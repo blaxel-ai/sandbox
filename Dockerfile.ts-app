@@ -1,0 +1,49 @@
+FROM --platform=linux/amd64 golang:1.23.3-bookworm as build
+
+WORKDIR /blaxel/uvm-api
+
+COPY ./uvm-api /blaxel/uvm-api
+
+RUN set -xe; \
+  go build \
+  -v \
+  -buildmode=pie \
+  -ldflags "-linkmode external -extldflags -static-pie" \
+  -tags netgo \
+  -o uvm-api-binary . \
+  ;
+
+# Use an official Python runtime as a parent image
+FROM --platform=linux/amd64 python:3.11-slim
+
+
+COPY --from=build /blaxel/uvm-api/uvm-api-binary /usr/local/bin/uvm-api
+
+WORKDIR /
+
+# Install necessary packages
+RUN apt-get update && \
+  apt-get install -y --no-install-recommends \
+  curl \
+  wget \
+  zip \
+  tree \
+  git \
+  unzip && \
+  curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
+  apt-get install -y --no-install-recommends nodejs && \
+  apt-get clean && \
+  rm -rf /var/lib/apt/lists/*
+
+RUN node --version && npm --version
+
+# Download as tarball instead of git clone to avoid Git tracking issues
+RUN mkdir -p /frontend && \
+  curl -L https://github.com/hvardhan878/blank-canvas-template/archive/refs/heads/main.tar.gz | tar -xz --strip-components=1 -C /frontend
+
+WORKDIR /frontend
+
+RUN npm install --force
+RUN npm run build
+
+EXPOSE 3000

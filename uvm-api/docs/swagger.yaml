@@ -1,0 +1,610 @@
+basePath: /
+definitions:
+  api.DirectoryResponse:
+    properties:
+      files:
+        items:
+          $ref: '#/definitions/api.FileResponse'
+        type: array
+      path:
+        example: /path/to/dir
+        type: string
+      subdirectories:
+        items:
+          $ref: '#/definitions/api.SubdirectoryResponse'
+        type: array
+    type: object
+  api.ErrorResponse:
+    properties:
+      error:
+        example: Error message
+        type: string
+    type: object
+  api.FileRequest:
+    properties:
+      content:
+        example: file contents here
+        type: string
+      isDirectory:
+        example: false
+        type: boolean
+      permissions:
+        example: "0644"
+        type: string
+    type: object
+  api.FileResponse:
+    properties:
+      content:
+        example: file contents here
+        type: string
+      group:
+        example: wheel
+        type: string
+      lastModified:
+        example: 1627984000
+        type: integer
+      owner:
+        example: root
+        type: string
+      path:
+        example: /path/to/file.txt
+        type: string
+      permissions:
+        example: "0644"
+        type: string
+      size:
+        example: 1024
+        type: integer
+    type: object
+  api.PortMonitorRequest:
+    properties:
+      callback:
+        description: URL to call when a new port is detected
+        example: http://localhost:3000/callback
+        type: string
+    type: object
+  api.ProcessKillRequest:
+    properties:
+      signal:
+        example: SIGTERM
+        type: string
+    type: object
+  api.ProcessRequest:
+    properties:
+      command:
+        example: ls -la
+        type: string
+      streamLogs:
+        example: true
+        type: boolean
+      timeout:
+        example: 30
+        type: integer
+      waitForCompletion:
+        example: false
+        type: boolean
+      waitForPorts:
+        example:
+        - 3000
+        - 8080
+        items:
+          type: integer
+        type: array
+      workingDir:
+        example: /home/user
+        type: string
+    required:
+    - command
+    type: object
+  api.ProcessResponse:
+    properties:
+      command:
+        example: ls -la
+        type: string
+      completedAt:
+        example: Wed, 01 Jan 2023 12:01:00 GMT
+        type: string
+      exitCode:
+        example: 0
+        type: integer
+      pid:
+        example: 1234
+        type: integer
+      startedAt:
+        example: Wed, 01 Jan 2023 12:00:00 GMT
+        type: string
+      status:
+        example: running
+        type: string
+      workingDir:
+        example: /home/user
+        type: string
+    type: object
+  api.SubdirectoryResponse:
+    properties:
+      path:
+        example: /path/to/subdir
+        type: string
+    type: object
+  api.SuccessResponse:
+    properties:
+      message:
+        example: File created successfully
+        type: string
+      path:
+        example: /path/to/file
+        type: string
+    type: object
+  api.TreeRequest:
+    properties:
+      files:
+        additionalProperties:
+          type: string
+        example:
+          dir/file2.txt: content2
+          file1.txt: content1
+        type: object
+    type: object
+  filesystem.Directory:
+    properties:
+      files:
+        items:
+          $ref: '#/definitions/filesystem.File'
+        type: array
+      path:
+        type: string
+      subdirectories:
+        items:
+          $ref: '#/definitions/filesystem.Directory'
+        type: array
+    type: object
+  filesystem.File:
+    properties:
+      group:
+        type: string
+      lastModified:
+        type: string
+      owner:
+        type: string
+      path:
+        type: string
+      permissions:
+        description: swagger:strfmt string
+        type: string
+      size:
+        type: integer
+    type: object
+  filesystem.FileWithContent:
+    properties:
+      content:
+        items:
+          type: integer
+        type: array
+      group:
+        type: string
+      lastModified:
+        type: string
+      owner:
+        type: string
+      path:
+        type: string
+      permissions:
+        description: swagger:strfmt string
+        type: string
+      size:
+        type: integer
+    type: object
+host: localhost:8080
+info:
+  contact: {}
+  description: API for manipulating filesystem, processes and network.
+  title: Sandbox API
+  version: 0.0.1-preview
+paths:
+  /filesystem/{path}:
+    delete:
+      consumes:
+      - application/json
+      description: Delete a file or directory
+      parameters:
+      - description: File or directory path
+        in: path
+        name: path
+        required: true
+        type: string
+      - description: Delete directory recursively
+        in: body
+        name: recursive
+        schema:
+          type: boolean
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Success message
+          schema:
+            $ref: '#/definitions/api.SuccessResponse'
+        "404":
+          description: File or directory not found
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      summary: Delete file or directory
+      tags:
+      - filesystem
+    get:
+      consumes:
+      - application/json
+      description: Get content of a file or listing of a directory
+      parameters:
+      - description: File or directory path
+        in: path
+        name: path
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Directory listing
+          schema:
+            $ref: '#/definitions/filesystem.Directory'
+        "404":
+          description: File or directory not found
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      summary: Get file or directory information
+      tags:
+      - filesystem
+    put:
+      consumes:
+      - application/json
+      description: Create or update a file or directory
+      parameters:
+      - description: File or directory path
+        in: path
+        name: path
+        required: true
+        type: string
+      - description: File or directory information
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/api.FileRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Success message
+          schema:
+            $ref: '#/definitions/api.SuccessResponse'
+        "400":
+          description: Invalid request
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      summary: Create or update file or directory
+      tags:
+      - filesystem
+  /filesystem/tree/{path}:
+    get:
+      consumes:
+      - application/json
+      description: Get a hierarchical listing of a directory
+      parameters:
+      - description: Directory path
+        in: path
+        name: path
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Directory tree
+          schema:
+            $ref: '#/definitions/filesystem.Directory'
+        "400":
+          description: Path is not a directory
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      summary: Get filesystem tree
+      tags:
+      - filesystem
+    put:
+      consumes:
+      - application/json
+      description: Create or update multiple files in a directory
+      parameters:
+      - description: Base directory path
+        in: path
+        name: path
+        required: true
+        type: string
+      - description: Files to create or update
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/api.TreeRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Updated tree
+          schema:
+            $ref: '#/definitions/api.DirectoryResponse'
+        "400":
+          description: Invalid request
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      summary: Create or update filesystem tree
+      tags:
+      - filesystem
+  /network/process/{pid}/monitor:
+    delete:
+      consumes:
+      - application/json
+      description: Stop monitoring for new ports opened by a process
+      parameters:
+      - description: Process ID
+        in: path
+        name: pid
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Object containing PID and success message
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Invalid process ID
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      summary: Stop monitoring ports for a process
+      tags:
+      - network
+    post:
+      consumes:
+      - application/json
+      description: Start monitoring for new ports opened by a process
+      parameters:
+      - description: Process ID
+        in: path
+        name: pid
+        required: true
+        type: integer
+      - description: Port monitor configuration
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/api.PortMonitorRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Object containing PID and success message
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Invalid request
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      summary: Start monitoring ports for a process
+      tags:
+      - network
+  /network/process/{pid}/ports:
+    get:
+      consumes:
+      - application/json
+      description: Get a list of all open ports for a process
+      parameters:
+      - description: Process ID
+        in: path
+        name: pid
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Object containing PID and array of network.PortInfo
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Invalid process ID
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      summary: Get open ports for a process
+      tags:
+      - network
+  /process:
+    get:
+      consumes:
+      - application/json
+      description: Get a list of all running and completed processes
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Process list
+          schema:
+            items:
+              $ref: '#/definitions/api.ProcessResponse'
+            type: array
+      summary: List all processes
+      tags:
+      - process
+    post:
+      consumes:
+      - application/json
+      description: Execute a command and return process information
+      parameters:
+      - description: Process execution request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/api.ProcessRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Process information
+          schema:
+            $ref: '#/definitions/api.ProcessResponse'
+        "400":
+          description: Invalid request
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      summary: Execute a command
+      tags:
+      - process
+  /process/{pid}:
+    delete:
+      consumes:
+      - application/json
+      description: Gracefully stop a running process
+      parameters:
+      - description: Process ID
+        in: path
+        name: pid
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Process stopped
+          schema:
+            $ref: '#/definitions/api.SuccessResponse'
+        "400":
+          description: Invalid process ID
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "404":
+          description: Process not found
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      summary: Stop a process
+      tags:
+      - process
+  /process/{pid}/kill:
+    post:
+      consumes:
+      - application/json
+      description: Forcefully kill a running process
+      parameters:
+      - description: Process ID
+        in: path
+        name: pid
+        required: true
+        type: integer
+      - description: Kill options
+        in: body
+        name: request
+        schema:
+          $ref: '#/definitions/api.ProcessKillRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Process killed
+          schema:
+            $ref: '#/definitions/api.SuccessResponse'
+        "400":
+          description: Invalid process ID
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "404":
+          description: Process not found
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      summary: Kill a process
+      tags:
+      - process
+  /process/{pid}/logs:
+    get:
+      consumes:
+      - application/json
+      description: Get the stdout and stderr output of a process
+      parameters:
+      - description: Process ID
+        in: path
+        name: pid
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Process logs
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Invalid process ID
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "404":
+          description: Process not found
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      summary: Get process logs
+      tags:
+      - process
+swagger: "2.0"

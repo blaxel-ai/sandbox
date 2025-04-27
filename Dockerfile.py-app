@@ -1,0 +1,52 @@
+FROM --platform=linux/amd64 golang:1.23.3-bookworm as build
+
+WORKDIR /blaxel/uvm-api
+
+COPY ./uvm-api /blaxel/uvm-api
+
+RUN set -xe; \
+  go build \
+  -v \
+  -buildmode=pie \
+  -ldflags "-linkmode external -extldflags -static-pie" \
+  -tags netgo \
+  -o uvm-api-binary . \
+  ;
+
+
+# Use an official Python runtime as a parent image
+FROM --platform=linux/amd64 python:3.11-slim
+
+COPY --from=build /blaxel/uvm-api/uvm-api-binary /usr/local/bin/uvm-api
+
+
+WORKDIR /
+
+# Install necessary packages
+RUN apt-get update && \
+  apt-get install -y --no-install-recommends \
+  curl \
+  wget \
+  zip \
+  tree \
+  git \
+  unzip && \
+  curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
+  apt-get install -y --no-install-recommends nodejs && \
+  apt-get clean && \
+  rm -rf /var/lib/apt/lists/*
+
+RUN node --version && npm --version
+
+# Download as tarball instead of git clone to avoid Git tracking issues
+RUN mkdir -p /backend && \
+  curl -L https://github.com/hvardhan878/alace-template/archive/refs/heads/von-stack.tar.gz | tar -xz --strip-components=1 -C /backend
+
+WORKDIR /backend
+
+# Install Python dependencies
+RUN pip install --no-cache-dir -r api/requirements.txt
+
+EXPOSE 8080 3000
+
+ENTRYPOINT ["/usr/local/bin/uvm-api"]
