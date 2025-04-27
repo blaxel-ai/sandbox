@@ -48,5 +48,3 @@ WORKDIR /backend
 RUN pip install --no-cache-dir -r api/requirements.txt
 
 EXPOSE 8080 3000
-
-ENTRYPOINT ["/usr/local/bin/uvm-api"]
