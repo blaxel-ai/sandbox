@@ -1,0 +1,429 @@
+package handler
+
+import (
+	"fmt"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strconv"
+
+	"github.com/gin-gonic/gin"
+
+	"github.com/beamlit/uvm-api/src/handler/filesystem"
+)
+
+// FileSystemHandler handles filesystem operations
+type FileSystemHandler struct {
+	*BaseHandler
+	fs *filesystem.Filesystem
+}
+
+// NewFileSystemHandler creates a new filesystem handler
+func NewFileSystemHandler() *FileSystemHandler {
+	return &FileSystemHandler{
+		BaseHandler: NewBaseHandler(),
+		fs:          filesystem.NewFilesystem("/"),
+	}
+}
+
+// GetWorkingDirectory gets the current working directory
+func (h *FileSystemHandler) GetWorkingDirectory() (string, error) {
+	return h.fs.GetAbsolutePath("/")
+}
+
+// ListDirectory lists the contents of a directory
+func (h *FileSystemHandler) ListDirectory(path string) (*filesystem.Directory, error) {
+	return h.fs.ListDirectory(path)
+}
+
+// ReadFile reads the contents of a file
+func (h *FileSystemHandler) ReadFile(path string) (*filesystem.FileWithContent, error) {
+	return h.fs.ReadFile(path)
+}
+
+// CreateDirectory creates a directory
+func (h *FileSystemHandler) CreateDirectory(path string, permissions os.FileMode) error {
+	return h.fs.CreateDirectory(path, permissions)
+}
+
+// WriteFile writes content to a file
+func (h *FileSystemHandler) WriteFile(path string, content []byte, permissions os.FileMode) error {
+	return h.fs.WriteFile(path, content, permissions)
+}
+
+// DirectoryExists checks if a path is a directory
+func (h *FileSystemHandler) DirectoryExists(path string) (bool, error) {
+	return h.fs.DirectoryExists(path)
+}
+
+// DeleteDirectory deletes a directory
+func (h *FileSystemHandler) DeleteDirectory(path string, recursive bool) error {
+	return h.fs.DeleteDirectory(path, recursive)
+}
+
+// FileExists checks if a path is a file
+func (h *FileSystemHandler) FileExists(path string) (bool, error) {
+	return h.fs.FileExists(path)
+}
+
+// DeleteFile deletes a file
+func (h *FileSystemHandler) DeleteFile(path string) error {
+	return h.fs.DeleteFile(path)
+}
+
+// HandleGetFile handles GET requests for files
+func (h *FileSystemHandler) HandleGetFile(c *gin.Context) {
+	path, err := h.GetPathParam(c, "path")
+	if err != nil {
+		h.SendError(c, http.StatusBadRequest, err)
+		return
+	}
+
+	// Default to root if path is empty
+	if path == "" {
+		path = "/"
+	}
+
+	// Ensure path starts with a slash
+	if path != "/" && len(path) > 0 && path[0] != '/' {
+		path = "/" + path
+	}
+
+	// Check if path is a directory
+	isDir, err := h.DirectoryExists(path)
+	if err != nil {
+		h.SendError(c, http.StatusInternalServerError, err)
+		return
+	}
+
+	if isDir {
+		h.handleListDirectory(c, path)
+		return
+	}
+
+	// Check if path is a file
+	isFile, err := h.FileExists(path)
+	if err != nil {
+		h.SendError(c, http.StatusInternalServerError, err)
+		return
+	}
+
+	if isFile {
+		h.handleReadFile(c, path)
+		return
+	}
+
+	h.SendError(c, http.StatusNotFound, fmt.Errorf("file or directory not found"))
+}
+
+// handleReadFile handles requests to read a file
+func (h *FileSystemHandler) handleReadFile(c *gin.Context, path string) {
+	file, err := h.ReadFile(path)
+	if err != nil {
+		h.SendError(c, http.StatusInternalServerError, fmt.Errorf("error reading file: %w", err))
+		return
+	}
+
+	h.SendJSON(c, http.StatusOK, gin.H{
+		"path":         file.Path,
+		"content":      string(file.Content),
+		"permissions":  file.Permissions.String(),
+		"size":         file.Size,
+		"lastModified": file.LastModified,
+		"owner":        file.Owner,
+		"group":        file.Group,
+	})
+}
+
+// handleListDirectory handles requests to list a directory
+func (h *FileSystemHandler) handleListDirectory(c *gin.Context, path string) {
+	dir, err := h.ListDirectory(path)
+	if err != nil {
+		h.SendError(c, http.StatusInternalServerError, fmt.Errorf("error listing directory: %w", err))
+		return
+	}
+
+	files := make([]map[string]interface{}, 0, len(dir.Files))
+	for _, file := range dir.Files {
+		files = append(files, map[string]interface{}{
+			"path":         file.Path,
+			"permissions":  file.Permissions.String(),
+			"size":         file.Size,
+			"lastModified": file.LastModified,
+			"owner":        file.Owner,
+			"group":        file.Group,
+		})
+	}
+
+	subdirs := make([]map[string]interface{}, 0, len(dir.Subdirectories))
+	for _, subdir := range dir.Subdirectories {
+		subdirs = append(subdirs, map[string]interface{}{
+			"path": subdir.Path,
+		})
+	}
+
+	h.SendJSON(c, http.StatusOK, gin.H{
+		"path":           dir.Path,
+		"files":          files,
+		"subdirectories": subdirs,
+	})
+}
+
+// HandleCreateOrUpdateFile handles PUT requests for files
+func (h *FileSystemHandler) HandleCreateOrUpdateFile(c *gin.Context) {
+	path, err := h.GetPathParam(c, "path")
+	if err != nil {
+		h.SendError(c, http.StatusBadRequest, err)
+		return
+	}
+
+	// Default to root if path is empty
+	if path == "" {
+		path = "/"
+	}
+
+	// Ensure path starts with a slash
+	if path != "/" && len(path) > 0 && path[0] != '/' {
+		path = "/" + path
+	}
+
+	var request struct {
+		Content     string `json:"content"`
+		IsDirectory bool   `json:"isDirectory"`
+		Permissions string `json:"permissions"`
+	}
+
+	if err := h.BindJSON(c, &request); err != nil {
+		h.SendError(c, http.StatusBadRequest, err)
+		return
+	}
+
+	// Parse permissions or use default
+	var permissions os.FileMode = 0644
+	if request.Permissions != "" {
+		permInt, err := strconv.ParseUint(request.Permissions, 8, 32)
+		if err == nil {
+			permissions = os.FileMode(permInt)
+		}
+	}
+
+	if request.IsDirectory {
+		// Create directory
+		err := h.CreateDirectory(path, permissions)
+		if err != nil {
+			h.SendError(c, http.StatusInternalServerError, fmt.Errorf("error creating directory: %w", err))
+			return
+		}
+		h.SendSuccess(c, "Directory created successfully")
+	} else {
+		// Create or update file
+		err := h.WriteFile(path, []byte(request.Content), permissions)
+		if err != nil {
+			h.SendError(c, http.StatusInternalServerError, fmt.Errorf("error writing file: %w", err))
+			return
+		}
+		h.SendSuccess(c, "File created/updated successfully")
+	}
+}
+
+// HandleDeleteFile handles DELETE requests for files
+func (h *FileSystemHandler) HandleDeleteFile(c *gin.Context) {
+	path, err := h.GetPathParam(c, "path")
+	if err != nil {
+		h.SendError(c, http.StatusBadRequest, err)
+		return
+	}
+
+	// Default to root if path is empty
+	if path == "" {
+		path = "/"
+	}
+
+	// Ensure path starts with a slash
+	if path != "/" && len(path) > 0 && path[0] != '/' {
+		path = "/" + path
+	}
+
+	var request struct {
+		Recursive bool `json:"recursive"`
+	}
+
+	if err := h.BindJSON(c, &request); err != nil {
+		// If JSON is not provided, default to non-recursive
+		request.Recursive = false
+	}
+
+	// Check if it's a directory
+	isDir, err := h.DirectoryExists(path)
+	if err != nil {
+		h.SendError(c, http.StatusInternalServerError, err)
+		return
+	}
+
+	if isDir {
+		// Delete directory
+		err := h.DeleteDirectory(path, request.Recursive)
+		if err != nil {
+			h.SendError(c, http.StatusInternalServerError, fmt.Errorf("error deleting directory: %w", err))
+			return
+		}
+		h.SendSuccess(c, "Directory deleted successfully")
+		return
+	}
+
+	// Check if it's a file
+	isFile, err := h.FileExists(path)
+	if err != nil {
+		h.SendError(c, http.StatusInternalServerError, err)
+		return
+	}
+
+	if isFile {
+		// Delete file
+		err := h.DeleteFile(path)
+		if err != nil {
+			h.SendError(c, http.StatusInternalServerError, fmt.Errorf("error deleting file: %w", err))
+			return
+		}
+		h.SendSuccess(c, "File deleted successfully")
+		return
+	}
+
+	h.SendError(c, http.StatusNotFound, fmt.Errorf("file or directory not found"))
+}
+
+// HandleGetTree handles GET requests for directory trees
+func (h *FileSystemHandler) HandleGetTree(c *gin.Context) {
+	rootPath, exists := c.Get("rootPath")
+	if !exists {
+		// Fallback to path param if not set in context
+		rootPath = c.Param("path")
+	}
+
+	// Convert to string
+	rootPathStr, ok := rootPath.(string)
+	if !ok {
+		h.SendError(c, http.StatusInternalServerError, fmt.Errorf("invalid path parameter"))
+		return
+	}
+
+	// Default to root if path is not provided or empty
+	if rootPathStr == "" {
+		rootPathStr = "/"
+	}
+
+	// Ensure rootPath starts with a slash
+	if rootPathStr != "/" && len(rootPathStr) > 0 && rootPathStr[0] != '/' {
+		rootPathStr = "/" + rootPathStr
+	}
+
+	// Check if path exists and is a directory
+	isDir, err := h.DirectoryExists(rootPathStr)
+	if err != nil {
+		h.SendError(c, http.StatusInternalServerError, err)
+		return
+	}
+
+	if !isDir {
+		h.SendError(c, http.StatusBadRequest, fmt.Errorf("path is not a directory"))
+		return
+	}
+
+	// Get directory listing
+	dir, err := h.ListDirectory(rootPathStr)
+	if err != nil {
+		h.SendError(c, http.StatusInternalServerError, fmt.Errorf("error getting file system tree: %w", err))
+		return
+	}
+
+	h.SendJSON(c, http.StatusOK, dir)
+}
+
+// HandleCreateOrUpdateTree handles PUT requests for directory trees
+func (h *FileSystemHandler) HandleCreateOrUpdateTree(c *gin.Context) {
+	rootPath, exists := c.Get("rootPath")
+	if !exists {
+		// Fallback to path param if not set in context
+		rootPath = c.Param("path")
+	}
+
+	// Convert to string
+	rootPathStr, ok := rootPath.(string)
+	if !ok {
+		h.SendError(c, http.StatusInternalServerError, fmt.Errorf("invalid path parameter"))
+		return
+	}
+
+	// Default to root if path is empty
+	if rootPathStr == "" {
+		rootPathStr = "/"
+	}
+
+	// Ensure rootPath starts with a slash
+	if rootPathStr != "/" && len(rootPathStr) > 0 && rootPathStr[0] != '/' {
+		rootPathStr = "/" + rootPathStr
+	}
+
+	var request struct {
+		Files map[string]string `json:"files"`
+	}
+
+	if err := h.BindJSON(c, &request); err != nil {
+		h.SendError(c, http.StatusBadRequest, err)
+		return
+	}
+
+	// Check if root path exists, create it if not
+	isDir, err := h.DirectoryExists(rootPathStr)
+	// The root path should be created if it doesn't exist
+	if err != nil || !isDir {
+		// Create the root directory if it doesn't exist or is not a directory
+		err := h.CreateDirectory(rootPathStr, 0755)
+		if err != nil {
+			h.SendError(c, http.StatusInternalServerError, fmt.Errorf("error creating root directory: %w", err))
+			return
+		}
+	}
+
+	// Process each file in the request
+	for relativePath, content := range request.Files {
+		// Combine root path with relative path, ensuring there's only one slash between them
+		fullPath := rootPathStr
+		if rootPathStr != "/" {
+			fullPath += "/"
+		}
+		fullPath += relativePath
+
+		// Get the parent directory path - we need to ensure it exists
+		dir := filepath.Dir(fullPath)
+		if dir != "/" {
+			// Create parent directories
+			err := h.CreateDirectory(dir, 0755)
+			if err != nil {
+				h.SendError(c, http.StatusInternalServerError, fmt.Errorf("error creating parent directory: %w", err))
+				return
+			}
+		}
+
+		// Write the file
+		err := h.WriteFile(fullPath, []byte(content), 0644)
+		if err != nil {
+			h.SendError(c, http.StatusInternalServerError, fmt.Errorf("error writing file: %w", err))
+			return
+		}
+	}
+
+	// Get updated directory listing
+	dir, err := h.ListDirectory(rootPathStr)
+	if err != nil {
+		h.SendError(c, http.StatusInternalServerError, fmt.Errorf("error getting updated file system tree: %w", err))
+		return
+	}
+
+	h.SendJSON(c, http.StatusOK, gin.H{
+		"path":           dir.Path,
+		"files":          dir.Files,
+		"subdirectories": dir.Subdirectories,
+		"message":        "Tree created/updated successfully",
+	})
+}

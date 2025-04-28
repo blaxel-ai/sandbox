@@ -28,12 +28,24 @@ type ProcessNameArgs struct {
 	Name string `json:"name" jsonschema:"required,description=Technical name of the process"`
 }
 
-// FileSystemArgs represents arguments for filesystem-related tools
-type FileSystemArgs struct {
+type FsListDirectoryArgs struct {
+	Path string `json:"path" jsonschema:"required,description=Path to the file or directory"`
+}
+
+type FsReadFileArgs struct {
+	Path string `json:"path" jsonschema:"required,description=Path to the file"`
+}
+
+type FsWriteArgs struct {
 	Path        string `json:"path" jsonschema:"required,description=Path to the file or directory"`
 	Content     string `json:"content" jsonschema:"description=Content to write to the file"`
-	IsDirectory bool   `json:"isDirectory" jsonschema:"description=Whether the path refers to a directory"`
 	Permissions string `json:"permissions" jsonschema:"description=Permissions for the file or directory (octal string)"`
+	IsDirectory bool   `json:"isDirectory" jsonschema:"description=Whether the path refers to a directory"`
+}
+
+type FsDeleteArgs struct {
+	Path        string `json:"path" jsonschema:"required,description=Path to the file or directory"`
+	IsDirectory bool   `json:"isDirectory" jsonschema:"description=Whether the path refers to a directory"`
 	Recursive   bool   `json:"recursive" jsonschema:"description=Whether to perform the operation recursively"`
 }
 

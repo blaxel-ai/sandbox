@@ -360,3 +360,20 @@ func (fs *Filesystem) Walk(root string, fn filepath.WalkFunc) error {
 		return fn(relPath, info, nil)
 	})
 }
+
+// CreateOrUpdateFile creates or updates a file
+func (fs *Filesystem) CreateOrUpdateFile(path string, content string, isDirectory bool, permissions string) error {
+	// Parse permissions or use default
+	var perm os.FileMode = 0644
+	if permissions != "" {
+		permInt, err := strconv.ParseUint(permissions, 8, 32)
+		if err == nil {
+			perm = os.FileMode(permInt)
+		}
+	}
+
+	if isDirectory {
+		return fs.CreateDirectory(path, perm)
+	}
+	return fs.WriteFile(path, []byte(content), perm)
+}

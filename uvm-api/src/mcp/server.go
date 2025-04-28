@@ -5,11 +5,21 @@ import (
 
 	"github.com/gin-gonic/gin"
 	mcp_golang "github.com/metoro-io/mcp-golang"
+
+	"github.com/beamlit/uvm-api/src/handler"
 )
 
 // Server represents the MCP server
 type Server struct {
 	mcpServer *mcp_golang.Server
+	handlers  *Handlers
+}
+
+// Handlers contains all the handlers used by the MCP server
+type Handlers struct {
+	FileSystem *handler.FileSystemHandler
+	Process    *handler.ProcessHandler
+	Network    *handler.NetworkHandler
 }
 
 // NewServer creates a new MCP server
@@ -18,8 +28,16 @@ func NewServer(gin *gin.Engine) (*Server, error) {
 	transport := NewWebSocketTransport(gin)
 	mcpServer := mcp_golang.NewServer(transport, mcp_golang.WithName("Sandbox API Server"))
 
+	// Initialize handlers
+	handlers := &Handlers{
+		FileSystem: handler.NewFileSystemHandler(),
+		Process:    handler.NewProcessHandler(),
+		Network:    handler.NewNetworkHandler(),
+	}
+
 	server := &Server{
 		mcpServer: mcpServer,
+		handlers:  handlers,
 	}
 
 	fmt.Println("Registering tools")

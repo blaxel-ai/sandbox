@@ -8,6 +8,7 @@ import (
 	ginSwagger "github.com/swaggo/gin-swagger"
 
 	_ "github.com/beamlit/uvm-api/docs" // Import generated docs
+	"github.com/beamlit/uvm-api/src/handler"
 )
 
 // @title           Sandbox API
@@ -30,6 +31,11 @@ func SetupRouter() *gin.Engine {
 		c.Redirect(301, "/swagger/index.html")
 	})
 	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
+
+	// Initialize handlers
+	fsHandler := handler.NewFileSystemHandler()
+	processHandler := handler.NewProcessHandler()
+	networkHandler := handler.NewNetworkHandler()
 
 	// Custom filesystem tree router middleware to handle tree-specific routes
 	r.Use(func(c *gin.Context) {
@@ -66,11 +72,11 @@ func SetupRouter() *gin.Engine {
 
 			// Handle based on method
 			if method == "GET" {
-				HandleGetFileSystemTree(c)
+				fsHandler.HandleGetTree(c)
 				c.Abort()
 				return
 			} else if method == "PUT" {
-				HandleCreateOrUpdateTree(c)
+				fsHandler.HandleCreateOrUpdateTree(c)
 				c.Abort()
 				return
 			}
@@ -80,22 +86,22 @@ func SetupRouter() *gin.Engine {
 	})
 
 	// Filesystem routes
-	r.GET("/filesystem/*path", HandleFileSystemRequest)
-	r.PUT("/filesystem/*path", HandleCreateOrUpdateFile)
-	r.DELETE("/filesystem/*path", HandleDeleteFileOrDirectory)
+	r.GET("/filesystem/*path", fsHandler.HandleGetFile)
+	r.PUT("/filesystem/*path", fsHandler.HandleCreateOrUpdateFile)
+	r.DELETE("/filesystem/*path", fsHandler.HandleDeleteFile)
 
 	// Process routes
-	r.GET("/process", HandleListProcesses)
-	r.POST("/process", HandleExecuteCommand)
-	r.GET("/process/:pid/logs", HandleGetProcessLogs)
-	r.DELETE("/process/:pid", HandleStopProcess)
-	r.POST("/process/:pid/kill", HandleKillProcess)
-	r.GET("/process/name/:name", HandleGetProcessByName)
+	r.GET("/process", processHandler.HandleListProcesses)
+	r.POST("/process", processHandler.HandleExecuteCommand)
+	r.GET("/process/:pid/logs", processHandler.HandleGetProcessLogs)
+	r.DELETE("/process/:pid", processHandler.HandleStopProcess)
+	r.POST("/process/:pid/kill", processHandler.HandleKillProcess)
+	r.GET("/process/name/:name", processHandler.HandleGetProcessByName)
 
 	// Network routes
-	r.GET("/network/process/:pid/ports", HandleGetPorts)
-	r.POST("/network/process/:pid/monitor", HandleMonitorPorts)
-	r.DELETE("/network/process/:pid/monitor", HandleStopMonitoringPorts)
+	r.GET("/network/process/:pid/ports", networkHandler.HandleGetPorts)
+	r.POST("/network/process/:pid/monitor", networkHandler.HandleMonitorPorts)
+	r.DELETE("/network/process/:pid/monitor", networkHandler.HandleStopMonitoringPorts)
 
 	// Health check route
 	r.GET("/health", func(c *gin.Context) {

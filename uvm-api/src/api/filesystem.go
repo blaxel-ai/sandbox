@@ -9,7 +9,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/beamlit/uvm-api/src/filesystem"
+	"github.com/beamlit/uvm-api/src/handler/filesystem"
 )
 
 // fileSystemInstance is a singleton instance of the filesystem

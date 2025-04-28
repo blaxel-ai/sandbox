@@ -5,5 +5,5 @@ api:
 	cd uvm-api && air
 
 mcp:
-	cd uvm-api/mcp-inspect && npm install && npm run build && npm run start
+	cd uvm-api/mcp-inspect && npm run inspect
 
