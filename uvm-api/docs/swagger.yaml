@@ -1,19 +1,5 @@
 basePath: /
 definitions:
-  api.DirectoryResponse:
-    properties:
-      files:
-        items:
-          $ref: '#/definitions/api.FileResponse'
-        type: array
-      path:
-        example: /path/to/dir
-        type: string
-      subdirectories:
-        items:
-          $ref: '#/definitions/api.SubdirectoryResponse'
-        type: array
-    type: object
   api.ErrorResponse:
     properties:
       error:
@@ -32,30 +18,6 @@ definitions:
         example: "0644"
         type: string
     type: object
-  api.FileResponse:
-    properties:
-      content:
-        example: file contents here
-        type: string
-      group:
-        example: wheel
-        type: string
-      lastModified:
-        example: 1627984000
-        type: integer
-      owner:
-        example: root
-        type: string
-      path:
-        example: /path/to/file.txt
-        type: string
-      permissions:
-        example: "0644"
-        type: string
-      size:
-        example: 1024
-        type: integer
-    type: object
   api.PortMonitorRequest:
     properties:
       callback:
@@ -73,6 +35,9 @@ definitions:
     properties:
       command:
         example: ls -la
+        type: string
+      name:
+        example: my-process
         type: string
       streamLogs:
         example: true
@@ -107,9 +72,12 @@ definitions:
       exitCode:
         example: 0
         type: integer
+      name:
+        example: my-process
+        type: string
       pid:
-        example: 1234
-        type: integer
+        example: "1234"
+        type: string
       startedAt:
         example: Wed, 01 Jan 2023 12:00:00 GMT
         type: string
@@ -120,12 +88,6 @@ definitions:
         example: /home/user
         type: string
     type: object
-  api.SubdirectoryResponse:
-    properties:
-      path:
-        example: /path/to/subdir
-        type: string
-    type: object
   api.SuccessResponse:
     properties:
       message:
@@ -134,16 +96,6 @@ definitions:
       path:
         example: /path/to/file
         type: string
-    type: object
-  api.TreeRequest:
-    properties:
-      files:
-        additionalProperties:
-          type: string
-        example:
-          dir/file2.txt: content2
-          file1.txt: content1
-        type: object
     type: object
   filesystem.Directory:
     properties:
@@ -297,69 +249,6 @@ paths:
       summary: Create or update file or directory
       tags:
       - filesystem
-  /filesystem/tree/{path}:
-    get:
-      consumes:
-      - application/json
-      description: Get a hierarchical listing of a directory
-      parameters:
-      - description: Directory path
-        in: path
-        name: path
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: Directory tree
-          schema:
-            $ref: '#/definitions/filesystem.Directory'
-        "400":
-          description: Path is not a directory
-          schema:
-            $ref: '#/definitions/api.ErrorResponse'
-        "500":
-          description: Internal server error
-          schema:
-            $ref: '#/definitions/api.ErrorResponse'
-      summary: Get filesystem tree
-      tags:
-      - filesystem
-    put:
-      consumes:
-      - application/json
-      description: Create or update multiple files in a directory
-      parameters:
-      - description: Base directory path
-        in: path
-        name: path
-        required: true
-        type: string
-      - description: Files to create or update
-        in: body
-        name: request
-        required: true
-        schema:
-          $ref: '#/definitions/api.TreeRequest'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: Updated tree
-          schema:
-            $ref: '#/definitions/api.DirectoryResponse'
-        "400":
-          description: Invalid request
-          schema:
-            $ref: '#/definitions/api.ErrorResponse'
-        "500":
-          description: Internal server error
-          schema:
-            $ref: '#/definitions/api.ErrorResponse'
-      summary: Create or update filesystem tree
-      tags:
-      - filesystem
   /network/process/{pid}/monitor:
     delete:
       consumes:
@@ -501,17 +390,17 @@ paths:
       summary: Execute a command
       tags:
       - process
-  /process/{pid}:
+  /process/{identifier}:
     delete:
       consumes:
       - application/json
       description: Gracefully stop a running process
       parameters:
-      - description: Process ID
+      - description: Process identifier (PID or name)
         in: path
-        name: pid
+        name: identifier
         required: true
-        type: integer
+        type: string
       produces:
       - application/json
       responses:
@@ -519,10 +408,6 @@ paths:
           description: Process stopped
           schema:
             $ref: '#/definitions/api.SuccessResponse'
-        "400":
-          description: Invalid process ID
-          schema:
-            $ref: '#/definitions/api.ErrorResponse'
         "404":
           description: Process not found
           schema:
@@ -534,17 +419,41 @@ paths:
       summary: Stop a process
       tags:
       - process
-  /process/{pid}/kill:
+    get:
+      consumes:
+      - application/json
+      description: Get information about a process by its PID or name
+      parameters:
+      - description: Process identifier (PID or name)
+        in: path
+        name: identifier
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Process information
+          schema:
+            $ref: '#/definitions/api.ProcessResponse'
+        "404":
+          description: Process not found
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      summary: Get process by identifier
+      tags:
+      - process
+  /process/{identifier}/kill:
     post:
       consumes:
       - application/json
       description: Forcefully kill a running process
       parameters:
-      - description: Process ID
+      - description: Process identifier (PID or name)
         in: path
-        name: pid
+        name: identifier
         required: true
-        type: integer
+        type: string
       - description: Kill options
         in: body
         name: request
@@ -557,10 +466,6 @@ paths:
           description: Process killed
           schema:
             $ref: '#/definitions/api.SuccessResponse'
-        "400":
-          description: Invalid process ID
-          schema:
-            $ref: '#/definitions/api.ErrorResponse'
         "404":
           description: Process not found
           schema:
@@ -572,17 +477,17 @@ paths:
       summary: Kill a process
       tags:
       - process
-  /process/{pid}/logs:
+  /process/{identifier}/logs:
     get:
       consumes:
       - application/json
       description: Get the stdout and stderr output of a process
       parameters:
-      - description: Process ID
+      - description: Process identifier (PID or name)
         in: path
-        name: pid
+        name: identifier
         required: true
-        type: integer
+        type: string
       produces:
       - application/json
       responses:
@@ -592,10 +497,6 @@ paths:
             additionalProperties:
               type: string
             type: object
-        "400":
-          description: Invalid process ID
-          schema:
-            $ref: '#/definitions/api.ErrorResponse'
         "404":
           description: Process not found
           schema:
@@ -605,6 +506,31 @@ paths:
           schema:
             $ref: '#/definitions/api.ErrorResponse'
       summary: Get process logs
+      tags:
+      - process
+  /process/name/{name}:
+    get:
+      consumes:
+      - application/json
+      description: Get information about a process by its name
+      parameters:
+      - description: Process name
+        in: path
+        name: name
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Process information
+          schema:
+            $ref: '#/definitions/api.ProcessResponse'
+        "404":
+          description: Process not found
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      summary: Get process by name
       tags:
       - process
 swagger: "2.0"

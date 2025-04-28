@@ -11,9 +11,21 @@ import (
 	"github.com/beamlit/uvm-api/docs" // swagger generated docs
 	"github.com/beamlit/uvm-api/src/api"
 	"github.com/beamlit/uvm-api/src/mcp"
+	"github.com/joho/godotenv"
 )
 
+// @title           Sandbox API
+// @version         0.0.1-preview
+// @description     API for manipulating filesystem, processes and network.
+
+// @host      localhost:8080
+// @BasePath  /
 func main() {
+	// Load .env file
+	if err := godotenv.Load(); err != nil {
+		log.Printf("Warning: .env file not found")
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	docs.SwaggerInfo.Host = fmt.Sprintf("%s:%s", os.Getenv("HOST"), os.Getenv("PORT"))

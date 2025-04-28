@@ -6,13 +6,11 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"strconv"
 	"sync"
 
 	"github.com/gin-gonic/gin"
 
 	"github.com/beamlit/uvm-api/src/handler"
-	"github.com/beamlit/uvm-api/src/handler/process"
 )
 
 // ProcessRequest is the request body for executing a command
@@ -28,7 +26,7 @@ type ProcessRequest struct {
 
 // ProcessResponse is the response body for a process
 type ProcessResponse struct {
-	PID         int    `json:"pid" example:"1234"`
+	PID         string `json:"pid" example:"1234"`
 	Name        string `json:"name,omitempty" example:"my-process"`
 	Command     string `json:"command" example:"ls -la"`
 	Status      string `json:"status" example:"running"`
@@ -56,7 +54,17 @@ func HandleListProcesses(c *gin.Context) {
 	c.JSON(http.StatusOK, processes)
 }
 
-// HandleStartProcess handles POST requests to /process
+// HandleExecuteCommand handles POST requests to /process/
+// @Summary Execute a command
+// @Description Execute a command and return process information
+// @Tags process
+// @Accept json
+// @Produce json
+// @Param request body ProcessRequest true "Process execution request"
+// @Success 200 {object} ProcessResponse "Process information"
+// @Failure 400 {object} ErrorResponse "Invalid request"
+// @Failure 500 {object} ErrorResponse "Internal server error"
+// @Router /process [post]
 func HandleStartProcess(c *gin.Context) {
 	var req struct {
 		Command           string `json:"command" binding:"required"`
@@ -74,7 +82,7 @@ func HandleStartProcess(c *gin.Context) {
 
 	// If a name is provided, check if a process with that name already exists
 	if req.Name != "" {
-		_, err := handler.GetProcessHandler().GetProcessByName(req.Name)
+		_, err := handler.GetProcessHandler().GetProcess(req.Name)
 		if err == nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("process with name '%s' already exists", req.Name)})
 			return
@@ -91,16 +99,19 @@ func HandleStartProcess(c *gin.Context) {
 	c.JSON(http.StatusOK, processInfo)
 }
 
-// HandleGetProcess handles GET requests to /process/:pid
+// HandleGetProcess handles GET requests to /process/:identifier
+// @Summary Get process by identifier
+// @Description Get information about a process by its PID or name
+// @Tags process
+// @Accept json
+// @Produce json
+// @Param identifier path string true "Process identifier (PID or name)"
+// @Success 200 {object} ProcessResponse "Process information"
+// @Failure 404 {object} ErrorResponse "Process not found"
+// @Router /process/{identifier} [get]
 func HandleGetProcess(c *gin.Context) {
-	pidStr := c.Param("pid")
-	pid, err := strconv.Atoi(pidStr)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid PID"})
-		return
-	}
-
-	processInfo, err := handler.GetProcessHandler().GetProcess(pid)
+	identifier := c.Param("identifier")
+	processInfo, err := handler.GetProcessHandler().GetProcess(identifier)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
 		return
@@ -121,7 +132,7 @@ func HandleGetProcess(c *gin.Context) {
 // @Router /process/name/{name} [get]
 func HandleGetProcessByName(c *gin.Context) {
 	name := c.Param("name")
-	processInfo, err := handler.GetProcessHandler().GetProcessByName(name)
+	processInfo, err := handler.GetProcessHandler().GetProcess(name)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
 		return
@@ -130,37 +141,20 @@ func HandleGetProcessByName(c *gin.Context) {
 	c.JSON(http.StatusOK, processInfo)
 }
 
-// HandleGetProcessOutput handles GET requests to /process/:pid/output
-func HandleGetProcessOutput(c *gin.Context) {
-	pidStr := c.Param("pid")
-	pid, err := strconv.Atoi(pidStr)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid PID"})
-		return
-	}
-
-	stdout, stderr, err := handler.GetProcessHandler().GetProcessOutput(pid)
-	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"stdout": stdout,
-		"stderr": stderr,
-	})
-}
-
-// HandleStopProcess handles POST requests to /process/:pid/stop
+// HandleStopProcess handles DELETE requests to /process/{identifier}
+// @Summary Stop a process
+// @Description Gracefully stop a running process
+// @Tags process
+// @Accept json
+// @Produce json
+// @Param identifier path string true "Process identifier (PID or name)"
+// @Success 200 {object} SuccessResponse "Process stopped"
+// @Failure 404 {object} ErrorResponse "Process not found"
+// @Failure 500 {object} ErrorResponse "Internal server error"
+// @Router /process/{identifier} [delete]
 func HandleStopProcess(c *gin.Context) {
-	pidStr := c.Param("pid")
-	pid, err := strconv.Atoi(pidStr)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid PID"})
-		return
-	}
-
-	err = handler.GetProcessHandler().StopProcess(pid)
+	identifier := c.Param("identifier")
+	err := handler.GetProcessHandler().StopProcess(identifier)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
 		return
@@ -169,16 +163,21 @@ func HandleStopProcess(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "Process stopped successfully"})
 }
 
-// HandleKillProcess handles POST requests to /process/:pid/kill
+// HandleKillProcess handles POST requests to /process/{identifier}/kill
+// @Summary Kill a process
+// @Description Forcefully kill a running process
+// @Tags process
+// @Accept json
+// @Produce json
+// @Param identifier path string true "Process identifier (PID or name)"
+// @Param request body ProcessKillRequest false "Kill options"
+// @Success 200 {object} SuccessResponse "Process killed"
+// @Failure 404 {object} ErrorResponse "Process not found"
+// @Failure 500 {object} ErrorResponse "Internal server error"
+// @Router /process/{identifier}/kill [post]
 func HandleKillProcess(c *gin.Context) {
-	pidStr := c.Param("pid")
-	pid, err := strconv.Atoi(pidStr)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid PID"})
-		return
-	}
-
-	err = handler.GetProcessHandler().KillProcess(pid)
+	identifier := c.Param("identifier")
+	err := handler.GetProcessHandler().KillProcess(identifier)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
 		return
@@ -187,34 +186,21 @@ func HandleKillProcess(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "Process killed successfully"})
 }
 
-// HandleGetProcessLogs handles GET requests to /process/{pid}/logs
+// HandleGetProcessLogs handles GET requests to /process/{identifier}/logs
 // @Summary Get process logs
 // @Description Get the stdout and stderr output of a process
 // @Tags process
 // @Accept json
 // @Produce json
-// @Param pid path int true "Process ID"
+// @Param identifier path string true "Process identifier (PID or name)"
 // @Success 200 {object} map[string]string "Process logs"
-// @Failure 400 {object} ErrorResponse "Invalid process ID"
 // @Failure 404 {object} ErrorResponse "Process not found"
 // @Failure 500 {object} ErrorResponse "Internal server error"
-// @Router /process/{pid}/logs [get]
+// @Router /process/{identifier}/logs [get]
 func HandleGetProcessLogs(c *gin.Context) {
-	pidStr := c.Param("pid")
-	pid, err := strconv.Atoi(pidStr)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid PID"})
-		return
-	}
-
-	pm := process.GetProcessManager()
-	_, exists := pm.GetProcess(pid)
-	if !exists {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Process not found"})
-		return
-	}
-
+	identifier := c.Param("identifier")
 	streamLogs := c.Query("stream") == "true"
+
 	if streamLogs {
 		// Set headers for streaming
 		c.Header("Content-Type", "text/plain; charset=utf-8")
@@ -232,11 +218,11 @@ func HandleGetProcessLogs(c *gin.Context) {
 		}
 
 		// Send initial message
-		c.Writer.Write([]byte(fmt.Sprintf("data: {\"pid\": %d, \"streaming\": true}\n\n", pid)))
+		c.Writer.Write([]byte(fmt.Sprintf("data: {\"identifier\": %s, \"streaming\": true}\n\n", identifier)))
 		c.Writer.Flush()
 
 		// Attach the writer to the process
-		err := pm.StreamProcessOutput(pid, outputWriter)
+		err := handler.GetProcessHandler().StreamProcessOutput(identifier, outputWriter)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
@@ -246,26 +232,25 @@ func HandleGetProcessLogs(c *gin.Context) {
 		<-clientGone
 
 		// Clean up when client disconnects
-		pm.RemoveLogWriter(pid, outputWriter)
+		handler.GetProcessHandler().RemoveLogWriter(identifier, outputWriter)
 
 		// Send final message before closing
 		c.Writer.Write([]byte("data: [CONNECTION_CLOSED]\n\n"))
 		c.Writer.Flush()
 		return
-	} else {
-		// Non-streaming response - return all logs at once
-		stdout, stderr, err := pm.GetProcessOutput(pid)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-
-		c.JSON(http.StatusOK, gin.H{
-			"pid":    pid,
-			"stdout": stdout,
-			"stderr": stderr,
-		})
 	}
+
+	// Non-streaming response - return all logs at once
+	stdout, stderr, err := handler.GetProcessHandler().GetProcessOutput(identifier)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"stdout": stdout,
+		"stderr": stderr,
+	})
 }
 
 // ResponseWriter is a custom writer for SSE responses that also flushes after each write

@@ -11,13 +11,6 @@ import (
 	"github.com/beamlit/uvm-api/src/handler"
 )
 
-// @title           Sandbox API
-// @version         0.0.1-preview
-// @description     API for manipulating filesystem, processes and network.
-
-// @host      localhost:8080
-// @BasePath  /
-
 // SetupRouter configures all the routes for the Sandbox API
 func SetupRouter() *gin.Engine {
 	// Initialize the router

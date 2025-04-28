@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"runtime"
 	"slices"
+	"strconv"
 	"sync"
 	"time"
 
@@ -14,7 +15,7 @@ import (
 // ExecuteProcess executes a process with the given parameters
 func (pm *ProcessManager) ExecuteProcess(command string, workingDir string, name string, waitForCompletion bool, timeout int, waitForPorts []int) (*ProcessInfo, error) {
 	portCh := make(chan int)
-	completionCh := make(chan int)
+	completionCh := make(chan string)
 
 	// Add flags to track if channels have been closed
 	portChClosed := false
@@ -49,7 +50,7 @@ func (pm *ProcessManager) ExecuteProcess(command string, workingDir string, name
 	}
 
 	// Start the process
-	var pid int
+	var pid string
 	var err error
 	if name != "" {
 		pid, err = pm.StartProcessWithName(command, workingDir, name, callback)
@@ -82,7 +83,8 @@ func (pm *ProcessManager) ExecuteProcess(command string, workingDir string, name
 		} else {
 			n := network.GetNetwork()
 			ports := make([]int, 0, len(waitForPorts))
-			n.RegisterPortOpenCallback(pid, func(pid int, port *network.PortInfo) {
+			pidInt, _ := strconv.Atoi(pid)
+			n.RegisterPortOpenCallback(pidInt, func(pid int, port *network.PortInfo) {
 				if slices.Contains(waitForPorts, port.LocalPort) {
 					ports = append(ports, port.LocalPort)
 				}
@@ -111,7 +113,7 @@ func (pm *ProcessManager) ExecuteProcess(command string, workingDir string, name
 	if waitForCompletion {
 		select {
 		case pid := <-completionCh:
-			_, exists := pm.GetProcess(pid)
+			_, exists := pm.GetProcessByIdentifier(pid)
 			if !exists {
 				return nil, fmt.Errorf("process creation failed")
 			}
@@ -122,7 +124,7 @@ func (pm *ProcessManager) ExecuteProcess(command string, workingDir string, name
 	}
 
 	// Get the process info
-	processInfo, exists := pm.GetProcess(pid)
+	processInfo, exists := pm.GetProcessByIdentifier(pid)
 	if !exists {
 		return nil, fmt.Errorf("process creation failed")
 	}

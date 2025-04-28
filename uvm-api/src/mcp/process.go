@@ -30,30 +30,30 @@ func (s *Server) registerProcessTools() error {
 		return fmt.Errorf("failed to register executeCommand tool: %w", err)
 	}
 
-	// Get process by name
-	if err := s.mcpServer.RegisterTool("processGetByName", "Get process information by name",
-		func(args ProcessNameArgs) (*mcp_golang.ToolResponse, error) {
-			processInfo, err := s.handlers.Process.GetProcessByName(args.Name)
+	// Get process by identifier
+	if err := s.mcpServer.RegisterTool("processGet", "Get process information by identifier (PID or name)",
+		func(args ProcessIdentifierArgs) (*mcp_golang.ToolResponse, error) {
+			processInfo, err := s.handlers.Process.GetProcess(args.Identifier)
 			if err != nil {
-				return nil, fmt.Errorf("process with name '%s' not found", args.Name)
+				return nil, fmt.Errorf("process with identifier '%s' not found", args.Identifier)
 			}
 			return CreateJSONResponse(processInfo)
 		}); err != nil {
-		return fmt.Errorf("failed to register getProcessByName tool: %w", err)
+		return fmt.Errorf("failed to register getProcess tool: %w", err)
 	}
 
 	// Get process logs
 	if err := s.mcpServer.RegisterTool("processGetLogs", "Get logs for a specific process",
-		func(args ProcessIDArgs) (*mcp_golang.ToolResponse, error) {
-			stdout, stderr, err := s.handlers.Process.GetProcessOutput(args.PID)
+		func(args ProcessIdentifierArgs) (*mcp_golang.ToolResponse, error) {
+			stdout, stderr, err := s.handlers.Process.GetProcessOutput(args.Identifier)
 			if err != nil {
 				return nil, fmt.Errorf("failed to get process output: %w", err)
 			}
 
 			response := map[string]interface{}{
-				"pid":    args.PID,
-				"stdout": stdout,
-				"stderr": stderr,
+				"identifier": args.Identifier,
+				"stdout":     stdout,
+				"stderr":     stderr,
 			}
 
 			return CreateJSONResponse(response)
@@ -63,15 +63,15 @@ func (s *Server) registerProcessTools() error {
 
 	// Stop process
 	if err := s.mcpServer.RegisterTool("processStop", "Stop a specific process",
-		func(args ProcessIDArgs) (*mcp_golang.ToolResponse, error) {
-			err := s.handlers.Process.StopProcess(args.PID)
+		func(args ProcessIdentifierArgs) (*mcp_golang.ToolResponse, error) {
+			err := s.handlers.Process.StopProcess(args.Identifier)
 			if err != nil {
 				return nil, fmt.Errorf("failed to stop process: %w", err)
 			}
 
 			response := map[string]interface{}{
-				"pid":     args.PID,
-				"message": "Process stopped successfully",
+				"identifier": args.Identifier,
+				"message":    "Process stopped successfully",
 			}
 
 			return CreateJSONResponse(response)
@@ -81,15 +81,15 @@ func (s *Server) registerProcessTools() error {
 
 	// Kill process
 	if err := s.mcpServer.RegisterTool("processKill", "Kill a specific process",
-		func(args ProcessIDArgs) (*mcp_golang.ToolResponse, error) {
-			err := s.handlers.Process.KillProcess(args.PID)
+		func(args ProcessIdentifierArgs) (*mcp_golang.ToolResponse, error) {
+			err := s.handlers.Process.KillProcess(args.Identifier)
 			if err != nil {
 				return nil, fmt.Errorf("failed to kill process: %w", err)
 			}
 
 			response := map[string]interface{}{
-				"pid":     args.PID,
-				"message": "Process killed successfully",
+				"identifier": args.Identifier,
+				"message":    "Process killed successfully",
 			}
 
 			return CreateJSONResponse(response)

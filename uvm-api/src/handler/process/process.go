@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"io"
 	"math/rand"
+	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -21,7 +23,7 @@ type ProcessManager struct {
 
 // ProcessInfo stores information about a running process
 type ProcessInfo struct {
-	PID         int
+	PID         string
 	Name        string
 	Command     string
 	Cmd         *exec.Cmd
@@ -46,7 +48,7 @@ func NewProcessManager() *ProcessManager {
 	}
 	// Create table if not exists
 	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS processes (
-		pid INTEGER PRIMARY KEY,
+		pid TEXT PRIMARY KEY,
 		name TEXT,
 		command TEXT,
 		started_at DATETIME,
@@ -77,12 +79,12 @@ func GetProcessManager() *ProcessManager {
 	return processManager
 }
 
-func (pm *ProcessManager) StartProcess(command string, workingDir string, callback func(process *ProcessInfo)) (int, error) {
+func (pm *ProcessManager) StartProcess(command string, workingDir string, callback func(process *ProcessInfo)) (string, error) {
 	name := GenerateRandomName(8)
 	return pm.StartProcessWithName(command, workingDir, name, callback)
 }
 
-func (pm *ProcessManager) StartProcessWithName(command string, workingDir string, name string, callback func(process *ProcessInfo)) (int, error) {
+func (pm *ProcessManager) StartProcessWithName(command string, workingDir string, name string, callback func(process *ProcessInfo)) (string, error) {
 	var cmd *exec.Cmd
 
 	// Check if the command needs a shell by looking for shell special chars
@@ -95,7 +97,7 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 		// Parse command string into command and arguments while respecting quotes
 		args := parseCommand(command)
 		if len(args) == 0 {
-			return 0, fmt.Errorf("empty command")
+			return "", fmt.Errorf("empty command")
 		}
 		cmd = exec.Command(args[0], args[1:]...)
 	}
@@ -107,12 +109,12 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 	// Set up stdout and stderr pipes
 	stdoutPipe, err := cmd.StdoutPipe()
 	if err != nil {
-		return 0, fmt.Errorf("failed to create stdout pipe: %w", err)
+		return "", fmt.Errorf("failed to create stdout pipe: %w", err)
 	}
 
 	stderrPipe, err := cmd.StderrPipe()
 	if err != nil {
-		return 0, fmt.Errorf("failed to create stderr pipe: %w", err)
+		return "", fmt.Errorf("failed to create stderr pipe: %w", err)
 	}
 
 	// Set up stdout and stderr capture
@@ -136,9 +138,9 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 
 	// Start the process
 	if err := cmd.Start(); err != nil {
-		return 0, err
+		return "", err
 	}
-	process.PID = cmd.Process.Pid
+	process.PID = fmt.Sprintf("%d", cmd.Process.Pid)
 
 	// Insert process info into SQLite
 	_, err = pm.db.Exec(`INSERT INTO processes (pid, name, command, started_at, completed_at, exit_code, status, working_dir, stdout, stderr) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -154,7 +156,7 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 		"", // stderr empty at start
 	)
 	if err != nil {
-		return 0, fmt.Errorf("failed to insert process into db: %w", err)
+		return "", fmt.Errorf("failed to insert process into db: %w", err)
 	}
 
 	// Handle stdout
@@ -208,31 +210,17 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 		process.CompletedAt = &now
 
 		// Determine exit status and create appropriate message
-		var statusMsg string
 		if err != nil {
 			process.Status = "failed"
 			if exitErr, ok := err.(*exec.ExitError); ok {
 				process.ExitCode = exitErr.ExitCode()
-				statusMsg = fmt.Sprintf("\n[Process exited with code %d]\n", process.ExitCode)
 			} else {
 				process.ExitCode = 1
-				statusMsg = fmt.Sprintf("\n[Process failed: %v]\n", err)
 			}
 		} else {
 			process.Status = "completed"
 			process.ExitCode = 0
-			statusMsg = "\n[Process completed successfully]\n"
 		}
-
-		// Notify log writers about process completion
-		process.logLock.RLock()
-		for _, w := range process.logWriters {
-			w.Write([]byte(statusMsg))
-		}
-		process.logLock.RUnlock()
-
-		// Add completion message to output buffer
-		process.stdout.WriteString(statusMsg)
 
 		// Update process info in SQLite
 		_, _ = pm.db.Exec(`UPDATE processes SET completed_at = ?, exit_code = ?, status = ?, stdout = ?, stderr = ? WHERE pid = ?`,
@@ -298,8 +286,38 @@ func parseCommand(command string) []string {
 	return args
 }
 
+// GetProcessByIdentifier returns a process by either PID or name
+func (pm *ProcessManager) GetProcessByIdentifier(identifier string) (*ProcessInfo, bool) {
+	// Try to convert identifier to int (PID)
+	var process *ProcessInfo
+	var exists bool
+	if _, err := strconv.Atoi(identifier); err == nil {
+		// If conversion successful, try to get process by PID
+		process, exists = pm.GetProcessByPid(identifier)
+	} else {
+		process, exists = pm.GetProcessByName(identifier)
+	}
+	// If the process is running, try to get additional information from the OS
+	if process.Status == "running" {
+		pidInt, err := strconv.Atoi(process.PID)
+		if err == nil {
+			// Get process from OS
+			osProcess, err := os.FindProcess(pidInt)
+			if err == nil {
+				// Create a new exec.Cmd with the process
+				cmd := &exec.Cmd{
+					Process: osProcess,
+				}
+				process.Cmd = cmd
+			}
+		}
+	}
+
+	return process, exists
+}
+
 // GetProcess returns information about a specific process
-func (pm *ProcessManager) GetProcess(pid int) (*ProcessInfo, bool) {
+func (pm *ProcessManager) GetProcessByPid(pid string) (*ProcessInfo, bool) {
 	row := pm.db.QueryRow(`SELECT * FROM processes WHERE pid = ?`, pid)
 	process, err := pm.formatRowToProcess(row)
 	if err != nil {
@@ -313,7 +331,7 @@ func (pm *ProcessManager) GetProcessByName(name string) (*ProcessInfo, bool) {
 		return nil, false
 	}
 
-	row := pm.db.QueryRow(`SELECT * FROM processes WHERE name = ?`, name)
+	row := pm.db.QueryRow(`SELECT * FROM processes WHERE name = ? LIMIT 1`, name)
 	process, err := pm.formatRowToProcess(row)
 	if err != nil {
 		return nil, false
@@ -340,18 +358,18 @@ func (pm *ProcessManager) ListProcesses() []*ProcessInfo {
 }
 
 // StopProcess attempts to gracefully stop a process
-func (pm *ProcessManager) StopProcess(pid int) error {
-	process, exists := pm.GetProcess(pid)
+func (pm *ProcessManager) StopProcess(identifier string) error {
+	process, exists := pm.GetProcessByIdentifier(identifier)
 	if !exists {
-		return fmt.Errorf("process with PID %d not found", pid)
+		return fmt.Errorf("process with Identifier %s not found", identifier)
 	}
 
 	if process.Status != "running" {
-		return fmt.Errorf("process with PID %d is not running", pid)
+		return fmt.Errorf("process with Identifier %s is not running", identifier)
 	}
 
-	if process.Cmd.Process == nil {
-		return fmt.Errorf("process with PID %d has no OS process", pid)
+	if process.Cmd == nil || process.Cmd.Process == nil {
+		return fmt.Errorf("process with Identifier %s has no OS process", identifier)
 	}
 
 	// Notify log writers about termination
@@ -369,18 +387,18 @@ func (pm *ProcessManager) StopProcess(pid int) error {
 }
 
 // KillProcess forcefully kills a process
-func (pm *ProcessManager) KillProcess(pid int) error {
-	process, exists := pm.GetProcess(pid)
+func (pm *ProcessManager) KillProcess(identifier string) error {
+	process, exists := pm.GetProcessByIdentifier(identifier)
 	if !exists {
-		return fmt.Errorf("process with PID %d not found", pid)
+		return fmt.Errorf("process with Identifier %s not found", identifier)
 	}
 
 	if process.Status != "running" {
-		return fmt.Errorf("process with PID %d is not running", pid)
+		return fmt.Errorf("process with Identifier %s is not running", identifier)
 	}
 
-	if process.Cmd.Process == nil {
-		return fmt.Errorf("process with PID %d has no OS process", pid)
+	if process.Cmd == nil || process.Cmd.Process == nil {
+		return fmt.Errorf("process with Identifier %s has no OS process", identifier)
 	}
 
 	// Notify log writers about forceful termination
@@ -396,34 +414,34 @@ func (pm *ProcessManager) KillProcess(pid int) error {
 
 	err := process.Cmd.Process.Kill()
 	if err != nil {
-		return fmt.Errorf("failed to kill process with PID %d: %w", pid, err)
+		return fmt.Errorf("failed to kill process with Identifier %s: %w", identifier, err)
 	}
 
 	// Remove the process from the SQLite database
 	_, err = pm.db.Exec(
 		"DELETE FROM processes WHERE pid = ?",
-		pid,
+		process.PID,
 	)
 	if err != nil {
-		return fmt.Errorf("failed to remove process with PID %d from database: %w", pid, err)
+		return fmt.Errorf("failed to remove process with Identifier %s from database: %w", identifier, err)
 	}
 	return nil
 }
 
 // GetProcessOutput returns the stdout and stderr output of a process
-func (pm *ProcessManager) GetProcessOutput(pid int) (string, string, error) {
-	process, exists := pm.GetProcess(pid)
+func (pm *ProcessManager) GetProcessOutput(identifier string) (string, string, error) {
+	process, exists := pm.GetProcessByIdentifier(identifier)
 	if !exists {
-		return "", "", fmt.Errorf("process with PID %d not found", pid)
+		return "", "", fmt.Errorf("process with PID %s not found", identifier)
 	}
 
 	return process.stdout.String(), process.stderr.String(), nil
 }
 
-func (pm *ProcessManager) StreamProcessOutput(pid int, w io.Writer) error {
-	process, exists := pm.GetProcess(pid)
+func (pm *ProcessManager) StreamProcessOutput(identifier string, w io.Writer) error {
+	process, exists := pm.GetProcessByIdentifier(identifier)
 	if !exists {
-		return fmt.Errorf("process with PID %d not found", pid)
+		return fmt.Errorf("process with Identifier %s not found", identifier)
 	}
 
 	// Write current content first
@@ -439,10 +457,10 @@ func (pm *ProcessManager) StreamProcessOutput(pid int, w io.Writer) error {
 }
 
 // RemoveLogWriter removes a writer from a process's log writers list
-func (pm *ProcessManager) RemoveLogWriter(pid int, w io.Writer) error {
-	process, exists := pm.GetProcess(pid)
+func (pm *ProcessManager) RemoveLogWriter(identifier string, w io.Writer) error {
+	process, exists := pm.GetProcessByIdentifier(identifier)
 	if !exists {
-		return fmt.Errorf("process with PID %d not found", pid)
+		return fmt.Errorf("process with Identifier %s not found", identifier)
 	}
 
 	process.logLock.Lock()

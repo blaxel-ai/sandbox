@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strconv"
 	"sync"
 
 	"github.com/gin-gonic/gin"
@@ -50,7 +49,7 @@ type ProcessRequest struct {
 
 // ProcessResponse is the response body for a process
 type ProcessResponse struct {
-	PID         int    `json:"pid"`
+	PID         string `json:"pid"`
 	Name        string `json:"name,omitempty"`
 	Command     string `json:"command"`
 	Status      string `json:"status"`
@@ -94,26 +93,9 @@ func (h *ProcessHandler) ListProcesses() []ProcessResponse {
 	return result
 }
 
-// GetProcess gets a process by PID
-func (h *ProcessHandler) GetProcess(pid int) (ProcessResponse, error) {
-	processInfo, exists := h.processManager.GetProcess(pid)
-	if !exists {
-		return ProcessResponse{}, fmt.Errorf("process not found")
-	}
-
-	return ProcessResponse{
-		PID:        processInfo.PID,
-		Name:       processInfo.Name,
-		Command:    processInfo.Command,
-		Status:     processInfo.Status,
-		StartedAt:  processInfo.StartedAt.Format("Mon, 02 Jan 2006 15:04:05 GMT"),
-		WorkingDir: processInfo.WorkingDir,
-	}, nil
-}
-
-// GetProcessByName gets a process by name
-func (h *ProcessHandler) GetProcessByName(name string) (ProcessResponse, error) {
-	processInfo, exists := h.processManager.GetProcessByName(name)
+// GetProcess gets a process by identifier (PID or name)
+func (h *ProcessHandler) GetProcess(identifier string) (ProcessResponse, error) {
+	processInfo, exists := h.processManager.GetProcessByIdentifier(identifier)
 	if !exists {
 		return ProcessResponse{}, fmt.Errorf("process not found")
 	}
@@ -129,28 +111,28 @@ func (h *ProcessHandler) GetProcessByName(name string) (ProcessResponse, error) 
 }
 
 // GetProcessOutput gets the output of a process
-func (h *ProcessHandler) GetProcessOutput(pid int) (string, string, error) {
-	return h.processManager.GetProcessOutput(pid)
+func (h *ProcessHandler) GetProcessOutput(identifier string) (string, string, error) {
+	return h.processManager.GetProcessOutput(identifier)
 }
 
 // StopProcess stops a process
-func (h *ProcessHandler) StopProcess(pid int) error {
-	return h.processManager.StopProcess(pid)
+func (h *ProcessHandler) StopProcess(identifier string) error {
+	return h.processManager.StopProcess(identifier)
 }
 
 // KillProcess kills a process
-func (h *ProcessHandler) KillProcess(pid int) error {
-	return h.processManager.KillProcess(pid)
+func (h *ProcessHandler) KillProcess(identifier string) error {
+	return h.processManager.KillProcess(identifier)
 }
 
 // StreamProcessOutput streams the output of a process
-func (h *ProcessHandler) StreamProcessOutput(pid int, writer io.Writer) error {
-	return h.processManager.StreamProcessOutput(pid, writer)
+func (h *ProcessHandler) StreamProcessOutput(identifier string, writer io.Writer) error {
+	return h.processManager.StreamProcessOutput(identifier, writer)
 }
 
 // RemoveLogWriter removes a log writer from a process
-func (h *ProcessHandler) RemoveLogWriter(pid int, writer io.Writer) {
-	h.processManager.RemoveLogWriter(pid, writer)
+func (h *ProcessHandler) RemoveLogWriter(identifier string, writer io.Writer) {
+	h.processManager.RemoveLogWriter(identifier, writer)
 }
 
 // HandleListProcesses handles GET requests to /process/
@@ -169,7 +151,7 @@ func (h *ProcessHandler) HandleExecuteCommand(c *gin.Context) {
 
 	// If a name is provided, check if a process with that name already exists
 	if req.Name != "" {
-		_, err := h.GetProcessByName(req.Name)
+		_, err := h.GetProcess(req.Name)
 		if err == nil {
 			h.SendError(c, http.StatusBadRequest, fmt.Errorf("process with name '%s' already exists", req.Name))
 			return
@@ -186,131 +168,69 @@ func (h *ProcessHandler) HandleExecuteCommand(c *gin.Context) {
 	h.SendJSON(c, http.StatusOK, processInfo)
 }
 
-// HandleGetProcessLogs handles GET requests to /process/{pid}/logs
+// HandleGetProcessLogs handles GET requests to /process/{identifier}/logs
 func (h *ProcessHandler) HandleGetProcessLogs(c *gin.Context) {
-	pidStr, err := h.GetPathParam(c, "pid")
+	identifier, err := h.GetPathParam(c, "identifier")
 	if err != nil {
 		h.SendError(c, http.StatusBadRequest, err)
 		return
 	}
 
-	pid, err := strconv.Atoi(pidStr)
+	stdout, stderr, err := h.GetProcessOutput(identifier)
 	if err != nil {
-		h.SendError(c, http.StatusBadRequest, fmt.Errorf("invalid PID"))
-		return
-	}
-
-	// Check if process exists
-	_, err = h.GetProcess(pid)
-	if err != nil {
-		h.SendError(c, http.StatusNotFound, fmt.Errorf("process not found"))
-		return
-	}
-
-	streamLogs := h.GetQueryParam(c, "stream", "false") == "true"
-	if streamLogs {
-		// Set headers for streaming
-		c.Header("Content-Type", "text/plain; charset=utf-8")
-		c.Header("X-Content-Type-Options", "nosniff")
-		c.Header("Transfer-Encoding", "chunked")
-		c.Header("X-Accel-Buffering", "no")
-		c.Writer.Flush()
-
-		// Create a channel to signal when the client disconnects
-		clientGone := c.Request.Context().Done()
-
-		// Create a ResponseWriter wrapper
-		outputWriter := &ResponseWriter{
-			gin: c,
-		}
-
-		// Send initial message
-		c.Writer.Write([]byte(fmt.Sprintf("data: {\"pid\": %d, \"streaming\": true}\n\n", pid)))
-		c.Writer.Flush()
-
-		// Attach the writer to the process
-		err := h.StreamProcessOutput(pid, outputWriter)
-		if err != nil {
-			h.SendError(c, http.StatusInternalServerError, err)
-			return
-		}
-
-		// Block until client disconnects
-		<-clientGone
-
-		// Clean up when client disconnects
-		h.RemoveLogWriter(pid, outputWriter)
-
-		// Send final message before closing
-		c.Writer.Write([]byte("data: [CONNECTION_CLOSED]\n\n"))
-		c.Writer.Flush()
-		return
-	}
-
-	// Non-streaming response - return all logs at once
-	stdout, stderr, err := h.GetProcessOutput(pid)
-	if err != nil {
-		h.SendError(c, http.StatusInternalServerError, err)
+		h.SendError(c, http.StatusNotFound, err)
 		return
 	}
 
 	h.SendJSON(c, http.StatusOK, gin.H{
-		"pid":    pid,
 		"stdout": stdout,
 		"stderr": stderr,
 	})
 }
 
-// HandleStopProcess handles DELETE requests to /process/{pid}
+// HandleStopProcess handles DELETE requests to /process/{identifier}
 func (h *ProcessHandler) HandleStopProcess(c *gin.Context) {
-	pidStr, err := h.GetPathParam(c, "pid")
+	identifier, err := h.GetPathParam(c, "identifier")
 	if err != nil {
 		h.SendError(c, http.StatusBadRequest, err)
 		return
 	}
 
-	pid, err := strconv.Atoi(pidStr)
+	err = h.StopProcess(identifier)
 	if err != nil {
-		h.SendError(c, http.StatusBadRequest, fmt.Errorf("invalid PID"))
+		h.SendError(c, http.StatusNotFound, err)
 		return
 	}
 
-	err = h.StopProcess(pid)
-	if err != nil {
-		h.SendError(c, http.StatusInternalServerError, err)
-		return
-	}
-
-	h.SendSuccess(c, "Process stopped successfully")
+	h.SendJSON(c, http.StatusOK, gin.H{"message": "Process stopped successfully"})
 }
 
-// HandleKillProcess handles POST requests to /process/{pid}/kill
+// HandleKillProcess handles POST requests to /process/{identifier}/kill
 func (h *ProcessHandler) HandleKillProcess(c *gin.Context) {
-	pidStr, err := h.GetPathParam(c, "pid")
+	identifier, err := h.GetPathParam(c, "identifier")
 	if err != nil {
 		h.SendError(c, http.StatusBadRequest, err)
 		return
 	}
 
-	pid, err := strconv.Atoi(pidStr)
+	err = h.KillProcess(identifier)
 	if err != nil {
-		h.SendError(c, http.StatusBadRequest, fmt.Errorf("invalid PID"))
+		h.SendError(c, http.StatusNotFound, err)
 		return
 	}
 
-	err = h.KillProcess(pid)
-	if err != nil {
-		h.SendError(c, http.StatusInternalServerError, err)
-		return
-	}
-
-	h.SendSuccess(c, "Process killed successfully")
+	h.SendJSON(c, http.StatusOK, gin.H{"message": "Process killed successfully"})
 }
 
-// HandleGetProcessByName handles GET requests to /process/name/:name
+// HandleGetProcessByName handles GET requests to /process/name/{name}
 func (h *ProcessHandler) HandleGetProcessByName(c *gin.Context) {
-	name := c.Param("name")
-	processInfo, err := h.GetProcessByName(name)
+	name, err := h.GetPathParam(c, "name")
+	if err != nil {
+		h.SendError(c, http.StatusBadRequest, err)
+		return
+	}
+
+	processInfo, err := h.GetProcess(name)
 	if err != nil {
 		h.SendError(c, http.StatusNotFound, err)
 		return

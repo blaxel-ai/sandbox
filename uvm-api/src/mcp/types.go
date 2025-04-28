@@ -17,10 +17,9 @@ type ProcessArgs struct {
 	WaitForPorts      []int  `json:"waitForPorts" jsonschema:"description=List of ports to wait for before returning"`
 }
 
-// ProcessIDArgs represents arguments for process ID-related tools
-type ProcessIDArgs struct {
-	PID  int    `json:"pid" jsonschema:"required,description=Process ID"`
-	Name string `json:"name" jsonschema:"description=Technical name of the process,default="`
+// ProcessIdentifierArgs represents arguments for process identifier-related tools
+type ProcessIdentifierArgs struct {
+	Identifier string `json:"identifier" jsonschema:"required,description=Process identifier (PID or name)"`
 }
 
 // ProcessNameArgs represents arguments for process name-related tools
