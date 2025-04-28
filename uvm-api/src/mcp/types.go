@@ -7,8 +7,8 @@ import (
 	mcp_golang "github.com/metoro-io/mcp-golang"
 )
 
-// ProcessArgs represents arguments for process-related tools
-type ProcessArgs struct {
+// ProcessExecuteArgs represents arguments for process-related tools
+type ProcessExecuteArgs struct {
 	Command           string `json:"command" jsonschema:"required,description=The command to execute"`
 	Name              string `json:"name" jsonschema:"description=Technical name for the process,default="`
 	WorkingDir        string `json:"workingDir" jsonschema:"description=The working directory for the command,default=/"`
@@ -20,11 +20,6 @@ type ProcessArgs struct {
 // ProcessIdentifierArgs represents arguments for process identifier-related tools
 type ProcessIdentifierArgs struct {
 	Identifier string `json:"identifier" jsonschema:"required,description=Process identifier (PID or name)"`
-}
-
-// ProcessNameArgs represents arguments for process name-related tools
-type ProcessNameArgs struct {
-	Name string `json:"name" jsonschema:"required,description=Technical name of the process"`
 }
 
 type FsListDirectoryArgs struct {

@@ -67,12 +67,14 @@ func (h *ProcessHandler) ExecuteProcess(command string, workingDir string, name 
 	}
 
 	return ProcessResponse{
-		PID:        processInfo.PID,
-		Name:       processInfo.Name,
-		Command:    processInfo.Command,
-		Status:     processInfo.Status,
-		StartedAt:  processInfo.StartedAt.Format("Mon, 02 Jan 2006 15:04:05 GMT"),
-		WorkingDir: processInfo.WorkingDir,
+		PID:         processInfo.PID,
+		Name:        processInfo.Name,
+		Command:     processInfo.Command,
+		Status:      processInfo.Status,
+		StartedAt:   processInfo.StartedAt.Format("Mon, 02 Jan 2006 15:04:05 GMT"),
+		CompletedAt: processInfo.CompletedAt.Format("Mon, 02 Jan 2006 15:04:05 GMT"),
+		ExitCode:    processInfo.ExitCode,
+		WorkingDir:  processInfo.WorkingDir,
 	}, nil
 }
 
@@ -82,12 +84,14 @@ func (h *ProcessHandler) ListProcesses() []ProcessResponse {
 	result := make([]ProcessResponse, 0, len(processes))
 	for _, p := range processes {
 		result = append(result, ProcessResponse{
-			PID:        p.PID,
-			Name:       p.Name,
-			Command:    p.Command,
-			Status:     p.Status,
-			StartedAt:  p.StartedAt.Format("Mon, 02 Jan 2006 15:04:05 GMT"),
-			WorkingDir: p.WorkingDir,
+			PID:         p.PID,
+			Name:        p.Name,
+			Command:     p.Command,
+			Status:      p.Status,
+			StartedAt:   p.StartedAt.Format("Mon, 02 Jan 2006 15:04:05 GMT"),
+			CompletedAt: p.CompletedAt.Format("Mon, 02 Jan 2006 15:04:05 GMT"),
+			ExitCode:    p.ExitCode,
+			WorkingDir:  p.WorkingDir,
 		})
 	}
 	return result
@@ -101,12 +105,14 @@ func (h *ProcessHandler) GetProcess(identifier string) (ProcessResponse, error) 
 	}
 
 	return ProcessResponse{
-		PID:        processInfo.PID,
-		Name:       processInfo.Name,
-		Command:    processInfo.Command,
-		Status:     processInfo.Status,
-		StartedAt:  processInfo.StartedAt.Format("Mon, 02 Jan 2006 15:04:05 GMT"),
-		WorkingDir: processInfo.WorkingDir,
+		PID:         processInfo.PID,
+		Name:        processInfo.Name,
+		Command:     processInfo.Command,
+		Status:      processInfo.Status,
+		StartedAt:   processInfo.StartedAt.Format("Mon, 02 Jan 2006 15:04:05 GMT"),
+		CompletedAt: processInfo.CompletedAt.Format("Mon, 02 Jan 2006 15:04:05 GMT"),
+		ExitCode:    processInfo.ExitCode,
+		WorkingDir:  processInfo.WorkingDir,
 	}, nil
 }
 

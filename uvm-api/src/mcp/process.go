@@ -20,7 +20,7 @@ func (s *Server) registerProcessTools() error {
 
 	// Execute command
 	if err := s.mcpServer.RegisterTool("processExecute", "Execute a command",
-		func(args ProcessArgs) (*mcp_golang.ToolResponse, error) {
+		func(args ProcessExecuteArgs) (*mcp_golang.ToolResponse, error) {
 			processInfo, err := s.handlers.Process.ExecuteProcess(args.Command, args.WorkingDir, args.Name, args.WaitForCompletion, args.Timeout, args.WaitForPorts)
 			if err != nil {
 				return nil, err
@@ -51,9 +51,8 @@ func (s *Server) registerProcessTools() error {
 			}
 
 			response := map[string]interface{}{
-				"identifier": args.Identifier,
-				"stdout":     stdout,
-				"stderr":     stderr,
+				"stdout": stdout,
+				"stderr": stderr,
 			}
 
 			return CreateJSONResponse(response)
