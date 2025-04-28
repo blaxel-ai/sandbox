@@ -22,6 +22,7 @@ import (
 // ProcessRequest is the request body for executing a command
 type ProcessRequest struct {
 	Command           string `json:"command" binding:"required" example:"ls -la"`
+	Name              string `json:"name" example:"my-process"`
 	WorkingDir        string `json:"workingDir" example:"/home/user"`
 	WaitForCompletion bool   `json:"waitForCompletion" example:"false"`
 	Timeout           int    `json:"timeout" example:"30"`
@@ -32,6 +33,7 @@ type ProcessRequest struct {
 // ProcessResponse is the response body for a process
 type ProcessResponse struct {
 	PID         int    `json:"pid" example:"1234"`
+	Name        string `json:"name,omitempty" example:"my-process"`
 	Command     string `json:"command" example:"ls -la"`
 	Status      string `json:"status" example:"running"`
 	StartedAt   string `json:"startedAt" example:"Wed, 01 Jan 2023 12:00:00 GMT"`
@@ -61,6 +63,7 @@ func HandleListProcesses(c *gin.Context) {
 	for _, p := range processes {
 		resp := ProcessResponse{
 			PID:        p.PID,
+			Name:       p.Name,
 			Command:    p.Command,
 			Status:     p.Status,
 			StartedAt:  p.StartedAt.Format(http.TimeFormat),
@@ -94,6 +97,15 @@ func HandleExecuteCommand(c *gin.Context) {
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
+	}
+
+	// If a name is provided, check if a process with that name already exists
+	if req.Name != "" {
+		pm := process.GetProcessManager()
+		if existingProcess, exists := pm.GetProcessByName(req.Name); exists {
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Process with name '%s' already exists (PID: %d)", req.Name, existingProcess.PID)})
+			return
+		}
 	}
 
 	pm := process.GetProcessManager()
@@ -153,7 +165,7 @@ func HandleExecuteCommand(c *gin.Context) {
 		defer close(connClosed)
 
 		// Start the process with streaming setup
-		pid, err := pm.StartProcess(req.Command, req.WorkingDir, func(p *process.ProcessInfo) {
+		pid, err := pm.StartProcessWithName(req.Command, req.WorkingDir, req.Name, func(p *process.ProcessInfo) {
 			// Notify that process completed via channel
 			select {
 			case completionCh <- p.PID:
@@ -240,8 +252,8 @@ func HandleExecuteCommand(c *gin.Context) {
 		}
 
 		// Write the process info as the first message
-		infoMsg := fmt.Sprintf("{\"pid\": %d, \"command\": \"%s\", \"status\": \"%s\"}",
-			processInfo.PID, processInfo.Command, processInfo.Status)
+		infoMsg := fmt.Sprintf("{\"pid\": %d, \"name\": \"%s\", \"command\": \"%s\", \"status\": \"%s\"}",
+			processInfo.PID, processInfo.Name, processInfo.Command, processInfo.Status)
 		c.Writer.Write([]byte(fmt.Sprintf("data: %s\n\n", infoMsg)))
 		c.Writer.Flush()
 
@@ -297,7 +309,7 @@ func HandleExecuteCommand(c *gin.Context) {
 		}
 	} else {
 		// Regular non-streaming process execution
-		pid, err := pm.StartProcess(req.Command, req.WorkingDir, func(p *process.ProcessInfo) {
+		pid, err := pm.StartProcessWithName(req.Command, req.WorkingDir, req.Name, func(p *process.ProcessInfo) {
 			if req.WaitForCompletion {
 				completionCh <- p.PID
 			}
@@ -380,6 +392,7 @@ func HandleExecuteCommand(c *gin.Context) {
 		// Create a proper response using the ProcessResponse struct
 		response := ProcessResponse{
 			PID:        processInfo.PID,
+			Name:       processInfo.Name,
 			Command:    processInfo.Command,
 			Status:     processInfo.Status,
 			StartedAt:  processInfo.StartedAt.Format(http.TimeFormat),
@@ -543,6 +556,43 @@ func HandleKillProcess(c *gin.Context) {
 		"pid":     pid,
 		"message": "Process killed successfully",
 	})
+}
+
+// HandleGetProcessByName handles GET requests to /process/name/{name}
+// @Summary Get process by name
+// @Description Get information about a process by its name
+// @Tags process
+// @Accept json
+// @Produce json
+// @Param name path string true "Process name"
+// @Success 200 {object} ProcessResponse "Process information"
+// @Failure 404 {object} ErrorResponse "Process not found"
+// @Router /process/name/{name} [get]
+func HandleGetProcessByName(c *gin.Context) {
+	name := c.Param("name")
+	pm := process.GetProcessManager()
+
+	processInfo, exists := pm.GetProcessByName(name)
+	if !exists {
+		c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("Process with name '%s' not found", name)})
+		return
+	}
+
+	response := ProcessResponse{
+		PID:        processInfo.PID,
+		Name:       processInfo.Name,
+		Command:    processInfo.Command,
+		Status:     processInfo.Status,
+		StartedAt:  processInfo.StartedAt.Format(http.TimeFormat),
+		WorkingDir: processInfo.WorkingDir,
+	}
+
+	if processInfo.CompletedAt != nil {
+		response.CompletedAt = processInfo.CompletedAt.Format(http.TimeFormat)
+		response.ExitCode = processInfo.ExitCode
+	}
+
+	c.JSON(http.StatusOK, response)
 }
 
 // ResponseWriter is a custom writer for SSE responses that also flushes after each write

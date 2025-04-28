@@ -1,24 +1,28 @@
 package process
 
 import (
+	"database/sql"
 	"fmt"
 	"io"
+	"math/rand"
 	"os/exec"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
+
+	_ "github.com/mattn/go-sqlite3"
 )
 
 // ProcessManager manages the running processes
 type ProcessManager struct {
-	processes   map[int]*ProcessInfo
-	processLock sync.RWMutex
+	db *sql.DB
 }
 
 // ProcessInfo stores information about a running process
 type ProcessInfo struct {
 	PID         int
+	Name        string
 	Command     string
 	Cmd         *exec.Cmd
 	StartedAt   time.Time
@@ -36,9 +40,27 @@ type ProcessInfo struct {
 
 // NewProcessManager creates a new process manager
 func NewProcessManager() *ProcessManager {
-	return &ProcessManager{
-		processes: make(map[int]*ProcessInfo),
+	db, err := sql.Open("sqlite3", "processes.db")
+	if err != nil {
+		panic("failed to open sqlite database: " + err.Error())
 	}
+	// Create table if not exists
+	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS processes (
+		pid INTEGER PRIMARY KEY,
+		name TEXT,
+		command TEXT,
+		started_at DATETIME,
+		completed_at DATETIME,
+		exit_code INTEGER,
+		status TEXT,
+		working_dir TEXT,
+		stdout TEXT,
+		stderr TEXT
+	)`)
+	if err != nil {
+		panic("failed to create processes table: " + err.Error())
+	}
+	return &ProcessManager{db: db}
 }
 
 // Global process manager instance
@@ -56,9 +78,11 @@ func GetProcessManager() *ProcessManager {
 }
 
 func (pm *ProcessManager) StartProcess(command string, workingDir string, callback func(process *ProcessInfo)) (int, error) {
-	pm.processLock.Lock()
-	defer pm.processLock.Unlock()
+	name := GenerateRandomName(8)
+	return pm.StartProcessWithName(command, workingDir, name, callback)
+}
 
+func (pm *ProcessManager) StartProcessWithName(command string, workingDir string, name string, callback func(process *ProcessInfo)) (int, error) {
 	var cmd *exec.Cmd
 
 	// Check if the command needs a shell by looking for shell special chars
@@ -96,6 +120,7 @@ func (pm *ProcessManager) StartProcess(command string, workingDir string, callba
 	stderr := &strings.Builder{}
 
 	process := &ProcessInfo{
+		Name:        name,
 		Command:     command,
 		Cmd:         cmd,
 		StartedAt:   time.Now(),
@@ -114,7 +139,23 @@ func (pm *ProcessManager) StartProcess(command string, workingDir string, callba
 		return 0, err
 	}
 	process.PID = cmd.Process.Pid
-	pm.processes[process.PID] = process
+
+	// Insert process info into SQLite
+	_, err = pm.db.Exec(`INSERT INTO processes (pid, name, command, started_at, completed_at, exit_code, status, working_dir, stdout, stderr) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		process.PID,
+		process.Name,
+		process.Command,
+		process.StartedAt,
+		nil, // completed_at is nil at start
+		0,   // exit_code is 0 at start
+		process.Status,
+		process.WorkingDir,
+		"", // stdout empty at start
+		"", // stderr empty at start
+	)
+	if err != nil {
+		return 0, fmt.Errorf("failed to insert process into db: %w", err)
+	}
 
 	// Handle stdout
 	go func() {
@@ -164,9 +205,6 @@ func (pm *ProcessManager) StartProcess(command string, workingDir string, callba
 		err := cmd.Wait()
 		now := time.Now()
 
-		pm.processLock.Lock()
-		defer pm.processLock.Unlock()
-
 		process.CompletedAt = &now
 
 		// Determine exit status and create appropriate message
@@ -195,6 +233,16 @@ func (pm *ProcessManager) StartProcess(command string, workingDir string, callba
 
 		// Add completion message to output buffer
 		process.stdout.WriteString(statusMsg)
+
+		// Update process info in SQLite
+		_, _ = pm.db.Exec(`UPDATE processes SET completed_at = ?, exit_code = ?, status = ?, stdout = ?, stderr = ? WHERE pid = ?`,
+			now,
+			process.ExitCode,
+			process.Status,
+			process.stdout.String(),
+			process.stderr.String(),
+			process.PID,
+		)
 
 		// Clean up resources
 		// Note: The pipes are automatically closed when the process ends
@@ -252,20 +300,40 @@ func parseCommand(command string) []string {
 
 // GetProcess returns information about a specific process
 func (pm *ProcessManager) GetProcess(pid int) (*ProcessInfo, bool) {
-	pm.processLock.RLock()
-	defer pm.processLock.RUnlock()
+	row := pm.db.QueryRow(`SELECT * FROM processes WHERE pid = ?`, pid)
+	process, err := pm.formatRowToProcess(row)
+	if err != nil {
+		return nil, false
+	}
+	return process, true
+}
 
-	process, exists := pm.processes[pid]
-	return process, exists
+func (pm *ProcessManager) GetProcessByName(name string) (*ProcessInfo, bool) {
+	if name == "" {
+		return nil, false
+	}
+
+	row := pm.db.QueryRow(`SELECT * FROM processes WHERE name = ?`, name)
+	process, err := pm.formatRowToProcess(row)
+	if err != nil {
+		return nil, false
+	}
+	return process, true
 }
 
 // ListProcesses returns information about all processes
 func (pm *ProcessManager) ListProcesses() []*ProcessInfo {
-	pm.processLock.RLock()
-	defer pm.processLock.RUnlock()
-
-	processes := make([]*ProcessInfo, 0, len(pm.processes))
-	for _, process := range pm.processes {
+	rows, err := pm.db.Query(`SELECT * FROM processes`)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	processes := make([]*ProcessInfo, 0)
+	for rows.Next() {
+		process, err := pm.formatRowsToProcess(rows)
+		if err != nil {
+			continue
+		}
 		processes = append(processes, process)
 	}
 	return processes
@@ -273,10 +341,7 @@ func (pm *ProcessManager) ListProcesses() []*ProcessInfo {
 
 // StopProcess attempts to gracefully stop a process
 func (pm *ProcessManager) StopProcess(pid int) error {
-	pm.processLock.Lock()
-	defer pm.processLock.Unlock()
-
-	process, exists := pm.processes[pid]
+	process, exists := pm.GetProcess(pid)
 	if !exists {
 		return fmt.Errorf("process with PID %d not found", pid)
 	}
@@ -305,10 +370,7 @@ func (pm *ProcessManager) StopProcess(pid int) error {
 
 // KillProcess forcefully kills a process
 func (pm *ProcessManager) KillProcess(pid int) error {
-	pm.processLock.Lock()
-	defer pm.processLock.Unlock()
-
-	process, exists := pm.processes[pid]
+	process, exists := pm.GetProcess(pid)
 	if !exists {
 		return fmt.Errorf("process with PID %d not found", pid)
 	}
@@ -332,15 +394,25 @@ func (pm *ProcessManager) KillProcess(pid int) error {
 	// Add termination message to output buffers
 	process.stdout.Write(terminationMsg)
 
-	return process.Cmd.Process.Kill()
+	err := process.Cmd.Process.Kill()
+	if err != nil {
+		return fmt.Errorf("failed to kill process with PID %d: %w", pid, err)
+	}
+
+	// Remove the process from the SQLite database
+	_, err = pm.db.Exec(
+		"DELETE FROM processes WHERE pid = ?",
+		pid,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to remove process with PID %d from database: %w", pid, err)
+	}
+	return nil
 }
 
 // GetProcessOutput returns the stdout and stderr output of a process
 func (pm *ProcessManager) GetProcessOutput(pid int) (string, string, error) {
-	pm.processLock.RLock()
-	defer pm.processLock.RUnlock()
-
-	process, exists := pm.processes[pid]
+	process, exists := pm.GetProcess(pid)
 	if !exists {
 		return "", "", fmt.Errorf("process with PID %d not found", pid)
 	}
@@ -349,10 +421,7 @@ func (pm *ProcessManager) GetProcessOutput(pid int) (string, string, error) {
 }
 
 func (pm *ProcessManager) StreamProcessOutput(pid int, w io.Writer) error {
-	pm.processLock.RLock()
-	defer pm.processLock.RUnlock()
-
-	process, exists := pm.processes[pid]
+	process, exists := pm.GetProcess(pid)
 	if !exists {
 		return fmt.Errorf("process with PID %d not found", pid)
 	}
@@ -371,10 +440,7 @@ func (pm *ProcessManager) StreamProcessOutput(pid int, w io.Writer) error {
 
 // RemoveLogWriter removes a writer from a process's log writers list
 func (pm *ProcessManager) RemoveLogWriter(pid int, w io.Writer) error {
-	pm.processLock.RLock()
-	defer pm.processLock.RUnlock()
-
-	process, exists := pm.processes[pid]
+	process, exists := pm.GetProcess(pid)
 	if !exists {
 		return fmt.Errorf("process with PID %d not found", pid)
 	}
@@ -389,51 +455,67 @@ func (pm *ProcessManager) RemoveLogWriter(pid int, w io.Writer) error {
 			return nil
 		}
 	}
-
 	// Writer not found is not an error, just a no-op
 	return nil
 }
 
-// RemoveAllLogWriters removes all writers from a process's log writers list
-func (pm *ProcessManager) RemoveAllLogWriters(pid int) error {
-	pm.processLock.RLock()
-	defer pm.processLock.RUnlock()
+func GenerateRandomName(length int) string {
+	const charset = "abcdefghijklmnopqrstuvwxyz0123456789"
+	randomName := strings.Builder{}
+	randomName.WriteString("proc-")
 
-	process, exists := pm.processes[pid]
-	if !exists {
-		return fmt.Errorf("process with PID %d not found", pid)
+	// Seed the random number generator
+	rand.Seed(time.Now().UnixNano())
+
+	// Generate random string
+	for i := 0; i < length; i++ {
+		randomIndex := rand.Intn(len(charset))
+		randomName.WriteByte(charset[randomIndex])
 	}
 
-	process.logLock.Lock()
-	defer process.logLock.Unlock()
-
-	// Clear all writers
-	process.logWriters = make([]io.Writer, 0)
-	return nil
+	return randomName.String()
 }
 
-// CleanupProcess performs cleanup for a process, removing it from the process manager
-// This can be called after a process has completed and its output has been processed
-func (pm *ProcessManager) CleanupProcess(pid int) error {
-	pm.processLock.Lock()
-	defer pm.processLock.Unlock()
-
-	process, exists := pm.processes[pid]
-	if !exists {
-		return fmt.Errorf("process with PID %d not found", pid)
+func (pm *ProcessManager) formatRowToProcess(row *sql.Row) (*ProcessInfo, error) {
+	var p ProcessInfo
+	var startedAt, completedAt sql.NullTime
+	var completedAtPtr *time.Time
+	var stdout, stderr string
+	if err := row.Scan(&p.PID, &p.Name, &p.Command, &startedAt, &completedAt, &p.ExitCode, &p.Status, &p.WorkingDir, &stdout, &stderr); err != nil {
+		return nil, err
 	}
-
-	// Only allow cleanup for non-running processes
-	if process.Status == "running" {
-		return fmt.Errorf("cannot cleanup a running process with PID %d", pid)
+	if startedAt.Valid {
+		p.StartedAt = startedAt.Time
 	}
+	if completedAt.Valid {
+		completedAtPtr = &completedAt.Time
+	}
+	p.CompletedAt = completedAtPtr
+	p.stdout = &strings.Builder{}
+	p.stdout.WriteString(stdout)
+	p.stderr = &strings.Builder{}
+	p.stderr.WriteString(stderr)
+	return &p, nil
+}
 
-	// Clean up any remaining log writers
-	process.logLock.Lock()
-	process.logWriters = nil
-	process.logLock.Unlock()
-
-	// Remove from the process manager
-	delete(pm.processes, pid)
-	return nil
+func (pm *ProcessManager) formatRowsToProcess(rows *sql.Rows) (*ProcessInfo, error) {
+	var p ProcessInfo
+	var startedAt, completedAt sql.NullTime
+	var completedAtPtr *time.Time
+	var stdout, stderr string
+	if err := rows.Scan(&p.PID, &p.Name, &p.Command, &startedAt, &completedAt, &p.ExitCode, &p.Status, &p.WorkingDir, &stdout, &stderr); err != nil {
+		return nil, err
+	}
+	if startedAt.Valid {
+		p.StartedAt = startedAt.Time
+	}
+	if completedAt.Valid {
+		completedAtPtr = &completedAt.Time
+	}
+	p.CompletedAt = completedAtPtr
+	p.stdout = &strings.Builder{}
+	p.stdout.WriteString(stdout)
+	p.stderr = &strings.Builder{}
+	p.stderr.WriteString(stderr)
+	return &p, nil
 }

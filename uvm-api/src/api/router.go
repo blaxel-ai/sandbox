@@ -26,6 +26,9 @@ func SetupRouter() *gin.Engine {
 	r.Use(corsMiddleware())
 
 	// Swagger documentation route
+	r.GET("/swagger", func(c *gin.Context) {
+		c.Redirect(301, "/swagger/index.html")
+	})
 	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 
 	// Custom filesystem tree router middleware to handle tree-specific routes
@@ -87,6 +90,7 @@ func SetupRouter() *gin.Engine {
 	r.GET("/process/:pid/logs", HandleGetProcessLogs)
 	r.DELETE("/process/:pid", HandleStopProcess)
 	r.POST("/process/:pid/kill", HandleKillProcess)
+	r.GET("/process/name/:name", HandleGetProcessByName)
 
 	// Network routes
 	r.GET("/network/process/:pid/ports", HandleGetPorts)

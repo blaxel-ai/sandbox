@@ -1,0 +1,53 @@
+package mcp
+
+import (
+	"encoding/json"
+	"fmt"
+
+	mcp_golang "github.com/metoro-io/mcp-golang"
+)
+
+// ProcessArgs represents arguments for process-related tools
+type ProcessArgs struct {
+	Command           string `json:"command" jsonschema:"required,description=The command to execute"`
+	Name              string `json:"name" jsonschema:"description=Technical name for the process,default="`
+	WorkingDir        string `json:"workingDir" jsonschema:"description=The working directory for the command,default=/"`
+	WaitForCompletion bool   `json:"waitForCompletion" jsonschema:"description=Whether to wait for the command to complete before returning"`
+	Timeout           int    `json:"timeout" jsonschema:"description=Timeout in seconds for the command,default=30"`
+	WaitForPorts      []int  `json:"waitForPorts" jsonschema:"description=List of ports to wait for before returning"`
+}
+
+// ProcessIDArgs represents arguments for process ID-related tools
+type ProcessIDArgs struct {
+	PID  int    `json:"pid" jsonschema:"required,description=Process ID"`
+	Name string `json:"name" jsonschema:"description=Technical name of the process,default="`
+}
+
+// ProcessNameArgs represents arguments for process name-related tools
+type ProcessNameArgs struct {
+	Name string `json:"name" jsonschema:"required,description=Technical name of the process"`
+}
+
+// FileSystemArgs represents arguments for filesystem-related tools
+type FileSystemArgs struct {
+	Path        string `json:"path" jsonschema:"required,description=Path to the file or directory"`
+	Content     string `json:"content" jsonschema:"description=Content to write to the file"`
+	IsDirectory bool   `json:"isDirectory" jsonschema:"description=Whether the path refers to a directory"`
+	Permissions string `json:"permissions" jsonschema:"description=Permissions for the file or directory (octal string)"`
+	Recursive   bool   `json:"recursive" jsonschema:"description=Whether to perform the operation recursively"`
+}
+
+// NetworkArgs represents arguments for network-related tools
+type NetworkArgs struct {
+	PID      int    `json:"pid" jsonschema:"required,description=Process ID"`
+	Callback string `json:"callback" jsonschema:"description=Callback URL for port monitoring notifications"`
+}
+
+// Helper function to create JSON response
+func CreateJSONResponse(data interface{}) (*mcp_golang.ToolResponse, error) {
+	jsonBytes, err := json.MarshalIndent(data, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal response: %w", err)
+	}
+	return mcp_golang.NewToolResponse(mcp_golang.NewTextContent(string(jsonBytes))), nil
+}
