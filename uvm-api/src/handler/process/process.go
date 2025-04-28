@@ -331,7 +331,7 @@ func (pm *ProcessManager) GetProcessByName(name string) (*ProcessInfo, bool) {
 		return nil, false
 	}
 
-	row := pm.db.QueryRow(`SELECT * FROM processes WHERE name = ? LIMIT 1`, name)
+	row := pm.db.QueryRow(`SELECT * FROM processes WHERE name = ? ORDER BY started_at DESC LIMIT 1`, name)
 	process, err := pm.formatRowToProcess(row)
 	if err != nil {
 		return nil, false

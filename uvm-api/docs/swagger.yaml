@@ -508,29 +508,4 @@ paths:
       summary: Get process logs
       tags:
       - process
-  /process/name/{name}:
-    get:
-      consumes:
-      - application/json
-      description: Get information about a process by its name
-      parameters:
-      - description: Process name
-        in: path
-        name: name
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: Process information
-          schema:
-            $ref: '#/definitions/api.ProcessResponse'
-        "404":
-          description: Process not found
-          schema:
-            $ref: '#/definitions/api.ErrorResponse'
-      summary: Get process by name
-      tags:
-      - process
 swagger: "2.0"

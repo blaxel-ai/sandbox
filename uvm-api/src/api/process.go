@@ -120,27 +120,6 @@ func HandleGetProcess(c *gin.Context) {
 	c.JSON(http.StatusOK, processInfo)
 }
 
-// HandleGetProcessByName handles GET requests to /process/name/:name
-// @Summary Get process by name
-// @Description Get information about a process by its name
-// @Tags process
-// @Accept json
-// @Produce json
-// @Param name path string true "Process name"
-// @Success 200 {object} ProcessResponse "Process information"
-// @Failure 404 {object} ErrorResponse "Process not found"
-// @Router /process/name/{name} [get]
-func HandleGetProcessByName(c *gin.Context) {
-	name := c.Param("name")
-	processInfo, err := handler.GetProcessHandler().GetProcess(name)
-	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
-		return
-	}
-
-	c.JSON(http.StatusOK, processInfo)
-}
-
 // HandleStopProcess handles DELETE requests to /process/{identifier}
 // @Summary Stop a process
 // @Description Gracefully stop a running process

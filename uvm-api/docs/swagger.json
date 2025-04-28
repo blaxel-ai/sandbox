@@ -366,44 +366,6 @@
                 }
             }
         },
-        "/process/name/{name}": {
-            "get": {
-                "description": "Get information about a process by its name",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "process"
-                ],
-                "summary": "Get process by name",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Process name",
-                        "name": "name",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "Process information",
-                        "schema": {
-                            "$ref": "#/definitions/api.ProcessResponse"
-                        }
-                    },
-                    "404": {
-                        "description": "Process not found",
-                        "schema": {
-                            "$ref": "#/definitions/api.ErrorResponse"
-                        }
-                    }
-                }
-            }
-        },
         "/process/{identifier}": {
             "get": {
                 "description": "Get information about a process by its PID or name",
