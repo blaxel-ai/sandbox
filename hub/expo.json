@@ -8,6 +8,39 @@
   "longDescription": "Expo",
   "icon": "",
   "url": "",
+  "memory": 2048,
+  "ports": [
+    {
+      "name": "sandbox-api",
+      "target": 8080,
+      "protocol": "http+tls"
+    },
+    {
+      "name": "expo-dev-client",
+      "target": 19000,
+      "protocol": "tls"
+    },
+    {
+      "name": "expo-dev-server",
+      "target": 19001,
+      "protocol": "tls"
+    },
+    {
+      "name": "expo-dev-tools",
+      "target": 19002,
+      "protocol": "tls"
+    },
+    {
+      "name": "expo-dev-menu",
+      "target": 19006,
+      "protocol": "tls"
+    },
+    {
+      "name": "expo-web",
+      "target": 8081,
+      "protocol": "tls"
+    }
+  ],
   "enterprise": false,
   "coming_soon": false
 }

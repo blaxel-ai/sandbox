@@ -8,6 +8,14 @@
   "longDescription": "Typescript App",
   "icon": "",
   "url": "",
+  "memory": 2048,
+  "ports": [
+    {
+      "name": "sandbox-api",
+      "target": 8080,
+      "protocol": "http+tls"
+    }
+  ],
   "enterprise": false,
   "coming_soon": false
 }
