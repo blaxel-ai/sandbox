@@ -33,14 +33,14 @@ else
 		exit 1
 fi
 
-# kraft pkg \
-# 	--arch x86_64 \
-# 	--plat kraftcloud \
-# 	--name $UKC_URL/$PREFIX/$1 \
-# 	--rootfs Dockerfile.$1 \
-# 	--runtime $UKC_URL/official/base-compat:latest \
-# 	--push \
-# 	.
+kraft pkg \
+	--arch x86_64 \
+	--plat kraftcloud \
+	--name $UKC_URL/$PREFIX/$1 \
+	--rootfs Dockerfile.$1 \
+	--runtime $UKC_URL/official/base-compat:latest \
+	--push \
+	.
 
 curl -X PUT -H "Content-Type: application/json" \
 	-d @tmp/$1.json.tmp \
