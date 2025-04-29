@@ -12,28 +12,28 @@ import (
 )
 
 type Filesystem struct {
-	Root string
+	Root string `json:"root"`
 }
 
 type File struct {
-	Path string
+	Path string `json:"path"`
 	// swagger:strfmt string
-	Permissions  os.FileMode `swaggertype:"string"`
-	Size         int64
-	LastModified time.Time
-	Owner        string
-	Group        string
+	Permissions  os.FileMode `json:"permissions" swaggertype:"string"`
+	Size         int64       `json:"size"`
+	LastModified time.Time   `json:"lastModified"`
+	Owner        string      `json:"owner"`
+	Group        string      `json:"group"`
 }
 
 type FileWithContent struct {
-	Path    string
-	Content []byte
+	Path    string `json:"path"`
+	Content []byte `json:"content"`
 	// swagger:strfmt string
-	Permissions  os.FileMode `swaggertype:"string"`
-	Size         int64
-	LastModified time.Time
-	Owner        string
-	Group        string
+	Permissions  os.FileMode `json:"permissions" swaggertype:"string"`
+	Size         int64       `json:"size"`
+	LastModified time.Time   `json:"lastModified"`
+	Owner        string      `json:"owner"`
+	Group        string      `json:"group"`
 }
 
 func NewFilesystem(root string) *Filesystem {

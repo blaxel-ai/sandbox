@@ -6,9 +6,9 @@ import (
 )
 
 type Directory struct {
-	Path           string
-	Files          []*File
-	Subdirectories []*Directory
+	Path           string       `json:"path"`
+	Files          []*File      `json:"files"`
+	Subdirectories []*Directory `json:"subdirectories"`
 }
 
 func NewDirectory(path string) *Directory {
