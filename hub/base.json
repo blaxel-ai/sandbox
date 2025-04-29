@@ -1,0 +1,13 @@
+{
+  "name": "base",
+  "displayName": "Base",
+  "categories": [
+    "storage"
+  ],
+  "description": "Base",
+  "longDescription": "Base",
+  "icon": "",
+  "url": "",
+  "enterprise": false,
+  "coming_soon": false
+}

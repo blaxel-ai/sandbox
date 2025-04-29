@@ -1,0 +1,13 @@
+{
+  "name": "py-app",
+  "displayName": "Python App",
+  "categories": [
+    "storage"
+  ],
+  "description": "Python App",
+  "longDescription": "Python App",
+  "icon": "",
+  "url": "",
+  "enterprise": false,
+  "coming_soon": false
+}
