@@ -12,28 +12,28 @@ import (
 )
 
 type Filesystem struct {
-	Root string
+	Root string `json:"root"`
 }
 
 type File struct {
-	Path string
+	Path string `json:"path"`
 	// swagger:strfmt string
-	Permissions  os.FileMode `swaggertype:"string"`
-	Size         int64
-	LastModified time.Time
-	Owner        string
-	Group        string
+	Permissions  os.FileMode `json:"permissions" swaggertype:"string"`
+	Size         int64       `json:"size"`
+	LastModified time.Time   `json:"lastModified"`
+	Owner        string      `json:"owner"`
+	Group        string      `json:"group"`
 }
 
 type FileWithContent struct {
-	Path    string
-	Content []byte
+	Path    string `json:"path"`
+	Content []byte `json:"content"`
 	// swagger:strfmt string
-	Permissions  os.FileMode `swaggertype:"string"`
-	Size         int64
-	LastModified time.Time
-	Owner        string
-	Group        string
+	Permissions  os.FileMode `json:"permissions" swaggertype:"string"`
+	Size         int64       `json:"size"`
+	LastModified time.Time   `json:"lastModified"`
+	Owner        string      `json:"owner"`
+	Group        string      `json:"group"`
 }
 
 func NewFilesystem(root string) *Filesystem {
@@ -359,4 +359,21 @@ func (fs *Filesystem) Walk(root string, fn filepath.WalkFunc) error {
 		// Call the provided function with the relative path
 		return fn(relPath, info, nil)
 	})
+}
+
+// CreateOrUpdateFile creates or updates a file
+func (fs *Filesystem) CreateOrUpdateFile(path string, content string, isDirectory bool, permissions string) error {
+	// Parse permissions or use default
+	var perm os.FileMode = 0644
+	if permissions != "" {
+		permInt, err := strconv.ParseUint(permissions, 8, 32)
+		if err == nil {
+			perm = os.FileMode(permInt)
+		}
+	}
+
+	if isDirectory {
+		return fs.CreateDirectory(path, perm)
+	}
+	return fs.WriteFile(path, []byte(content), perm)
 }

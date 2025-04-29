@@ -12,14 +12,14 @@ import (
 
 // PortInfo represents information about an open port
 type PortInfo struct {
-	PID         int
-	Protocol    string // tcp or udp
-	LocalAddr   string
-	LocalPort   int
-	RemoteAddr  string
-	RemotePort  int
-	State       string
-	ProcessName string
+	PID         int    `json:"pid"`
+	Protocol    string `json:"protocol"` // tcp or udp
+	LocalAddr   string `json:"localAddr"`
+	LocalPort   int    `json:"localPort"`
+	RemoteAddr  string `json:"remoteAddr"`
+	RemotePort  int    `json:"remotePort"`
+	State       string `json:"state"`
+	ProcessName string `json:"processName"`
 }
 
 // PortOpenCallback is a function that gets called when a process opens a new port

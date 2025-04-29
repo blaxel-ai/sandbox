@@ -7,8 +7,8 @@ import (
 	mcp_golang "github.com/metoro-io/mcp-golang"
 )
 
-// ProcessArgs represents arguments for process-related tools
-type ProcessArgs struct {
+// ProcessExecuteArgs represents arguments for process-related tools
+type ProcessExecuteArgs struct {
 	Command           string `json:"command" jsonschema:"required,description=The command to execute"`
 	Name              string `json:"name" jsonschema:"description=Technical name for the process,default="`
 	WorkingDir        string `json:"workingDir" jsonschema:"description=The working directory for the command,default=/"`
@@ -17,23 +17,29 @@ type ProcessArgs struct {
 	WaitForPorts      []int  `json:"waitForPorts" jsonschema:"description=List of ports to wait for before returning"`
 }
 
-// ProcessIDArgs represents arguments for process ID-related tools
-type ProcessIDArgs struct {
-	PID  int    `json:"pid" jsonschema:"required,description=Process ID"`
-	Name string `json:"name" jsonschema:"description=Technical name of the process,default="`
+// ProcessIdentifierArgs represents arguments for process identifier-related tools
+type ProcessIdentifierArgs struct {
+	Identifier string `json:"identifier" jsonschema:"required,description=Process identifier (PID or name)"`
 }
 
-// ProcessNameArgs represents arguments for process name-related tools
-type ProcessNameArgs struct {
-	Name string `json:"name" jsonschema:"required,description=Technical name of the process"`
+type FsListDirectoryArgs struct {
+	Path string `json:"path" jsonschema:"required,description=Path to the file or directory"`
 }
 
-// FileSystemArgs represents arguments for filesystem-related tools
-type FileSystemArgs struct {
+type FsReadFileArgs struct {
+	Path string `json:"path" jsonschema:"required,description=Path to the file"`
+}
+
+type FsWriteArgs struct {
 	Path        string `json:"path" jsonschema:"required,description=Path to the file or directory"`
 	Content     string `json:"content" jsonschema:"description=Content to write to the file"`
-	IsDirectory bool   `json:"isDirectory" jsonschema:"description=Whether the path refers to a directory"`
 	Permissions string `json:"permissions" jsonschema:"description=Permissions for the file or directory (octal string)"`
+	IsDirectory bool   `json:"isDirectory" jsonschema:"description=Whether the path refers to a directory"`
+}
+
+type FsDeleteArgs struct {
+	Path        string `json:"path" jsonschema:"required,description=Path to the file or directory"`
+	IsDirectory bool   `json:"isDirectory" jsonschema:"description=Whether the path refers to a directory"`
 	Recursive   bool   `json:"recursive" jsonschema:"description=Whether to perform the operation recursively"`
 }
 

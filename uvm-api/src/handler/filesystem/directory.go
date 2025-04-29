@@ -1,13 +1,14 @@
 package filesystem
 
 import (
+	"fmt"
 	"path/filepath"
 )
 
 type Directory struct {
-	Path           string
-	Files          []*File
-	Subdirectories []*Directory
+	Path           string       `json:"path"`
+	Files          []*File      `json:"files"`
+	Subdirectories []*Directory `json:"subdirectories"`
 }
 
 func NewDirectory(path string) *Directory {
@@ -61,4 +62,44 @@ func (d *Directory) CountSubdirectories() int {
 // IsEmpty returns true if the directory has no files and no subdirectories
 func (d *Directory) IsEmpty() bool {
 	return len(d.Files) == 0 && len(d.Subdirectories) == 0
+}
+
+func (fs *Filesystem) CreateOrUpdateTree(rootPath string, files map[string]string) error {
+	// Check if root path exists, create it if not
+	isDir, err := fs.DirectoryExists(rootPath)
+	if err != nil || !isDir {
+		// Create the root directory if it doesn't exist or is not a directory
+		err := fs.CreateDirectory(rootPath, 0755)
+		if err != nil {
+			return fmt.Errorf("error creating root directory: %w", err)
+		}
+	}
+
+	// Process each file in the request
+	for relativePath, content := range files {
+		// Combine root path with relative path, ensuring there's only one slash between them
+		fullPath := rootPath
+		if rootPath != "/" {
+			fullPath += "/"
+		}
+		fullPath += relativePath
+
+		// Get the parent directory path - we need to ensure it exists
+		dir := filepath.Dir(fullPath)
+		if dir != "/" {
+			// Create parent directories
+			err := fs.CreateDirectory(dir, 0755)
+			if err != nil {
+				return fmt.Errorf("error creating parent directory: %w", err)
+			}
+		}
+
+		// Write the file
+		err := fs.WriteFile(fullPath, []byte(content), 0644)
+		if err != nil {
+			return fmt.Errorf("error writing file: %w", err)
+		}
+	}
+
+	return nil
 }

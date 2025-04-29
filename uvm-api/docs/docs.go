@@ -15,101 +15,6 @@ const docTemplate = `{
     "host": "{{.Host}}",
     "basePath": "{{.BasePath}}",
     "paths": {
-        "/filesystem/tree/{path}": {
-            "get": {
-                "description": "Get a hierarchical listing of a directory",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "filesystem"
-                ],
-                "summary": "Get filesystem tree",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Directory path",
-                        "name": "path",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "Directory tree",
-                        "schema": {
-                            "$ref": "#/definitions/filesystem.Directory"
-                        }
-                    },
-                    "400": {
-                        "description": "Path is not a directory",
-                        "schema": {
-                            "$ref": "#/definitions/api.ErrorResponse"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal server error",
-                        "schema": {
-                            "$ref": "#/definitions/api.ErrorResponse"
-                        }
-                    }
-                }
-            },
-            "put": {
-                "description": "Create or update multiple files in a directory",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "filesystem"
-                ],
-                "summary": "Create or update filesystem tree",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Base directory path",
-                        "name": "path",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "description": "Files to create or update",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/api.TreeRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "Updated tree",
-                        "schema": {
-                            "$ref": "#/definitions/api.DirectoryResponse"
-                        }
-                    },
-                    "400": {
-                        "description": "Invalid request",
-                        "schema": {
-                            "$ref": "#/definitions/api.ErrorResponse"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal server error",
-                        "schema": {
-                            "$ref": "#/definitions/api.ErrorResponse"
-                        }
-                    }
-                }
-            }
-        },
         "/filesystem/{path}": {
             "get": {
                 "description": "Get content of a file or listing of a directory",
@@ -467,7 +372,43 @@ const docTemplate = `{
                 }
             }
         },
-        "/process/{pid}": {
+        "/process/{identifier}": {
+            "get": {
+                "description": "Get information about a process by its PID or name",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "process"
+                ],
+                "summary": "Get process by identifier",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Process identifier (PID or name)",
+                        "name": "identifier",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Process information",
+                        "schema": {
+                            "$ref": "#/definitions/api.ProcessResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Process not found",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    }
+                }
+            },
             "delete": {
                 "description": "Gracefully stop a running process",
                 "consumes": [
@@ -482,9 +423,9 @@ const docTemplate = `{
                 "summary": "Stop a process",
                 "parameters": [
                     {
-                        "type": "integer",
-                        "description": "Process ID",
-                        "name": "pid",
+                        "type": "string",
+                        "description": "Process identifier (PID or name)",
+                        "name": "identifier",
                         "in": "path",
                         "required": true
                     }
@@ -494,12 +435,6 @@ const docTemplate = `{
                         "description": "Process stopped",
                         "schema": {
                             "$ref": "#/definitions/api.SuccessResponse"
-                        }
-                    },
-                    "400": {
-                        "description": "Invalid process ID",
-                        "schema": {
-                            "$ref": "#/definitions/api.ErrorResponse"
                         }
                     },
                     "404": {
@@ -517,7 +452,7 @@ const docTemplate = `{
                 }
             }
         },
-        "/process/{pid}/kill": {
+        "/process/{identifier}/kill": {
             "post": {
                 "description": "Forcefully kill a running process",
                 "consumes": [
@@ -532,9 +467,9 @@ const docTemplate = `{
                 "summary": "Kill a process",
                 "parameters": [
                     {
-                        "type": "integer",
-                        "description": "Process ID",
-                        "name": "pid",
+                        "type": "string",
+                        "description": "Process identifier (PID or name)",
+                        "name": "identifier",
                         "in": "path",
                         "required": true
                     },
@@ -554,12 +489,6 @@ const docTemplate = `{
                             "$ref": "#/definitions/api.SuccessResponse"
                         }
                     },
-                    "400": {
-                        "description": "Invalid process ID",
-                        "schema": {
-                            "$ref": "#/definitions/api.ErrorResponse"
-                        }
-                    },
                     "404": {
                         "description": "Process not found",
                         "schema": {
@@ -575,7 +504,7 @@ const docTemplate = `{
                 }
             }
         },
-        "/process/{pid}/logs": {
+        "/process/{identifier}/logs": {
             "get": {
                 "description": "Get the stdout and stderr output of a process",
                 "consumes": [
@@ -590,9 +519,9 @@ const docTemplate = `{
                 "summary": "Get process logs",
                 "parameters": [
                     {
-                        "type": "integer",
-                        "description": "Process ID",
-                        "name": "pid",
+                        "type": "string",
+                        "description": "Process identifier (PID or name)",
+                        "name": "identifier",
                         "in": "path",
                         "required": true
                     }
@@ -605,12 +534,6 @@ const docTemplate = `{
                             "additionalProperties": {
                                 "type": "string"
                             }
-                        }
-                    },
-                    "400": {
-                        "description": "Invalid process ID",
-                        "schema": {
-                            "$ref": "#/definitions/api.ErrorResponse"
                         }
                     },
                     "404": {
@@ -630,27 +553,6 @@ const docTemplate = `{
         }
     },
     "definitions": {
-        "api.DirectoryResponse": {
-            "type": "object",
-            "properties": {
-                "files": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/api.FileResponse"
-                    }
-                },
-                "path": {
-                    "type": "string",
-                    "example": "/path/to/dir"
-                },
-                "subdirectories": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/api.SubdirectoryResponse"
-                    }
-                }
-            }
-        },
         "api.ErrorResponse": {
             "type": "object",
             "properties": {
@@ -674,39 +576,6 @@ const docTemplate = `{
                 "permissions": {
                     "type": "string",
                     "example": "0644"
-                }
-            }
-        },
-        "api.FileResponse": {
-            "type": "object",
-            "properties": {
-                "content": {
-                    "type": "string",
-                    "example": "file contents here"
-                },
-                "group": {
-                    "type": "string",
-                    "example": "wheel"
-                },
-                "lastModified": {
-                    "type": "integer",
-                    "example": 1627984000
-                },
-                "owner": {
-                    "type": "string",
-                    "example": "root"
-                },
-                "path": {
-                    "type": "string",
-                    "example": "/path/to/file.txt"
-                },
-                "permissions": {
-                    "type": "string",
-                    "example": "0644"
-                },
-                "size": {
-                    "type": "integer",
-                    "example": 1024
                 }
             }
         },
@@ -738,6 +607,10 @@ const docTemplate = `{
                 "command": {
                     "type": "string",
                     "example": "ls -la"
+                },
+                "name": {
+                    "type": "string",
+                    "example": "my-process"
                 },
                 "streamLogs": {
                     "type": "boolean",
@@ -782,9 +655,13 @@ const docTemplate = `{
                     "type": "integer",
                     "example": 0
                 },
+                "name": {
+                    "type": "string",
+                    "example": "my-process"
+                },
                 "pid": {
-                    "type": "integer",
-                    "example": 1234
+                    "type": "string",
+                    "example": "1234"
                 },
                 "startedAt": {
                     "type": "string",
@@ -800,15 +677,6 @@ const docTemplate = `{
                 }
             }
         },
-        "api.SubdirectoryResponse": {
-            "type": "object",
-            "properties": {
-                "path": {
-                    "type": "string",
-                    "example": "/path/to/subdir"
-                }
-            }
-        },
         "api.SuccessResponse": {
             "type": "object",
             "properties": {
@@ -819,21 +687,6 @@ const docTemplate = `{
                 "path": {
                     "type": "string",
                     "example": "/path/to/file"
-                }
-            }
-        },
-        "api.TreeRequest": {
-            "type": "object",
-            "properties": {
-                "files": {
-                    "type": "object",
-                    "additionalProperties": {
-                        "type": "string"
-                    },
-                    "example": {
-                        "dir/file2.txt": "content2",
-                        "file1.txt": "content1"
-                    }
                 }
             }
         },

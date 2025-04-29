@@ -4,12 +4,11 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/beamlit/uvm-api/src/filesystem"
+	"github.com/beamlit/uvm-api/src/handler/filesystem"
 )
 
 // fileSystemInstance is a singleton instance of the filesystem
@@ -132,168 +131,6 @@ func handleListDirectory(c *gin.Context, path string) {
 		"path":           dir.Path,
 		"files":          files,
 		"subdirectories": subdirs,
-	})
-}
-
-// HandleGetFileSystemTree handles GET requests to /filesystem/tree/*
-// @Summary Get filesystem tree
-// @Description Get a hierarchical listing of a directory
-// @Tags filesystem
-// @Accept json
-// @Produce json
-// @Param path path string true "Directory path"
-// @Success 200 {object} filesystem.Directory "Directory tree"
-// @Failure 400 {object} ErrorResponse "Path is not a directory"
-// @Failure 500 {object} ErrorResponse "Internal server error"
-// @Router /filesystem/tree/{path} [get]
-func HandleGetFileSystemTree(c *gin.Context) {
-	rootPath, exists := c.Get("rootPath")
-	if !exists {
-		// Fallback to path param if not set in context
-		rootPath = c.Param("path")
-	}
-
-	// Convert to string
-	rootPathStr, ok := rootPath.(string)
-	if !ok {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Invalid path parameter"})
-		return
-	}
-
-	fs := getFileSystem()
-
-	// Default to root if path is not provided or empty
-	if rootPathStr == "" {
-		rootPathStr = "/"
-	}
-
-	// Ensure rootPath starts with a slash
-	if rootPathStr != "/" && len(rootPathStr) > 0 && rootPathStr[0] != '/' {
-		rootPathStr = "/" + rootPathStr
-	}
-
-	// Check if path exists and is a directory
-	isDir, err := fs.DirectoryExists(rootPathStr)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
-	if !isDir {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Path is not a directory"})
-		return
-	}
-
-	// Get directory listing
-	dir, err := fs.ListDirectory(rootPathStr)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Error getting file system tree: %v", err)})
-		return
-	}
-
-	c.JSON(http.StatusOK, dir)
-}
-
-// HandleCreateOrUpdateTree handles PUT requests to /filesystem/tree/*
-// @Summary Create or update filesystem tree
-// @Description Create or update multiple files in a directory
-// @Tags filesystem
-// @Accept json
-// @Produce json
-// @Param path path string true "Base directory path"
-// @Param request body TreeRequest true "Files to create or update"
-// @Success 200 {object} DirectoryResponse "Updated tree"
-// @Failure 400 {object} ErrorResponse "Invalid request"
-// @Failure 500 {object} ErrorResponse "Internal server error"
-// @Router /filesystem/tree/{path} [put]
-func HandleCreateOrUpdateTree(c *gin.Context) {
-	rootPath, exists := c.Get("rootPath")
-	if !exists {
-		// Fallback to path param if not set in context
-		rootPath = c.Param("path")
-	}
-
-	// Convert to string
-	rootPathStr, ok := rootPath.(string)
-	if !ok {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Invalid path parameter"})
-		return
-	}
-
-	fs := getFileSystem()
-
-	// Default to root if path is empty
-	if rootPathStr == "" {
-		rootPathStr = "/"
-	}
-
-	// Ensure rootPath starts with a slash
-	if rootPathStr != "/" && len(rootPathStr) > 0 && rootPathStr[0] != '/' {
-		rootPathStr = "/" + rootPathStr
-	}
-
-	var request struct {
-		Files map[string]string `json:"files"`
-	}
-
-	if err := c.ShouldBindJSON(&request); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
-	// Check if root path exists, create it if not
-	isDir, err := fs.DirectoryExists(rootPathStr)
-	// The root path should be created if it doesn't exist
-	if err != nil || !isDir {
-		// Create the root directory if it doesn't exist or is not a directory
-		err := fs.CreateDirectory(rootPathStr, 0755)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Error creating root directory: %v", err)})
-			return
-		}
-	}
-
-	// Process each file in the request
-	for relativePath, content := range request.Files {
-		// Combine root path with relative path, ensuring there's only one slash between them
-		fullPath := rootPathStr
-		if rootPathStr != "/" {
-			fullPath += "/"
-		}
-		fullPath += relativePath
-
-		// Get the parent directory path - we need to ensure it exists
-		dir := filepath.Dir(fullPath)
-		if dir != "/" {
-			// Create parent directories
-			err := fs.CreateDirectory(dir, 0755)
-			if err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Error creating parent directory: %v", err)})
-				return
-			}
-		}
-
-		// Write the file
-		err := fs.WriteFile(fullPath, []byte(content), 0644)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Error writing file: %v", err)})
-			return
-		}
-	}
-
-	// Get updated directory listing
-	dir, err := fs.ListDirectory(rootPathStr)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Error getting updated file system tree: %v", err)})
-		return
-	}
-
-	// Add success message to response
-	c.JSON(http.StatusOK, gin.H{
-		"path":           dir.Path,
-		"files":          dir.Files,
-		"subdirectories": dir.Subdirectories,
-		"message":        "Tree created/updated successfully",
 	})
 }
 

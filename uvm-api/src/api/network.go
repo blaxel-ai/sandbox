@@ -9,7 +9,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/beamlit/uvm-api/src/network"
+	"github.com/beamlit/uvm-api/src/handler/network"
 )
 
 // PortMonitorRequest is the request body for monitoring ports
