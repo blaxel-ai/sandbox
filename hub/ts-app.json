@@ -4,10 +4,10 @@
   "categories": [
     "storage"
   ],
-  "description": "Typescript App",
-  "longDescription": "Typescript App",
-  "icon": "",
-  "url": "",
+  "description": "A development environment for TypeScript applications with Node.js runtime and essential development tools.",
+  "longDescription": "The TypeScript App micro VM provides a complete development environment for building TypeScript applications. It includes Node.js runtime, npm package manager, and essential development tools. Perfect for developing modern web applications, APIs, and server-side applications with type safety and modern JavaScript features.",
+  "icon": "https://upload.wikimedia.org/wikipedia/commons/thumb/f/f5/Typescript.svg/250px-Typescript.svg.png",
+  "url": "https://github.com/microsoft/typescript",
   "memory": 2048,
   "ports": [
     {
