@@ -13,11 +13,6 @@ on:
         type: boolean
         required: false
         default: false
-      workspace:
-        description: "Workspace to use"
-        type: string
-        required: false
-        default: ""
 
 jobs:
   generate-matrix:
@@ -124,7 +119,6 @@ jobs:
           echo "$PWD/bin" >> $GITHUB_PATH
       - name: Build and push
         env:
-          BL_WORKSPACE: ${{ inputs.workspace }}
           TAG: ${{ github.run_id }}
         run: |
           sh build.sh
