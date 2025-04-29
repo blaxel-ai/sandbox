@@ -23,7 +23,7 @@ jobs:
   generate-matrix:
     runs-on: ubuntu-latest
     outputs:
-      servers: ${{ steps.retrieve-servers.outputs.servers }}
+      uvm: ${{ steps.retrieve-uvm.outputs.uvm }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -107,7 +107,7 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-      - name: Echo server
+      - name: Echo uvm
         run: |
           echo "UVM: ${{ matrix.uvm }}"
       - name: Set up QEMU
