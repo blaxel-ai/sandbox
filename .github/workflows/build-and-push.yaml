@@ -121,4 +121,4 @@ jobs:
         env:
           TAG: ${{ github.run_id }}
         run: |
-          sh build.sh
+          sh build.sh ${{ matrix.uvm }}
