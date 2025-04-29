@@ -34,7 +34,7 @@ jobs:
           fi
 
           # Get list of all UVM files
-          all_uvm=$(tree -J -L 1 | jq -c '.[0].contents | map(select(.name | startswith("Dockerfile.")) | .name | ltrimstr("Dockerfile."))')
+          all_uvm=$(tree -J -L 1 hub | jq -c '.[0].contents | map(select(.name) | .name | rtrimstr(".json"))')
 
           # Filter UVM based on changes
           changed_uvm=()
@@ -52,7 +52,7 @@ jobs:
             exit 0
           else
             for uvm in $(echo $all_uvm | jq -r '.[]'); do
-              if git diff --name-only HEAD^ HEAD | grep -q "Dockerfile.${uvm}"; then
+              if git diff --name-only HEAD^ HEAD | grep -q "Dockerfile.${uvm}" || git diff --name-only HEAD^ HEAD | grep -q "hub/${uvm}.json"; then
                 changed_uvm+=("$uvm")
               fi
             done
