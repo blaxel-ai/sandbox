@@ -14,6 +14,11 @@
       "name": "sandbox-api",
       "target": 8080,
       "protocol": "http+tls"
+    },
+    {
+      "name": "python-app",
+      "target": 8000,
+      "protocol": "tls"
     }
   ],
   "enterprise": false,
