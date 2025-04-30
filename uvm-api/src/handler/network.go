@@ -29,8 +29,8 @@ func NewNetworkHandler() *NetworkHandler {
 
 // PortMonitorRequest is the request body for monitoring ports
 type PortMonitorRequest struct {
-	Callback string `json:"callback"` // URL to call when a new port is detected
-}
+	Callback string `json:"callback" example:"http://localhost:3000/callback"` // URL to call when a new port is detected
+} // @name PortMonitorRequest
 
 // GetPortsForPID gets the ports for a process
 func (h *NetworkHandler) GetPortsForPID(pid int) ([]*network.PortInfo, error) {
@@ -48,6 +48,16 @@ func (h *NetworkHandler) UnregisterPortOpenCallback(pid int) {
 }
 
 // HandleGetPorts handles GET requests to /network/process/{pid}/ports
+// @Summary Get open ports for a process
+// @Description Get a list of all open ports for a process
+// @Tags network
+// @Accept json
+// @Produce json
+// @Param pid path int true "Process ID"
+// @Success 200 {object} map[string]interface{} "Object containing PID and array of network.PortInfo"
+// @Failure 400 {object} ErrorResponse "Invalid process ID"
+// @Failure 500 {object} ErrorResponse "Internal server error"
+// @Router /network/process/{pid}/ports [get]
 func (h *NetworkHandler) HandleGetPorts(c *gin.Context) {
 	pidStr, err := h.GetPathParam(c, "pid")
 	if err != nil {
@@ -74,6 +84,17 @@ func (h *NetworkHandler) HandleGetPorts(c *gin.Context) {
 }
 
 // HandleMonitorPorts handles POST requests to /network/process/{pid}/monitor
+// @Summary Start monitoring ports for a process
+// @Description Start monitoring for new ports opened by a process
+// @Tags network
+// @Accept json
+// @Produce json
+// @Param pid path int true "Process ID"
+// @Param request body PortMonitorRequest true "Port monitor configuration"
+// @Success 200 {object} map[string]interface{} "Object containing PID and success message"
+// @Failure 400 {object} ErrorResponse "Invalid request"
+// @Failure 500 {object} ErrorResponse "Internal server error"
+// @Router /network/process/{pid}/monitor [post]
 func (h *NetworkHandler) HandleMonitorPorts(c *gin.Context) {
 	pidStr, err := h.GetPathParam(c, "pid")
 	if err != nil {
@@ -117,6 +138,16 @@ func (h *NetworkHandler) HandleMonitorPorts(c *gin.Context) {
 }
 
 // HandleStopMonitoringPorts handles DELETE requests to /network/process/{pid}/monitor
+// @Summary Stop monitoring ports for a process
+// @Description Stop monitoring for new ports opened by a process
+// @Tags network
+// @Accept json
+// @Produce json
+// @Param pid path int true "Process ID"
+// @Success 200 {object} map[string]interface{} "Object containing PID and success message"
+// @Failure 400 {object} ErrorResponse "Invalid process ID"
+// @Failure 500 {object} ErrorResponse "Internal server error"
+// @Router /network/process/{pid}/monitor [delete]
 func (h *NetworkHandler) HandleStopMonitoringPorts(c *gin.Context) {
 	pidStr, err := h.GetPathParam(c, "pid")
 	if err != nil {
