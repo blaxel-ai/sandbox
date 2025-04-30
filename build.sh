@@ -10,7 +10,7 @@ if [ -z "$TAG" ]; then
 fi
 
 UKC_URL="index.unikraft.io"
-PREFIX="blaxel/uvm-hub"
+PREFIX="blaxel"
 
 if [ "$BL_ENV" = "dev" ]; then
 	PREFIX="$PREFIX/dev"
@@ -23,7 +23,7 @@ mkdir tmp || echo "tmp directory already exists"
 # Read and update the JSON file
 if [ -f "hub/$1.json" ]; then
     echo "Updating hub/$1.json with image information"
-    jq --arg img "$PREFIX/$1:$TAG" '. + {"image": $img}' "hub/$1.json" > "tmp/$1.json.tmp"
+    jq --arg img "$PREFIX-$1:$TAG" '. + {"image": $img}' "hub/$1.json" > "tmp/$1.json.tmp"
 else
     echo "Warning: hub/$1.json not found"
 		exit 1
@@ -33,7 +33,7 @@ echo $UKC_URL/$PREFIX/$1:$TAG
 kraft pkg \
 	--arch x86_64 \
 	--plat kraftcloud \
-	--name "$UKC_URL/$PREFIX/$1:$TAG" \
+	--name "$UKC_URL/$PREFIX-$1:$TAG" \
 	--rootfs Dockerfile.$1 \
 	--runtime $UKC_URL/official/base-compat:latest \
 	--push \
