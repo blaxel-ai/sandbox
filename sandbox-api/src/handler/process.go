@@ -9,7 +9,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/beamlit/uvm-api/src/handler/process"
+	"github.com/beamlit/sandbox-api/src/handler/process"
 )
 
 var processHandlerInstance *ProcessHandler

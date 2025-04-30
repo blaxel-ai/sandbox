@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/beamlit/uvm-api/src/handler/network"
+	"github.com/beamlit/sandbox-api/src/handler/network"
 )
 
 // ExecuteProcess executes a process with the given parameters

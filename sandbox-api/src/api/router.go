@@ -7,8 +7,8 @@ import (
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
 
-	_ "github.com/beamlit/uvm-api/docs" // Import generated docs
-	"github.com/beamlit/uvm-api/src/handler"
+	_ "github.com/beamlit/sandbox-api/docs" // Import generated docs
+	"github.com/beamlit/sandbox-api/src/handler"
 )
 
 // SetupRouter configures all the routes for the Sandbox API

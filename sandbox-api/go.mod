@@ -1,4 +1,4 @@
-module github.com/beamlit/uvm-api
+module github.com/beamlit/sandbox-api
 
 go 1.23.3
 

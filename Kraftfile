@@ -7,4 +7,4 @@ labels:
   cloud.unikraft.v1.instances/scale_to_zero.stateful: "true"
   cloud.unikraft.v1.instances/scale_to_zero.cooldown_time_ms: 1000
 
-cmd: ['/usr/local/bin/uvm-api']
+cmd: ['/usr/local/bin/sandbox-api']
