@@ -86,10 +86,10 @@ func SetupRouter() *gin.Engine {
 	// Process routes
 	r.GET("/process", processHandler.HandleListProcesses)
 	r.POST("/process", processHandler.HandleExecuteCommand)
-	r.GET("/process/:pid/logs", processHandler.HandleGetProcessLogs)
-	r.DELETE("/process/:pid", processHandler.HandleStopProcess)
-	r.POST("/process/:pid/kill", processHandler.HandleKillProcess)
-	r.GET("/process/name/:name", processHandler.HandleGetProcessByName)
+	r.GET("/process/:identifier/logs", processHandler.HandleGetProcessLogs)
+	r.DELETE("/process/:identifier", processHandler.HandleStopProcess)
+	r.DELETE("/process/:identifier/kill", processHandler.HandleKillProcess)
+	r.GET("/process/:identifier", processHandler.HandleGetProcess)
 
 	// Network routes
 	r.GET("/network/process/:pid/ports", networkHandler.HandleGetPorts)

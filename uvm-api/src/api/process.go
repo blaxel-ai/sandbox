@@ -82,9 +82,9 @@ func HandleStartProcess(c *gin.Context) {
 
 	// If a name is provided, check if a process with that name already exists
 	if req.Name != "" {
-		_, err := handler.GetProcessHandler().GetProcess(req.Name)
-		if err == nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("process with name '%s' already exists", req.Name)})
+		alreadyExists, err := handler.GetProcessHandler().GetProcess(req.Name)
+		if err == nil && alreadyExists.Status == "running" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("process with name '%s' already exists and is running", req.Name)})
 			return
 		}
 	}
@@ -142,7 +142,7 @@ func HandleStopProcess(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "Process stopped successfully"})
 }
 
-// HandleKillProcess handles POST requests to /process/{identifier}/kill
+// HandleKillProcess handles DELETE requests to /process/{identifier}/kill
 // @Summary Kill a process
 // @Description Forcefully kill a running process
 // @Tags process
@@ -153,7 +153,7 @@ func HandleStopProcess(c *gin.Context) {
 // @Success 200 {object} SuccessResponse "Process killed"
 // @Failure 404 {object} ErrorResponse "Process not found"
 // @Failure 500 {object} ErrorResponse "Internal server error"
-// @Router /process/{identifier}/kill [post]
+// @Router /process/{identifier}/kill [delete]
 func HandleKillProcess(c *gin.Context) {
 	identifier := c.Param("identifier")
 	err := handler.GetProcessHandler().KillProcess(identifier)

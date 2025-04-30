@@ -233,6 +233,7 @@ func (h *FileSystemHandler) HandleDeleteFile(c *gin.Context) {
 		h.SendError(c, http.StatusBadRequest, err)
 		return
 	}
+	recursive := c.Query("recursive")
 
 	// Default to root if path is empty
 	if path == "" {
@@ -244,15 +245,6 @@ func (h *FileSystemHandler) HandleDeleteFile(c *gin.Context) {
 		path = "/" + path
 	}
 
-	var request struct {
-		Recursive bool `json:"recursive"`
-	}
-
-	if err := h.BindJSON(c, &request); err != nil {
-		// If JSON is not provided, default to non-recursive
-		request.Recursive = false
-	}
-
 	// Check if it's a directory
 	isDir, err := h.DirectoryExists(path)
 	if err != nil {
@@ -262,7 +254,7 @@ func (h *FileSystemHandler) HandleDeleteFile(c *gin.Context) {
 
 	if isDir {
 		// Delete directory
-		err := h.DeleteDirectory(path, request.Recursive)
+		err := h.DeleteDirectory(path, recursive == "true")
 		if err != nil {
 			h.SendError(c, http.StatusInternalServerError, fmt.Errorf("error deleting directory: %w", err))
 			return

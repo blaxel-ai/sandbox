@@ -66,13 +66,18 @@ func (h *ProcessHandler) ExecuteProcess(command string, workingDir string, name 
 		return ProcessResponse{}, err
 	}
 
+	completedAt := ""
+	if processInfo.CompletedAt != nil {
+		completedAt = processInfo.CompletedAt.Format("Mon, 02 Jan 2006 15:04:05 GMT")
+	}
+
 	return ProcessResponse{
 		PID:         processInfo.PID,
 		Name:        processInfo.Name,
 		Command:     processInfo.Command,
 		Status:      processInfo.Status,
 		StartedAt:   processInfo.StartedAt.Format("Mon, 02 Jan 2006 15:04:05 GMT"),
-		CompletedAt: processInfo.CompletedAt.Format("Mon, 02 Jan 2006 15:04:05 GMT"),
+		CompletedAt: completedAt,
 		ExitCode:    processInfo.ExitCode,
 		WorkingDir:  processInfo.WorkingDir,
 	}, nil
@@ -157,9 +162,9 @@ func (h *ProcessHandler) HandleExecuteCommand(c *gin.Context) {
 
 	// If a name is provided, check if a process with that name already exists
 	if req.Name != "" {
-		_, err := h.GetProcess(req.Name)
-		if err == nil {
-			h.SendError(c, http.StatusBadRequest, fmt.Errorf("process with name '%s' already exists", req.Name))
+		alreadyExists, err := GetProcessHandler().GetProcess(req.Name)
+		if err == nil && alreadyExists.Status == "running" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("process with name '%s' already exists and is running", req.Name)})
 			return
 		}
 	}
@@ -176,6 +181,7 @@ func (h *ProcessHandler) HandleExecuteCommand(c *gin.Context) {
 
 // HandleGetProcessLogs handles GET requests to /process/{identifier}/logs
 func (h *ProcessHandler) HandleGetProcessLogs(c *gin.Context) {
+	fmt.Println(c.Params)
 	identifier, err := h.GetPathParam(c, "identifier")
 	if err != nil {
 		h.SendError(c, http.StatusBadRequest, err)
@@ -211,7 +217,7 @@ func (h *ProcessHandler) HandleStopProcess(c *gin.Context) {
 	h.SendJSON(c, http.StatusOK, gin.H{"message": "Process stopped successfully"})
 }
 
-// HandleKillProcess handles POST requests to /process/{identifier}/kill
+// HandleKillProcess handles DELETE requests to /process/{identifier}/kill
 func (h *ProcessHandler) HandleKillProcess(c *gin.Context) {
 	identifier, err := h.GetPathParam(c, "identifier")
 	if err != nil {
@@ -228,15 +234,15 @@ func (h *ProcessHandler) HandleKillProcess(c *gin.Context) {
 	h.SendJSON(c, http.StatusOK, gin.H{"message": "Process killed successfully"})
 }
 
-// HandleGetProcessByName handles GET requests to /process/name/{name}
-func (h *ProcessHandler) HandleGetProcessByName(c *gin.Context) {
-	name, err := h.GetPathParam(c, "name")
+// HandleGetProcess handles GET requests to /process/{identifier}
+func (h *ProcessHandler) HandleGetProcess(c *gin.Context) {
+	identifier, err := h.GetPathParam(c, "identifier")
 	if err != nil {
 		h.SendError(c, http.StatusBadRequest, err)
 		return
 	}
 
-	processInfo, err := h.GetProcess(name)
+	processInfo, err := h.GetProcess(identifier)
 	if err != nil {
 		h.SendError(c, http.StatusNotFound, err)
 		return

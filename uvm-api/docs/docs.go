@@ -451,7 +451,7 @@ const docTemplate = `{
             }
         },
         "/process/{identifier}/kill": {
-            "post": {
+            "delete": {
                 "description": "Forcefully kill a running process",
                 "consumes": [
                     "application/json"
