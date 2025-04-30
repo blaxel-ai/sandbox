@@ -31,7 +31,6 @@ func getFileSystem() *filesystem.Filesystem {
 // @Accept json
 // @Produce json
 // @Param path path string true "File or directory path"
-// @Success 200 {object} filesystem.FileWithContent "File content"
 // @Success 200 {object} filesystem.Directory "Directory listing"
 // @Failure 404 {object} ErrorResponse "File or directory not found"
 // @Failure 500 {object} ErrorResponse "Internal server error"

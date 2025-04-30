@@ -22,7 +22,7 @@ type ProcessRequest struct {
 	Timeout           int    `json:"timeout" example:"30"`
 	StreamLogs        bool   `json:"streamLogs" example:"true"`
 	WaitForPorts      []int  `json:"waitForPorts" example:"3000,8080"`
-}
+} // @name ProcessRequest
 
 // ProcessResponse is the response body for a process
 type ProcessResponse struct {
@@ -34,12 +34,12 @@ type ProcessResponse struct {
 	CompletedAt string `json:"completedAt,omitempty" example:"Wed, 01 Jan 2023 12:01:00 GMT"`
 	ExitCode    int    `json:"exitCode,omitempty" example:"0"`
 	WorkingDir  string `json:"workingDir" example:"/home/user"`
-}
+} // @name ProcessResponse
 
 // ProcessKillRequest is the request body for killing a process
 type ProcessKillRequest struct {
 	Signal string `json:"signal" example:"SIGTERM"`
-}
+} // @name ProcessKillRequest
 
 // HandleListProcesses handles GET requests to /process/
 // @Summary List all processes

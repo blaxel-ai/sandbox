@@ -11,10 +11,12 @@ import (
 	"time"
 )
 
+// Filesystem represents the root directory of the filesystem
 type Filesystem struct {
 	Root string `json:"root"`
-}
+} // @name Filesystem
 
+// File represents a file in the filesystem
 type File struct {
 	Path string `json:"path"`
 	// swagger:strfmt string
@@ -23,8 +25,9 @@ type File struct {
 	LastModified time.Time   `json:"lastModified"`
 	Owner        string      `json:"owner"`
 	Group        string      `json:"group"`
-}
+} // @name File
 
+// FileWithContent represents a file with its content
 type FileWithContent struct {
 	Path    string `json:"path"`
 	Content []byte `json:"content"`
@@ -34,7 +37,7 @@ type FileWithContent struct {
 	LastModified time.Time   `json:"lastModified"`
 	Owner        string      `json:"owner"`
 	Group        string      `json:"group"`
-}
+} // @name FileWithContent
 
 func NewFilesystem(root string) *Filesystem {
 	return &Filesystem{Root: root}

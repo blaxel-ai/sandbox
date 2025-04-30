@@ -7,7 +7,7 @@ type FileRequest struct {
 	Content     string `json:"content" example:"file contents here"`
 	IsDirectory bool   `json:"isDirectory" example:"false"`
 	Permissions string `json:"permissions" example:"0644"`
-}
+} // @name FileRequest
 
 // FileResponse represents a file in the filesystem
 type FileResponse struct {
@@ -18,32 +18,32 @@ type FileResponse struct {
 	LastModified int64  `json:"lastModified" example:"1627984000"`
 	Owner        string `json:"owner" example:"root"`
 	Group        string `json:"group" example:"wheel"`
-}
+} // @name FileResponse
 
 // DirectoryResponse represents a directory in the filesystem
 type DirectoryResponse struct {
 	Path           string                 `json:"path" example:"/path/to/dir"`
 	Files          []FileResponse         `json:"files"`
 	Subdirectories []SubdirectoryResponse `json:"subdirectories"`
-}
+} // @name DirectoryResponse
 
 // SubdirectoryResponse represents a subdirectory in a directory listing
 type SubdirectoryResponse struct {
 	Path string `json:"path" example:"/path/to/subdir"`
-}
+} // @name SubdirectoryResponse
 
 // TreeRequest represents a request to create or update a file tree
 type TreeRequest struct {
 	Files map[string]string `json:"files" example:"file1.txt:content1,dir/file2.txt:content2"`
-}
+} // @name TreeRequest
 
 // ErrorResponse represents an error response
 type ErrorResponse struct {
 	Error string `json:"error" example:"Error message"`
-}
+} // @name ErrorResponse
 
 // SuccessResponse represents a success response
 type SuccessResponse struct {
 	Path    string `json:"path" example:"/path/to/file"`
 	Message string `json:"message" example:"File created successfully"`
-}
+} // @name SuccessResponse

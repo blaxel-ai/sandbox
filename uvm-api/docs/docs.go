@@ -41,19 +41,19 @@ const docTemplate = `{
                     "200": {
                         "description": "Directory listing",
                         "schema": {
-                            "$ref": "#/definitions/filesystem.Directory"
+                            "$ref": "#/definitions/Directory"
                         }
                     },
                     "404": {
                         "description": "File or directory not found",
                         "schema": {
-                            "$ref": "#/definitions/api.ErrorResponse"
+                            "$ref": "#/definitions/ErrorResponse"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/api.ErrorResponse"
+                            "$ref": "#/definitions/ErrorResponse"
                         }
                     }
                 }
@@ -84,7 +84,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/api.FileRequest"
+                            "$ref": "#/definitions/FileRequest"
                         }
                     }
                 ],
@@ -92,19 +92,19 @@ const docTemplate = `{
                     "200": {
                         "description": "Success message",
                         "schema": {
-                            "$ref": "#/definitions/api.SuccessResponse"
+                            "$ref": "#/definitions/SuccessResponse"
                         }
                     },
                     "400": {
                         "description": "Invalid request",
                         "schema": {
-                            "$ref": "#/definitions/api.ErrorResponse"
+                            "$ref": "#/definitions/ErrorResponse"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/api.ErrorResponse"
+                            "$ref": "#/definitions/ErrorResponse"
                         }
                     }
                 }
@@ -140,19 +140,19 @@ const docTemplate = `{
                     "200": {
                         "description": "Success message",
                         "schema": {
-                            "$ref": "#/definitions/api.SuccessResponse"
+                            "$ref": "#/definitions/SuccessResponse"
                         }
                     },
                     "404": {
                         "description": "File or directory not found",
                         "schema": {
-                            "$ref": "#/definitions/api.ErrorResponse"
+                            "$ref": "#/definitions/ErrorResponse"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/api.ErrorResponse"
+                            "$ref": "#/definitions/ErrorResponse"
                         }
                     }
                 }
@@ -185,7 +185,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/api.PortMonitorRequest"
+                            "$ref": "#/definitions/PortMonitorRequest"
                         }
                     }
                 ],
@@ -200,13 +200,13 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid request",
                         "schema": {
-                            "$ref": "#/definitions/api.ErrorResponse"
+                            "$ref": "#/definitions/ErrorResponse"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/api.ErrorResponse"
+                            "$ref": "#/definitions/ErrorResponse"
                         }
                     }
                 }
@@ -243,13 +243,13 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid process ID",
                         "schema": {
-                            "$ref": "#/definitions/api.ErrorResponse"
+                            "$ref": "#/definitions/ErrorResponse"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/api.ErrorResponse"
+                            "$ref": "#/definitions/ErrorResponse"
                         }
                     }
                 }
@@ -288,13 +288,13 @@ const docTemplate = `{
                     "400": {
                         "description": "Invalid process ID",
                         "schema": {
-                            "$ref": "#/definitions/api.ErrorResponse"
+                            "$ref": "#/definitions/ErrorResponse"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/api.ErrorResponse"
+                            "$ref": "#/definitions/ErrorResponse"
                         }
                     }
                 }
@@ -319,7 +319,7 @@ const docTemplate = `{
                         "schema": {
                             "type": "array",
                             "items": {
-                                "$ref": "#/definitions/api.ProcessResponse"
+                                "$ref": "#/definitions/ProcessResponse"
                             }
                         }
                     }
@@ -344,7 +344,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/api.ProcessRequest"
+                            "$ref": "#/definitions/ProcessRequest"
                         }
                     }
                 ],
@@ -352,19 +352,19 @@ const docTemplate = `{
                     "200": {
                         "description": "Process information",
                         "schema": {
-                            "$ref": "#/definitions/api.ProcessResponse"
+                            "$ref": "#/definitions/ProcessResponse"
                         }
                     },
                     "400": {
                         "description": "Invalid request",
                         "schema": {
-                            "$ref": "#/definitions/api.ErrorResponse"
+                            "$ref": "#/definitions/ErrorResponse"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/api.ErrorResponse"
+                            "$ref": "#/definitions/ErrorResponse"
                         }
                     }
                 }
@@ -396,13 +396,13 @@ const docTemplate = `{
                     "200": {
                         "description": "Process information",
                         "schema": {
-                            "$ref": "#/definitions/api.ProcessResponse"
+                            "$ref": "#/definitions/ProcessResponse"
                         }
                     },
                     "404": {
                         "description": "Process not found",
                         "schema": {
-                            "$ref": "#/definitions/api.ErrorResponse"
+                            "$ref": "#/definitions/ErrorResponse"
                         }
                     }
                 }
@@ -432,19 +432,19 @@ const docTemplate = `{
                     "200": {
                         "description": "Process stopped",
                         "schema": {
-                            "$ref": "#/definitions/api.SuccessResponse"
+                            "$ref": "#/definitions/SuccessResponse"
                         }
                     },
                     "404": {
                         "description": "Process not found",
                         "schema": {
-                            "$ref": "#/definitions/api.ErrorResponse"
+                            "$ref": "#/definitions/ErrorResponse"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/api.ErrorResponse"
+                            "$ref": "#/definitions/ErrorResponse"
                         }
                     }
                 }
@@ -476,7 +476,7 @@ const docTemplate = `{
                         "name": "request",
                         "in": "body",
                         "schema": {
-                            "$ref": "#/definitions/api.ProcessKillRequest"
+                            "$ref": "#/definitions/ProcessKillRequest"
                         }
                     }
                 ],
@@ -484,19 +484,19 @@ const docTemplate = `{
                     "200": {
                         "description": "Process killed",
                         "schema": {
-                            "$ref": "#/definitions/api.SuccessResponse"
+                            "$ref": "#/definitions/SuccessResponse"
                         }
                     },
                     "404": {
                         "description": "Process not found",
                         "schema": {
-                            "$ref": "#/definitions/api.ErrorResponse"
+                            "$ref": "#/definitions/ErrorResponse"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/api.ErrorResponse"
+                            "$ref": "#/definitions/ErrorResponse"
                         }
                     }
                 }
@@ -537,13 +537,13 @@ const docTemplate = `{
                     "404": {
                         "description": "Process not found",
                         "schema": {
-                            "$ref": "#/definitions/api.ErrorResponse"
+                            "$ref": "#/definitions/ErrorResponse"
                         }
                     },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
-                            "$ref": "#/definitions/api.ErrorResponse"
+                            "$ref": "#/definitions/ErrorResponse"
                         }
                     }
                 }
@@ -551,7 +551,7 @@ const docTemplate = `{
         }
     },
     "definitions": {
-        "api.ErrorResponse": {
+        "ErrorResponse": {
             "type": "object",
             "properties": {
                 "error": {
@@ -560,7 +560,31 @@ const docTemplate = `{
                 }
             }
         },
-        "api.FileRequest": {
+        "File": {
+            "type": "object",
+            "properties": {
+                "group": {
+                    "type": "string"
+                },
+                "lastModified": {
+                    "type": "string"
+                },
+                "owner": {
+                    "type": "string"
+                },
+                "path": {
+                    "type": "string"
+                },
+                "permissions": {
+                    "description": "swagger:strfmt string",
+                    "type": "string"
+                },
+                "size": {
+                    "type": "integer"
+                }
+            }
+        },
+        "FileRequest": {
             "type": "object",
             "properties": {
                 "content": {
@@ -577,7 +601,7 @@ const docTemplate = `{
                 }
             }
         },
-        "api.PortMonitorRequest": {
+        "PortMonitorRequest": {
             "type": "object",
             "properties": {
                 "callback": {
@@ -587,7 +611,7 @@ const docTemplate = `{
                 }
             }
         },
-        "api.ProcessKillRequest": {
+        "ProcessKillRequest": {
             "type": "object",
             "properties": {
                 "signal": {
@@ -596,7 +620,7 @@ const docTemplate = `{
                 }
             }
         },
-        "api.ProcessRequest": {
+        "ProcessRequest": {
             "type": "object",
             "required": [
                 "command"
@@ -638,7 +662,7 @@ const docTemplate = `{
                 }
             }
         },
-        "api.ProcessResponse": {
+        "ProcessResponse": {
             "type": "object",
             "properties": {
                 "command": {
@@ -675,7 +699,7 @@ const docTemplate = `{
                 }
             }
         },
-        "api.SuccessResponse": {
+        "SuccessResponse": {
             "type": "object",
             "properties": {
                 "message": {
@@ -688,77 +712,24 @@ const docTemplate = `{
                 }
             }
         },
-        "filesystem.Directory": {
+        "Directory": {
             "type": "object",
             "properties": {
                 "files": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/filesystem.File"
+                        "$ref": "#/definitions/File"
                     }
                 },
                 "path": {
                     "type": "string"
                 },
                 "subdirectories": {
+                    "description": "@name Subdirectories",
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/filesystem.Directory"
+                        "$ref": "#/definitions/Directory"
                     }
-                }
-            }
-        },
-        "filesystem.File": {
-            "type": "object",
-            "properties": {
-                "group": {
-                    "type": "string"
-                },
-                "lastModified": {
-                    "type": "string"
-                },
-                "owner": {
-                    "type": "string"
-                },
-                "path": {
-                    "type": "string"
-                },
-                "permissions": {
-                    "description": "swagger:strfmt string",
-                    "type": "string"
-                },
-                "size": {
-                    "type": "integer"
-                }
-            }
-        },
-        "filesystem.FileWithContent": {
-            "type": "object",
-            "properties": {
-                "content": {
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
-                },
-                "group": {
-                    "type": "string"
-                },
-                "lastModified": {
-                    "type": "string"
-                },
-                "owner": {
-                    "type": "string"
-                },
-                "path": {
-                    "type": "string"
-                },
-                "permissions": {
-                    "description": "swagger:strfmt string",
-                    "type": "string"
-                },
-                "size": {
-                    "type": "integer"
                 }
             }
         }

@@ -5,11 +5,12 @@ import (
 	"path/filepath"
 )
 
+// Directory represents a directory in the filesystem
 type Directory struct {
 	Path           string       `json:"path"`
 	Files          []*File      `json:"files"`
-	Subdirectories []*Directory `json:"subdirectories"`
-}
+	Subdirectories []*Directory `json:"subdirectories"` // @name Subdirectories
+} // @name Directory
 
 func NewDirectory(path string) *Directory {
 	return &Directory{
