@@ -165,10 +165,9 @@ paths:
         required: true
         type: string
       - description: Delete directory recursively
-        in: body
+        in: query
         name: recursive
-        schema:
-          type: boolean
+        type: boolean
       produces:
       - application/json
       responses:

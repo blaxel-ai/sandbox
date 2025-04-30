@@ -130,12 +130,10 @@ const docTemplate = `{
                         "required": true
                     },
                     {
+                        "type": "boolean",
                         "description": "Delete directory recursively",
                         "name": "recursive",
-                        "in": "body",
-                        "schema": {
-                            "type": "boolean"
-                        }
+                        "in": "query"
                     }
                 ],
                 "responses": {
