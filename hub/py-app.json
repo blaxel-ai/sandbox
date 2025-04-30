@@ -1,9 +1,7 @@
 {
   "name": "py-app",
   "displayName": "Python App",
-  "categories": [
-    "storage"
-  ],
+  "categories": ["Python"],
   "description": "A Python development environment with pip package manager and common development libraries.",
   "longDescription": "The Python App micro VM provides a complete development environment for Python applications. It includes Python runtime, pip package manager, and common development libraries. Ideal for developing web applications, data science projects, automation scripts, and machine learning applications with Python's rich ecosystem of packages and tools.",
   "url": "https://github.com/python",
