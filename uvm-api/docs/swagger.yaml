@@ -1,12 +1,28 @@
 basePath: /
 definitions:
-  api.ErrorResponse:
+  ErrorResponse:
     properties:
       error:
         example: Error message
         type: string
     type: object
-  api.FileRequest:
+  File:
+    properties:
+      group:
+        type: string
+      lastModified:
+        type: string
+      owner:
+        type: string
+      path:
+        type: string
+      permissions:
+        description: swagger:strfmt string
+        type: string
+      size:
+        type: integer
+    type: object
+  FileRequest:
     properties:
       content:
         example: file contents here
@@ -18,20 +34,20 @@ definitions:
         example: "0644"
         type: string
     type: object
-  api.PortMonitorRequest:
+  PortMonitorRequest:
     properties:
       callback:
         description: URL to call when a new port is detected
         example: http://localhost:3000/callback
         type: string
     type: object
-  api.ProcessKillRequest:
+  ProcessKillRequest:
     properties:
       signal:
         example: SIGTERM
         type: string
     type: object
-  api.ProcessRequest:
+  ProcessRequest:
     properties:
       command:
         example: ls -la
@@ -61,7 +77,7 @@ definitions:
     required:
     - command
     type: object
-  api.ProcessResponse:
+  ProcessResponse:
     properties:
       command:
         example: ls -la
@@ -88,7 +104,7 @@ definitions:
         example: /home/user
         type: string
     type: object
-  api.SuccessResponse:
+  SuccessResponse:
     properties:
       message:
         example: File created successfully
@@ -97,54 +113,19 @@ definitions:
         example: /path/to/file
         type: string
     type: object
-  filesystem.Directory:
+  Directory:
     properties:
       files:
         items:
-          $ref: '#/definitions/filesystem.File'
+          $ref: '#/definitions/File'
         type: array
       path:
         type: string
       subdirectories:
+        description: '@name Subdirectories'
         items:
-          $ref: '#/definitions/filesystem.Directory'
+          $ref: '#/definitions/Directory'
         type: array
-    type: object
-  filesystem.File:
-    properties:
-      group:
-        type: string
-      lastModified:
-        type: string
-      owner:
-        type: string
-      path:
-        type: string
-      permissions:
-        description: swagger:strfmt string
-        type: string
-      size:
-        type: integer
-    type: object
-  filesystem.FileWithContent:
-    properties:
-      content:
-        items:
-          type: integer
-        type: array
-      group:
-        type: string
-      lastModified:
-        type: string
-      owner:
-        type: string
-      path:
-        type: string
-      permissions:
-        description: swagger:strfmt string
-        type: string
-      size:
-        type: integer
     type: object
 host: localhost:8080
 info:
@@ -165,25 +146,24 @@ paths:
         required: true
         type: string
       - description: Delete directory recursively
-        in: body
+        in: query
         name: recursive
-        schema:
-          type: boolean
+        type: boolean
       produces:
       - application/json
       responses:
         "200":
           description: Success message
           schema:
-            $ref: '#/definitions/api.SuccessResponse'
+            $ref: '#/definitions/SuccessResponse'
         "404":
           description: File or directory not found
           schema:
-            $ref: '#/definitions/api.ErrorResponse'
+            $ref: '#/definitions/ErrorResponse'
         "500":
           description: Internal server error
           schema:
-            $ref: '#/definitions/api.ErrorResponse'
+            $ref: '#/definitions/ErrorResponse'
       summary: Delete file or directory
       tags:
       - filesystem
@@ -203,15 +183,15 @@ paths:
         "200":
           description: Directory listing
           schema:
-            $ref: '#/definitions/filesystem.Directory'
+            $ref: '#/definitions/Directory'
         "404":
           description: File or directory not found
           schema:
-            $ref: '#/definitions/api.ErrorResponse'
+            $ref: '#/definitions/ErrorResponse'
         "500":
           description: Internal server error
           schema:
-            $ref: '#/definitions/api.ErrorResponse'
+            $ref: '#/definitions/ErrorResponse'
       summary: Get file or directory information
       tags:
       - filesystem
@@ -230,22 +210,22 @@ paths:
         name: request
         required: true
         schema:
-          $ref: '#/definitions/api.FileRequest'
+          $ref: '#/definitions/FileRequest'
       produces:
       - application/json
       responses:
         "200":
           description: Success message
           schema:
-            $ref: '#/definitions/api.SuccessResponse'
+            $ref: '#/definitions/SuccessResponse'
         "400":
           description: Invalid request
           schema:
-            $ref: '#/definitions/api.ErrorResponse'
+            $ref: '#/definitions/ErrorResponse'
         "500":
           description: Internal server error
           schema:
-            $ref: '#/definitions/api.ErrorResponse'
+            $ref: '#/definitions/ErrorResponse'
       summary: Create or update file or directory
       tags:
       - filesystem
@@ -271,11 +251,11 @@ paths:
         "400":
           description: Invalid process ID
           schema:
-            $ref: '#/definitions/api.ErrorResponse'
+            $ref: '#/definitions/ErrorResponse'
         "500":
           description: Internal server error
           schema:
-            $ref: '#/definitions/api.ErrorResponse'
+            $ref: '#/definitions/ErrorResponse'
       summary: Stop monitoring ports for a process
       tags:
       - network
@@ -294,7 +274,7 @@ paths:
         name: request
         required: true
         schema:
-          $ref: '#/definitions/api.PortMonitorRequest'
+          $ref: '#/definitions/PortMonitorRequest'
       produces:
       - application/json
       responses:
@@ -306,11 +286,11 @@ paths:
         "400":
           description: Invalid request
           schema:
-            $ref: '#/definitions/api.ErrorResponse'
+            $ref: '#/definitions/ErrorResponse'
         "500":
           description: Internal server error
           schema:
-            $ref: '#/definitions/api.ErrorResponse'
+            $ref: '#/definitions/ErrorResponse'
       summary: Start monitoring ports for a process
       tags:
       - network
@@ -336,11 +316,11 @@ paths:
         "400":
           description: Invalid process ID
           schema:
-            $ref: '#/definitions/api.ErrorResponse'
+            $ref: '#/definitions/ErrorResponse'
         "500":
           description: Internal server error
           schema:
-            $ref: '#/definitions/api.ErrorResponse'
+            $ref: '#/definitions/ErrorResponse'
       summary: Get open ports for a process
       tags:
       - network
@@ -356,7 +336,7 @@ paths:
           description: Process list
           schema:
             items:
-              $ref: '#/definitions/api.ProcessResponse'
+              $ref: '#/definitions/ProcessResponse'
             type: array
       summary: List all processes
       tags:
@@ -371,22 +351,22 @@ paths:
         name: request
         required: true
         schema:
-          $ref: '#/definitions/api.ProcessRequest'
+          $ref: '#/definitions/ProcessRequest'
       produces:
       - application/json
       responses:
         "200":
           description: Process information
           schema:
-            $ref: '#/definitions/api.ProcessResponse'
+            $ref: '#/definitions/ProcessResponse'
         "400":
           description: Invalid request
           schema:
-            $ref: '#/definitions/api.ErrorResponse'
+            $ref: '#/definitions/ErrorResponse'
         "500":
           description: Internal server error
           schema:
-            $ref: '#/definitions/api.ErrorResponse'
+            $ref: '#/definitions/ErrorResponse'
       summary: Execute a command
       tags:
       - process
@@ -407,15 +387,15 @@ paths:
         "200":
           description: Process stopped
           schema:
-            $ref: '#/definitions/api.SuccessResponse'
+            $ref: '#/definitions/SuccessResponse'
         "404":
           description: Process not found
           schema:
-            $ref: '#/definitions/api.ErrorResponse'
+            $ref: '#/definitions/ErrorResponse'
         "500":
           description: Internal server error
           schema:
-            $ref: '#/definitions/api.ErrorResponse'
+            $ref: '#/definitions/ErrorResponse'
       summary: Stop a process
       tags:
       - process
@@ -435,11 +415,11 @@ paths:
         "200":
           description: Process information
           schema:
-            $ref: '#/definitions/api.ProcessResponse'
+            $ref: '#/definitions/ProcessResponse'
         "404":
           description: Process not found
           schema:
-            $ref: '#/definitions/api.ErrorResponse'
+            $ref: '#/definitions/ErrorResponse'
       summary: Get process by identifier
       tags:
       - process
@@ -458,22 +438,22 @@ paths:
         in: body
         name: request
         schema:
-          $ref: '#/definitions/api.ProcessKillRequest'
+          $ref: '#/definitions/ProcessKillRequest'
       produces:
       - application/json
       responses:
         "200":
           description: Process killed
           schema:
-            $ref: '#/definitions/api.SuccessResponse'
+            $ref: '#/definitions/SuccessResponse'
         "404":
           description: Process not found
           schema:
-            $ref: '#/definitions/api.ErrorResponse'
+            $ref: '#/definitions/ErrorResponse'
         "500":
           description: Internal server error
           schema:
-            $ref: '#/definitions/api.ErrorResponse'
+            $ref: '#/definitions/ErrorResponse'
       summary: Kill a process
       tags:
       - process
@@ -500,11 +480,11 @@ paths:
         "404":
           description: Process not found
           schema:
-            $ref: '#/definitions/api.ErrorResponse'
+            $ref: '#/definitions/ErrorResponse'
         "500":
           description: Internal server error
           schema:
-            $ref: '#/definitions/api.ErrorResponse'
+            $ref: '#/definitions/ErrorResponse'
       summary: Get process logs
       tags:
       - process

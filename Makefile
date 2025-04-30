@@ -12,3 +12,6 @@ mcp:
 
 swagger:
 	cd uvm-api && swag init
+	cd uvm-api/docs && sed -i.bak 's/filesystem\.Directory/Directory/g' swagger.json && rm swagger.json.bak
+	cd uvm-api/docs && sed -i.bak 's/filesystem\.Directory/Directory/g' swagger.yaml && rm swagger.yaml.bak
+	cd uvm-api/docs && sed -i.bak 's/filesystem\.Directory/Directory/g' docs.go && rm docs.go.bak

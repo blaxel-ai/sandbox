@@ -10,11 +10,7 @@ if [ -z "$TAG" ]; then
 fi
 
 UKC_URL="index.unikraft.io"
-PREFIX="blaxel"
-if [ ! -z "$BL_WORKSPACE" ]; then
-	echo "Using workspace: $BL_WORKSPACE"
-	PREFIX="$PREFIX/$BL_WORKSPACE"
-fi
+PREFIX="blaxel/uvm-hub"
 
 if [ "$BL_ENV" = "dev" ]; then
 	PREFIX="$PREFIX/dev"
@@ -33,14 +29,15 @@ else
 		exit 1
 fi
 
-# kraft pkg \
-# 	--arch x86_64 \
-# 	--plat kraftcloud \
-# 	--name $UKC_URL/$PREFIX/$1 \
-# 	--rootfs Dockerfile.$1 \
-# 	--runtime $UKC_URL/official/base-compat:latest \
-# 	--push \
-# 	.
+echo $UKC_URL/$PREFIX/$1:$TAG
+kraft pkg \
+	--arch x86_64 \
+	--plat kraftcloud \
+	--name "$UKC_URL/$PREFIX/$1:$TAG" \
+	--rootfs Dockerfile.$1 \
+	--runtime $UKC_URL/official/base-compat:latest \
+	--push \
+	.
 
 curl -X PUT -H "Content-Type: application/json" \
 	-d @tmp/$1.json.tmp \

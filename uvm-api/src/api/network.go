@@ -15,19 +15,19 @@ import (
 // PortMonitorRequest is the request body for monitoring ports
 type PortMonitorRequest struct {
 	Callback string `json:"callback" example:"http://localhost:3000/callback"` // URL to call when a new port is detected
-}
+} // @name PortMonitorRequest
 
 // PortsResponse is the response for the GetPorts endpoint
 type PortsResponse struct {
 	PID   int                `json:"pid" example:"1234"`
 	Ports []network.PortInfo `json:"ports"`
-}
+} // @name PortsResponse
 
 // MonitorResponse is the response for the port monitoring endpoints
 type MonitorResponse struct {
 	PID     int    `json:"pid" example:"1234"`
 	Message string `json:"message" example:"Port monitoring started"`
-}
+} // @name MonitorResponse
 
 // HandleGetPorts handles GET requests to /network/process/{pid}/ports
 // @Summary Get open ports for a process

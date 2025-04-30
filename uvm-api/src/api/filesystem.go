@@ -31,7 +31,6 @@ func getFileSystem() *filesystem.Filesystem {
 // @Accept json
 // @Produce json
 // @Param path path string true "File or directory path"
-// @Success 200 {object} filesystem.FileWithContent "File content"
 // @Success 200 {object} filesystem.Directory "Directory listing"
 // @Failure 404 {object} ErrorResponse "File or directory not found"
 // @Failure 500 {object} ErrorResponse "Internal server error"
@@ -206,7 +205,7 @@ func HandleCreateOrUpdateFile(c *gin.Context) {
 // @Accept json
 // @Produce json
 // @Param path path string true "File or directory path"
-// @Param recursive body boolean false "Delete directory recursively"
+// @Param recursive query boolean false "Delete directory recursively"
 // @Success 200 {object} SuccessResponse "Success message"
 // @Failure 404 {object} ErrorResponse "File or directory not found"
 // @Failure 500 {object} ErrorResponse "Internal server error"
@@ -214,7 +213,7 @@ func HandleCreateOrUpdateFile(c *gin.Context) {
 func HandleDeleteFileOrDirectory(c *gin.Context) {
 	path := c.Param("path")
 	fs := getFileSystem()
-
+	recursive := c.Query("recursive")
 	// Default to root if path is empty
 	if path == "" {
 		path = "/"
@@ -223,15 +222,6 @@ func HandleDeleteFileOrDirectory(c *gin.Context) {
 	// Ensure path starts with a slash
 	if path != "/" && len(path) > 0 && path[0] != '/' {
 		path = "/" + path
-	}
-
-	var request struct {
-		Recursive bool `json:"recursive"`
-	}
-
-	if err := c.ShouldBindJSON(&request); err != nil {
-		// If JSON is not provided, default to non-recursive
-		request.Recursive = false
 	}
 
 	// Check if it's a directory
@@ -243,7 +233,7 @@ func HandleDeleteFileOrDirectory(c *gin.Context) {
 
 	if isDir {
 		// Delete directory
-		err := fs.DeleteDirectory(path, request.Recursive)
+		err := fs.DeleteDirectory(path, recursive == "true")
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Error deleting directory: %v", err)})
 			return
