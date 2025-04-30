@@ -13,7 +13,7 @@
     {
       "name": "sandbox-api",
       "target": 8080,
-      "protocol": "http+tls"
+      "protocol": "HTTP"
     }
   ],
   "enterprise": false,
