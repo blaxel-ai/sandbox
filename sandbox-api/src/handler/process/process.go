@@ -297,6 +297,10 @@ func (pm *ProcessManager) GetProcessByIdentifier(identifier string) (*ProcessInf
 	} else {
 		process, exists = pm.GetProcessByName(identifier)
 	}
+	if process == nil {
+		return nil, false
+	}
+
 	// If the process is running, try to get additional information from the OS
 	if process.Status == "running" {
 		pidInt, err := strconv.Atoi(process.PID)

@@ -424,7 +424,7 @@ paths:
       tags:
       - process
   /process/{identifier}/kill:
-    post:
+    delete:
       consumes:
       - application/json
       description: Forcefully kill a running process

@@ -17,15 +17,16 @@ func NewBaseHandler() *BaseHandler {
 	return &BaseHandler{}
 }
 
-// ErrorResponse represents a standard error response
+// ErrorResponse represents an error response
 type ErrorResponse struct {
-	Error string `json:"error"`
-}
+	Error string `json:"error" example:"Error message"`
+} // @name ErrorResponse
 
-// SuccessResponse represents a standard success response
+// SuccessResponse represents a success response
 type SuccessResponse struct {
-	Message string `json:"message"`
-}
+	Path    string `json:"path" example:"/path/to/file"`
+	Message string `json:"message" example:"File created successfully"`
+} // @name SuccessResponse
 
 // SendError sends a standardized error response
 func (h *BaseHandler) SendError(c *gin.Context, status int, err error) {

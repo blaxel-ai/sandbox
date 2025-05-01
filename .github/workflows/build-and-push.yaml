@@ -1,4 +1,4 @@
-name: UVM Build and Push
+name: Sandbox Build and Push
 on:
   push:
     branches:
@@ -6,10 +6,10 @@ on:
       - main
   workflow_dispatch:
     inputs:
-      uvm:
-        description: "UVM to import"
+      sandbox:
+        description: "Sandbox to import"
       all:
-        description: "Import all UVM"
+        description: "Import all Sandbox"
         type: boolean
         required: false
         default: false
@@ -18,65 +18,65 @@ jobs:
   generate-matrix:
     runs-on: ubuntu-latest
     outputs:
-      uvm: ${{ steps.retrieve-uvm.outputs.uvm }}
+      sandbox: ${{ steps.retrieve-sandbox.outputs.sandbox }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
           fetch-depth: 2  # Fetch last 2 commits to compare changes
-      - name: Retrieve uvm
-        id: retrieve-uvm
+      - name: Retrieve sandbox
+        id: retrieve-sandbox
         shell: bash
         run: |
-          if [[ ! -z "${{ inputs.uvm }}" ]]; then
-            echo "uvm=[\"${{ inputs.uvm }}\"]" >> $GITHUB_OUTPUT
+          if [[ ! -z "${{ inputs.sandbox }}" ]]; then
+            echo "sandbox=[\"${{ inputs.sandbox }}\"]" >> $GITHUB_OUTPUT
             exit 0
           fi
 
-          # Get list of all UVM files
+          # Get list of all Sandbox files
           all_uvm=$(tree -J -L 1 hub | jq -c '.[0].contents | map(select(.name) | .name | rtrimstr(".json"))')
 
-          # Filter UVM based on changes
+          # Filter Sandbox based on changes
           changed_uvm=()
 
           if [[ "${{ inputs.all }}" == "true" ]]; then
-            echo "Importing all UVM"
-            echo "uvm=$all_uvm" >> $GITHUB_OUTPUT
+            echo "Importing all Sandbox"
+            echo "sandbox=$all_uvm" >> $GITHUB_OUTPUT
             exit 0
           fi
 
-          # Check if there are changes in uvm-api
-          if git diff --name-only HEAD^ HEAD | grep -q "uvm-api/"; then
-            echo "Changes detected in uvm-api, including all UVM"
-            echo "uvm=$all_uvm" >> $GITHUB_OUTPUT
+          # Check if there are changes in sandbox-api
+          if git diff --name-only HEAD^ HEAD | grep -q "sandbox-api/"; then
+            echo "Changes detected in sandbox-api, including all Sandbox"
+            echo "sandbox=$all_uvm" >> $GITHUB_OUTPUT
             exit 0
           else
-            for uvm in $(echo $all_uvm | jq -r '.[]'); do
-              if git diff --name-only HEAD^ HEAD | grep -q "Dockerfile.${uvm}" || git diff --name-only HEAD^ HEAD | grep -q "hub/${uvm}.json"; then
-                changed_uvm+=("$uvm")
+            for sandbox in $(echo $all_uvm | jq -r '.[]'); do
+              if git diff --name-only HEAD^ HEAD | grep -q "Dockerfile.${sandbox}" || git diff --name-only HEAD^ HEAD | grep -q "hub/${sandbox}.json"; then
+                changed_uvm+=("$sandbox")
               fi
             done
           fi
 
           # Convert array to JSON array
           if [ ${#changed_uvm[@]} -eq 0 ]; then
-            echo "No UVM with changes found"
-            echo "uvm=[]" >> $GITHUB_OUTPUT
+            echo "No Sandbox with changes found"
+            echo "sandbox=[]" >> $GITHUB_OUTPUT
           else
             # Create a properly formatted JSON array
             uvm_json="["
-            for uvm in "${changed_uvm[@]}"; do
+            for sandbox in "${changed_uvm[@]}"; do
               if [ "$uvm_json" != "[" ]; then
                 uvm_json="$uvm_json,"
               fi
-              uvm_json="$uvm_json\"$uvm\""
+              uvm_json="$uvm_json\"$sandbox\""
             done
             uvm_json="$uvm_json]"
-            echo "uvm=$uvm_json" >> $GITHUB_OUTPUT
+            echo "sandbox=$uvm_json" >> $GITHUB_OUTPUT
           fi
   publish:
     runs-on: ubuntu-latest
-    if: needs.generate-matrix.outputs.uvm != '[]'
+    if: needs.generate-matrix.outputs.sandbox != '[]'
     environment: |-
       ${{
         github.ref_name == 'main' && 'prod'
@@ -94,7 +94,7 @@ jobs:
       - generate-matrix
     strategy:
       matrix:
-        uvm: ${{ fromJson(needs.generate-matrix.outputs.uvm )}}
+        sandbox: ${{ fromJson(needs.generate-matrix.outputs.sandbox )}}
     permissions:
       contents: read
       packages: write
@@ -102,9 +102,9 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-      - name: Echo uvm
+      - name: Echo sandbox
         run: |
-          echo "UVM: ${{ matrix.uvm }}"
+          echo "Sandbox: ${{ matrix.sandbox }}"
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
       - name: Set up Docker Buildx
@@ -116,4 +116,4 @@ jobs:
         env:
           TAG: ${{ github.run_id }}
         run: |
-          sh build.sh ${{ matrix.uvm }}
+          sh build.sh ${{ matrix.sandbox }}

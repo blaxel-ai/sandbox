@@ -9,7 +9,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/beamlit/uvm-api/src/handler/filesystem"
+	"github.com/beamlit/sandbox-api/src/handler/filesystem"
 )
 
 // FileSystemHandler handles filesystem operations
@@ -17,6 +17,13 @@ type FileSystemHandler struct {
 	*BaseHandler
 	fs *filesystem.Filesystem
 }
+
+// FileRequest represents the request body for creating or updating a file
+type FileRequest struct {
+	Content     string `json:"content" example:"file contents here"`
+	IsDirectory bool   `json:"isDirectory" example:"false"`
+	Permissions string `json:"permissions" example:"0644"`
+} // @name FileRequest
 
 // NewFileSystemHandler creates a new filesystem handler
 func NewFileSystemHandler() *FileSystemHandler {
@@ -71,7 +78,18 @@ func (h *FileSystemHandler) DeleteFile(path string) error {
 	return h.fs.DeleteFile(path)
 }
 
-// HandleGetFile handles GET requests for files
+// HandleFileSystemRequest handles GET requests to /filesystem/:path
+// It returns either file content or directory listing depending on the path
+// @Summary Get file or directory information
+// @Description Get content of a file or listing of a directory
+// @Tags filesystem
+// @Accept json
+// @Produce json
+// @Param path path string true "File or directory path"
+// @Success 200 {object} filesystem.Directory "Directory listing"
+// @Failure 404 {object} ErrorResponse "File or directory not found"
+// @Failure 500 {object} ErrorResponse "Internal server error"
+// @Router /filesystem/{path} [get]
 func (h *FileSystemHandler) HandleGetFile(c *gin.Context) {
 	path, err := h.GetPathParam(c, "path")
 	if err != nil {
@@ -169,7 +187,18 @@ func (h *FileSystemHandler) handleListDirectory(c *gin.Context, path string) {
 	})
 }
 
-// HandleCreateOrUpdateFile handles PUT requests for files
+// HandleCreateOrUpdateFile handles PUT requests to /filesystem/:path
+// @Summary Create or update file or directory
+// @Description Create or update a file or directory
+// @Tags filesystem
+// @Accept json
+// @Produce json
+// @Param path path string true "File or directory path"
+// @Param request body FileRequest true "File or directory information"
+// @Success 200 {object} SuccessResponse "Success message"
+// @Failure 400 {object} ErrorResponse "Invalid request"
+// @Failure 500 {object} ErrorResponse "Internal server error"
+// @Router /filesystem/{path} [put]
 func (h *FileSystemHandler) HandleCreateOrUpdateFile(c *gin.Context) {
 	path, err := h.GetPathParam(c, "path")
 	if err != nil {
@@ -226,13 +255,25 @@ func (h *FileSystemHandler) HandleCreateOrUpdateFile(c *gin.Context) {
 	}
 }
 
-// HandleDeleteFile handles DELETE requests for files
+// HandleDeleteFileOrDirectory handles DELETE requests to /filesystem/:path
+// @Summary Delete file or directory
+// @Description Delete a file or directory
+// @Tags filesystem
+// @Accept json
+// @Produce json
+// @Param path path string true "File or directory path"
+// @Param recursive query boolean false "Delete directory recursively"
+// @Success 200 {object} SuccessResponse "Success message"
+// @Failure 404 {object} ErrorResponse "File or directory not found"
+// @Failure 500 {object} ErrorResponse "Internal server error"
+// @Router /filesystem/{path} [delete]
 func (h *FileSystemHandler) HandleDeleteFile(c *gin.Context) {
 	path, err := h.GetPathParam(c, "path")
 	if err != nil {
 		h.SendError(c, http.StatusBadRequest, err)
 		return
 	}
+	recursive := c.Query("recursive")
 
 	// Default to root if path is empty
 	if path == "" {
@@ -244,15 +285,6 @@ func (h *FileSystemHandler) HandleDeleteFile(c *gin.Context) {
 		path = "/" + path
 	}
 
-	var request struct {
-		Recursive bool `json:"recursive"`
-	}
-
-	if err := h.BindJSON(c, &request); err != nil {
-		// If JSON is not provided, default to non-recursive
-		request.Recursive = false
-	}
-
 	// Check if it's a directory
 	isDir, err := h.DirectoryExists(path)
 	if err != nil {
@@ -262,7 +294,7 @@ func (h *FileSystemHandler) HandleDeleteFile(c *gin.Context) {
 
 	if isDir {
 		// Delete directory
-		err := h.DeleteDirectory(path, request.Recursive)
+		err := h.DeleteDirectory(path, recursive == "true")
 		if err != nil {
 			h.SendError(c, http.StatusInternalServerError, fmt.Errorf("error deleting directory: %w", err))
 			return
