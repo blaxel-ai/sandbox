@@ -1,0 +1,524 @@
+openapi: 3.0.0
+info:
+  contact: {}
+  description: API for manipulating filesystem, processes and network.
+  title: Sandbox API
+  version: 0.0.1-preview
+paths:
+  "/filesystem/{path}":
+    delete:
+      description: Delete a file or directory
+      parameters:
+        - description: File or directory path
+          in: path
+          name: path
+          required: true
+          schema:
+            type: string
+        - description: Delete directory recursively
+          in: query
+          name: recursive
+          schema:
+            type: boolean
+      responses:
+        "200":
+          description: Success message
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "404":
+          description: File or directory not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+      summary: Delete file or directory
+      tags:
+        - filesystem
+    get:
+      description: Get content of a file or listing of a directory
+      parameters:
+        - description: File or directory path
+          in: path
+          name: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Directory listing
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Directory"
+        "404":
+          description: File or directory not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+      summary: Get file or directory information
+      tags:
+        - filesystem
+    put:
+      description: Create or update a file or directory
+      parameters:
+        - description: File or directory path
+          in: path
+          name: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FileRequest"
+        description: File or directory information
+        required: true
+      responses:
+        "200":
+          description: Success message
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+      summary: Create or update file or directory
+      tags:
+        - filesystem
+  "/network/process/{pid}/monitor":
+    delete:
+      description: Stop monitoring for new ports opened by a process
+      parameters:
+        - description: Process ID
+          in: path
+          name: pid
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Object containing PID and success message
+          content:
+            application/json:
+              schema:
+                additionalProperties: true
+                type: object
+        "400":
+          description: Invalid process ID
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+      summary: Stop monitoring ports for a process
+      tags:
+        - network
+    post:
+      description: Start monitoring for new ports opened by a process
+      parameters:
+        - description: Process ID
+          in: path
+          name: pid
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PortMonitorRequest"
+        description: Port monitor configuration
+        required: true
+      responses:
+        "200":
+          description: Object containing PID and success message
+          content:
+            application/json:
+              schema:
+                additionalProperties: true
+                type: object
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+      summary: Start monitoring ports for a process
+      tags:
+        - network
+  "/network/process/{pid}/ports":
+    get:
+      description: Get a list of all open ports for a process
+      parameters:
+        - description: Process ID
+          in: path
+          name: pid
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Object containing PID and array of network.PortInfo
+          content:
+            application/json:
+              schema:
+                additionalProperties: true
+                type: object
+        "400":
+          description: Invalid process ID
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+      summary: Get open ports for a process
+      tags:
+        - network
+  /process:
+    get:
+      description: Get a list of all running and completed processes
+      responses:
+        "200":
+          description: Process list
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: "#/components/schemas/ProcessResponse"
+                type: array
+      summary: List all processes
+      tags:
+        - process
+    post:
+      description: Execute a command and return process information
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProcessRequest"
+        description: Process execution request
+        required: true
+      responses:
+        "200":
+          description: Process information
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProcessResponse"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+      summary: Execute a command
+      tags:
+        - process
+  "/process/{identifier}":
+    delete:
+      description: Gracefully stop a running process
+      parameters:
+        - description: Process identifier (PID or name)
+          in: path
+          name: identifier
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Process stopped
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "404":
+          description: Process not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+      summary: Stop a process
+      tags:
+        - process
+    get:
+      description: Get information about a process by its PID or name
+      parameters:
+        - description: Process identifier (PID or name)
+          in: path
+          name: identifier
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Process information
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProcessResponse"
+        "404":
+          description: Process not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+      summary: Get process by identifier
+      tags:
+        - process
+  "/process/{identifier}/kill":
+    delete:
+      description: Forcefully kill a running process
+      parameters:
+        - description: Process identifier (PID or name)
+          in: path
+          name: identifier
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProcessKillRequest"
+        description: Kill options
+      responses:
+        "200":
+          description: Process killed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "404":
+          description: Process not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+      summary: Kill a process
+      tags:
+        - process
+  "/process/{identifier}/logs":
+    get:
+      description: Get the stdout and stderr output of a process
+      parameters:
+        - description: Process identifier (PID or name)
+          in: path
+          name: identifier
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Process logs
+          content:
+            application/json:
+              schema:
+                additionalProperties:
+                  type: string
+                type: object
+        "404":
+          description: Process not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+      summary: Get process logs
+      tags:
+        - process
+servers:
+  - url: //localhost:8080
+components:
+  schemas:
+    ErrorResponse:
+      properties:
+        error:
+          example: Error message
+          type: string
+      type: object
+    File:
+      properties:
+        group:
+          type: string
+        lastModified:
+          type: string
+        owner:
+          type: string
+        path:
+          type: string
+        permissions:
+          description: swagger:strfmt string
+          type: string
+        size:
+          type: integer
+      type: object
+    FileRequest:
+      properties:
+        content:
+          example: file contents here
+          type: string
+        isDirectory:
+          example: false
+          type: boolean
+        permissions:
+          example: "0644"
+          type: string
+      type: object
+    PortMonitorRequest:
+      properties:
+        callback:
+          description: URL to call when a new port is detected
+          example: http://localhost:3000/callback
+          type: string
+      type: object
+    ProcessKillRequest:
+      properties:
+        signal:
+          example: SIGTERM
+          type: string
+      type: object
+    ProcessRequest:
+      properties:
+        command:
+          example: ls -la
+          type: string
+        name:
+          example: my-process
+          type: string
+        streamLogs:
+          example: true
+          type: boolean
+        timeout:
+          example: 30
+          type: integer
+        waitForCompletion:
+          example: false
+          type: boolean
+        waitForPorts:
+          example:
+            - 3000
+            - 8080
+          items:
+            type: integer
+          type: array
+        workingDir:
+          example: /home/user
+          type: string
+      required:
+        - command
+      type: object
+    ProcessResponse:
+      properties:
+        command:
+          example: ls -la
+          type: string
+        completedAt:
+          example: Wed, 01 Jan 2023 12:01:00 GMT
+          type: string
+        exitCode:
+          example: 0
+          type: integer
+        name:
+          example: my-process
+          type: string
+        pid:
+          example: "1234"
+          type: string
+        startedAt:
+          example: Wed, 01 Jan 2023 12:00:00 GMT
+          type: string
+        status:
+          example: running
+          type: string
+        workingDir:
+          example: /home/user
+          type: string
+      type: object
+    SuccessResponse:
+      properties:
+        message:
+          example: File created successfully
+          type: string
+        path:
+          example: /path/to/file
+          type: string
+      type: object
+    Directory:
+      properties:
+        files:
+          items:
+            $ref: "#/components/schemas/File"
+          type: array
+        path:
+          type: string
+        subdirectories:
+          description: "@name Subdirectories"
+          items:
+            $ref: "#/components/schemas/Directory"
+          type: array
+      type: object
