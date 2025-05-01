@@ -115,5 +115,6 @@ jobs:
       - name: Build and push
         env:
           TAG: ${{ github.run_id }}
+          BL_ENV: ${{ vars.BL_ENV }}
         run: |
           sh build.sh ${{ matrix.sandbox }}
