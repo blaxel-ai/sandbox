@@ -7,8 +7,8 @@ import (
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
 
-	_ "github.com/beamlit/uvm-api/docs" // Import generated docs
-	"github.com/beamlit/uvm-api/src/handler"
+	_ "github.com/beamlit/sandbox-api/docs" // Import generated docs
+	"github.com/beamlit/sandbox-api/src/handler"
 )
 
 // SetupRouter configures all the routes for the Sandbox API
@@ -86,10 +86,10 @@ func SetupRouter() *gin.Engine {
 	// Process routes
 	r.GET("/process", processHandler.HandleListProcesses)
 	r.POST("/process", processHandler.HandleExecuteCommand)
-	r.GET("/process/:pid/logs", processHandler.HandleGetProcessLogs)
-	r.DELETE("/process/:pid", processHandler.HandleStopProcess)
-	r.POST("/process/:pid/kill", processHandler.HandleKillProcess)
-	r.GET("/process/name/:name", processHandler.HandleGetProcessByName)
+	r.GET("/process/:identifier/logs", processHandler.HandleGetProcessLogs)
+	r.DELETE("/process/:identifier", processHandler.HandleStopProcess)
+	r.DELETE("/process/:identifier/kill", processHandler.HandleKillProcess)
+	r.GET("/process/:identifier", processHandler.HandleGetProcess)
 
 	// Network routes
 	r.GET("/network/process/:pid/ports", networkHandler.HandleGetPorts)

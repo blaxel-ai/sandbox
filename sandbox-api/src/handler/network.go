@@ -1,33 +1,51 @@
-package api
+package handler
 
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/beamlit/uvm-api/src/handler/network"
+	"github.com/beamlit/sandbox-api/src/handler/network"
 )
+
+// NetworkHandler handles network operations
+type NetworkHandler struct {
+	*BaseHandler
+	net *network.Network
+}
+
+// NewNetworkHandler creates a new network handler
+func NewNetworkHandler() *NetworkHandler {
+	return &NetworkHandler{
+		BaseHandler: NewBaseHandler(),
+		net:         network.GetNetwork(),
+	}
+}
 
 // PortMonitorRequest is the request body for monitoring ports
 type PortMonitorRequest struct {
 	Callback string `json:"callback" example:"http://localhost:3000/callback"` // URL to call when a new port is detected
 } // @name PortMonitorRequest
 
-// PortsResponse is the response for the GetPorts endpoint
-type PortsResponse struct {
-	PID   int                `json:"pid" example:"1234"`
-	Ports []network.PortInfo `json:"ports"`
-} // @name PortsResponse
+// GetPortsForPID gets the ports for a process
+func (h *NetworkHandler) GetPortsForPID(pid int) ([]*network.PortInfo, error) {
+	return h.net.GetPortsForPID(pid)
+}
 
-// MonitorResponse is the response for the port monitoring endpoints
-type MonitorResponse struct {
-	PID     int    `json:"pid" example:"1234"`
-	Message string `json:"message" example:"Port monitoring started"`
-} // @name MonitorResponse
+// RegisterPortOpenCallback registers a callback for when a port is opened
+func (h *NetworkHandler) RegisterPortOpenCallback(pid int, callback func(int, *network.PortInfo)) {
+	h.net.RegisterPortOpenCallback(pid, callback)
+}
+
+// UnregisterPortOpenCallback unregisters a callback for when a port is opened
+func (h *NetworkHandler) UnregisterPortOpenCallback(pid int) {
+	h.net.UnregisterPortOpenCallback(pid)
+}
 
 // HandleGetPorts handles GET requests to /network/process/{pid}/ports
 // @Summary Get open ports for a process
@@ -40,23 +58,26 @@ type MonitorResponse struct {
 // @Failure 400 {object} ErrorResponse "Invalid process ID"
 // @Failure 500 {object} ErrorResponse "Internal server error"
 // @Router /network/process/{pid}/ports [get]
-func HandleGetPorts(c *gin.Context) {
-	pidStr := c.Param("pid")
+func (h *NetworkHandler) HandleGetPorts(c *gin.Context) {
+	pidStr, err := h.GetPathParam(c, "pid")
+	if err != nil {
+		h.SendError(c, http.StatusBadRequest, err)
+		return
+	}
+
 	pid, err := strconv.Atoi(pidStr)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid PID"})
+		h.SendError(c, http.StatusBadRequest, fmt.Errorf("invalid PID"))
 		return
 	}
 
-	net := network.GetNetwork()
-	ports, err := net.GetPortsForPID(pid)
-
+	ports, err := h.GetPortsForPID(pid)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		h.SendError(c, http.StatusInternalServerError, err)
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
+	h.SendJSON(c, http.StatusOK, gin.H{
 		"pid":   pid,
 		"ports": ports,
 	})
@@ -74,25 +95,27 @@ func HandleGetPorts(c *gin.Context) {
 // @Failure 400 {object} ErrorResponse "Invalid request"
 // @Failure 500 {object} ErrorResponse "Internal server error"
 // @Router /network/process/{pid}/monitor [post]
-func HandleMonitorPorts(c *gin.Context) {
-	pidStr := c.Param("pid")
+func (h *NetworkHandler) HandleMonitorPorts(c *gin.Context) {
+	pidStr, err := h.GetPathParam(c, "pid")
+	if err != nil {
+		h.SendError(c, http.StatusBadRequest, err)
+		return
+	}
+
 	pid, err := strconv.Atoi(pidStr)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid PID"})
+		h.SendError(c, http.StatusBadRequest, fmt.Errorf("invalid PID"))
 		return
 	}
 
 	var req PortMonitorRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	if err := h.BindJSON(c, &req); err != nil {
+		h.SendError(c, http.StatusBadRequest, err)
 		return
 	}
 
 	// Register a callback to be called when a new port is detected
-	// For this API, we just store that monitoring was requested, we don't actually
-	// make HTTP callbacks to the client (that would be a more complex implementation)
-	net := network.GetNetwork()
-	net.RegisterPortOpenCallback(pid, func(pid int, port *network.PortInfo) {
+	h.RegisterPortOpenCallback(pid, func(pid int, port *network.PortInfo) {
 		type PortCallbackRequest struct {
 			PID  int `json:"pid"`
 			Port int `json:"port"`
@@ -111,10 +134,7 @@ func HandleMonitorPorts(c *gin.Context) {
 		log.Printf("Port callback request sent to %s", req.Callback)
 	})
 
-	c.JSON(http.StatusOK, gin.H{
-		"pid":     pid,
-		"message": "Port monitoring started",
-	})
+	h.SendSuccess(c, "Port monitoring started")
 }
 
 // HandleStopMonitoringPorts handles DELETE requests to /network/process/{pid}/monitor
@@ -128,19 +148,20 @@ func HandleMonitorPorts(c *gin.Context) {
 // @Failure 400 {object} ErrorResponse "Invalid process ID"
 // @Failure 500 {object} ErrorResponse "Internal server error"
 // @Router /network/process/{pid}/monitor [delete]
-func HandleStopMonitoringPorts(c *gin.Context) {
-	pidStr := c.Param("pid")
-	pid, err := strconv.Atoi(pidStr)
+func (h *NetworkHandler) HandleStopMonitoringPorts(c *gin.Context) {
+	pidStr, err := h.GetPathParam(c, "pid")
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid PID"})
+		h.SendError(c, http.StatusBadRequest, err)
 		return
 	}
 
-	net := network.GetNetwork()
-	net.UnregisterPortOpenCallback(pid)
+	pid, err := strconv.Atoi(pidStr)
+	if err != nil {
+		h.SendError(c, http.StatusBadRequest, fmt.Errorf("invalid PID"))
+		return
+	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"pid":     pid,
-		"message": "Port monitoring stopped",
-	})
+	h.UnregisterPortOpenCallback(pid)
+
+	h.SendSuccess(c, "Port monitoring stopped")
 }

@@ -41,9 +41,9 @@ function jsonSchemaToZod(schema: any): Record<string, z.ZodTypeAny> {
 }
 
 const server = new McpServer({
-  name: "mcp-blaxel-uvm",
+  name: "mcp-blaxel-sandbox",
   version: "1.0.0",
-  description: "MCP server for Blaxel UVM",
+  description: "MCP server for Blaxel Sandbox",
 });
 
 // Get the Blaxel MCP URL from environment variables or use a default

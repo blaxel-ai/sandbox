@@ -1,5 +1,5 @@
 if [ -z "$1" ]; then
-	echo "Usage: $0 <uvm>"
+	echo "Usage: $0 <sandbox>"
 	exit 1
 fi
 if [ -z "$BL_ENV" ]; then
@@ -41,5 +41,5 @@ kraft pkg \
 
 curl -X PUT -H "Content-Type: application/json" \
 	-d @tmp/$1.json.tmp \
-	$BL_API_URL/admin/store/uvm/$1 \
+	$BL_API_URL/admin/store/sandbox/$1 \
 	-u $BL_ADMIN_USERNAME:$BL_ADMIN_PASSWORD

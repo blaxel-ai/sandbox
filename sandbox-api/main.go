@@ -8,9 +8,9 @@ import (
 	"os"
 	"os/exec"
 
-	"github.com/beamlit/uvm-api/docs" // swagger generated docs
-	"github.com/beamlit/uvm-api/src/api"
-	"github.com/beamlit/uvm-api/src/mcp"
+	"github.com/beamlit/sandbox-api/docs" // swagger generated docs
+	"github.com/beamlit/sandbox-api/src/api"
+	"github.com/beamlit/sandbox-api/src/mcp"
 	"github.com/joho/godotenv"
 )
 
