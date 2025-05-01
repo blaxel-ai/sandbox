@@ -41,5 +41,5 @@ kraft pkg \
 
 curl -X PUT -H "Content-Type: application/json" \
 	-d @tmp/$1.json.tmp \
-	$BL_API_URL/admin/store/sandbox/$1 \
+	$BL_API_URL/admin/store/sandboxes/$1 \
 	-u $BL_ADMIN_USERNAME:$BL_ADMIN_PASSWORD
