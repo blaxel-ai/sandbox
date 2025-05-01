@@ -1,0 +1,16 @@
+meta {
+  name: List directory
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{BASE_URL}}/{{WORKSPACE}}/sandboxes/base-6/filesystem/Users
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+  X-Blaxel-Workspace: {{WORKSPACE}}
+}
