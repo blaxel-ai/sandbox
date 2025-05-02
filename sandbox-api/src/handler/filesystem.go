@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -97,16 +98,7 @@ func (h *FileSystemHandler) HandleGetFile(c *gin.Context) {
 		h.SendError(c, http.StatusBadRequest, err)
 		return
 	}
-
-	// Default to root if path is empty
-	if path == "" {
-		path = "/"
-	}
-
-	// Ensure path starts with a slash
-	if path != "/" && len(path) > 0 && path[0] != '/' {
-		path = "/" + path
-	}
+	path = h.formatPath(path)
 
 	// Check if path is a directory
 	isDir, err := h.DirectoryExists(path)
@@ -206,16 +198,7 @@ func (h *FileSystemHandler) HandleCreateOrUpdateFile(c *gin.Context) {
 		h.SendError(c, http.StatusBadRequest, err)
 		return
 	}
-
-	// Default to root if path is empty
-	if path == "" {
-		path = "/"
-	}
-
-	// Ensure path starts with a slash
-	if path != "/" && len(path) > 0 && path[0] != '/' {
-		path = "/" + path
-	}
+	path = h.formatPath(path)
 
 	var request struct {
 		Content     string `json:"content"`
@@ -274,6 +257,8 @@ func (h *FileSystemHandler) HandleDeleteFile(c *gin.Context) {
 		h.SendError(c, http.StatusBadRequest, err)
 		return
 	}
+	path = h.formatPath(path)
+
 	recursive := c.Query("recursive")
 
 	// Default to root if path is empty
@@ -340,16 +325,7 @@ func (h *FileSystemHandler) HandleGetTree(c *gin.Context) {
 		return
 	}
 
-	// Default to root if path is not provided or empty
-	if rootPathStr == "" {
-		rootPathStr = "/"
-	}
-
-	// Ensure rootPath starts with a slash
-	if rootPathStr != "/" && len(rootPathStr) > 0 && rootPathStr[0] != '/' {
-		rootPathStr = "/" + rootPathStr
-	}
-
+	rootPathStr = h.formatPath(rootPathStr)
 	// Check if path exists and is a directory
 	isDir, err := h.DirectoryExists(rootPathStr)
 	if err != nil {
@@ -386,16 +362,7 @@ func (h *FileSystemHandler) HandleCreateOrUpdateTree(c *gin.Context) {
 		h.SendError(c, http.StatusInternalServerError, fmt.Errorf("invalid path parameter"))
 		return
 	}
-
-	// Default to root if path is empty
-	if rootPathStr == "" {
-		rootPathStr = "/"
-	}
-
-	// Ensure rootPath starts with a slash
-	if rootPathStr != "/" && len(rootPathStr) > 0 && rootPathStr[0] != '/' {
-		rootPathStr = "/" + rootPathStr
-	}
+	rootPathStr = h.formatPath(rootPathStr)
 
 	var request struct {
 		Files map[string]string `json:"files"`
@@ -459,4 +426,19 @@ func (h *FileSystemHandler) HandleCreateOrUpdateTree(c *gin.Context) {
 		"subdirectories": dir.Subdirectories,
 		"message":        "Tree created/updated successfully",
 	})
+}
+
+func (h *FileSystemHandler) formatPath(path string) string {
+	// Default to root if path is empty
+	if path == "" {
+		path = "/"
+	}
+	// Ensure path starts with a slash
+	if path != "/" && len(path) > 0 && path[0] != '/' {
+		path = "/" + path
+	}
+	if strings.HasPrefix(path, "//") {
+		path = path[1:]
+	}
+	return path
 }
