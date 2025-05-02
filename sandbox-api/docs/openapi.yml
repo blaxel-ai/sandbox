@@ -57,7 +57,9 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Directory"
+                oneOf:
+                    - $ref: "#/components/schemas/Directory"
+                    - $ref: "#/components/schemas/FileWithContent"
         "404":
           description: File or directory not found
           content:
@@ -428,6 +430,24 @@ components:
         permissions:
           example: "0644"
           type: string
+      type: object
+    FileWithContent:
+      properties:
+        content:
+          type: string
+        group:
+          type: string
+        lastModified:
+          type: string
+        owner:
+          type: string
+        path:
+          type: string
+        permissions:
+          description: swagger:strfmt string
+          type: string
+        size:
+          type: integer
       type: object
     PortMonitorRequest:
       properties:

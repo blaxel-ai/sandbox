@@ -601,6 +601,33 @@ const docTemplate = `{
                 }
             }
         },
+        "FileWithContent": {
+            "type": "object",
+            "properties": {
+                "content": {
+                    "type": "string"
+                },
+                "group": {
+                    "type": "string"
+                },
+                "lastModified": {
+                    "type": "string"
+                },
+                "owner": {
+                    "type": "string"
+                },
+                "path": {
+                    "type": "string"
+                },
+                "permissions": {
+                    "description": "swagger:strfmt string",
+                    "type": "string"
+                },
+                "size": {
+                    "type": "integer"
+                }
+            }
+        },
         "PortMonitorRequest": {
             "type": "object",
             "properties": {
