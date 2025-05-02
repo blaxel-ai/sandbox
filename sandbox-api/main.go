@@ -39,11 +39,13 @@ func main() {
 	if os.Getenv("BL_ENV") == "prod" {
 		docs.SwaggerInfo.Host = "run.blaxel.ai"
 		docs.SwaggerInfo.Schemes = []string{"https"}
-
-	}
-	if os.Getenv("BL_ENV") == "dev" {
+	} else if os.Getenv("BL_ENV") == "dev" {
 		docs.SwaggerInfo.Host = "run.blaxel.dev"
 		docs.SwaggerInfo.Schemes = []string{"https"}
+	} else {
+		docs.SwaggerInfo.Host = "localhost:8080"
+		docs.SwaggerInfo.BasePath = "/"
+		docs.SwaggerInfo.Schemes = []string{"http"}
 	}
 
 	// Define command-line flags
