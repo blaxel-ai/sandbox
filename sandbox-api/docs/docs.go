@@ -522,6 +522,65 @@ const docTemplate = `{
                         "name": "identifier",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "Stream logs",
+                        "name": "stream",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Process logs",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Process not found",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/process/{identifier}/logs/stream": {
+            "get": {
+                "description": "Get the stdout and stderr output of a process in realtime",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "process"
+                ],
+                "summary": "Get process logs in realtime",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Process identifier (PID or name)",
+                        "name": "identifier",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "Stream logs",
+                        "name": "stream",
+                        "in": "query"
                     }
                 ],
                 "responses": {

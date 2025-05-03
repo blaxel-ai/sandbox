@@ -1,0 +1,25 @@
+meta {
+  name: Exec
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{URL}}/process
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+  X-Blaxel-Workspace: {{WORKSPACE}}
+}
+
+body:json {
+  {
+    "command": "sh long-running-script.sh",
+    "name": "test",
+    "workingDir": "~/tmp",
+    "waitForCompletion": true
+  }
+}

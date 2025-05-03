@@ -6,11 +6,11 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
-	"strings"
 
 	"github.com/gin-gonic/gin"
 
 	"github.com/beamlit/sandbox-api/src/handler/filesystem"
+	"github.com/beamlit/sandbox-api/src/lib"
 )
 
 // FileSystemHandler handles filesystem operations
@@ -98,7 +98,11 @@ func (h *FileSystemHandler) HandleGetFile(c *gin.Context) {
 		h.SendError(c, http.StatusBadRequest, err)
 		return
 	}
-	path = h.formatPath(path)
+	path, err = lib.FormatPath(path)
+	if err != nil {
+		h.SendError(c, http.StatusBadRequest, err)
+		return
+	}
 
 	// Check if path is a directory
 	isDir, err := h.DirectoryExists(path)
@@ -198,7 +202,11 @@ func (h *FileSystemHandler) HandleCreateOrUpdateFile(c *gin.Context) {
 		h.SendError(c, http.StatusBadRequest, err)
 		return
 	}
-	path = h.formatPath(path)
+	path, err = lib.FormatPath(path)
+	if err != nil {
+		h.SendError(c, http.StatusBadRequest, err)
+		return
+	}
 
 	var request struct {
 		Content     string `json:"content"`
@@ -257,7 +265,11 @@ func (h *FileSystemHandler) HandleDeleteFile(c *gin.Context) {
 		h.SendError(c, http.StatusBadRequest, err)
 		return
 	}
-	path = h.formatPath(path)
+	path, err = lib.FormatPath(path)
+	if err != nil {
+		h.SendError(c, http.StatusBadRequest, err)
+		return
+	}
 
 	recursive := c.Query("recursive")
 
@@ -325,7 +337,12 @@ func (h *FileSystemHandler) HandleGetTree(c *gin.Context) {
 		return
 	}
 
-	rootPathStr = h.formatPath(rootPathStr)
+	rootPathStr, err := lib.FormatPath(rootPathStr)
+	if err != nil {
+		h.SendError(c, http.StatusBadRequest, err)
+		return
+	}
+
 	// Check if path exists and is a directory
 	isDir, err := h.DirectoryExists(rootPathStr)
 	if err != nil {
@@ -362,7 +379,11 @@ func (h *FileSystemHandler) HandleCreateOrUpdateTree(c *gin.Context) {
 		h.SendError(c, http.StatusInternalServerError, fmt.Errorf("invalid path parameter"))
 		return
 	}
-	rootPathStr = h.formatPath(rootPathStr)
+	rootPathStr, err := lib.FormatPath(rootPathStr)
+	if err != nil {
+		h.SendError(c, http.StatusBadRequest, err)
+		return
+	}
 
 	var request struct {
 		Files map[string]string `json:"files"`
@@ -426,19 +447,4 @@ func (h *FileSystemHandler) HandleCreateOrUpdateTree(c *gin.Context) {
 		"subdirectories": dir.Subdirectories,
 		"message":        "Tree created/updated successfully",
 	})
-}
-
-func (h *FileSystemHandler) formatPath(path string) string {
-	// Default to root if path is empty
-	if path == "" {
-		path = "/"
-	}
-	// Ensure path starts with a slash
-	if path != "/" && len(path) > 0 && path[0] != '/' {
-		path = "/" + path
-	}
-	if strings.HasPrefix(path, "//") {
-		path = path[1:]
-	}
-	return path
 }

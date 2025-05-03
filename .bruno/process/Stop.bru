@@ -1,11 +1,11 @@
 meta {
-  name: List directory
+  name: Stop
   type: http
-  seq: 1
+  seq: 5
 }
 
-get {
-  url: {{URL}}/filesystem/~/tmp
+delete {
+  url: {{URL}}/process/test
   body: none
   auth: none
 }

@@ -1,11 +1,11 @@
 meta {
-  name: List directory
+  name: Read
   type: http
-  seq: 1
+  seq: 4
 }
 
 get {
-  url: {{URL}}/filesystem/~/tmp
+  url: {{URL}}/filesystem/~/tmp/long-running-script.sh
   body: none
   auth: none
 }
@@ -13,4 +13,10 @@ get {
 headers {
   Content-Type: application/json
   X-Blaxel-Workspace: {{WORKSPACE}}
+}
+
+body:json {
+  {
+    "content": "Hello world\n"
+  }
 }
