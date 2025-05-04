@@ -51,7 +51,18 @@ func (pm *ProcessManager) ExecuteProcess(command string, workingDir string, name
 	// Create a callback function
 	callback := func(p *ProcessInfo) {
 		if waitForCompletion {
-			completionCh <- p.PID
+			mu.Lock()
+			closed := completionChClosed
+			mu.Unlock()
+			if !closed {
+				// Use a recover block in case of a race condition
+				defer func() {
+					if r := recover(); r != nil {
+						// Optionally log the panic
+					}
+				}()
+				completionCh <- p.PID
+			}
 		}
 	}
 
