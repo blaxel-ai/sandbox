@@ -1,0 +1,16 @@
+meta {
+  name: Kill
+  type: http
+  seq: 6
+}
+
+delete {
+  url: {{URL}}/process/test/kill
+  body: none
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+  X-Blaxel-Workspace: {{WORKSPACE}}
+}

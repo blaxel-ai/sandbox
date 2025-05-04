@@ -1,0 +1,16 @@
+meta {
+  name: Logs
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{URL}}/process/test/logs
+  body: none
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+  X-Blaxel-Workspace: {{WORKSPACE}}
+}

@@ -1,0 +1,16 @@
+meta {
+  name: Stop
+  type: http
+  seq: 5
+}
+
+delete {
+  url: {{URL}}/process/test
+  body: none
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+  X-Blaxel-Workspace: {{WORKSPACE}}
+}

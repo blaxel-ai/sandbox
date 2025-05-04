@@ -57,7 +57,9 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Directory"
+                oneOf:
+                    - $ref: "#/components/schemas/Directory"
+                    - $ref: "#/components/schemas/FileWithContent"
         "404":
           description: File or directory not found
           content:
@@ -367,6 +369,11 @@ paths:
           required: true
           schema:
             type: string
+        - description: Stream logs
+          in: query
+          name: stream
+          schema:
+            type: boolean
       responses:
         "200":
           description: Process logs
@@ -389,6 +396,45 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
       summary: Get process logs
+      tags:
+        - process
+  "/process/{identifier}/logs/stream":
+    get:
+      description: Get the stdout and stderr output of a process in realtime
+      parameters:
+        - description: Process identifier (PID or name)
+          in: path
+          name: identifier
+          required: true
+          schema:
+            type: string
+        - description: Stream logs
+          in: query
+          name: stream
+          schema:
+            type: boolean
+      responses:
+        "200":
+          description: Process logs
+          content:
+            application/json:
+              schema:
+                additionalProperties:
+                  type: string
+                type: object
+        "404":
+          description: Process not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+      summary: Get process logs in realtime
       tags:
         - process
 servers:
@@ -428,6 +474,24 @@ components:
         permissions:
           example: "0644"
           type: string
+      type: object
+    FileWithContent:
+      properties:
+        content:
+          type: string
+        group:
+          type: string
+        lastModified:
+          type: string
+        owner:
+          type: string
+        path:
+          type: string
+        permissions:
+          description: swagger:strfmt string
+          type: string
+        size:
+          type: integer
       type: object
     PortMonitorRequest:
       properties:

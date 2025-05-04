@@ -30,7 +30,7 @@ type File struct {
 // FileWithContent represents a file with its content
 type FileWithContent struct {
 	Path    string `json:"path"`
-	Content []byte `json:"content"`
+	Content []byte `json:"content" swaggertype:"string"`
 	// swagger:strfmt string
 	Permissions  os.FileMode `json:"permissions" swaggertype:"string"`
 	Size         int64       `json:"size"`

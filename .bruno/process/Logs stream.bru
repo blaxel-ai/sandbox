@@ -1,0 +1,16 @@
+meta {
+  name: Logs stream
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{URL}}/process/test/logs/stream
+  body: none
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+  X-Blaxel-Workspace: {{WORKSPACE}}
+}

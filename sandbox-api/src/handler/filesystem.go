@@ -10,6 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/beamlit/sandbox-api/src/handler/filesystem"
+	"github.com/beamlit/sandbox-api/src/lib"
 )
 
 // FileSystemHandler handles filesystem operations
@@ -86,6 +87,7 @@ func (h *FileSystemHandler) DeleteFile(path string) error {
 // @Accept json
 // @Produce json
 // @Param path path string true "File or directory path"
+// @Success 200 {object} filesystem.FileWithContent "File content"
 // @Success 200 {object} filesystem.Directory "Directory listing"
 // @Failure 404 {object} ErrorResponse "File or directory not found"
 // @Failure 500 {object} ErrorResponse "Internal server error"
@@ -96,15 +98,10 @@ func (h *FileSystemHandler) HandleGetFile(c *gin.Context) {
 		h.SendError(c, http.StatusBadRequest, err)
 		return
 	}
-
-	// Default to root if path is empty
-	if path == "" {
-		path = "/"
-	}
-
-	// Ensure path starts with a slash
-	if path != "/" && len(path) > 0 && path[0] != '/' {
-		path = "/" + path
+	path, err = lib.FormatPath(path)
+	if err != nil {
+		h.SendError(c, http.StatusBadRequest, err)
+		return
 	}
 
 	// Check if path is a directory
@@ -205,15 +202,10 @@ func (h *FileSystemHandler) HandleCreateOrUpdateFile(c *gin.Context) {
 		h.SendError(c, http.StatusBadRequest, err)
 		return
 	}
-
-	// Default to root if path is empty
-	if path == "" {
-		path = "/"
-	}
-
-	// Ensure path starts with a slash
-	if path != "/" && len(path) > 0 && path[0] != '/' {
-		path = "/" + path
+	path, err = lib.FormatPath(path)
+	if err != nil {
+		h.SendError(c, http.StatusBadRequest, err)
+		return
 	}
 
 	var request struct {
@@ -273,6 +265,12 @@ func (h *FileSystemHandler) HandleDeleteFile(c *gin.Context) {
 		h.SendError(c, http.StatusBadRequest, err)
 		return
 	}
+	path, err = lib.FormatPath(path)
+	if err != nil {
+		h.SendError(c, http.StatusBadRequest, err)
+		return
+	}
+
 	recursive := c.Query("recursive")
 
 	// Default to root if path is empty
@@ -339,14 +337,10 @@ func (h *FileSystemHandler) HandleGetTree(c *gin.Context) {
 		return
 	}
 
-	// Default to root if path is not provided or empty
-	if rootPathStr == "" {
-		rootPathStr = "/"
-	}
-
-	// Ensure rootPath starts with a slash
-	if rootPathStr != "/" && len(rootPathStr) > 0 && rootPathStr[0] != '/' {
-		rootPathStr = "/" + rootPathStr
+	rootPathStr, err := lib.FormatPath(rootPathStr)
+	if err != nil {
+		h.SendError(c, http.StatusBadRequest, err)
+		return
 	}
 
 	// Check if path exists and is a directory
@@ -385,15 +379,10 @@ func (h *FileSystemHandler) HandleCreateOrUpdateTree(c *gin.Context) {
 		h.SendError(c, http.StatusInternalServerError, fmt.Errorf("invalid path parameter"))
 		return
 	}
-
-	// Default to root if path is empty
-	if rootPathStr == "" {
-		rootPathStr = "/"
-	}
-
-	// Ensure rootPath starts with a slash
-	if rootPathStr != "/" && len(rootPathStr) > 0 && rootPathStr[0] != '/' {
-		rootPathStr = "/" + rootPathStr
+	rootPathStr, err := lib.FormatPath(rootPathStr)
+	if err != nil {
+		h.SendError(c, http.StatusBadRequest, err)
+		return
 	}
 
 	var request struct {

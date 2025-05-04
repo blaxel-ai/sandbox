@@ -18,3 +18,4 @@ reference:
 	npx swagger2openapi --yaml --outfile ./sandbox-api/docs/openapi.yml ./sandbox-api/docs/swagger.yml
 	rm -rf sandbox-api/docs/swagger.yml
 	rm -rf sandbox-api/docs/swagger.json
+	cd sandbox-api/docs && sh fixopenapi.sh

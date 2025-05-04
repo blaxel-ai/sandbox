@@ -10,6 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/beamlit/sandbox-api/src/handler/process"
+	"github.com/beamlit/sandbox-api/src/lib"
 )
 
 var processHandlerInstance *ProcessHandler
@@ -93,13 +94,17 @@ func (h *ProcessHandler) ListProcesses() []ProcessResponse {
 	processes := h.processManager.ListProcesses()
 	result := make([]ProcessResponse, 0, len(processes))
 	for _, p := range processes {
+		completedAt := ""
+		if p.CompletedAt != nil {
+			completedAt = p.CompletedAt.Format("Mon, 02 Jan 2006 15:04:05 GMT")
+		}
 		result = append(result, ProcessResponse{
 			PID:         p.PID,
 			Name:        p.Name,
 			Command:     p.Command,
 			Status:      p.Status,
 			StartedAt:   p.StartedAt.Format("Mon, 02 Jan 2006 15:04:05 GMT"),
-			CompletedAt: p.CompletedAt.Format("Mon, 02 Jan 2006 15:04:05 GMT"),
+			CompletedAt: completedAt,
 			ExitCode:    p.ExitCode,
 			WorkingDir:  p.WorkingDir,
 		})
@@ -114,13 +119,17 @@ func (h *ProcessHandler) GetProcess(identifier string) (ProcessResponse, error) 
 		return ProcessResponse{}, fmt.Errorf("process not found")
 	}
 
+	completedAt := ""
+	if processInfo.CompletedAt != nil {
+		completedAt = processInfo.CompletedAt.Format("Mon, 02 Jan 2006 15:04:05 GMT")
+	}
 	return ProcessResponse{
 		PID:         processInfo.PID,
 		Name:        processInfo.Name,
 		Command:     processInfo.Command,
 		Status:      processInfo.Status,
 		StartedAt:   processInfo.StartedAt.Format("Mon, 02 Jan 2006 15:04:05 GMT"),
-		CompletedAt: processInfo.CompletedAt.Format("Mon, 02 Jan 2006 15:04:05 GMT"),
+		CompletedAt: completedAt,
 		ExitCode:    processInfo.ExitCode,
 		WorkingDir:  processInfo.WorkingDir,
 	}, nil
@@ -182,6 +191,15 @@ func (h *ProcessHandler) HandleExecuteCommand(c *gin.Context) {
 		return
 	}
 
+	if req.WorkingDir != "" {
+		formattedWorkingDir, err := lib.FormatPath(req.WorkingDir)
+		if err != nil {
+			h.SendError(c, http.StatusBadRequest, err)
+			return
+		}
+		req.WorkingDir = formattedWorkingDir
+	}
+
 	// If a name is provided, check if a process with that name already exists
 	if req.Name != "" {
 		alreadyExists, err := GetProcessHandler().GetProcess(req.Name)
@@ -208,12 +226,12 @@ func (h *ProcessHandler) HandleExecuteCommand(c *gin.Context) {
 // @Accept json
 // @Produce json
 // @Param identifier path string true "Process identifier (PID or name)"
+// @Param stream query bool false "Stream logs"
 // @Success 200 {object} map[string]string "Process logs"
 // @Failure 404 {object} ErrorResponse "Process not found"
 // @Failure 500 {object} ErrorResponse "Internal server error"
 // @Router /process/{identifier}/logs [get]
 func (h *ProcessHandler) HandleGetProcessLogs(c *gin.Context) {
-	fmt.Println(c.Params)
 	identifier, err := h.GetPathParam(c, "identifier")
 	if err != nil {
 		h.SendError(c, http.StatusBadRequest, err)
@@ -230,6 +248,31 @@ func (h *ProcessHandler) HandleGetProcessLogs(c *gin.Context) {
 		"stdout": stdout,
 		"stderr": stderr,
 	})
+}
+
+// HandleGetProcessLogsStream handles GET requests to /process/{identifier}/logs/stream
+// @Summary Get process logs in realtime
+// @Description Get the stdout and stderr output of a process in realtime
+// @Tags process
+// @Accept json
+// @Produce json
+// @Param identifier path string true "Process identifier (PID or name)"
+// @Param stream query bool false "Stream logs"
+// @Success 200 {object} map[string]string "Process logs"
+// @Failure 404 {object} ErrorResponse "Process not found"
+// @Failure 500 {object} ErrorResponse "Internal server error"
+// @Router /process/{identifier}/logs/stream [get]
+func (h *ProcessHandler) HandleGetProcessLogsStream(c *gin.Context) {
+	identifier, err := h.GetPathParam(c, "identifier")
+	if err != nil {
+		h.SendError(c, http.StatusBadRequest, err)
+		return
+	}
+	err = h.StreamProcessOutput(identifier, c.Writer)
+	if err != nil {
+		h.SendError(c, http.StatusInternalServerError, err)
+		return
+	}
 }
 
 // HandleStopProcess handles DELETE requests to /process/{identifier}
