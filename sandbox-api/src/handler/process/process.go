@@ -386,8 +386,13 @@ func (pm *ProcessManager) StopProcess(identifier string) error {
 
 	// Add termination message to output buffers
 	process.stdout.Write(terminationMsg)
-
-	return process.Cmd.Process.Signal(syscall.SIGTERM)
+	err := process.Cmd.Process.Signal(syscall.SIGTERM)
+	if err != nil {
+		if err.Error() != "os: process already finished" {
+			return fmt.Errorf("failed to send SIGTERM to process with Identifier %s: %w", identifier, err)
+		}
+	}
+	return nil
 }
 
 // KillProcess forcefully kills a process
@@ -418,7 +423,9 @@ func (pm *ProcessManager) KillProcess(identifier string) error {
 
 	err := process.Cmd.Process.Kill()
 	if err != nil {
-		return fmt.Errorf("failed to kill process with Identifier %s: %w", identifier, err)
+		if err.Error() != "os: process already finished" {
+			return fmt.Errorf("failed to kill process with Identifier %s: %w", identifier, err)
+		}
 	}
 
 	// Remove the process from the SQLite database

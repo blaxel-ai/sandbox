@@ -1,0 +1,16 @@
+meta {
+  name: List directory
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{URL}}/filesystem/~/tmp
+  body: none
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+  X-Blaxel-Workspace: {{WORKSPACE}}
+}

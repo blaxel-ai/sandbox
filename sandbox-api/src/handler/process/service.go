@@ -39,8 +39,14 @@ func (pm *ProcessManager) ExecuteProcess(command string, workingDir string, name
 	}()
 
 	// Create a context with the specified timeout
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeout)*time.Second)
-	defer cancel()
+	var ctx context.Context
+	var cancel context.CancelFunc
+	if timeout > 0 {
+		ctx, cancel = context.WithTimeout(context.Background(), time.Duration(timeout)*time.Second)
+		defer cancel()
+	} else {
+		ctx = context.Background()
+	}
 
 	// Create a callback function
 	callback := func(p *ProcessInfo) {

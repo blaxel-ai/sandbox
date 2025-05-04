@@ -18,3 +18,5 @@ FROM --platform=linux/amd64 node:22-alpine
 COPY --from=build /blaxel/sandbox-api/sandbox-api-binary /usr/local/bin/sandbox-api
 
 EXPOSE 8080
+
+ENTRYPOINT ["/usr/local/bin/sandbox-api"]

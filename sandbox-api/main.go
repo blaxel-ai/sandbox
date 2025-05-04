@@ -28,7 +28,25 @@ func main() {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	docs.SwaggerInfo.Host = fmt.Sprintf("%s:%s", os.Getenv("HOST"), os.Getenv("PORT"))
+
+	workspace := os.Getenv("BL_WORKSPACE")
+	name := os.Getenv("BL_NAME")
+
+	if workspace != "" && name != "" {
+		docs.SwaggerInfo.BasePath = fmt.Sprintf("/%s/sandboxes/%s", workspace, name)
+	}
+
+	if os.Getenv("BL_ENV") == "prod" {
+		docs.SwaggerInfo.Host = "run.blaxel.ai"
+		docs.SwaggerInfo.Schemes = []string{"https"}
+	} else if os.Getenv("BL_ENV") == "dev" {
+		docs.SwaggerInfo.Host = "run.blaxel.dev"
+		docs.SwaggerInfo.Schemes = []string{"https"}
+	} else {
+		docs.SwaggerInfo.Host = "localhost:8080"
+		docs.SwaggerInfo.BasePath = "/"
+		docs.SwaggerInfo.Schemes = []string{"http"}
+	}
 
 	// Define command-line flags
 	port := flag.Int("port", 8080, "Port to listen on")

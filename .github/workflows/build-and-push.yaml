@@ -114,7 +114,9 @@ jobs:
           echo "$PWD/bin" >> $GITHUB_PATH
       - name: Build and push
         env:
-          TAG: ${{ github.run_id }}
+          # Use latest tag because of infrastructure limitation
+          # When solved use ${{ github.run_id }}
+          TAG: latest
           BL_ENV: ${{ vars.BL_ENV }}
         run: |
           sh build.sh ${{ matrix.sandbox }}
