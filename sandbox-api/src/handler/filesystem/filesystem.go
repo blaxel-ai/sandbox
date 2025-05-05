@@ -1,7 +1,9 @@
 package filesystem
 
 import (
+	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -18,26 +20,158 @@ type Filesystem struct {
 
 // File represents a file in the filesystem
 type File struct {
-	Path string `json:"path"`
-	// swagger:strfmt string
-	Permissions  os.FileMode `json:"permissions" swaggertype:"string"`
+	Path         string      `json:"-"`
+	Permissions  os.FileMode `json:"-"`
 	Size         int64       `json:"size"`
 	LastModified time.Time   `json:"lastModified"`
 	Owner        string      `json:"owner"`
 	Group        string      `json:"group"`
 } // @name File
 
+// FileDTO is a data transfer object for File with string permissions
+type FileDTO struct {
+	Path         string    `json:"path"`
+	Permissions  string    `json:"permissions"`
+	Size         int64     `json:"size"`
+	LastModified time.Time `json:"lastModified"`
+	Owner        string    `json:"owner"`
+	Group        string    `json:"group"`
+}
+
+// MarshalJSON implements json.Marshaler for custom JSON marshaling
+func (f File) MarshalJSON() ([]byte, error) {
+	return json.Marshal(FileDTO{
+		Path:         f.Path,
+		Permissions:  fmt.Sprintf("%o", f.Permissions),
+		Size:         f.Size,
+		LastModified: f.LastModified,
+		Owner:        f.Owner,
+		Group:        f.Group,
+	})
+}
+
+// UnmarshalJSON implements json.Unmarshaler for custom JSON unmarshaling
+func (f *File) UnmarshalJSON(data []byte) error {
+	var dto FileDTO
+	if err := json.Unmarshal(data, &dto); err != nil {
+		return err
+	}
+
+	f.Path = dto.Path
+	f.Size = dto.Size
+	f.LastModified = dto.LastModified
+	f.Owner = dto.Owner
+	f.Group = dto.Group
+
+	// Parse permissions if present
+	if dto.Permissions != "" {
+		// Handle formats like '-rw-r--r--' by extracting just the numeric part
+		permStr := dto.Permissions
+		if strings.HasPrefix(permStr, "-") || strings.HasPrefix(permStr, "d") {
+			// Convert unix-style permissions like "-rw-r--r--" to octal
+			var perm uint32 = 0
+
+			if len(permStr) >= 10 {
+				// Owner permissions
+				if permStr[1] == 'r' {
+					perm |= 0400
+				}
+				if permStr[2] == 'w' {
+					perm |= 0200
+				}
+				if permStr[3] == 'x' {
+					perm |= 0100
+				}
+
+				// Group permissions
+				if permStr[4] == 'r' {
+					perm |= 0040
+				}
+				if permStr[5] == 'w' {
+					perm |= 0020
+				}
+				if permStr[6] == 'x' {
+					perm |= 0010
+				}
+
+				// Others permissions
+				if permStr[7] == 'r' {
+					perm |= 0004
+				}
+				if permStr[8] == 'w' {
+					perm |= 0002
+				}
+				if permStr[9] == 'x' {
+					perm |= 0001
+				}
+			}
+
+			f.Permissions = os.FileMode(perm)
+		} else {
+			// Try to parse as octal string
+			perm, err := strconv.ParseUint(permStr, 8, 32)
+			if err != nil {
+				return fmt.Errorf("invalid permissions format: %s", permStr)
+			}
+			f.Permissions = os.FileMode(perm)
+		}
+	}
+
+	return nil
+}
+
 // FileWithContent represents a file with its content
 type FileWithContent struct {
-	Path    string `json:"path"`
-	Content []byte `json:"content" swaggertype:"string"`
-	// swagger:strfmt string
-	Permissions  os.FileMode `json:"permissions" swaggertype:"string"`
-	Size         int64       `json:"size"`
-	LastModified time.Time   `json:"lastModified"`
-	Owner        string      `json:"owner"`
-	Group        string      `json:"group"`
+	File
+	Content []byte `json:"-"`
 } // @name FileWithContent
+
+// FileWithContentDTO is a data transfer object for FileWithContent with encoded content
+type FileWithContentDTO struct {
+	FileDTO
+	Content string `json:"content"`
+}
+
+// MarshalJSON implements json.Marshaler for custom JSON marshaling
+func (f FileWithContent) MarshalJSON() ([]byte, error) {
+	fileDTO := FileDTO{
+		Path:         f.Path,
+		Permissions:  fmt.Sprintf("%o", f.Permissions),
+		Size:         f.Size,
+		LastModified: f.LastModified,
+		Owner:        f.Owner,
+		Group:        f.Group,
+	}
+
+	return json.Marshal(FileWithContentDTO{
+		FileDTO: fileDTO,
+		Content: string(f.Content),
+	})
+}
+
+// UnmarshalJSON implements json.Unmarshaler for custom JSON unmarshaling
+func (f *FileWithContent) UnmarshalJSON(data []byte) error {
+	var dto FileWithContentDTO
+	if err := json.Unmarshal(data, &dto); err != nil {
+		return err
+	}
+
+	// First parse the file part
+	var file File
+	fileData, err := json.Marshal(dto.FileDTO)
+	if err != nil {
+		return err
+	}
+
+	if err := json.Unmarshal(fileData, &file); err != nil {
+		return err
+	}
+
+	f.File = file
+	f.Content = []byte(dto.Content)
+
+	return nil
+}
 
 func NewFilesystem(root string) *Filesystem {
 	return &Filesystem{Root: root}
@@ -118,7 +252,19 @@ func (fs *Filesystem) ReadFile(path string) (*FileWithContent, error) {
 		return nil, err
 	}
 
-	return &FileWithContent{Path: path, Content: content, Permissions: info.Mode(), Size: info.Size(), LastModified: info.ModTime(), Owner: owner, Group: group}, nil
+	// Create and return a FileWithContent instance
+	result := &FileWithContent{
+		Content: content,
+	}
+	// Set File fields
+	result.Path = path
+	result.Permissions = info.Mode()
+	result.Size = info.Size()
+	result.LastModified = info.ModTime()
+	result.Owner = owner
+	result.Group = group
+
+	return result, nil
 }
 
 // WriteFile writes content to a file
@@ -378,5 +524,18 @@ func (fs *Filesystem) CreateOrUpdateFile(path string, content string, isDirector
 	if isDirectory {
 		return fs.CreateDirectory(path, perm)
 	}
+
+	// Get absolute path for directory creation
+	absPath, err := fs.GetAbsolutePath(path)
+	if err != nil {
+		return err
+	}
+
+	// Ensure parent directory exists
+	dir := filepath.Dir(absPath)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return err
+	}
+
 	return fs.WriteFile(path, []byte(content), perm)
 }

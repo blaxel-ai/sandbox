@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"time"
 )
 
@@ -17,11 +18,14 @@ var (
 	BaseURL string
 )
 
-// Initialize sets up the common package
-func Initialize(baseURL string) {
-	BaseURL = baseURL
+func init() {
+	BaseURL = GetEnv("API_BASE_URL", "http://localhost:8080")
 	Client = &http.Client{
 		Timeout: 10 * time.Second,
+	}
+	err := WaitForAPI(30, 1*time.Second)
+	if err != nil {
+		os.Exit(1)
 	}
 }
 

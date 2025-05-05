@@ -2,12 +2,13 @@ package tests
 
 import (
 	"fmt"
-	"io"
 	"net/http"
 	"testing"
 	"time"
 
 	"github.com/beamlit/sandbox-api/integration_tests/common"
+	"github.com/beamlit/sandbox-api/src/handler"
+	"github.com/beamlit/sandbox-api/src/handler/filesystem"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -23,29 +24,36 @@ func TestFileSystemOperations(t *testing.T) {
 		"content": testContent,
 	}
 
-	resp, err := common.MakeRequest(http.MethodPut, "/filesystem"+testPath, createFileRequest)
+	var successResp handler.SuccessResponse
+	resp, err := common.MakeRequestAndParse(http.MethodPut, "/filesystem"+testPath, createFileRequest, &successResp)
 	require.NoError(t, err)
-	resp.Body.Close()
+	defer resp.Body.Close()
+
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Contains(t, successResp.Message, "success")
 
 	// Get the file
-	resp, err = common.MakeRequest(http.MethodGet, "/filesystem"+testPath, nil)
+	var fileResponse filesystem.FileWithContent
+	resp, err = common.MakeRequestAndParse(http.MethodGet, "/filesystem"+testPath, nil, &fileResponse)
 	require.NoError(t, err)
 	defer resp.Body.Close()
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-	content, err := io.ReadAll(resp.Body)
-	require.NoError(t, err)
-
-	assert.Equal(t, testContent, string(content))
+	// Check file content and properties
+	assert.Equal(t, testContent, string(fileResponse.Content))
+	assert.Equal(t, testPath, fileResponse.Path)
+	assert.NotEmpty(t, fileResponse.Permissions)
+	assert.NotZero(t, fileResponse.Size)
+	assert.NotZero(t, fileResponse.LastModified)
 
 	// Delete the file
-	resp, err = common.MakeRequest(http.MethodDelete, "/filesystem"+testPath, nil)
+	resp, err = common.MakeRequestAndParse(http.MethodDelete, "/filesystem"+testPath, nil, &successResp)
 	require.NoError(t, err)
-	resp.Body.Close()
+	defer resp.Body.Close()
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Contains(t, successResp.Message, "success")
 
 	// Verify file is deleted
 	resp, err = common.MakeRequest(http.MethodGet, "/filesystem"+testPath, nil)
@@ -61,32 +69,57 @@ func TestFileSystemTree(t *testing.T) {
 	testDir := "/test-dir-" + fmt.Sprintf("%d", time.Now().Unix())
 
 	// Create the directory
-	resp, err := common.MakeRequest(http.MethodPut, "/filesystem"+testDir, map[string]interface{}{
+	var successResp handler.SuccessResponse
+	resp, err := common.MakeRequestAndParse(http.MethodPut, "/filesystem"+testDir, map[string]interface{}{
 		"isDirectory": true,
-	})
+	}, &successResp)
 	require.NoError(t, err)
-	resp.Body.Close()
+	defer resp.Body.Close()
+
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Contains(t, successResp.Message, "success")
 
 	// Create a file inside the directory
-	testFilePath := testDir + "/test.txt"
-	resp, err = common.MakeRequest(http.MethodPut, "/filesystem"+testFilePath, map[string]interface{}{
-		"content": "test content",
-	})
-	require.NoError(t, err)
-	resp.Body.Close()
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	testFileName := "test.txt"
+	testFilePath := testDir + "/" + testFileName
+	testContent := "test content"
 
-	// Get the tree view
-	resp, err = common.MakeRequest(http.MethodGet, "/filesystem/tree"+testDir, nil)
+	resp, err = common.MakeRequestAndParse(http.MethodPut, "/filesystem"+testFilePath, map[string]interface{}{
+		"content": testContent,
+	}, &successResp)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Contains(t, successResp.Message, "success")
+
+	// Get the directory listing
+	var dirResponse filesystem.Directory
+	resp, err = common.MakeRequestAndParse(http.MethodGet, "/filesystem"+testDir, nil, &dirResponse)
 	require.NoError(t, err)
 	defer resp.Body.Close()
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-	// Clean up - delete the directory (should recursively delete contents)
-	resp, err = common.MakeRequest(http.MethodDelete, "/filesystem"+testDir, nil)
+	// Verify directory path and contents
+	assert.Equal(t, testDir, dirResponse.Path)
+	require.Len(t, dirResponse.Files, 1, "Directory should contain exactly one file")
+	assert.Equal(t, testFilePath, dirResponse.Files[0].Path, "File path should match")
+
+	// Get the tree view
+	var treeResponse filesystem.Directory
+	resp, err = common.MakeRequestAndParse(http.MethodGet, "/filesystem/tree"+testDir, nil, &treeResponse)
 	require.NoError(t, err)
-	resp.Body.Close()
+	defer resp.Body.Close()
+
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, testDir, treeResponse.Path)
+
+	// Clean up - delete the directory (should recursively delete contents)
+	resp, err = common.MakeRequestAndParse(http.MethodDelete, "/filesystem"+testDir+"?recursive=true", nil, &successResp)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Contains(t, successResp.Message, "success")
 }

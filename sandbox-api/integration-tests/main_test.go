@@ -4,7 +4,6 @@ import (
 	"net/http"
 	"os"
 	"testing"
-	"time"
 
 	"github.com/beamlit/sandbox-api/integration_tests/common"
 	"github.com/stretchr/testify/assert"
@@ -19,17 +18,10 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-// setup starts the API server in Docker and sets up the test client
+// setup starts the API server in Docker
 func setup() {
-	// Initialize the common package
-	baseURL := common.GetEnv("API_BASE_URL", "http://localhost:8080")
-	common.Initialize(baseURL)
-
-	// Wait for the API to be ready
-	err := common.WaitForAPI(30, 1*time.Second)
-	if err != nil {
-		os.Exit(1)
-	}
+	// Nothing to do here if we're using an external Docker container
+	// If we started the container ourselves, we would start it here
 }
 
 // teardown cleans up any resources
