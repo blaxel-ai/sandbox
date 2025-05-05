@@ -15,8 +15,12 @@ RUN set -xe; \
 
 FROM --platform=linux/amd64 node:22-alpine
 
+WORKDIR /blaxel
+
 COPY --from=build /blaxel/sandbox-api/sandbox-api-binary /usr/local/bin/sandbox-api
 
 EXPOSE 8080
+
+ENV HOME=/blaxel
 
 ENTRYPOINT ["/usr/local/bin/sandbox-api"]

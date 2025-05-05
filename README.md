@@ -76,6 +76,28 @@ Each template exposes specific ports for access:
 - **TypeScript App**: Accessible via ports 8080 (sandbox-api) and 3000 (ts-app)
 - **Expo**: Accessible via multiple ports for various Expo services (19000-19006, 8081)
 
+### Developing with the Sandbox API
+
+#### Development server
+
+The recommended way to develop on the Sandbox API is to use the dev environment with Docker Compose:
+
+```bash
+docker-compose up dev
+```
+
+This will start the development container with the sandbox-api directory mounted as a volume, enabling hot-reloading through Air for real-time code changes. You can then request your sandbox api on port 8080.
+
+After your server has started (You should see a log: "Starting Sandbox API server on :8080"). You can run this command to check everything is running
+```bash
+curl http://localhost:8080/filesystem/~
+```
+
+#### Test server
+
+Go to sandbox-api/integration-tests
+[Detailed documentation](sandbox-api/integration-tests/README.md)
+
 ## Configuration
 
 Template configurations are defined in `template.json` files within each template directory. These files specify:
