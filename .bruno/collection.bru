@@ -1,0 +1,14 @@
+headers {
+  X-Blaxel-Workspace: main
+}
+
+auth {
+  mode: none
+}
+
+script:pre-request {
+  if (bru.getProcessEnv("BL_API_KEY")) {
+    req.setHeader("X-Blaxel-Authorization", "Bearer " + bru.getProcessEnv("BL_API_KEY"))
+  }
+
+}

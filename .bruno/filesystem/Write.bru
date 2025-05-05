@@ -1,0 +1,22 @@
+meta {
+  name: Write
+  type: http
+  seq: 2
+}
+
+put {
+  url: {{URL}}/filesystem/~/tmp/long-running-script.sh
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+  X-Blaxel-Workspace: {{WORKSPACE}}
+}
+
+body:json {
+  {
+    "content": "#!/bin/bash\n\ncount=1\nwhile true; do\n  echo \"Iteration $count: Wow, we've looped $count times already! 🚀\"\n  sleep 5\n  ((count++))\ndone\n"
+  }
+}

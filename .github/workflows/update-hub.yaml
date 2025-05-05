@@ -1,0 +1,82 @@
+name: Sandbox Update
+on:
+  push:
+    branches:
+      - develop
+      - main
+  workflow_dispatch:
+    inputs:
+      sandbox:
+        description: "Sandbox to import"
+      all:
+        description: "Import all Sandbox"
+        type: boolean
+        required: false
+        default: false
+
+jobs:
+  generate-sandboxes:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2  # Fetch last 2 commits to compare changes
+      - name: Retrieve sandbox
+        id: retrieve-sandbox
+        shell: bash
+        run: |
+          if [[ ! -z "${{ inputs.sandbox }}" ]]; then
+            echo "sandbox=[\"${{ inputs.sandbox }}\"]" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # Get list of all Sandbox files
+          all_uvm=$(tree -J -L 1 hub | jq -c '.[0].contents | map(select(.name) | .name)')
+
+          # Filter Sandbox based on changes
+          changed_uvm=()
+
+          if [[ "${{ inputs.all }}" == "true" ]]; then
+            echo "Importing all Sandbox"
+            echo "sandbox=$all_uvm" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # Check if there are changes in sandbox-api
+          if git diff --name-only HEAD^ HEAD | grep -q "sandbox-api/"; then
+            echo "Changes detected in sandbox-api, including all Sandbox"
+            echo "sandbox=$all_uvm" >> $GITHUB_OUTPUT
+            exit 0
+          else
+            for sandbox in $(echo $all_uvm | jq -r '.[]'); do
+              if git diff --name-only HEAD^ HEAD | grep -q "hub/${sandbox}"; then
+                changed_uvm+=("$sandbox")
+              fi
+            done
+          fi
+
+          # Convert array to JSON array
+          if [ ${#changed_uvm[@]} -eq 0 ]; then
+            echo "No Sandbox with changes found"
+            echo "sandbox=[]" >> $GITHUB_OUTPUT
+          else
+            # Create a properly formatted JSON array
+            uvm_json="["
+            for sandbox in "${changed_uvm[@]}"; do
+              if [ "$uvm_json" != "[" ]; then
+                uvm_json="$uvm_json,"
+              fi
+              uvm_json="$uvm_json\"$sandbox\""
+            done
+            uvm_json="$uvm_json]"
+            echo "sandbox=$uvm_json" >> $GITHUB_OUTPUT
+          fi
+      - name: Trigger UVM Workflow
+        if: steps.retrieve-sandbox.outputs.sandbox != '[]'
+        uses: peter-evans/repository-dispatch@v2
+        with:
+          token: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
+          repository: beamlit/uvm
+          event-type: build-sandbox
+          client-payload: '{"sandboxes": ${{ steps.retrieve-sandbox.outputs.sandbox }}, "env": "${{ github.ref_name == ''main'' && ''prod'' || ''dev'' }}", "repository_url": "${{ github.repository }}"}'

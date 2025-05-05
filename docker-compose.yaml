@@ -1,0 +1,48 @@
+version: "3.8"
+services:
+  ts-app:
+    platform: linux/amd64
+    build:
+      context: .
+      dockerfile: hub/ts-app/Dockerfile.ts-app
+    env_file:
+      - .env
+    ports:
+      - "8080:8080"
+      - "3000:3000"
+
+  py-app:
+    platform: linux/amd64
+    build:
+      context: .
+      dockerfile: hub/py-app/Dockerfile.py-app
+    env_file:
+      - .env
+    ports:
+      - "8080:8080"
+      - "8000:8000"
+
+  base:
+    platform: linux/amd64
+    build:
+      context: .
+      dockerfile: hub/base/Dockerfile.base
+    env_file:
+      - .env
+    ports:
+      - "8080:8080"
+
+  expo:
+    platform: linux/amd64
+    build:
+      context: .
+      dockerfile: hub/expo/Dockerfile.expo
+    env_file:
+      - .env
+    ports:
+      - "8080:8080"
+      - "19000:19000"
+      - "19001:19001"
+      - "19002:19002"
+      - "19006:19006"
+      - "8081:8081"

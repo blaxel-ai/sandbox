@@ -1,0 +1,382 @@
+package filesystem
+
+import (
+	"errors"
+	"os"
+	"os/user"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"syscall"
+	"time"
+)
+
+// Filesystem represents the root directory of the filesystem
+type Filesystem struct {
+	Root string `json:"root"`
+} // @name Filesystem
+
+// File represents a file in the filesystem
+type File struct {
+	Path string `json:"path"`
+	// swagger:strfmt string
+	Permissions  os.FileMode `json:"permissions" swaggertype:"string"`
+	Size         int64       `json:"size"`
+	LastModified time.Time   `json:"lastModified"`
+	Owner        string      `json:"owner"`
+	Group        string      `json:"group"`
+} // @name File
+
+// FileWithContent represents a file with its content
+type FileWithContent struct {
+	Path    string `json:"path"`
+	Content []byte `json:"content" swaggertype:"string"`
+	// swagger:strfmt string
+	Permissions  os.FileMode `json:"permissions" swaggertype:"string"`
+	Size         int64       `json:"size"`
+	LastModified time.Time   `json:"lastModified"`
+	Owner        string      `json:"owner"`
+	Group        string      `json:"group"`
+} // @name FileWithContent
+
+func NewFilesystem(root string) *Filesystem {
+	return &Filesystem{Root: root}
+}
+
+// GetAbsolutePath gets the absolute path, ensuring it's within the root
+func (fs *Filesystem) GetAbsolutePath(path string) (string, error) {
+	absPath := filepath.Join(fs.Root, path)
+	// Verify the path is within the root to prevent path traversal
+	if relPath, err := filepath.Rel(fs.Root, absPath); err != nil || relPath == ".." || strings.HasPrefix(relPath, ".."+string(filepath.Separator)) {
+		return "", errors.New("path is outside of the root directory")
+	}
+	return absPath, nil
+}
+
+// FileExists checks if a file exists at the given path
+func (fs *Filesystem) FileExists(path string) (bool, error) {
+	absPath, err := fs.GetAbsolutePath(path)
+	if err != nil {
+		return false, err
+	}
+
+	info, err := os.Stat(absPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+
+	return !info.IsDir(), nil
+}
+
+// DirectoryExists checks if a directory exists at the given path
+func (fs *Filesystem) DirectoryExists(path string) (bool, error) {
+	absPath, err := fs.GetAbsolutePath(path)
+	if err != nil {
+		return false, err
+	}
+
+	info, err := os.Stat(absPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+
+	return info.IsDir(), nil
+}
+
+// ReadFile reads a file and returns its contents
+func (fs *Filesystem) ReadFile(path string) (*FileWithContent, error) {
+	absPath, err := fs.GetAbsolutePath(path)
+	if err != nil {
+		return nil, err
+	}
+
+	// Get file information
+	info, err := os.Stat(absPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if info.IsDir() {
+		return nil, errors.New("path points to a directory, not a file")
+	}
+
+	// Read content
+	content, err := os.ReadFile(absPath)
+	if err != nil {
+		return nil, err
+	}
+
+	// Get owner and group
+	owner, group, err := fs.getFileOwnerAndGroup(absPath)
+	if err != nil {
+		return nil, err
+	}
+
+	return &FileWithContent{Path: path, Content: content, Permissions: info.Mode(), Size: info.Size(), LastModified: info.ModTime(), Owner: owner, Group: group}, nil
+}
+
+// WriteFile writes content to a file
+func (fs *Filesystem) WriteFile(path string, content []byte, perm os.FileMode) error {
+	absPath, err := fs.GetAbsolutePath(path)
+	if err != nil {
+		return err
+	}
+
+	// Ensure parent directory exists
+	dir := filepath.Dir(absPath)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return err
+	}
+
+	return os.WriteFile(absPath, content, perm)
+}
+
+// CreateDirectory creates a directory at the given path
+func (fs *Filesystem) CreateDirectory(path string, perm os.FileMode) error {
+	absPath, err := fs.GetAbsolutePath(path)
+	if err != nil {
+		return err
+	}
+
+	return os.MkdirAll(absPath, perm)
+}
+
+// ListDirectory lists files and directories in the given path
+func (fs *Filesystem) ListDirectory(path string) (*Directory, error) {
+	absPath, err := fs.GetAbsolutePath(path)
+	if err != nil {
+		return nil, err
+	}
+
+	dir := NewDirectory(path)
+
+	entries, err := os.ReadDir(absPath)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, entry := range entries {
+		entryPath := filepath.Join(path, entry.Name())
+		absEntryPath := filepath.Join(absPath, entry.Name())
+
+		info, err := entry.Info()
+		if err != nil {
+			return nil, err
+		}
+
+		if entry.IsDir() {
+			// It's a directory, create a subdirectory object
+			subDir := NewDirectory(entryPath)
+			dir.AddSubdirectory(subDir)
+		} else {
+			// It's a file
+			owner, group, err := fs.getFileOwnerAndGroup(absEntryPath)
+			if err != nil {
+				return nil, err
+			}
+
+			file := &File{Path: entryPath, Permissions: info.Mode(), Size: info.Size(), LastModified: info.ModTime(), Owner: owner, Group: group}
+			dir.AddFile(file)
+		}
+	}
+
+	return dir, nil
+}
+
+// DeleteFile deletes a file at the given path
+func (fs *Filesystem) DeleteFile(path string) error {
+	absPath, err := fs.GetAbsolutePath(path)
+	if err != nil {
+		return err
+	}
+
+	fileInfo, err := os.Stat(absPath)
+	if err != nil {
+		return err
+	}
+
+	if fileInfo.IsDir() {
+		return errors.New("path points to a directory, not a file")
+	}
+
+	return os.Remove(absPath)
+}
+
+// DeleteDirectory deletes a directory at the given path
+func (fs *Filesystem) DeleteDirectory(path string, recursive bool) error {
+	absPath, err := fs.GetAbsolutePath(path)
+	if err != nil {
+		return err
+	}
+
+	fileInfo, err := os.Stat(absPath)
+	if err != nil {
+		return err
+	}
+
+	if !fileInfo.IsDir() {
+		return errors.New("path points to a file, not a directory")
+	}
+
+	if recursive {
+		return os.RemoveAll(absPath)
+	}
+	return os.Remove(absPath) // This will fail if directory is not empty
+}
+
+// CopyFile copies a file from src to dst
+func (fs *Filesystem) CopyFile(src, dst string) error {
+	srcAbs, err := fs.GetAbsolutePath(src)
+	if err != nil {
+		return err
+	}
+
+	dstAbs, err := fs.GetAbsolutePath(dst)
+	if err != nil {
+		return err
+	}
+
+	// Read the source file
+	content, err := os.ReadFile(srcAbs)
+	if err != nil {
+		return err
+	}
+
+	// Get source file info for permissions
+	srcInfo, err := os.Stat(srcAbs)
+	if err != nil {
+		return err
+	}
+
+	// Ensure destination directory exists
+	destDir := filepath.Dir(dstAbs)
+	if err := os.MkdirAll(destDir, 0755); err != nil {
+		return err
+	}
+
+	// Write to destination with same permissions
+	return os.WriteFile(dstAbs, content, srcInfo.Mode())
+}
+
+// MoveFile moves a file from src to dst
+func (fs *Filesystem) MoveFile(src, dst string) error {
+	srcAbs, err := fs.GetAbsolutePath(src)
+	if err != nil {
+		return err
+	}
+
+	dstAbs, err := fs.GetAbsolutePath(dst)
+	if err != nil {
+		return err
+	}
+
+	// Ensure destination directory exists
+	destDir := filepath.Dir(dstAbs)
+	if err := os.MkdirAll(destDir, 0755); err != nil {
+		return err
+	}
+
+	return os.Rename(srcAbs, dstAbs)
+}
+
+// getFileOwnerAndGroup returns the owner and group of a file
+func (fs *Filesystem) getFileOwnerAndGroup(path string) (string, string, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return "", "", err
+	}
+
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return "", "", errors.New("failed to get file stat")
+	}
+
+	uid := stat.Uid
+	gid := stat.Gid
+
+	// Try to get username from UID
+	u, err := user.LookupId(strconv.FormatUint(uint64(uid), 10))
+	ownerName := strconv.FormatUint(uint64(uid), 10)
+	if err == nil {
+		ownerName = u.Username
+	}
+
+	// Try to get group name from GID
+	g, err := user.LookupGroupId(strconv.FormatUint(uint64(gid), 10))
+	groupName := strconv.FormatUint(uint64(gid), 10)
+	if err == nil {
+		groupName = g.Name
+	}
+
+	return ownerName, groupName, nil
+}
+
+// GetFileInfo returns file information without reading its content
+func (fs *Filesystem) GetFileInfo(path string) (*File, error) {
+	absPath, err := fs.GetAbsolutePath(path)
+	if err != nil {
+		return nil, err
+	}
+
+	info, err := os.Stat(absPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if info.IsDir() {
+		return nil, errors.New("path points to a directory, not a file")
+	}
+
+	owner, group, err := fs.getFileOwnerAndGroup(absPath)
+	if err != nil {
+		return nil, err
+	}
+
+	return &File{Path: path, Permissions: info.Mode(), Size: info.Size(), LastModified: info.ModTime(), Owner: owner, Group: group}, nil
+}
+
+// Walk walks the file tree rooted at root, calling fn for each file or directory
+func (fs *Filesystem) Walk(root string, fn filepath.WalkFunc) error {
+	absRoot, err := fs.GetAbsolutePath(root)
+	if err != nil {
+		return err
+	}
+
+	return filepath.Walk(absRoot, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+
+		// Convert absolute path back to relative path for consistency
+		relPath, err := filepath.Rel(fs.Root, path)
+		if err != nil {
+			return err
+		}
+
+		// Call the provided function with the relative path
+		return fn(relPath, info, nil)
+	})
+}
+
+// CreateOrUpdateFile creates or updates a file
+func (fs *Filesystem) CreateOrUpdateFile(path string, content string, isDirectory bool, permissions string) error {
+	// Parse permissions or use default
+	var perm os.FileMode = 0644
+	if permissions != "" {
+		permInt, err := strconv.ParseUint(permissions, 8, 32)
+		if err == nil {
+			perm = os.FileMode(permInt)
+		}
+	}
+
+	if isDirectory {
+		return fs.CreateDirectory(path, perm)
+	}
+	return fs.WriteFile(path, []byte(content), perm)
+}
