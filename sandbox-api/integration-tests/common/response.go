@@ -43,3 +43,12 @@ func MakeRequestAndParse(method, path string, requestBody interface{}, responseM
 
 	return resp, nil
 }
+
+// ReadResponseBody reads and returns the entire response body as a byte array
+func ReadResponseBody(resp *http.Response) ([]byte, error) {
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response body: %w", err)
+	}
+	return body, nil
+}
