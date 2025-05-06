@@ -18,29 +18,29 @@ type Filesystem struct {
 	Root string `json:"root"`
 } // @name Filesystem
 
-// File represents a file in the filesystem
-type File struct {
+// FileByte represents a file in the filesystem
+type FileByte struct {
 	Path         string      `json:"-"`
 	Permissions  os.FileMode `json:"-"`
 	Size         int64       `json:"size"`
 	LastModified time.Time   `json:"lastModified"`
 	Owner        string      `json:"owner"`
 	Group        string      `json:"group"`
-} // @name File
+}
 
-// FileDTO is a data transfer object for File with string permissions
-type FileDTO struct {
+// File is a data transfer object for File with string permissions
+type File struct {
 	Path         string    `json:"path"`
 	Permissions  string    `json:"permissions"`
 	Size         int64     `json:"size"`
 	LastModified time.Time `json:"lastModified"`
 	Owner        string    `json:"owner"`
 	Group        string    `json:"group"`
-}
+} // @name File
 
 // MarshalJSON implements json.Marshaler for custom JSON marshaling
-func (f File) MarshalJSON() ([]byte, error) {
-	return json.Marshal(FileDTO{
+func (f FileByte) MarshalJSON() ([]byte, error) {
+	return json.Marshal(File{
 		Path:         f.Path,
 		Permissions:  fmt.Sprintf("%o", f.Permissions),
 		Size:         f.Size,
@@ -51,8 +51,8 @@ func (f File) MarshalJSON() ([]byte, error) {
 }
 
 // UnmarshalJSON implements json.Unmarshaler for custom JSON unmarshaling
-func (f *File) UnmarshalJSON(data []byte) error {
-	var dto FileDTO
+func (f *FileByte) UnmarshalJSON(data []byte) error {
+	var dto File
 	if err := json.Unmarshal(data, &dto); err != nil {
 		return err
 	}
@@ -120,21 +120,20 @@ func (f *File) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// FileWithContent represents a file with its content
-type FileWithContent struct {
-	File
+type FileWithContentByte struct {
+	FileByte
 	Content []byte `json:"-"`
-} // @name FileWithContent
-
-// FileWithContentDTO is a data transfer object for FileWithContent with encoded content
-type FileWithContentDTO struct {
-	FileDTO
-	Content string `json:"content"`
 }
 
+// FileWithContent is a data transfer object for FileWithContent with encoded content
+type FileWithContent struct {
+	File
+	Content string `json:"content"`
+} // @name FileWithContent
+
 // MarshalJSON implements json.Marshaler for custom JSON marshaling
-func (f FileWithContent) MarshalJSON() ([]byte, error) {
-	fileDTO := FileDTO{
+func (f FileWithContentByte) MarshalJSON() ([]byte, error) {
+	fileDTO := File{
 		Path:         f.Path,
 		Permissions:  fmt.Sprintf("%o", f.Permissions),
 		Size:         f.Size,
@@ -143,22 +142,22 @@ func (f FileWithContent) MarshalJSON() ([]byte, error) {
 		Group:        f.Group,
 	}
 
-	return json.Marshal(FileWithContentDTO{
-		FileDTO: fileDTO,
+	return json.Marshal(FileWithContent{
+		File:    fileDTO,
 		Content: string(f.Content),
 	})
 }
 
 // UnmarshalJSON implements json.Unmarshaler for custom JSON unmarshaling
-func (f *FileWithContent) UnmarshalJSON(data []byte) error {
-	var dto FileWithContentDTO
+func (f *FileWithContentByte) UnmarshalJSON(data []byte) error {
+	var dto FileWithContent
 	if err := json.Unmarshal(data, &dto); err != nil {
 		return err
 	}
 
 	// First parse the file part
-	var file File
-	fileData, err := json.Marshal(dto.FileDTO)
+	var file FileByte
+	fileData, err := json.Marshal(dto.File)
 	if err != nil {
 		return err
 	}
@@ -167,7 +166,7 @@ func (f *FileWithContent) UnmarshalJSON(data []byte) error {
 		return err
 	}
 
-	f.File = file
+	f.FileByte = file
 	f.Content = []byte(dto.Content)
 
 	return nil
@@ -224,7 +223,7 @@ func (fs *Filesystem) DirectoryExists(path string) (bool, error) {
 }
 
 // ReadFile reads a file and returns its contents
-func (fs *Filesystem) ReadFile(path string) (*FileWithContent, error) {
+func (fs *Filesystem) ReadFile(path string) (*FileWithContentByte, error) {
 	absPath, err := fs.GetAbsolutePath(path)
 	if err != nil {
 		return nil, err
@@ -253,7 +252,7 @@ func (fs *Filesystem) ReadFile(path string) (*FileWithContent, error) {
 	}
 
 	// Create and return a FileWithContent instance
-	result := &FileWithContent{
+	result := &FileWithContentByte{
 		Content: content,
 	}
 	// Set File fields
@@ -317,9 +316,7 @@ func (fs *Filesystem) ListDirectory(path string) (*Directory, error) {
 		}
 
 		if entry.IsDir() {
-			// It's a directory, create a subdirectory object
-			subDir := NewDirectory(entryPath)
-			dir.AddSubdirectory(subDir)
+			dir.AddSubdirectory(&Subdirectory{Path: entryPath})
 		} else {
 			// It's a file
 			owner, group, err := fs.getFileOwnerAndGroup(absEntryPath)
@@ -327,7 +324,7 @@ func (fs *Filesystem) ListDirectory(path string) (*Directory, error) {
 				return nil, err
 			}
 
-			file := &File{Path: entryPath, Permissions: info.Mode(), Size: info.Size(), LastModified: info.ModTime(), Owner: owner, Group: group}
+			file := &File{Path: entryPath, Permissions: fmt.Sprintf("%o", info.Mode()), Size: info.Size(), LastModified: info.ModTime(), Owner: owner, Group: group}
 			dir.AddFile(file)
 		}
 	}
@@ -464,7 +461,7 @@ func (fs *Filesystem) getFileOwnerAndGroup(path string) (string, string, error) 
 }
 
 // GetFileInfo returns file information without reading its content
-func (fs *Filesystem) GetFileInfo(path string) (*File, error) {
+func (fs *Filesystem) GetFileInfo(path string) (*FileByte, error) {
 	absPath, err := fs.GetAbsolutePath(path)
 	if err != nil {
 		return nil, err
@@ -484,7 +481,7 @@ func (fs *Filesystem) GetFileInfo(path string) (*File, error) {
 		return nil, err
 	}
 
-	return &File{Path: path, Permissions: info.Mode(), Size: info.Size(), LastModified: info.ModTime(), Owner: owner, Group: group}, nil
+	return &FileByte{Path: path, Permissions: info.Mode(), Size: info.Size(), LastModified: info.ModTime(), Owner: owner, Group: group}, nil
 }
 
 // Walk walks the file tree rooted at root, calling fn for each file or directory

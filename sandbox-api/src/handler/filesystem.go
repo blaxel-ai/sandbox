@@ -45,7 +45,7 @@ func (h *FileSystemHandler) ListDirectory(path string) (*filesystem.Directory, e
 }
 
 // ReadFile reads the contents of a file
-func (h *FileSystemHandler) ReadFile(path string) (*filesystem.FileWithContent, error) {
+func (h *FileSystemHandler) ReadFile(path string) (*filesystem.FileWithContentByte, error) {
 	return h.fs.ReadFile(path)
 }
 
@@ -162,7 +162,7 @@ func (h *FileSystemHandler) handleListDirectory(c *gin.Context, path string) {
 	for _, file := range dir.Files {
 		files = append(files, map[string]interface{}{
 			"path":         file.Path,
-			"permissions":  file.Permissions.String(),
+			"permissions":  file.Permissions,
 			"size":         file.Size,
 			"lastModified": file.LastModified,
 			"owner":        file.Owner,
