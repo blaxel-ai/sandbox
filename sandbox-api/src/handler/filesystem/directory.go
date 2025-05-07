@@ -5,18 +5,23 @@ import (
 	"path/filepath"
 )
 
+// Subdirectory represents a subdirectory in the filesystem
+type Subdirectory struct {
+	Path string `json:"path"`
+} // @name Subdirectory
+
 // Directory represents a directory in the filesystem
 type Directory struct {
-	Path           string       `json:"path"`
-	Files          []*File      `json:"files"`
-	Subdirectories []*Directory `json:"subdirectories"` // @name Subdirectories
+	Path           string          `json:"path"`
+	Files          []*File         `json:"files"`
+	Subdirectories []*Subdirectory `json:"subdirectories"` // @name Subdirectories
 } // @name Directory
 
 func NewDirectory(path string) *Directory {
 	return &Directory{
 		Path:           path,
 		Files:          []*File{},
-		Subdirectories: []*Directory{},
+		Subdirectories: []*Subdirectory{},
 	}
 }
 
@@ -26,7 +31,7 @@ func (d *Directory) AddFile(file *File) {
 }
 
 // AddSubdirectory adds a subdirectory to the directory
-func (d *Directory) AddSubdirectory(subDir *Directory) {
+func (d *Directory) AddSubdirectory(subDir *Subdirectory) {
 	d.Subdirectories = append(d.Subdirectories, subDir)
 }
 
@@ -41,7 +46,7 @@ func (d *Directory) GetFile(name string) *File {
 }
 
 // GetSubdirectory returns a subdirectory by name if it exists in this directory
-func (d *Directory) GetSubdirectory(name string) *Directory {
+func (d *Directory) GetSubdirectory(name string) *Subdirectory {
 	for _, subDir := range d.Subdirectories {
 		if filepath.Base(subDir.Path) == name {
 			return subDir

@@ -610,6 +610,27 @@ const docTemplate = `{
         }
     },
     "definitions": {
+        "Directory": {
+            "type": "object",
+            "properties": {
+                "files": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/File"
+                    }
+                },
+                "path": {
+                    "type": "string"
+                },
+                "subdirectories": {
+                    "description": "@name Subdirectories",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/Subdirectory"
+                    }
+                }
+            }
+        },
         "ErrorResponse": {
             "type": "object",
             "properties": {
@@ -635,7 +656,6 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "permissions": {
-                    "description": "swagger:strfmt string",
                     "type": "string"
                 },
                 "size": {
@@ -679,7 +699,6 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "permissions": {
-                    "description": "swagger:strfmt string",
                     "type": "string"
                 },
                 "size": {
@@ -785,6 +804,14 @@ const docTemplate = `{
                 }
             }
         },
+        "Subdirectory": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string"
+                }
+            }
+        },
         "SuccessResponse": {
             "type": "object",
             "properties": {
@@ -795,27 +822,6 @@ const docTemplate = `{
                 "path": {
                     "type": "string",
                     "example": "/path/to/file"
-                }
-            }
-        },
-        "Directory": {
-            "type": "object",
-            "properties": {
-                "files": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/File"
-                    }
-                },
-                "path": {
-                    "type": "string"
-                },
-                "subdirectories": {
-                    "description": "@name Subdirectories",
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/Directory"
-                    }
                 }
             }
         }

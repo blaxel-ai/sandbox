@@ -16,8 +16,12 @@ RUN set -xe; \
 # Use an official Python runtime as a parent image
 FROM --platform=linux/amd64 node:22-slim
 
+WORKDIR /blaxel
+
 COPY --from=build /blaxel/sandbox-api/sandbox-api-binary /usr/local/bin/sandbox-api
 
 EXPOSE 8080 3000
+
+ENV HOME=/blaxel
 
 ENTRYPOINT ["/usr/local/bin/sandbox-api"]

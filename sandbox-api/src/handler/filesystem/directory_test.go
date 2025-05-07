@@ -12,7 +12,7 @@ func TestDirectoryMethods(t *testing.T) {
 	// Test adding and getting files
 	file := &File{
 		Path:         "test/file.txt",
-		Permissions:  0644,
+		Permissions:  "644",
 		Size:         100,
 		LastModified: time.Now(),
 		Owner:        "user",
@@ -35,7 +35,7 @@ func TestDirectoryMethods(t *testing.T) {
 	}
 
 	// Test adding and getting subdirectories
-	subdir := NewDirectory("test/subdir")
+	subdir := &Subdirectory{Path: "test/subdir"}
 	dir.AddSubdirectory(subdir)
 
 	if dir.CountSubdirectories() != 1 {

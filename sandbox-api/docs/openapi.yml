@@ -441,6 +441,20 @@ servers:
   - url: //localhost:8080
 components:
   schemas:
+    Directory:
+      properties:
+        files:
+          items:
+            $ref: "#/components/schemas/File"
+          type: array
+        path:
+          type: string
+        subdirectories:
+          description: "@name Subdirectories"
+          items:
+            $ref: "#/components/schemas/Subdirectory"
+          type: array
+      type: object
     ErrorResponse:
       properties:
         error:
@@ -458,7 +472,6 @@ components:
         path:
           type: string
         permissions:
-          description: swagger:strfmt string
           type: string
         size:
           type: integer
@@ -488,7 +501,6 @@ components:
         path:
           type: string
         permissions:
-          description: swagger:strfmt string
           type: string
         size:
           type: integer
@@ -563,6 +575,11 @@ components:
           example: /home/user
           type: string
       type: object
+    Subdirectory:
+      properties:
+        path:
+          type: string
+      type: object
     SuccessResponse:
       properties:
         message:
@@ -571,18 +588,4 @@ components:
         path:
           example: /path/to/file
           type: string
-      type: object
-    Directory:
-      properties:
-        files:
-          items:
-            $ref: "#/components/schemas/File"
-          type: array
-        path:
-          type: string
-        subdirectories:
-          description: "@name Subdirectories"
-          items:
-            $ref: "#/components/schemas/Directory"
-          type: array
       type: object
