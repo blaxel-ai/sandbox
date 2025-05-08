@@ -14,7 +14,9 @@ import (
 // TestProcessOperations tests process operations
 func TestProcessOperations(t *testing.T) {
 	// Create a process
+	processName := "test-process"
 	processRequest := map[string]interface{}{
+		"name":    processName,
 		"command": "echo 'hello world'",
 		"cwd":     "/",
 	}
@@ -30,10 +32,11 @@ func TestProcessOperations(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify process ID is returned
-	require.Contains(t, processResponse, "id")
-	processID := processResponse["id"].(string)
+	require.Contains(t, processResponse, "pid")
+	processID := processResponse["pid"].(string)
+	require.Contains(t, processResponse, "name")
 
-	// Get process details
+	// Test getting process details by PID
 	resp, err = common.MakeRequest(http.MethodGet, "/process/"+processID, nil)
 	require.NoError(t, err)
 	defer resp.Body.Close()
@@ -46,6 +49,50 @@ func TestProcessOperations(t *testing.T) {
 
 	// Verify process status
 	require.Contains(t, processDetails, "status")
+
+	// Test getting process details by name
+	resp, err = common.MakeRequest(http.MethodGet, "/process/"+processName, nil)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	err = json.NewDecoder(resp.Body).Decode(&processDetails)
+	require.NoError(t, err)
+
+	// Verify process details match when getting by name
+	assert.Equal(t, processID, processDetails["pid"])
+	assert.Equal(t, processName, processDetails["name"])
+
+	var processList []map[string]interface{}
+	resp, err = common.MakeRequest(http.MethodGet, "/process", nil)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	err = json.NewDecoder(resp.Body).Decode(&processList)
+	require.NoError(t, err)
+
+	// Test stopping process by name
+	resp, err = common.MakeRequest(http.MethodDelete, "/process/"+processName, nil)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	// Wait a bit for the process to stop
+	time.Sleep(100 * time.Millisecond)
+
+	// Verify process is stopped when getting by name
+	resp, err = common.MakeRequest(http.MethodGet, "/process/"+processName, nil)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	err = json.NewDecoder(resp.Body).Decode(&processDetails)
+	require.NoError(t, err)
+
+	assert.Equal(t, "stopped", processDetails["status"])
 }
 
 // TestLongRunningProcess tests starting, monitoring, and stopping a long-running process
@@ -67,8 +114,8 @@ func TestLongRunningProcess(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify process ID is returned
-	require.Contains(t, processResponse, "id")
-	processID := processResponse["id"].(string)
+	require.Contains(t, processResponse, "pid")
+	processID := processResponse["pid"].(string)
 
 	// Give the process time to start
 	time.Sleep(1 * time.Second)
@@ -102,4 +149,89 @@ func TestLongRunningProcess(t *testing.T) {
 	status, ok := stoppedProcessDetails["status"].(string)
 	require.True(t, ok, "Status should be a string")
 	assert.NotEqual(t, "running", status)
+}
+
+func TestProcessKillByName(t *testing.T) {
+	// Create a long-running process
+	processRequest := map[string]interface{}{
+		"command": "sleep 100",
+		"cwd":     "/",
+	}
+
+	resp, err := common.MakeRequest(http.MethodPost, "/process", processRequest)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var processResponse map[string]interface{}
+	err = json.NewDecoder(resp.Body).Decode(&processResponse)
+	require.NoError(t, err)
+
+	require.Contains(t, processResponse, "name")
+	processName := processResponse["name"].(string)
+
+	// Test killing process by name
+	resp, err = common.MakeRequest(http.MethodDelete, "/process/"+processName+"/kill", nil)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	// Wait a bit for the process to be killed
+	time.Sleep(100 * time.Millisecond)
+
+	// Verify process is killed when getting by name
+	resp, err = common.MakeRequest(http.MethodGet, "/process/"+processName, nil)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var processDetails map[string]interface{}
+	err = json.NewDecoder(resp.Body).Decode(&processDetails)
+	require.NoError(t, err)
+
+	assert.Equal(t, "killed", processDetails["status"])
+}
+
+func TestProcessOutputByName(t *testing.T) {
+	// Create a process with output
+	processRequest := map[string]interface{}{
+		"command": "echo 'test output' && echo 'test error' >&2",
+		"cwd":     "/",
+	}
+
+	resp, err := common.MakeRequest(http.MethodPost, "/process", processRequest)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var processResponse map[string]interface{}
+	err = json.NewDecoder(resp.Body).Decode(&processResponse)
+	require.NoError(t, err)
+
+	require.Contains(t, processResponse, "name")
+	processName := processResponse["name"].(string)
+
+	// Wait a bit for the process to complete
+	time.Sleep(100 * time.Millisecond)
+
+	// Test getting process output by name
+	resp, err = common.MakeRequest(http.MethodGet, "/process/"+processName+"/logs", nil)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var outputResponse map[string]interface{}
+	err = json.NewDecoder(resp.Body).Decode(&outputResponse)
+	require.NoError(t, err)
+
+	require.Contains(t, outputResponse, "stdout")
+	require.Contains(t, outputResponse, "stderr")
+
+	assert.Equal(t, "test output\n", outputResponse["stdout"])
+	assert.Equal(t, "test error\n", outputResponse["stderr"])
 }

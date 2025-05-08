@@ -1,7 +1,6 @@
 package process
 
 import (
-	"database/sql"
 	"fmt"
 	"io"
 	"math/rand"
@@ -12,13 +11,12 @@ import (
 	"sync"
 	"syscall"
 	"time"
-
-	_ "github.com/mattn/go-sqlite3"
 )
 
 // ProcessManager manages the running processes
 type ProcessManager struct {
-	db *sql.DB
+	processes map[string]*ProcessInfo
+	mu        sync.RWMutex
 }
 
 // ProcessInfo stores information about a running process
@@ -42,27 +40,9 @@ type ProcessInfo struct {
 
 // NewProcessManager creates a new process manager
 func NewProcessManager() *ProcessManager {
-	db, err := sql.Open("sqlite3", "processes.db")
-	if err != nil {
-		panic("failed to open sqlite database: " + err.Error())
+	return &ProcessManager{
+		processes: make(map[string]*ProcessInfo),
 	}
-	// Create table if not exists
-	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS processes (
-		pid TEXT PRIMARY KEY,
-		name TEXT,
-		command TEXT,
-		started_at DATETIME,
-		completed_at DATETIME,
-		exit_code INTEGER,
-		status TEXT,
-		working_dir TEXT,
-		stdout TEXT,
-		stderr TEXT
-	)`)
-	if err != nil {
-		panic("failed to create processes table: " + err.Error())
-	}
-	return &ProcessManager{db: db}
 }
 
 // Global process manager instance
@@ -142,22 +122,10 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 	}
 	process.PID = fmt.Sprintf("%d", cmd.Process.Pid)
 
-	// Insert process info into SQLite
-	_, err = pm.db.Exec(`INSERT INTO processes (pid, name, command, started_at, completed_at, exit_code, status, working_dir, stdout, stderr) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		process.PID,
-		process.Name,
-		process.Command,
-		process.StartedAt,
-		nil, // completed_at is nil at start
-		0,   // exit_code is 0 at start
-		process.Status,
-		process.WorkingDir,
-		"", // stdout empty at start
-		"", // stderr empty at start
-	)
-	if err != nil {
-		return "", fmt.Errorf("failed to insert process into db: %w", err)
-	}
+	// Store process in memory
+	pm.mu.Lock()
+	pm.processes[process.PID] = process
+	pm.mu.Unlock()
 
 	// Handle stdout
 	go func() {
@@ -211,7 +179,10 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 
 		// Determine exit status and create appropriate message
 		if err != nil {
-			process.Status = "failed"
+			fmt.Println("Process shutdown")
+			if process.Status != "stopped" && process.Status != "killed" {
+				process.Status = "failed"
+			}
 			if exitErr, ok := err.(*exec.ExitError); ok {
 				process.ExitCode = exitErr.ExitCode()
 			} else {
@@ -222,18 +193,12 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 			process.ExitCode = 0
 		}
 
-		// Update process info in SQLite
-		_, _ = pm.db.Exec(`UPDATE processes SET completed_at = ?, exit_code = ?, status = ?, stdout = ?, stderr = ? WHERE pid = ?`,
-			now,
-			process.ExitCode,
-			process.Status,
-			process.stdout.String(),
-			process.stderr.String(),
-			process.PID,
-		)
+		// Update process in memory
+		pm.mu.Lock()
+		pm.processes[process.PID] = process
+		pm.mu.Unlock()
 
 		// Clean up resources
-		// Note: The pipes are automatically closed when the process ends
 		process.logLock.Lock()
 		process.logWriters = nil // Clear all log writers
 		process.logLock.Unlock()
@@ -288,46 +253,51 @@ func parseCommand(command string) []string {
 
 // GetProcessByIdentifier returns a process by either PID or name
 func (pm *ProcessManager) GetProcessByIdentifier(identifier string) (*ProcessInfo, bool) {
+	pm.mu.RLock()
+	defer pm.mu.RUnlock()
+
 	// Try to convert identifier to int (PID)
-	var process *ProcessInfo
-	var exists bool
 	if _, err := strconv.Atoi(identifier); err == nil {
 		// If conversion successful, try to get process by PID
-		process, exists = pm.GetProcessByPid(identifier)
-	} else {
-		process, exists = pm.GetProcessByName(identifier)
-	}
-	if process == nil {
-		return nil, false
+		process, exists := pm.processes[identifier]
+		if !exists {
+			return nil, false
+		}
+
+		// If the process is running, try to get additional information from the OS
+		if process.Status == "running" {
+			pidInt, err := strconv.Atoi(process.PID)
+			if err == nil {
+				// Get process from OS
+				osProcess, err := os.FindProcess(pidInt)
+				if err == nil {
+					// Create a new exec.Cmd with the process
+					cmd := &exec.Cmd{
+						Process: osProcess,
+					}
+					process.Cmd = cmd
+				}
+			}
+		}
+		return process, true
 	}
 
-	// If the process is running, try to get additional information from the OS
-	if process.Status == "running" {
-		pidInt, err := strconv.Atoi(process.PID)
-		if err == nil {
-			// Get process from OS
-			osProcess, err := os.FindProcess(pidInt)
-			if err == nil {
-				// Create a new exec.Cmd with the process
-				cmd := &exec.Cmd{
-					Process: osProcess,
-				}
-				process.Cmd = cmd
-			}
+	// Search by name
+	for _, process := range pm.processes {
+		if process.Name == identifier {
+			return process, true
 		}
 	}
 
-	return process, exists
+	return nil, false
 }
 
-// GetProcess returns information about a specific process
+// GetProcessByPid returns information about a specific process
 func (pm *ProcessManager) GetProcessByPid(pid string) (*ProcessInfo, bool) {
-	row := pm.db.QueryRow(`SELECT * FROM processes WHERE pid = ?`, pid)
-	process, err := pm.formatRowToProcess(row)
-	if err != nil {
-		return nil, false
-	}
-	return process, true
+	pm.mu.RLock()
+	defer pm.mu.RUnlock()
+	process, exists := pm.processes[pid]
+	return process, exists
 }
 
 func (pm *ProcessManager) GetProcessByName(name string) (*ProcessInfo, bool) {
@@ -335,27 +305,32 @@ func (pm *ProcessManager) GetProcessByName(name string) (*ProcessInfo, bool) {
 		return nil, false
 	}
 
-	row := pm.db.QueryRow(`SELECT * FROM processes WHERE name = ? ORDER BY started_at DESC LIMIT 1`, name)
-	process, err := pm.formatRowToProcess(row)
-	if err != nil {
+	pm.mu.RLock()
+	defer pm.mu.RUnlock()
+
+	// Find the most recent process with the given name
+	var latestProcess *ProcessInfo
+	for _, process := range pm.processes {
+		if process.Name == name {
+			if latestProcess == nil || process.StartedAt.After(latestProcess.StartedAt) {
+				latestProcess = process
+			}
+		}
+	}
+
+	if latestProcess == nil {
 		return nil, false
 	}
-	return process, true
+	return latestProcess, true
 }
 
 // ListProcesses returns information about all processes
 func (pm *ProcessManager) ListProcesses() []*ProcessInfo {
-	rows, err := pm.db.Query(`SELECT * FROM processes`)
-	if err != nil {
-		return nil
-	}
-	defer rows.Close()
-	processes := make([]*ProcessInfo, 0)
-	for rows.Next() {
-		process, err := pm.formatRowsToProcess(rows)
-		if err != nil {
-			continue
-		}
+	pm.mu.RLock()
+	defer pm.mu.RUnlock()
+
+	processes := make([]*ProcessInfo, 0, len(pm.processes))
+	for _, process := range pm.processes {
 		processes = append(processes, process)
 	}
 	return processes
@@ -392,6 +367,8 @@ func (pm *ProcessManager) StopProcess(identifier string) error {
 			return fmt.Errorf("failed to send SIGTERM to process with Identifier %s: %w", identifier, err)
 		}
 	}
+	fmt.Println("Setting status to stopped")
+	process.Status = "stopped"
 	return nil
 }
 
@@ -428,14 +405,8 @@ func (pm *ProcessManager) KillProcess(identifier string) error {
 		}
 	}
 
-	// Remove the process from the SQLite database
-	_, err = pm.db.Exec(
-		"DELETE FROM processes WHERE pid = ?",
-		process.PID,
-	)
-	if err != nil {
-		return fmt.Errorf("failed to remove process with Identifier %s from database: %w", identifier, err)
-	}
+	// Remove the process from memory
+	process.Status = "killed"
 	return nil
 }
 
@@ -503,48 +474,4 @@ func GenerateRandomName(length int) string {
 	}
 
 	return randomName.String()
-}
-
-func (pm *ProcessManager) formatRowToProcess(row *sql.Row) (*ProcessInfo, error) {
-	var p ProcessInfo
-	var startedAt, completedAt sql.NullTime
-	var completedAtPtr *time.Time
-	var stdout, stderr string
-	if err := row.Scan(&p.PID, &p.Name, &p.Command, &startedAt, &completedAt, &p.ExitCode, &p.Status, &p.WorkingDir, &stdout, &stderr); err != nil {
-		return nil, err
-	}
-	if startedAt.Valid {
-		p.StartedAt = startedAt.Time
-	}
-	if completedAt.Valid {
-		completedAtPtr = &completedAt.Time
-	}
-	p.CompletedAt = completedAtPtr
-	p.stdout = &strings.Builder{}
-	p.stdout.WriteString(stdout)
-	p.stderr = &strings.Builder{}
-	p.stderr.WriteString(stderr)
-	return &p, nil
-}
-
-func (pm *ProcessManager) formatRowsToProcess(rows *sql.Rows) (*ProcessInfo, error) {
-	var p ProcessInfo
-	var startedAt, completedAt sql.NullTime
-	var completedAtPtr *time.Time
-	var stdout, stderr string
-	if err := rows.Scan(&p.PID, &p.Name, &p.Command, &startedAt, &completedAt, &p.ExitCode, &p.Status, &p.WorkingDir, &stdout, &stderr); err != nil {
-		return nil, err
-	}
-	if startedAt.Valid {
-		p.StartedAt = startedAt.Time
-	}
-	if completedAt.Valid {
-		completedAtPtr = &completedAt.Time
-	}
-	p.CompletedAt = completedAtPtr
-	p.stdout = &strings.Builder{}
-	p.stdout.WriteString(stdout)
-	p.stderr = &strings.Builder{}
-	p.stderr.WriteString(stderr)
-	return &p, nil
 }
