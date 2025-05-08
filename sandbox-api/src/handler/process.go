@@ -33,7 +33,7 @@ type ProcessHandler struct {
 func NewProcessHandler() *ProcessHandler {
 	return &ProcessHandler{
 		BaseHandler:    NewBaseHandler(),
-		processManager: process.NewProcessManager(),
+		processManager: process.GetProcessManager(),
 	}
 }
 

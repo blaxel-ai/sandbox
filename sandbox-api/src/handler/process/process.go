@@ -179,7 +179,6 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 
 		// Determine exit status and create appropriate message
 		if err != nil {
-			fmt.Println("Process shutdown")
 			if process.Status != "stopped" && process.Status != "killed" {
 				process.Status = "failed"
 			}
@@ -367,7 +366,6 @@ func (pm *ProcessManager) StopProcess(identifier string) error {
 			return fmt.Errorf("failed to send SIGTERM to process with Identifier %s: %w", identifier, err)
 		}
 	}
-	fmt.Println("Setting status to stopped")
 	process.Status = "stopped"
 	return nil
 }
