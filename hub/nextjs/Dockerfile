@@ -23,9 +23,9 @@ COPY --from=build /blaxel/sandbox-api/sandbox-api-binary /usr/local/bin/sandbox-
 # Option 1: Start with a fresh Next.js project
 RUN mkdir -p /blaxel/app 
 
-RUN npx create-next-app@latest /blaxel/app --use-npm --typescript --eslint --tailwind --src-dir --app --import-alias "@/*" --no-git --yes
+RUN npx create-next-app@latest /blaxel/app --use-npm --typescript --eslint --tailwind --src-dir --app --import-alias "@/*" --no-git --yes --no-turbopack
 
 # Expose ports for Next.js dev server
 EXPOSE 3000
 
-ENTRYPOINT ["/usr/local/bin/sandbox-api", "-c", "cd /blaxel/app && npm run dev -- -p 3000"]
+ENTRYPOINT ["/usr/local/bin/sandbox-api"]
