@@ -136,10 +136,14 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 				data := buf[:n]
 				process.stdout.Write(data)
 
-				// Send to any attached log writers
+				// Send to any attached log writers, prefix with stdout:
 				process.logLock.RLock()
 				for _, w := range process.logWriters {
+					w.Write([]byte("stdout:"))
 					w.Write(data)
+					if f, ok := w.(interface{ Flush() }); ok {
+						f.Flush()
+					}
 				}
 				process.logLock.RUnlock()
 			}
@@ -158,10 +162,14 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 				data := buf[:n]
 				process.stderr.Write(data)
 
-				// Send to any attached log writers
+				// Send to any attached log writers, prefix with stderr:
 				process.logLock.RLock()
 				for _, w := range process.logWriters {
+					w.Write([]byte("stderr:"))
 					w.Write(data)
+					if f, ok := w.(interface{ Flush() }); ok {
+						f.Flush()
+					}
 				}
 				process.logLock.RUnlock()
 			}

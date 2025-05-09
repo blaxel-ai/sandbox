@@ -1,11 +1,11 @@
 package handler
 
 import (
-	"bytes"
 	"fmt"
 	"io"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -13,13 +13,16 @@ import (
 	"github.com/beamlit/sandbox-api/src/lib"
 )
 
-var processHandlerInstance *ProcessHandler
+var (
+	processHandlerInstance *ProcessHandler
+	processHandlerOnce     sync.Once
+)
 
 // GetProcessHandler returns the singleton process handler instance
 func GetProcessHandler() *ProcessHandler {
-	if processHandlerInstance == nil {
+	processHandlerOnce.Do(func() {
 		processHandlerInstance = NewProcessHandler()
-	}
+	})
 	return processHandlerInstance
 }
 
@@ -226,7 +229,6 @@ func (h *ProcessHandler) HandleExecuteCommand(c *gin.Context) {
 // @Accept json
 // @Produce json
 // @Param identifier path string true "Process identifier (PID or name)"
-// @Param stream query bool false "Stream logs"
 // @Success 200 {object} map[string]string "Process logs"
 // @Failure 404 {object} ErrorResponse "Process not found"
 // @Failure 500 {object} ErrorResponse "Internal server error"
@@ -251,14 +253,12 @@ func (h *ProcessHandler) HandleGetProcessLogs(c *gin.Context) {
 }
 
 // HandleGetProcessLogsStream handles GET requests to /process/{identifier}/logs/stream
-// @Summary Get process logs in realtime
-// @Description Get the stdout and stderr output of a process in realtime
+// @Summary Stream process logs in real time
+// @Description Streams the stdout and stderr output of a process in real time, one line per log, prefixed with 'stdout:' or 'stderr:'. Closes when the process exits or the client disconnects.
 // @Tags process
-// @Accept json
-// @Produce json
+// @Produce plain
 // @Param identifier path string true "Process identifier (PID or name)"
-// @Param stream query bool false "Stream logs"
-// @Success 200 {object} map[string]string "Process logs"
+// @Success 200 {string} string "Stream of process logs, one line per log (prefixed with stdout:/stderr:)"
 // @Failure 404 {object} ErrorResponse "Process not found"
 // @Failure 500 {object} ErrorResponse "Internal server error"
 // @Router /process/{identifier}/logs/stream [get]
@@ -268,11 +268,39 @@ func (h *ProcessHandler) HandleGetProcessLogsStream(c *gin.Context) {
 		h.SendError(c, http.StatusBadRequest, err)
 		return
 	}
-	err = h.StreamProcessOutput(identifier, c.Writer)
+
+	// Set headers for streaming
+	c.Writer.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	c.Writer.Header().Set("Cache-Control", "no-cache")
+	c.Writer.Header().Set("Connection", "keep-alive")
+	c.Writer.Flush()
+
+	// Use the custom ResponseWriter for flushing
+	rw := &ResponseWriter{gin: c}
+
+	err = h.StreamProcessOutput(identifier, rw)
 	if err != nil {
 		h.SendError(c, http.StatusInternalServerError, err)
 		return
 	}
+
+	// Wait until the process is done or the client disconnects
+	process, exists := h.processManager.GetProcessByIdentifier(identifier)
+	if !exists {
+		return
+	}
+	for process.Status == "running" {
+		time.Sleep(200 * time.Millisecond)
+		// If client disconnects, break
+		select {
+		case <-c.Request.Context().Done():
+			h.RemoveLogWriter(identifier, rw)
+			return
+		default:
+		}
+	}
+	// Detach the writer
+	h.RemoveLogWriter(identifier, rw)
 }
 
 // HandleStopProcess handles DELETE requests to /process/{identifier}
@@ -358,7 +386,6 @@ func (h *ProcessHandler) HandleGetProcess(c *gin.Context) {
 
 // ResponseWriter is a custom writer for SSE responses that also flushes after each write
 type ResponseWriter struct {
-	buffer bytes.Buffer
 	gin    *gin.Context
 	closed bool
 	mu     sync.Mutex // Protects the closed field
@@ -369,51 +396,24 @@ func (w *ResponseWriter) Write(data []byte) (int, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
-	// Don't attempt to write if the writer is marked as closed
 	if w.closed {
 		return 0, fmt.Errorf("writer closed")
 	}
 
-	// Use recover to catch any panics that might occur during writing
-	defer func() {
-		if r := recover(); r != nil {
-			// Log the panic but continue
-		}
-	}()
-
-	// Check if the request context is still valid
 	select {
 	case <-w.gin.Request.Context().Done():
 		w.closed = true
 		return 0, fmt.Errorf("client connection closed")
 	default:
-		// Context still valid, proceed with write
 	}
 
-	prefix := []byte("data: ")
-	w.buffer.Write(prefix)
-	w.buffer.Write(data)
-	w.buffer.Write([]byte("\n\n"))
-	content := w.buffer.Bytes()
-	w.buffer.Reset()
-
-	// Safely write and flush
-	n, err := w.gin.Writer.Write(content)
+	// Write data as-is (no SSE wrapping)
+	n, err := w.gin.Writer.Write(data)
 	if err != nil {
 		w.closed = true
 		return 0, err
 	}
-
-	// Flush safely with panic recovery
-	func() {
-		defer func() {
-			if r := recover(); r != nil {
-				// Log the panic but continue
-			}
-		}()
-		w.gin.Writer.Flush()
-	}()
-
+	w.gin.Writer.Flush()
 	return n, nil
 }
 

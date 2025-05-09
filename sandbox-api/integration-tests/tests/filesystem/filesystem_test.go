@@ -1,9 +1,11 @@
 package tests
 
 import (
+	"bufio"
 	"fmt"
 	"net/http"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -208,4 +210,72 @@ func TestFileSystemTree(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Contains(t, successResp.Message, "success")
+}
+
+// TestFileSystemWatch tests the streaming watch endpoint for file modifications
+func TestFileSystemWatch(t *testing.T) {
+	t.Parallel()
+
+	dir := fmt.Sprintf("/tmp/test-watch-%d", time.Now().UnixNano())
+	createDirRequest := map[string]interface{}{
+		"isDirectory": true,
+	}
+	var successResp handler.SuccessResponse
+	resp, err := common.MakeRequestAndParse(http.MethodPut, "/filesystem"+dir, createDirRequest, &successResp)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Contains(t, successResp.Message, "success")
+
+	watchPath := dir
+	fileName := "watched.txt"
+	filePath := dir + "/" + fileName
+
+	done := make(chan struct{})
+	received := make(chan string, 1)
+
+	// Start watcher goroutine
+	go func() {
+		resp, err := common.MakeRequest("GET", "/watch/filesystem"+watchPath, nil)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		reader := bufio.NewReader(resp.Body)
+		for {
+			line, err := reader.ReadString('\n')
+			fmt.Println("line:", line)
+			if err != nil {
+				break
+			}
+			line = strings.TrimSpace(line)
+			if line != "" {
+				received <- line
+				break
+			}
+		}
+		close(done)
+	}()
+
+	// Wait a moment to ensure watcher is ready
+	time.Sleep(300 * time.Millisecond)
+
+	// Create a file in the watched directory
+	content := []byte("hello watch!")
+	createFileRequest := map[string]interface{}{
+		"content": string(content),
+	}
+	resp, err = common.MakeRequestAndParse(http.MethodPut, "/filesystem"+filePath, createFileRequest, &successResp)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Contains(t, successResp.Message, "success")
+
+	// Wait for watcher to receive the event or timeout
+	select {
+	case path := <-received:
+		assert.Contains(t, path, filePath, "Watcher should receive the created file path")
+	case <-time.After(2 * time.Second):
+		t.Fatal("Timeout waiting for file event from watcher")
+	}
+
+	<-done
 }

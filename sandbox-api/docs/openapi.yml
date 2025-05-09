@@ -113,6 +113,39 @@ paths:
       summary: Create or update file or directory
       tags:
         - filesystem
+  "/filesystem/{path}/watch":
+    get:
+      description: Streams the path of modified files (one per line) in the given
+        directory. Closes when the client disconnects.
+      parameters:
+        - description: Directory path to watch
+          in: path
+          name: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Stream of modified file paths, one per line
+          content:
+            text/plain:
+              schema:
+                type: string
+        "400":
+          description: Invalid path
+          content:
+            text/plain:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            text/plain:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+      summary: Stream file modification events in a directory
+      tags:
+        - filesystem
   "/network/process/{pid}/monitor":
     delete:
       description: Stop monitoring for new ports opened by a process
@@ -369,11 +402,6 @@ paths:
           required: true
           schema:
             type: string
-        - description: Stream logs
-          in: query
-          name: stream
-          schema:
-            type: boolean
       responses:
         "200":
           description: Process logs
@@ -400,7 +428,9 @@ paths:
         - process
   "/process/{identifier}/logs/stream":
     get:
-      description: Get the stdout and stderr output of a process in realtime
+      description: Streams the stdout and stderr output of a process in real time, one
+        line per log, prefixed with 'stdout:' or 'stderr:'. Closes when the
+        process exits or the client disconnects.
       parameters:
         - description: Process identifier (PID or name)
           in: path
@@ -408,33 +438,27 @@ paths:
           required: true
           schema:
             type: string
-        - description: Stream logs
-          in: query
-          name: stream
-          schema:
-            type: boolean
       responses:
         "200":
-          description: Process logs
+          description: Stream of process logs, one line per log (prefixed with
+            stdout:/stderr:)
           content:
-            application/json:
+            text/plain:
               schema:
-                additionalProperties:
-                  type: string
-                type: object
+                type: string
         "404":
           description: Process not found
           content:
-            application/json:
+            text/plain:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "500":
           description: Internal server error
           content:
-            application/json:
+            text/plain:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
-      summary: Get process logs in realtime
+      summary: Stream process logs in real time
       tags:
         - process
 servers:
