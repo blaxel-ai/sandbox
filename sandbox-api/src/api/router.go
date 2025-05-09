@@ -79,6 +79,7 @@ func SetupRouter() *gin.Engine {
 	})
 
 	// Filesystem routes
+	r.GET("/watch/filesystem/*path", fsHandler.HandleWatchDirectory)
 	r.GET("/filesystem/*path", fsHandler.HandleGetFile)
 	r.PUT("/filesystem/*path", fsHandler.HandleCreateOrUpdateFile)
 	r.DELETE("/filesystem/*path", fsHandler.HandleDeleteFile)
@@ -87,6 +88,7 @@ func SetupRouter() *gin.Engine {
 	r.GET("/process", processHandler.HandleListProcesses)
 	r.POST("/process", processHandler.HandleExecuteCommand)
 	r.GET("/process/:identifier/logs", processHandler.HandleGetProcessLogs)
+	r.GET("/process/:identifier/logs/stream", processHandler.HandleGetProcessLogsStream)
 	r.DELETE("/process/:identifier", processHandler.HandleStopProcess)
 	r.DELETE("/process/:identifier/kill", processHandler.HandleKillProcess)
 	r.GET("/process/:identifier", processHandler.HandleGetProcess)

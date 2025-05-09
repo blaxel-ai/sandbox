@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strconv"
 
+	"github.com/fsnotify/fsnotify"
 	"github.com/gin-gonic/gin"
 
 	"github.com/beamlit/sandbox-api/src/handler/filesystem"
@@ -447,4 +448,73 @@ func (h *FileSystemHandler) HandleCreateOrUpdateTree(c *gin.Context) {
 		"subdirectories": dir.Subdirectories,
 		"message":        "Tree created/updated successfully",
 	})
+}
+
+// HandleWatchDirectory streams file modification events for a directory
+// @Summary Stream file modification events in a directory
+// @Description Streams the path of modified files (one per line) in the given directory. Closes when the client disconnects.
+// @Tags filesystem
+// @Produce plain
+// @Param path path string true "Directory path to watch"
+// @Success 200 {string} string "Stream of modified file paths, one per line"
+// @Failure 400 {object} ErrorResponse "Invalid path"
+// @Failure 500 {object} ErrorResponse "Internal server error"
+// @Router /watch/filesystem/{path} [get]
+func (h *FileSystemHandler) HandleWatchDirectory(c *gin.Context) {
+	path, err := h.GetPathParam(c, "path")
+	if err != nil {
+		h.SendError(c, http.StatusBadRequest, err)
+		return
+	}
+	path, err = lib.FormatPath(path)
+	if err != nil {
+		h.SendError(c, http.StatusBadRequest, err)
+		return
+	}
+
+	isDir, err := h.DirectoryExists(path)
+	if err != nil {
+		h.SendError(c, http.StatusInternalServerError, err)
+		return
+	}
+	if !isDir {
+		h.SendError(c, http.StatusBadRequest, fmt.Errorf("path is not a directory"))
+		return
+	}
+
+	c.Writer.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	c.Writer.Header().Set("Transfer-Encoding", "chunked")
+	c.Writer.WriteHeader(http.StatusOK)
+	flusher, ok := c.Writer.(http.Flusher)
+	if !ok {
+		h.SendError(c, http.StatusInternalServerError, fmt.Errorf("streaming not supported"))
+		return
+	}
+
+	ctx := c.Request.Context()
+	done := make(chan struct{})
+
+	// Start watching the directory
+	err = h.fs.WatchDirectory(path, func(event fsnotify.Event) {
+		// Only send file events (not directory events)
+		if event.Op&(fsnotify.Write|fsnotify.Create|fsnotify.Remove|fsnotify.Rename) != 0 {
+			defer func() { _ = recover() }()
+			if _, err := c.Writer.Write([]byte(event.Name + "\n")); err != nil {
+				return
+			}
+			flusher.Flush()
+		}
+	})
+	if err != nil {
+		h.SendError(c, http.StatusInternalServerError, err)
+		return
+	}
+
+	// Wait for client disconnect
+	go func() {
+		<-ctx.Done()
+		close(done)
+	}()
+
+	<-done
 }

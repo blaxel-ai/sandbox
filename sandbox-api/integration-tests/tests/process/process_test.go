@@ -1,8 +1,10 @@
 package tests
 
 import (
+	"bufio"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -234,4 +236,74 @@ func TestProcessOutputByName(t *testing.T) {
 
 	assert.Equal(t, "test output\n", outputResponse["stdout"])
 	assert.Equal(t, "test error\n", outputResponse["stderr"])
+}
+
+func TestProcessStreamLogs(t *testing.T) {
+	// Create a process that outputs 5 lines quickly
+	processRequest := map[string]interface{}{
+		"command": "for i in $(seq 1 5); do echo tick $i; sleep 0.05; done",
+		"cwd":     "/",
+	}
+
+	resp, err := common.MakeRequest(http.MethodPost, "/process", processRequest)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var processResponse map[string]interface{}
+	err = json.NewDecoder(resp.Body).Decode(&processResponse)
+	require.NoError(t, err)
+
+	require.Contains(t, processResponse, "name")
+	processName := processResponse["name"].(string)
+
+	// Start streaming logs
+	streamResp, err := common.MakeRequest(http.MethodGet, "/process/"+processName+"/logs/stream", nil)
+	require.NoError(t, err)
+	defer streamResp.Body.Close()
+
+	assert.Equal(t, http.StatusOK, streamResp.StatusCode)
+
+	reader := bufio.NewReader(streamResp.Body)
+	linesCh := make(chan string, 10)
+	done := make(chan struct{})
+
+	// Goroutine to read lines as they arrive
+	go func() {
+		for {
+			line, err := reader.ReadString('\n')
+			if err != nil {
+				close(done)
+				return
+			}
+			linesCh <- strings.TrimSpace(line)
+		}
+	}()
+
+	// Collect lines for up to 0.5 seconds
+	received := []string{}
+	collectTimeout := time.After(500 * time.Millisecond)
+collectLoop:
+	for {
+		select {
+		case line := <-linesCh:
+			if line != "" {
+				received = append(received, line)
+			}
+		case <-done:
+			break collectLoop
+		case <-collectTimeout:
+			break collectLoop
+		}
+	}
+
+	// We expect at least 5 lines like "tick 1", ..., "tick 5"
+	count := 0
+	for _, line := range received {
+		if strings.HasPrefix(line, "stdout:") && strings.Contains(line, "tick") {
+			count++
+		}
+	}
+	assert.GreaterOrEqual(t, count, 5, "should receive at least 5 tick lines from stream")
 }

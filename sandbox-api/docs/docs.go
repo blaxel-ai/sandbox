@@ -522,12 +522,6 @@ const docTemplate = `{
                         "name": "identifier",
                         "in": "path",
                         "required": true
-                    },
-                    {
-                        "type": "boolean",
-                        "description": "Stream logs",
-                        "name": "stream",
-                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -557,17 +551,14 @@ const docTemplate = `{
         },
         "/process/{identifier}/logs/stream": {
             "get": {
-                "description": "Get the stdout and stderr output of a process in realtime",
-                "consumes": [
-                    "application/json"
-                ],
+                "description": "Streams the stdout and stderr output of a process in real time, one line per log, prefixed with 'stdout:' or 'stderr:'. Closes when the process exits or the client disconnects.",
                 "produces": [
-                    "application/json"
+                    "text/plain"
                 ],
                 "tags": [
                     "process"
                 ],
-                "summary": "Get process logs in realtime",
+                "summary": "Stream process logs in real time",
                 "parameters": [
                     {
                         "type": "string",
@@ -575,26 +566,58 @@ const docTemplate = `{
                         "name": "identifier",
                         "in": "path",
                         "required": true
-                    },
-                    {
-                        "type": "boolean",
-                        "description": "Stream logs",
-                        "name": "stream",
-                        "in": "query"
                     }
                 ],
                 "responses": {
                     "200": {
-                        "description": "Process logs",
+                        "description": "Stream of process logs, one line per log (prefixed with stdout:/stderr:)",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
+                            "type": "string"
                         }
                     },
                     "404": {
                         "description": "Process not found",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/watch/filesystem/{path}": {
+            "get": {
+                "description": "Streams the path of modified files (one per line) in the given directory. Closes when the client disconnects.",
+                "produces": [
+                    "text/plain"
+                ],
+                "tags": [
+                    "filesystem"
+                ],
+                "summary": "Stream file modification events in a directory",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Directory path to watch",
+                        "name": "path",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Stream of modified file paths, one per line",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid path",
                         "schema": {
                             "$ref": "#/definitions/ErrorResponse"
                         }
@@ -738,10 +761,6 @@ const docTemplate = `{
                 "name": {
                     "type": "string",
                     "example": "my-process"
-                },
-                "streamLogs": {
-                    "type": "boolean",
-                    "example": true
                 },
                 "timeout": {
                     "type": "integer",

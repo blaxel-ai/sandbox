@@ -3,6 +3,8 @@ package filesystem
 import (
 	"fmt"
 	"path/filepath"
+
+	"github.com/fsnotify/fsnotify"
 )
 
 // Subdirectory represents a subdirectory in the filesystem
@@ -106,6 +108,44 @@ func (fs *Filesystem) CreateOrUpdateTree(rootPath string, files map[string]strin
 			return fmt.Errorf("error writing file: %w", err)
 		}
 	}
+
+	return nil
+}
+
+// WatchDirectory watches a specific directory for changes.
+// The callback is called with the event when a change occurs.
+func (fs *Filesystem) WatchDirectory(path string, callback func(event fsnotify.Event)) error {
+	absPath, err := fs.GetAbsolutePath(path)
+	if err != nil {
+		return err
+	}
+
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		return err
+	}
+
+	err = watcher.Add(absPath)
+	if err != nil {
+		return err
+	}
+
+	go func() {
+		for {
+			select {
+			case event, ok := <-watcher.Events:
+				if !ok {
+					return
+				}
+				callback(event)
+			case err, ok := <-watcher.Errors:
+				if !ok {
+					return
+				}
+				fmt.Println("error:", err)
+			}
+		}
+	}()
 
 	return nil
 }
