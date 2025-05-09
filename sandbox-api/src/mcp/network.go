@@ -5,7 +5,7 @@ import (
 
 	mcp_golang "github.com/metoro-io/mcp-golang"
 
-	"github.com/beamlit/sandbox-api/src/handler/network"
+	"github.com/blaxel-ai/sandbox-api/src/handler/network"
 )
 
 // registerNetworkTools registers network-related tools

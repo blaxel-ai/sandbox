@@ -6,7 +6,7 @@ import (
 	"github.com/gin-gonic/gin"
 	mcp_golang "github.com/metoro-io/mcp-golang"
 
-	"github.com/beamlit/sandbox-api/src/handler"
+	"github.com/blaxel-ai/sandbox-api/src/handler"
 )
 
 // Server represents the MCP server

@@ -78,7 +78,7 @@ Every `template.json` file should include:
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/beamlit/sandbox.git
+   git clone https://github.com/blaxel-ai/sandbox.git
    cd sandbox
    ```
 

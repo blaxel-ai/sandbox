@@ -1,11 +1,12 @@
-module github.com/beamlit/sandbox-api/integration_tests
+module github.com/blaxel-ai/sandbox-api/integration_tests
 
 go 1.23.3
 
 toolchain go1.23.8
 
 require (
-	github.com/beamlit/sandbox-api v0.0.0
+	github.com/blaxel-ai/sandbox-api v0.0.0
+	github.com/gorilla/websocket v1.5.3
 	github.com/stretchr/testify v1.10.0
 )
 
@@ -42,4 +43,4 @@ require (
 )
 
 // Use the local sandbox-api code
-replace github.com/beamlit/sandbox-api => ../
+replace github.com/blaxel-ai/sandbox-api => ../

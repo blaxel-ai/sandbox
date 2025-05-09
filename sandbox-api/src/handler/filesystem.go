@@ -9,9 +9,10 @@ import (
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/gin-gonic/gin"
+	"github.com/gorilla/websocket"
 
-	"github.com/beamlit/sandbox-api/src/handler/filesystem"
-	"github.com/beamlit/sandbox-api/src/lib"
+	"github.com/blaxel-ai/sandbox-api/src/handler/filesystem"
+	"github.com/blaxel-ai/sandbox-api/src/lib"
 )
 
 // FileSystemHandler handles filesystem operations
@@ -514,6 +515,77 @@ func (h *FileSystemHandler) HandleWatchDirectory(c *gin.Context) {
 	go func() {
 		<-ctx.Done()
 		close(done)
+	}()
+
+	<-done
+}
+
+// HandleWatchDirectoryWebSocket streams file modification events for a directory over WebSocket
+// @Summary Stream file modification events in a directory via WebSocket
+// @Description Streams JSON events of modified files in the given directory. Closes when the client disconnects.
+// @Tags filesystem
+// @Produce json
+// @Param path path string true "Directory path to watch"
+// @Success 101 {string} string "WebSocket connection established"
+// @Failure 400 {object} ErrorResponse "Invalid path"
+// @Failure 500 {object} ErrorResponse "Internal server error"
+// @Router /ws/watch/filesystem/{path} [get]
+func (h *FileSystemHandler) HandleWatchDirectoryWebSocket(c *gin.Context) {
+	path, err := h.GetPathParam(c, "path")
+	if err != nil {
+		h.SendError(c, http.StatusBadRequest, err)
+		return
+	}
+	path, err = lib.FormatPath(path)
+	if err != nil {
+		h.SendError(c, http.StatusBadRequest, err)
+		return
+	}
+
+	isDir, err := h.DirectoryExists(path)
+	if err != nil {
+		h.SendError(c, http.StatusInternalServerError, err)
+		return
+	}
+	if !isDir {
+		h.SendError(c, http.StatusBadRequest, fmt.Errorf("path is not a directory"))
+		return
+	}
+
+	upgrader := websocket.Upgrader{
+		CheckOrigin: func(r *http.Request) bool { return true },
+	}
+	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
+	if err != nil {
+		return
+	}
+	defer conn.Close()
+	done := make(chan struct{})
+
+	err = h.fs.WatchDirectory(path, func(event fsnotify.Event) {
+		if event.Op&(fsnotify.Write|fsnotify.Create|fsnotify.Remove|fsnotify.Rename) != 0 {
+			msg := map[string]interface{}{
+				"event": event.Op.String(),
+				"name":  event.Name,
+			}
+			if err := conn.WriteJSON(msg); err != nil {
+				close(done)
+			}
+		}
+	})
+	if err != nil {
+		conn.WriteJSON(map[string]string{"error": err.Error()})
+		return
+	}
+
+	go func() {
+		for {
+			_, _, err := conn.ReadMessage()
+			if err != nil {
+				close(done)
+				return
+			}
+		}
 	}()
 
 	<-done

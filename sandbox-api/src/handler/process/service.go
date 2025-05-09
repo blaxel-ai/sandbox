@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/beamlit/sandbox-api/src/handler/network"
+	"github.com/blaxel-ai/sandbox-api/src/handler/network"
 )
 
 // ExecuteProcess executes a process with the given parameters

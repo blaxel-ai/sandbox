@@ -45,7 +45,7 @@ A comprehensive development environment for building React Native applications u
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/beamlit/sandbox.git
+   git clone https://github.com/blaxel-ai/sandbox.git
    cd sandbox
    ```
 
@@ -59,7 +59,7 @@ A comprehensive development environment for building React Native applications u
 ### Blaxel SDK
 
 Languages:
- - [Python](https://github.com/beamlit/sdk-python)
+ - [Python](https://github.com/blaxel-ai/sdk-python)
  - [Typescript](https://github.com/modelcontextprotocol/typescript-sdk)
 
 You can find sample on how to create/retrieve/remove a Sandbox at this url: https://docs.blaxel.ai/Sandboxes/Overview

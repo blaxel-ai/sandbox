@@ -76,6 +76,6 @@ jobs:
         uses: peter-evans/repository-dispatch@v2
         with:
           token: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
-          repository: beamlit/uvm
+          repository: ${{ github.repository_owner }}/uvm
           event-type: build-sandbox
           client-payload: '{"sandboxes": ${{ steps.retrieve-sandbox.outputs.sandbox }}, "env": "${{ github.ref_name == ''main'' && ''prod'' || ''dev'' }}", "repository_url": "${{ github.repository }}"}'

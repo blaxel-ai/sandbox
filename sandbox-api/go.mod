@@ -1,4 +1,4 @@
-module github.com/beamlit/sandbox-api
+module github.com/blaxel-ai/sandbox-api
 
 go 1.23.3
 
