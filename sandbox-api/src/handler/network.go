@@ -10,7 +10,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/beamlit/sandbox-api/src/handler/network"
+	"github.com/blaxel-ai/sandbox-api/src/handler/network"
 )
 
 // NetworkHandler handles network operations

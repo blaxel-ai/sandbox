@@ -2,16 +2,19 @@ package tests
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/beamlit/sandbox-api/integration_tests/common"
-	"github.com/beamlit/sandbox-api/src/handler"
-	"github.com/beamlit/sandbox-api/src/handler/filesystem"
+	"github.com/blaxel-ai/sandbox-api/integration_tests/common"
+	"github.com/blaxel-ai/sandbox-api/src/handler"
+	"github.com/blaxel-ai/sandbox-api/src/handler/filesystem"
+	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -278,4 +281,80 @@ func TestFileSystemWatch(t *testing.T) {
 	}
 
 	<-done
+}
+
+// TestFileSystemWatchWebSocket tests the streaming watch endpoint for file modifications using WebSocket
+func TestFileSystemWatchWebSocket(t *testing.T) {
+	dir := fmt.Sprintf("/tmp/test-watchws-%d", time.Now().UnixNano())
+	createDirRequest := map[string]interface{}{
+		"isDirectory": true,
+	}
+	var successResp handler.SuccessResponse
+	resp, err := common.MakeRequestAndParse(http.MethodPut, "/filesystem"+dir, createDirRequest, &successResp)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Contains(t, successResp.Message, "success")
+
+	// Build ws:// URL from API base URL
+	apiBase := os.Getenv("API_BASE_URL")
+	if apiBase == "" {
+		apiBase = "http://localhost:8080"
+	}
+	u, err := url.Parse(apiBase)
+	require.NoError(t, err)
+	u.Scheme = "ws"
+	u.Path = "/ws/watch/filesystem" + dir
+
+	ws, _, err := websocket.DefaultDialer.Dial(u.String(), nil)
+	require.NoError(t, err)
+	defer ws.Close()
+
+	fileName := "watchedws.txt"
+	filePath := dir + "/" + fileName
+
+	done := make(chan struct{})
+	received := make(chan map[string]interface{}, 1)
+	go func() {
+		for {
+			_, msg, err := ws.ReadMessage()
+
+			if err != nil {
+				close(done)
+				return
+			}
+			var payload map[string]interface{}
+			err = json.Unmarshal(msg, &payload)
+			if err == nil {
+				received <- payload
+				return
+			}
+		}
+	}()
+
+	// Wait a moment to ensure watcher is ready
+	time.Sleep(300 * time.Millisecond)
+
+	// Create a file in the watched directory
+	content := []byte("hello watch ws!")
+	createFileRequest := map[string]interface{}{
+		"content": string(content),
+	}
+	resp, err = common.MakeRequestAndParse(http.MethodPut, "/filesystem"+filePath, createFileRequest, &successResp)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Contains(t, successResp.Message, "success")
+
+	// Wait for watcher to receive the event or timeout
+	select {
+	case event := <-received:
+		assert.Equal(t, filePath, event["name"], "Watcher should receive the created file path in event")
+		assert.Contains(t, event["event"], "CREATE")
+	case <-time.After(2 * time.Second):
+		t.Fatal("Timeout waiting for file event from websocket watcher")
+	}
+
+	// Clean up
+	_, _ = common.MakeRequest(http.MethodDelete, "/filesystem"+dir+"?recursive=true", nil)
 }
