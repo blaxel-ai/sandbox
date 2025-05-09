@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"sync"
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/gin-gonic/gin"
@@ -485,6 +486,7 @@ func (h *FileSystemHandler) HandleWatchDirectory(c *gin.Context) {
 
 	c.Writer.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	c.Writer.Header().Set("Transfer-Encoding", "chunked")
+	c.Writer.Header().Set("X-Accel-Buffering", "no")
 	c.Writer.WriteHeader(http.StatusOK)
 	flusher, ok := c.Writer.(http.Flusher)
 	if !ok {
@@ -561,6 +563,7 @@ func (h *FileSystemHandler) HandleWatchDirectoryWebSocket(c *gin.Context) {
 	}
 	defer conn.Close()
 	done := make(chan struct{})
+	var once sync.Once
 
 	err = h.fs.WatchDirectory(path, func(event fsnotify.Event) {
 		if event.Op&(fsnotify.Write|fsnotify.Create|fsnotify.Remove|fsnotify.Rename) != 0 {
@@ -569,7 +572,7 @@ func (h *FileSystemHandler) HandleWatchDirectoryWebSocket(c *gin.Context) {
 				"name":  event.Name,
 			}
 			if err := conn.WriteJSON(msg); err != nil {
-				close(done)
+				once.Do(func() { close(done) })
 			}
 		}
 	})
@@ -582,7 +585,7 @@ func (h *FileSystemHandler) HandleWatchDirectoryWebSocket(c *gin.Context) {
 		for {
 			_, _, err := conn.ReadMessage()
 			if err != nil {
-				close(done)
+				once.Do(func() { close(done) })
 				return
 			}
 		}

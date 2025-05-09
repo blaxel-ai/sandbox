@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -273,6 +274,7 @@ func (h *ProcessHandler) HandleGetProcessLogsStream(c *gin.Context) {
 	c.Writer.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	c.Writer.Header().Set("Cache-Control", "no-cache")
 	c.Writer.Header().Set("Connection", "keep-alive")
+	c.Writer.Header().Set("X-Accel-Buffering", "no")
 	c.Writer.Flush()
 
 	// Use the custom ResponseWriter for flushing
@@ -429,10 +431,15 @@ func (w *ResponseWriter) Close() {
 // Implements io.Writer
 type wsWriter struct {
 	conn *websocket.Conn
+	mu   sync.Mutex
 }
 
 func (w *wsWriter) Write(data []byte) (int, error) {
-	msg := map[string]interface{}{"log": string(data)}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	logStr := string(data)
+	logStr = strings.TrimRight(logStr, "\n")
+	msg := map[string]interface{}{"type": "log", "log": logStr}
 	if err := w.conn.WriteJSON(msg); err != nil {
 		return 0, err
 	}
@@ -465,12 +472,13 @@ func (h *ProcessHandler) HandleGetProcessLogsStreamWebSocket(c *gin.Context) {
 	}
 	defer conn.Close()
 	done := make(chan struct{})
+	var once sync.Once
 
 	writer := &wsWriter{conn: conn}
 
 	err = h.StreamProcessOutput(identifier, writer)
 	if err != nil {
-		conn.WriteJSON(map[string]string{"error": err.Error()})
+		conn.WriteJSON(map[string]string{"type": "error", "log": err.Error()})
 		return
 	}
 
@@ -482,7 +490,7 @@ func (h *ProcessHandler) HandleGetProcessLogsStreamWebSocket(c *gin.Context) {
 		for {
 			_, _, err := conn.ReadMessage()
 			if err != nil {
-				close(done)
+				once.Do(func() { close(done) })
 				return
 			}
 		}
