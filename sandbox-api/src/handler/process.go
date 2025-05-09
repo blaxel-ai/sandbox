@@ -47,7 +47,6 @@ type ProcessRequest struct {
 	WorkingDir        string `json:"workingDir" example:"/home/user"`
 	WaitForCompletion bool   `json:"waitForCompletion" example:"false"`
 	Timeout           int    `json:"timeout" example:"30"`
-	StreamLogs        bool   `json:"streamLogs" example:"true"`
 	WaitForPorts      []int  `json:"waitForPorts" example:"3000,8080"`
 } // @name ProcessRequest
 

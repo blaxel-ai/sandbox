@@ -459,7 +459,7 @@ func (h *FileSystemHandler) HandleCreateOrUpdateTree(c *gin.Context) {
 // @Success 200 {string} string "Stream of modified file paths, one per line"
 // @Failure 400 {object} ErrorResponse "Invalid path"
 // @Failure 500 {object} ErrorResponse "Internal server error"
-// @Router /filesystem/{path}/watch [get]
+// @Router /watch/filesystem/{path} [get]
 func (h *FileSystemHandler) HandleWatchDirectory(c *gin.Context) {
 	path, err := h.GetPathParam(c, "path")
 	if err != nil {
@@ -498,7 +498,10 @@ func (h *FileSystemHandler) HandleWatchDirectory(c *gin.Context) {
 	err = h.fs.WatchDirectory(path, func(event fsnotify.Event) {
 		// Only send file events (not directory events)
 		if event.Op&(fsnotify.Write|fsnotify.Create|fsnotify.Remove|fsnotify.Rename) != 0 {
-			c.Writer.Write([]byte(event.Name + "\n"))
+			defer func() { _ = recover() }()
+			if _, err := c.Writer.Write([]byte(event.Name + "\n")); err != nil {
+				return
+			}
 			flusher.Flush()
 		}
 	})

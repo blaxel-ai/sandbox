@@ -113,39 +113,6 @@ paths:
       summary: Create or update file or directory
       tags:
         - filesystem
-  "/filesystem/{path}/watch":
-    get:
-      description: Streams the path of modified files (one per line) in the given
-        directory. Closes when the client disconnects.
-      parameters:
-        - description: Directory path to watch
-          in: path
-          name: path
-          required: true
-          schema:
-            type: string
-      responses:
-        "200":
-          description: Stream of modified file paths, one per line
-          content:
-            text/plain:
-              schema:
-                type: string
-        "400":
-          description: Invalid path
-          content:
-            text/plain:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "500":
-          description: Internal server error
-          content:
-            text/plain:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-      summary: Stream file modification events in a directory
-      tags:
-        - filesystem
   "/network/process/{pid}/monitor":
     delete:
       description: Stop monitoring for new ports opened by a process
@@ -461,6 +428,39 @@ paths:
       summary: Stream process logs in real time
       tags:
         - process
+  "/watch/filesystem/{path}":
+    get:
+      description: Streams the path of modified files (one per line) in the given
+        directory. Closes when the client disconnects.
+      parameters:
+        - description: Directory path to watch
+          in: path
+          name: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Stream of modified file paths, one per line
+          content:
+            text/plain:
+              schema:
+                type: string
+        "400":
+          description: Invalid path
+          content:
+            text/plain:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            text/plain:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+      summary: Stream file modification events in a directory
+      tags:
+        - filesystem
 servers:
   - url: //localhost:8080
 components:
@@ -550,9 +550,6 @@ components:
         name:
           example: my-process
           type: string
-        streamLogs:
-          example: true
-          type: boolean
         timeout:
           example: 30
           type: integer

@@ -288,12 +288,18 @@ func (pm *ProcessManager) GetProcessByIdentifier(identifier string) (*ProcessInf
 		}
 		return process, true
 	}
-
-	// Search by name
+	// Search by name - find the most recent process with this name
+	var latestProcess *ProcessInfo
 	for _, process := range pm.processes {
 		if process.Name == identifier {
-			return process, true
+			if latestProcess == nil || process.StartedAt.After(latestProcess.StartedAt) {
+				latestProcess = process
+			}
 		}
+	}
+
+	if latestProcess != nil {
+		return latestProcess, true
 	}
 
 	return nil, false

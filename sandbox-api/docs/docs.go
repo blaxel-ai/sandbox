@@ -158,47 +158,6 @@ const docTemplate = `{
                 }
             }
         },
-        "/filesystem/{path}/watch": {
-            "get": {
-                "description": "Streams the path of modified files (one per line) in the given directory. Closes when the client disconnects.",
-                "produces": [
-                    "text/plain"
-                ],
-                "tags": [
-                    "filesystem"
-                ],
-                "summary": "Stream file modification events in a directory",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Directory path to watch",
-                        "name": "path",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "Stream of modified file paths, one per line",
-                        "schema": {
-                            "type": "string"
-                        }
-                    },
-                    "400": {
-                        "description": "Invalid path",
-                        "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal server error",
-                        "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
-                        }
-                    }
-                }
-            }
-        },
         "/network/process/{pid}/monitor": {
             "post": {
                 "description": "Start monitoring for new ports opened by a process",
@@ -630,6 +589,47 @@ const docTemplate = `{
                     }
                 }
             }
+        },
+        "/watch/filesystem/{path}": {
+            "get": {
+                "description": "Streams the path of modified files (one per line) in the given directory. Closes when the client disconnects.",
+                "produces": [
+                    "text/plain"
+                ],
+                "tags": [
+                    "filesystem"
+                ],
+                "summary": "Stream file modification events in a directory",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Directory path to watch",
+                        "name": "path",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Stream of modified file paths, one per line",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid path",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    }
+                }
+            }
         }
     },
     "definitions": {
@@ -761,10 +761,6 @@ const docTemplate = `{
                 "name": {
                     "type": "string",
                     "example": "my-process"
-                },
-                "streamLogs": {
-                    "type": "boolean",
-                    "example": true
                 },
                 "timeout": {
                     "type": "integer",
