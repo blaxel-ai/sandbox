@@ -23,4 +23,4 @@ RUN cd /blaxel/app && npm install
 
 EXPOSE 3000
 
-ENTRYPOINT ["/usr/local/bin/sandbox-api", "-c", "cd /blaxel/app && npm run dev -- -p 3000"]
+ENTRYPOINT ["/usr/local/bin/sandbox-api"]
