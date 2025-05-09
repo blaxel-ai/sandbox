@@ -7,8 +7,8 @@ import (
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
 
-	_ "github.com/beamlit/sandbox-api/docs" // Import generated docs
-	"github.com/beamlit/sandbox-api/src/handler"
+	_ "github.com/blaxel-ai/sandbox-api/docs" // Import generated docs
+	"github.com/blaxel-ai/sandbox-api/src/handler"
 )
 
 // SetupRouter configures all the routes for the Sandbox API
@@ -97,6 +97,10 @@ func SetupRouter() *gin.Engine {
 	r.GET("/network/process/:pid/ports", networkHandler.HandleGetPorts)
 	r.POST("/network/process/:pid/monitor", networkHandler.HandleMonitorPorts)
 	r.DELETE("/network/process/:pid/monitor", networkHandler.HandleStopMonitoringPorts)
+
+	// Register WebSocket endpoints for watch and logs stream
+	r.GET("/ws/watch/filesystem/*path", fsHandler.HandleWatchDirectoryWebSocket)
+	r.GET("/ws/process/:identifier/logs/stream", processHandler.HandleGetProcessLogsStreamWebSocket)
 
 	// Health check route
 	r.GET("/health", func(c *gin.Context) {

@@ -8,9 +8,9 @@ import (
 	"os"
 	"os/exec"
 
-	"github.com/beamlit/sandbox-api/docs" // swagger generated docs
-	"github.com/beamlit/sandbox-api/src/api"
-	"github.com/beamlit/sandbox-api/src/mcp"
+	"github.com/blaxel-ai/sandbox-api/docs" // swagger generated docs
+	"github.com/blaxel-ai/sandbox-api/src/api"
+	"github.com/blaxel-ai/sandbox-api/src/mcp"
 	"github.com/joho/godotenv"
 )
 

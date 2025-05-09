@@ -4,11 +4,14 @@ import (
 	"bufio"
 	"encoding/json"
 	"net/http"
+	"net/url"
+	"os"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/beamlit/sandbox-api/integration_tests/common"
+	"github.com/blaxel-ai/sandbox-api/integration_tests/common"
+	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -306,4 +309,72 @@ collectLoop:
 		}
 	}
 	assert.GreaterOrEqual(t, count, 5, "should receive at least 5 tick lines from stream")
+}
+
+func TestProcessStreamLogsWebSocket(t *testing.T) {
+	// Start a process that outputs several lines
+	processRequest := map[string]interface{}{
+		"command": "for i in $(seq 1 5); do echo wslog $i; sleep 0.05; done",
+		"cwd":     "/",
+	}
+
+	resp, err := common.MakeRequest(http.MethodPost, "/process", processRequest)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var processResponse map[string]interface{}
+	err = json.NewDecoder(resp.Body).Decode(&processResponse)
+	require.NoError(t, err)
+
+	processName, ok := processResponse["name"].(string)
+	require.True(t, ok)
+
+	// Build ws:// URL from API base URL
+	apiBase := os.Getenv("API_BASE_URL")
+	if apiBase == "" {
+		apiBase = "http://localhost:8080"
+	}
+	u, err := url.Parse(apiBase)
+	require.NoError(t, err)
+	u.Scheme = "ws"
+	u.Path = "/ws/process/" + processName + "/logs/stream"
+
+	ws, _, err := websocket.DefaultDialer.Dial(u.String(), nil)
+	require.NoError(t, err)
+	defer ws.Close()
+
+	logLines := []string{}
+	done := make(chan struct{})
+	go func() {
+		for {
+			_, msg, err := ws.ReadMessage()
+			if err != nil {
+				close(done)
+				return
+			}
+			var payload map[string]interface{}
+			err = json.Unmarshal(msg, &payload)
+			if err == nil {
+				if logVal, ok := payload["log"].(string); ok {
+					logLines = append(logLines, logVal)
+				}
+			}
+		}
+	}()
+
+	// Wait for logs or timeout
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+	}
+
+	count := 0
+	for _, line := range logLines {
+		if strings.Contains(line, "wslog") {
+			count++
+		}
+	}
+	assert.GreaterOrEqual(t, count, 5, "should receive at least 5 wslog lines from websocket stream")
 }
