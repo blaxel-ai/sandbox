@@ -138,6 +138,10 @@ func (fs *Filesystem) WatchDirectory(path string, callback func(event fsnotify.E
 					return
 				}
 				callback(event)
+				// If the watched directory itself is removed or renamed, notify and stop watching
+				if (event.Op&fsnotify.Remove != 0 || event.Op&fsnotify.Rename != 0) && event.Name == absPath {
+					return
+				}
 			case err, ok := <-watcher.Errors:
 				if !ok {
 					return
