@@ -15,10 +15,13 @@ RUN set -xe; \
 
 FROM --platform=linux/amd64 node:22-alpine
 
+RUN apk update && apk add --no-cache \
+  git \
+  && rm -rf /var/cache/apk/*
+
 WORKDIR /blaxel
 
 COPY --from=build /blaxel/sandbox-api/sandbox-api-binary /usr/local/bin/sandbox-api
-
 
 # Option 1: Start with a fresh Next.js project
 RUN mkdir -p /blaxel/app 
