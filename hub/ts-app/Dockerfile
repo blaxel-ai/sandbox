@@ -16,6 +16,10 @@ RUN set -xe; \
 # Use an official Python runtime as a parent image
 FROM --platform=linux/amd64 node:22-slim
 
+RUN apt-get update && apt-get install -y \
+  git \
+  && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /blaxel
 
 COPY --from=build /blaxel/sandbox-api/sandbox-api-binary /usr/local/bin/sandbox-api
