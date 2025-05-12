@@ -17,10 +17,12 @@ FROM --platform=linux/amd64 node:22-alpine
 
 COPY --from=build /blaxel/sandbox-api/sandbox-api-binary /usr/local/bin/sandbox-api
 
-COPY ./hub/bannana-company/src /blaxel/app
+WORKDIR /blaxel
 
-RUN cd /blaxel/app && npm install
+RUN npm create vite@latest app -- --template react-ts
 
-EXPOSE 3000
+RUN cd app && npm install
+
+EXPOSE 5173
 
 ENTRYPOINT ["/usr/local/bin/sandbox-api"]
