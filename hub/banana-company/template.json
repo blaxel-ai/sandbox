@@ -1,9 +1,9 @@
 {
-  "name": "bannana-company",
-  "displayName": "Bannana Company",
+  "name": "banana-company",
+  "displayName": "Banana Company",
   "categories": [],
   "description": "A simple Next.js app for a banana store",
-  "longDescription": "The Bannana Company is a simple Next.js app for a banana store. It's a great way to learn how sandbox-api works.",
+  "longDescription": "The Banana Company is a simple Next.js app for a banana store. It's a great way to learn how sandbox-api works.",
   "url": "https://blaxel.ai",
   "icon": "https://images.vexels.com/media/users/3/247181/isolated/preview/d5524c201fadfab8f8535412b6682deb-peeled-banana-semi-flat.png",
   "memory": 2048,

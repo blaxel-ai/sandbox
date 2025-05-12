@@ -1,0 +1,27 @@
+{
+  "name": "vite-react-ts",
+  "displayName": "Vite React TS",
+  "categories": [
+    "web",
+    "react"
+  ],
+  "description": "A simple Vite app",
+  "longDescription": "The Vite app is a simple Vite app with React and TypeScript. It's ideal for building a simple web app.",
+  "url": "https://vitejs.dev",
+  "icon": "https://vitejs.dev/logo.svg",
+  "memory": 2048,
+  "ports": [
+    {
+      "name": "sandbox-api",
+      "target": 8080,
+      "protocol": "HTTP"
+    },
+    {
+      "name": "preview",
+      "target": 5173,
+      "protocol": "tls"
+    }
+  ],
+  "enterprise": false,
+  "coming_soon": false
+}
