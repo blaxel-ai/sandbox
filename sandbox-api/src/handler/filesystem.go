@@ -1,11 +1,13 @@
 package handler
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/fsnotify/fsnotify"
@@ -21,6 +23,14 @@ type FileSystemHandler struct {
 	*BaseHandler
 	fs *filesystem.Filesystem
 }
+
+// FileEvent represents a file event
+type FileEvent struct {
+	Op    string  `json:"op"`
+	Name  string  `json:"name"`
+	Path  string  `json:"path"`
+	Error *string `json:"error"`
+} // @name FileEvent
 
 // FileRequest represents the request body for creating or updating a file
 type FileRequest struct {
@@ -498,11 +508,23 @@ func (h *FileSystemHandler) HandleWatchDirectory(c *gin.Context) {
 	done := make(chan struct{})
 
 	// Start watching the directory
-	err = h.fs.WatchDirectory(path, func(event fsnotify.Event) {
+	stop, err := h.fs.WatchDirectory(path, func(event fsnotify.Event) {
 		// Only send file events (not directory events)
 		if event.Op&(fsnotify.Write|fsnotify.Create|fsnotify.Remove|fsnotify.Rename) != 0 {
 			defer func() { _ = recover() }()
-			if _, err := c.Writer.Write([]byte(event.Name + "\n")); err != nil {
+			msg := FileEvent{
+				Op:    event.Op.String(),
+				Name:  strings.Split(event.Name, "/")[len(strings.Split(event.Name, "/"))-1],
+				Path:  strings.Join(strings.Split(event.Name, "/")[:len(strings.Split(event.Name, "/"))-1], "/"),
+				Error: nil,
+			}
+			json, err := json.Marshal(msg)
+			if err != nil {
+				fmt.Println("Error marshalling file event:", err)
+				h.SendError(c, http.StatusInternalServerError, err)
+				return
+			}
+			if _, err := c.Writer.Write([]byte(string(json) + "\n")); err != nil {
 				return
 			}
 			flusher.Flush()
@@ -512,6 +534,7 @@ func (h *FileSystemHandler) HandleWatchDirectory(c *gin.Context) {
 		h.SendError(c, http.StatusInternalServerError, err)
 		return
 	}
+	defer stop() // Ensures watcher is removed when handler exits
 
 	// Wait for client disconnect
 	go func() {
@@ -565,11 +588,13 @@ func (h *FileSystemHandler) HandleWatchDirectoryWebSocket(c *gin.Context) {
 	done := make(chan struct{})
 	var once sync.Once
 
-	err = h.fs.WatchDirectory(path, func(event fsnotify.Event) {
+	stop, err := h.fs.WatchDirectory(path, func(event fsnotify.Event) {
 		if event.Op&(fsnotify.Write|fsnotify.Create|fsnotify.Remove|fsnotify.Rename) != 0 {
-			msg := map[string]interface{}{
-				"event": event.Op.String(),
-				"name":  event.Name,
+			msg := FileEvent{
+				Op:    event.Op.String(),
+				Name:  strings.Split(event.Name, "/")[len(strings.Split(event.Name, "/"))-1],
+				Path:  strings.Join(strings.Split(event.Name, "/")[:len(strings.Split(event.Name, "/"))-1], "/"),
+				Error: nil,
 			}
 			if err := conn.WriteJSON(msg); err != nil {
 				once.Do(func() { close(done) })
@@ -580,6 +605,7 @@ func (h *FileSystemHandler) HandleWatchDirectoryWebSocket(c *gin.Context) {
 		conn.WriteJSON(map[string]string{"error": err.Error()})
 		return
 	}
+	defer stop() // Ensures watcher is removed when handler exits
 
 	go func() {
 		for {

@@ -114,22 +114,23 @@ func (fs *Filesystem) CreateOrUpdateTree(rootPath string, files map[string]strin
 
 // WatchDirectory watches a specific directory for changes.
 // The callback is called with the event when a change occurs.
-func (fs *Filesystem) WatchDirectory(path string, callback func(event fsnotify.Event)) error {
+func (fs *Filesystem) WatchDirectory(path string, callback func(event fsnotify.Event)) (func(), error) {
 	absPath, err := fs.GetAbsolutePath(path)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	err = watcher.Add(absPath)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
+	stopChan := make(chan struct{})
 	go func() {
 		for {
 			select {
@@ -151,5 +152,9 @@ func (fs *Filesystem) WatchDirectory(path string, callback func(event fsnotify.E
 		}
 	}()
 
-	return nil
+	stop := func() {
+		close(stopChan)
+		watcher.Close()
+	}
+	return stop, nil
 }
