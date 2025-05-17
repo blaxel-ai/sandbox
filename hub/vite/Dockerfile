@@ -17,6 +17,10 @@ FROM --platform=linux/amd64 node:22-alpine
 
 COPY --from=build /blaxel/sandbox-api/sandbox-api-binary /usr/local/bin/sandbox-api
 
+RUN apk update && apk add --no-cache \
+  git rsync \
+  && rm -rf /var/cache/apk/*
+
 WORKDIR /blaxel
 
 RUN npm create vite@latest app -- --template react-ts
