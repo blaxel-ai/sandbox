@@ -385,9 +385,7 @@ paths:
           content:
             application/json:
               schema:
-                additionalProperties:
-                  type: string
-                type: object
+                $ref: "#/components/schemas/ProcessLogs"
         "404":
           description: Process not found
           content:
@@ -583,6 +581,18 @@ components:
       properties:
         signal:
           example: SIGTERM
+          type: string
+      type: object
+    ProcessLogs:
+      properties:
+        logs:
+          example: logs output
+          type: string
+        stderr:
+          example: stderr output
+          type: string
+        stdout:
+          example: stdout output
           type: string
       type: object
     ProcessRequest:

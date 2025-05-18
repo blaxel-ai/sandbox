@@ -234,11 +234,13 @@ func TestProcessOutputByName(t *testing.T) {
 	err = json.NewDecoder(resp.Body).Decode(&outputResponse)
 	require.NoError(t, err)
 
+	require.Contains(t, outputResponse, "logs")
 	require.Contains(t, outputResponse, "stdout")
 	require.Contains(t, outputResponse, "stderr")
 
 	assert.Equal(t, "test output\n", outputResponse["stdout"])
 	assert.Equal(t, "test error\n", outputResponse["stderr"])
+	assert.Equal(t, "test output\ntest error\n", outputResponse["logs"])
 }
 
 func TestProcessStreamLogs(t *testing.T) {

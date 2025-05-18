@@ -542,10 +542,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Process logs",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
+                            "$ref": "#/definitions/ProcessLogs"
                         }
                     },
                     "404": {
@@ -800,6 +797,23 @@ const docTemplate = `{
                 "signal": {
                     "type": "string",
                     "example": "SIGTERM"
+                }
+            }
+        },
+        "ProcessLogs": {
+            "type": "object",
+            "properties": {
+                "logs": {
+                    "type": "string",
+                    "example": "logs output"
+                },
+                "stderr": {
+                    "type": "string",
+                    "example": "stderr output"
+                },
+                "stdout": {
+                    "type": "string",
+                    "example": "stdout output"
                 }
             }
         },

@@ -141,7 +141,7 @@ func (h *ProcessHandler) GetProcess(identifier string) (ProcessResponse, error) 
 }
 
 // GetProcessOutput gets the output of a process
-func (h *ProcessHandler) GetProcessOutput(identifier string) (string, string, error) {
+func (h *ProcessHandler) GetProcessOutput(identifier string) (process.ProcessLogs, error) {
 	return h.processManager.GetProcessOutput(identifier)
 }
 
@@ -231,7 +231,7 @@ func (h *ProcessHandler) HandleExecuteCommand(c *gin.Context) {
 // @Accept json
 // @Produce json
 // @Param identifier path string true "Process identifier (PID or name)"
-// @Success 200 {object} map[string]string "Process logs"
+// @Success 200 {object} process.ProcessLogs "Process logs"
 // @Failure 404 {object} ErrorResponse "Process not found"
 // @Failure 422 {object} ErrorResponse "Unprocessable entity"
 // @Router /process/{identifier}/logs [get]
@@ -242,16 +242,13 @@ func (h *ProcessHandler) HandleGetProcessLogs(c *gin.Context) {
 		return
 	}
 
-	stdout, stderr, err := h.GetProcessOutput(identifier)
+	logs, err := h.GetProcessOutput(identifier)
 	if err != nil {
 		h.SendError(c, http.StatusNotFound, err)
 		return
 	}
 
-	h.SendJSON(c, http.StatusOK, gin.H{
-		"stdout": stdout,
-		"stderr": stderr,
-	})
+	h.SendJSON(c, http.StatusOK, logs)
 }
 
 // HandleGetProcessLogsStream handles GET requests to /process/{identifier}/logs/stream

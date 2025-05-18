@@ -30,6 +30,12 @@ type ProcessManager struct {
 	mu        sync.RWMutex
 }
 
+type ProcessLogs struct {
+	Stdout string `json:"stdout" example:"stdout output"`
+	Stderr string `json:"stderr" example:"stderr output"`
+	Logs   string `json:"logs" example:"logs output"`
+} // @name ProcessLogs
+
 // ProcessInfo stores information about a running process
 type ProcessInfo struct {
 	PID         string     `json:"pid"`
@@ -43,6 +49,7 @@ type ProcessInfo struct {
 	WorkingDir  string     `json:"workingDir"`
 	stdout      *strings.Builder
 	stderr      *strings.Builder
+	logs        *strings.Builder
 	stdoutPipe  io.ReadCloser
 	stderrPipe  io.ReadCloser
 	logWriters  []io.Writer
@@ -111,7 +118,7 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 	// Set up stdout and stderr capture
 	stdout := &strings.Builder{}
 	stderr := &strings.Builder{}
-
+	logs := &strings.Builder{}
 	process := &ProcessInfo{
 		Name:        name,
 		Command:     command,
@@ -122,6 +129,7 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 		WorkingDir:  workingDir,
 		stdout:      stdout,
 		stderr:      stderr,
+		logs:        logs,
 		stdoutPipe:  stdoutPipe,
 		stderrPipe:  stderrPipe,
 		logWriters:  make([]io.Writer, 0),
@@ -146,7 +154,7 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 			if n > 0 {
 				data := buf[:n]
 				process.stdout.Write(data)
-
+				process.logs.Write(data)
 				// Send to any attached log writers, prefix with stdout:
 				process.logLock.RLock()
 				for _, w := range process.logWriters {
@@ -172,7 +180,7 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 			if n > 0 {
 				data := buf[:n]
 				process.stderr.Write(data)
-
+				process.logs.Write(data)
 				// Send to any attached log writers, prefix with stderr:
 				process.logLock.RLock()
 				for _, w := range process.logWriters {
@@ -434,13 +442,17 @@ func (pm *ProcessManager) KillProcess(identifier string) error {
 }
 
 // GetProcessOutput returns the stdout and stderr output of a process
-func (pm *ProcessManager) GetProcessOutput(identifier string) (string, string, error) {
+func (pm *ProcessManager) GetProcessOutput(identifier string) (ProcessLogs, error) {
 	process, exists := pm.GetProcessByIdentifier(identifier)
 	if !exists {
-		return "", "", fmt.Errorf("process with PID %s not found", identifier)
+		return ProcessLogs{}, fmt.Errorf("process with PID %s not found", identifier)
 	}
 
-	return process.stdout.String(), process.stderr.String(), nil
+	return ProcessLogs{
+		Stdout: process.stdout.String(),
+		Stderr: process.stderr.String(),
+		Logs:   process.logs.String(),
+	}, nil
 }
 
 func (pm *ProcessManager) StreamProcessOutput(identifier string, w io.Writer) error {
