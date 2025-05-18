@@ -3,6 +3,7 @@ package handler
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -103,7 +104,7 @@ func (h *FileSystemHandler) DeleteFile(path string) error {
 // @Success 200 {object} filesystem.FileWithContent "File content"
 // @Success 200 {object} filesystem.Directory "Directory listing"
 // @Failure 404 {object} ErrorResponse "File or directory not found"
-// @Failure 500 {object} ErrorResponse "Internal server error"
+// @Failure 422 {object} ErrorResponse "Unprocessable entity"
 // @Router /filesystem/{path} [get]
 func (h *FileSystemHandler) HandleGetFile(c *gin.Context) {
 	path, err := h.GetPathParam(c, "path")
@@ -120,7 +121,7 @@ func (h *FileSystemHandler) HandleGetFile(c *gin.Context) {
 	// Check if path is a directory
 	isDir, err := h.DirectoryExists(path)
 	if err != nil {
-		h.SendError(c, http.StatusInternalServerError, err)
+		h.SendError(c, http.StatusUnprocessableEntity, err)
 		return
 	}
 
@@ -132,7 +133,7 @@ func (h *FileSystemHandler) HandleGetFile(c *gin.Context) {
 	// Check if path is a file
 	isFile, err := h.FileExists(path)
 	if err != nil {
-		h.SendError(c, http.StatusInternalServerError, err)
+		h.SendError(c, http.StatusUnprocessableEntity, err)
 		return
 	}
 
@@ -148,7 +149,7 @@ func (h *FileSystemHandler) HandleGetFile(c *gin.Context) {
 func (h *FileSystemHandler) handleReadFile(c *gin.Context, path string) {
 	file, err := h.ReadFile(path)
 	if err != nil {
-		h.SendError(c, http.StatusInternalServerError, fmt.Errorf("error reading file: %w", err))
+		h.SendError(c, http.StatusUnprocessableEntity, fmt.Errorf("error reading file: %w", err))
 		return
 	}
 
@@ -167,7 +168,7 @@ func (h *FileSystemHandler) handleReadFile(c *gin.Context, path string) {
 func (h *FileSystemHandler) handleListDirectory(c *gin.Context, path string) {
 	dir, err := h.ListDirectory(path)
 	if err != nil {
-		h.SendError(c, http.StatusInternalServerError, fmt.Errorf("error listing directory: %w", err))
+		h.SendError(c, http.StatusUnprocessableEntity, fmt.Errorf("error listing directory: %w", err))
 		return
 	}
 
@@ -198,18 +199,30 @@ func (h *FileSystemHandler) handleListDirectory(c *gin.Context, path string) {
 }
 
 // HandleCreateOrUpdateFile handles PUT requests to /filesystem/:path
-// @Summary Create or update file or directory
+// @Summary Create or update a file or directory
 // @Description Create or update a file or directory
 // @Tags filesystem
 // @Accept json
+// @Accept multipart/form-data
 // @Produce json
 // @Param path path string true "File or directory path"
-// @Param request body FileRequest true "File or directory information"
+// @Param request body FileRequest true "File or directory details"
+// @Param file formData file true "File to upload"
+// @Param permissions formData string false "File permissions (octal format, e.g. 0644)"
 // @Success 200 {object} SuccessResponse "Success message"
-// @Failure 400 {object} ErrorResponse "Invalid request"
-// @Failure 500 {object} ErrorResponse "Internal server error"
+// @Failure 400 {object} ErrorResponse "Bad request"
+// @Failure 422 {object} ErrorResponse "Unprocessable entity"
 // @Router /filesystem/{path} [put]
 func (h *FileSystemHandler) HandleCreateOrUpdateFile(c *gin.Context) {
+	contentType := c.GetHeader("Content-Type")
+	if strings.HasPrefix(contentType, "multipart/form-data") {
+		h.HandleCreateOrUpdateBinary(c)
+	} else {
+		h.HandleCreateOrUpdateFileJSON(c)
+	}
+}
+
+func (h *FileSystemHandler) HandleCreateOrUpdateFileJSON(c *gin.Context) {
 	path, err := h.GetPathParam(c, "path")
 	if err != nil {
 		h.SendError(c, http.StatusBadRequest, err)
@@ -241,23 +254,77 @@ func (h *FileSystemHandler) HandleCreateOrUpdateFile(c *gin.Context) {
 		}
 	}
 
+	// Handle directory creation
 	if request.IsDirectory {
-		// Create directory
-		err := h.CreateDirectory(path, permissions)
-		if err != nil {
-			h.SendError(c, http.StatusInternalServerError, fmt.Errorf("error creating directory: %w", err))
+		if err := h.CreateDirectory(path, permissions); err != nil {
+			h.SendError(c, http.StatusUnprocessableEntity, fmt.Errorf("error creating directory: %w", err))
 			return
 		}
 		h.SendSuccess(c, "Directory created successfully")
-	} else {
-		// Create or update file
-		err := h.WriteFile(path, []byte(request.Content), permissions)
-		if err != nil {
-			h.SendError(c, http.StatusInternalServerError, fmt.Errorf("error writing file: %w", err))
-			return
-		}
-		h.SendSuccess(c, "File created/updated successfully")
+		return
 	}
+
+	// Handle file creation/update
+	if err := h.WriteFile(path, []byte(request.Content), permissions); err != nil {
+		h.SendError(c, http.StatusUnprocessableEntity, fmt.Errorf("error writing file: %w", err))
+		return
+	}
+
+	h.SendSuccess(c, "File created/updated successfully")
+}
+
+func (h *FileSystemHandler) HandleCreateOrUpdateBinary(c *gin.Context) {
+	// Get path from form data
+	path, err := h.GetPathParam(c, "path")
+	if err != nil {
+		h.SendError(c, http.StatusBadRequest, err)
+		return
+	}
+	path, err = lib.FormatPath(path)
+	if err != nil {
+		h.SendError(c, http.StatusBadRequest, err)
+		return
+	}
+
+	// Get the file from form data
+	file, err := c.FormFile("file")
+	if err != nil {
+		h.SendError(c, http.StatusBadRequest, fmt.Errorf("error getting file from request: %w", err))
+		return
+	}
+
+	// Open the uploaded file
+	src, err := file.Open()
+	if err != nil {
+		h.SendError(c, http.StatusUnprocessableEntity, fmt.Errorf("error opening uploaded file: %w", err))
+		return
+	}
+	defer src.Close()
+
+	// Read file data
+	fileData, err := io.ReadAll(src)
+	if err != nil {
+		h.SendError(c, http.StatusUnprocessableEntity, fmt.Errorf("error reading uploaded file: %w", err))
+		return
+	}
+
+	// Parse permissions or use default
+	var permissions os.FileMode = 0644
+	permStr := c.PostForm("permissions")
+	if permStr != "" {
+		permInt, err := strconv.ParseUint(permStr, 8, 32)
+		if err == nil {
+			permissions = os.FileMode(permInt)
+		}
+	}
+
+	// Write the file
+	if err := h.WriteFile(path, fileData, permissions); err != nil {
+		h.SendError(c, http.StatusUnprocessableEntity, fmt.Errorf("error writing binary file: %w", err))
+		return
+	}
+
+	h.SendSuccess(c, "Binary file uploaded successfully")
 }
 
 // HandleDeleteFileOrDirectory handles DELETE requests to /filesystem/:path
@@ -270,7 +337,7 @@ func (h *FileSystemHandler) HandleCreateOrUpdateFile(c *gin.Context) {
 // @Param recursive query boolean false "Delete directory recursively"
 // @Success 200 {object} SuccessResponse "Success message"
 // @Failure 404 {object} ErrorResponse "File or directory not found"
-// @Failure 500 {object} ErrorResponse "Internal server error"
+// @Failure 422 {object} ErrorResponse "Unprocessable entity"
 // @Router /filesystem/{path} [delete]
 func (h *FileSystemHandler) HandleDeleteFile(c *gin.Context) {
 	path, err := h.GetPathParam(c, "path")
@@ -299,7 +366,7 @@ func (h *FileSystemHandler) HandleDeleteFile(c *gin.Context) {
 	// Check if it's a directory
 	isDir, err := h.DirectoryExists(path)
 	if err != nil {
-		h.SendError(c, http.StatusInternalServerError, err)
+		h.SendError(c, http.StatusUnprocessableEntity, err)
 		return
 	}
 
@@ -307,7 +374,7 @@ func (h *FileSystemHandler) HandleDeleteFile(c *gin.Context) {
 		// Delete directory
 		err := h.DeleteDirectory(path, recursive == "true")
 		if err != nil {
-			h.SendError(c, http.StatusInternalServerError, fmt.Errorf("error deleting directory: %w", err))
+			h.SendError(c, http.StatusUnprocessableEntity, fmt.Errorf("error deleting directory: %w", err))
 			return
 		}
 		h.SendSuccess(c, "Directory deleted successfully")
@@ -317,7 +384,7 @@ func (h *FileSystemHandler) HandleDeleteFile(c *gin.Context) {
 	// Check if it's a file
 	isFile, err := h.FileExists(path)
 	if err != nil {
-		h.SendError(c, http.StatusInternalServerError, err)
+		h.SendError(c, http.StatusUnprocessableEntity, err)
 		return
 	}
 
@@ -325,7 +392,7 @@ func (h *FileSystemHandler) HandleDeleteFile(c *gin.Context) {
 		// Delete file
 		err := h.DeleteFile(path)
 		if err != nil {
-			h.SendError(c, http.StatusInternalServerError, fmt.Errorf("error deleting file: %w", err))
+			h.SendError(c, http.StatusUnprocessableEntity, fmt.Errorf("error deleting file: %w", err))
 			return
 		}
 		h.SendSuccess(c, "File deleted successfully")
@@ -346,7 +413,7 @@ func (h *FileSystemHandler) HandleGetTree(c *gin.Context) {
 	// Convert to string
 	rootPathStr, ok := rootPath.(string)
 	if !ok {
-		h.SendError(c, http.StatusInternalServerError, fmt.Errorf("invalid path parameter"))
+		h.SendError(c, http.StatusUnprocessableEntity, fmt.Errorf("invalid path parameter"))
 		return
 	}
 
@@ -359,7 +426,7 @@ func (h *FileSystemHandler) HandleGetTree(c *gin.Context) {
 	// Check if path exists and is a directory
 	isDir, err := h.DirectoryExists(rootPathStr)
 	if err != nil {
-		h.SendError(c, http.StatusInternalServerError, err)
+		h.SendError(c, http.StatusUnprocessableEntity, err)
 		return
 	}
 
@@ -371,7 +438,7 @@ func (h *FileSystemHandler) HandleGetTree(c *gin.Context) {
 	// Get directory listing
 	dir, err := h.ListDirectory(rootPathStr)
 	if err != nil {
-		h.SendError(c, http.StatusInternalServerError, fmt.Errorf("error getting file system tree: %w", err))
+		h.SendError(c, http.StatusUnprocessableEntity, fmt.Errorf("error getting file system tree: %w", err))
 		return
 	}
 
@@ -389,7 +456,7 @@ func (h *FileSystemHandler) HandleCreateOrUpdateTree(c *gin.Context) {
 	// Convert to string
 	rootPathStr, ok := rootPath.(string)
 	if !ok {
-		h.SendError(c, http.StatusInternalServerError, fmt.Errorf("invalid path parameter"))
+		h.SendError(c, http.StatusUnprocessableEntity, fmt.Errorf("invalid path parameter"))
 		return
 	}
 	rootPathStr, err := lib.FormatPath(rootPathStr)
@@ -407,71 +474,84 @@ func (h *FileSystemHandler) HandleCreateOrUpdateTree(c *gin.Context) {
 		return
 	}
 
-	// Check if root path exists, create it if not
+	// Create the root directory if it doesn't exist
 	isDir, err := h.DirectoryExists(rootPathStr)
-	// The root path should be created if it doesn't exist
-	if err != nil || !isDir {
-		// Create the root directory if it doesn't exist or is not a directory
-		err := h.CreateDirectory(rootPathStr, 0755)
-		if err != nil {
-			h.SendError(c, http.StatusInternalServerError, fmt.Errorf("error creating root directory: %w", err))
+	if err != nil {
+		h.SendError(c, http.StatusUnprocessableEntity, err)
+		return
+	}
+
+	if !isDir {
+		if err := h.CreateDirectory(rootPathStr, 0755); err != nil {
+			h.SendError(c, http.StatusUnprocessableEntity, fmt.Errorf("error creating root directory: %w", err))
 			return
 		}
 	}
 
-	// Process each file in the request
-	for relativePath, content := range request.Files {
-		// Combine root path with relative path, ensuring there's only one slash between them
-		fullPath := rootPathStr
-		if rootPathStr != "/" {
-			fullPath += "/"
-		}
-		fullPath += relativePath
+	// Create files
+	for filePath, content := range request.Files {
+		// Get the absolute path of the file
+		absPath := filepath.Join(rootPathStr, filePath)
 
-		// Get the parent directory path - we need to ensure it exists
-		dir := filepath.Dir(fullPath)
-		if dir != "/" {
-			// Create parent directories
-			err := h.CreateDirectory(dir, 0755)
-			if err != nil {
-				h.SendError(c, http.StatusInternalServerError, fmt.Errorf("error creating parent directory: %w", err))
+		// Create parent directories if they don't exist
+		parentDir := filepath.Dir(absPath)
+		isDir, err := h.DirectoryExists(parentDir)
+		if err != nil {
+			h.SendError(c, http.StatusUnprocessableEntity, err)
+			return
+		}
+
+		if !isDir {
+			if err := h.CreateDirectory(parentDir, 0755); err != nil {
+				h.SendError(c, http.StatusUnprocessableEntity, fmt.Errorf("error creating parent directory: %w", err))
 				return
 			}
 		}
 
 		// Write the file
-		err := h.WriteFile(fullPath, []byte(content), 0644)
-		if err != nil {
-			h.SendError(c, http.StatusInternalServerError, fmt.Errorf("error writing file: %w", err))
+		if err := h.WriteFile(absPath, []byte(content), 0644); err != nil {
+			h.SendError(c, http.StatusUnprocessableEntity, fmt.Errorf("error writing file: %w", err))
 			return
 		}
 	}
 
-	// Get updated directory listing
+	// Get updated tree
 	dir, err := h.ListDirectory(rootPathStr)
 	if err != nil {
-		h.SendError(c, http.StatusInternalServerError, fmt.Errorf("error getting updated file system tree: %w", err))
+		h.SendError(c, http.StatusUnprocessableEntity, fmt.Errorf("error getting updated file system tree: %w", err))
 		return
 	}
 
-	h.SendJSON(c, http.StatusOK, gin.H{
-		"path":           dir.Path,
-		"files":          dir.Files,
-		"subdirectories": dir.Subdirectories,
-		"message":        "Tree created/updated successfully",
-	})
+	h.SendJSON(c, http.StatusOK, dir)
 }
 
-// HandleWatchDirectory streams file modification events for a directory
-// @Summary Stream file modification events in a directory
-// @Description Streams the path of modified files (one per line) in the given directory. Closes when the client disconnects.
-// @Tags filesystem
-// @Produce plain
-// @Param path path string true "Directory path to watch"
-// @Success 200 {string} string "Stream of modified file paths, one per line"
-// @Failure 400 {object} ErrorResponse "Invalid path"
-// @Failure 500 {object} ErrorResponse "Internal server error"
-// @Router /watch/filesystem/{path} [get]
+// HandleDeleteTree handles DELETE requests for directory trees
+func (h *FileSystemHandler) HandleDeleteTree(c *gin.Context) {
+	rootPath, exists := c.Get("rootPath")
+	if !exists {
+		// Fallback to path param if not set in context
+		rootPath = c.Param("path")
+	}
+
+	// Convert to string
+	rootPathStr, ok := rootPath.(string)
+	if !ok {
+		h.SendError(c, http.StatusUnprocessableEntity, fmt.Errorf("invalid path parameter"))
+		return
+	}
+
+	recursive := c.Query("recursive") == "true"
+
+	// Delete the directory
+	if err := h.DeleteDirectory(rootPathStr, recursive); err != nil {
+		h.SendError(c, http.StatusUnprocessableEntity, fmt.Errorf("error deleting directory: %w", err))
+		return
+	}
+
+	h.SendSuccess(c, "Directory deleted successfully")
+}
+
+// HandleWatchDirectory handles GET requests to watch filesystem changes
 func (h *FileSystemHandler) HandleWatchDirectory(c *gin.Context) {
 	path, err := h.GetPathParam(c, "path")
 	if err != nil {
@@ -486,10 +566,13 @@ func (h *FileSystemHandler) HandleWatchDirectory(c *gin.Context) {
 
 	isDir, err := h.DirectoryExists(path)
 	if err != nil {
-		h.SendError(c, http.StatusInternalServerError, err)
+		h.SendError(c, http.StatusUnprocessableEntity, err)
 		return
 	}
+
 	if !isDir {
+		// If this isn't a directory, we're in trouble.
+		// We don't want to watch a file, and there's no reason to create a new directory.
 		h.SendError(c, http.StatusBadRequest, fmt.Errorf("path is not a directory"))
 		return
 	}
@@ -563,15 +646,16 @@ func (h *FileSystemHandler) HandleWatchDirectoryWebSocket(c *gin.Context) {
 	}
 	path, err = lib.FormatPath(path)
 	if err != nil {
-		h.SendError(c, http.StatusBadRequest, err)
+		h.SendError(c, http.StatusUnprocessableEntity, err)
 		return
 	}
 
 	isDir, err := h.DirectoryExists(path)
 	if err != nil {
-		h.SendError(c, http.StatusInternalServerError, err)
+		h.SendError(c, http.StatusUnprocessableEntity, err)
 		return
 	}
+
 	if !isDir {
 		h.SendError(c, http.StatusBadRequest, fmt.Errorf("path is not a directory"))
 		return
@@ -589,7 +673,7 @@ func (h *FileSystemHandler) HandleWatchDirectoryWebSocket(c *gin.Context) {
 	var once sync.Once
 
 	stop, err := h.fs.WatchDirectory(path, func(event fsnotify.Event) {
-		if event.Op&(fsnotify.Write|fsnotify.Create|fsnotify.Remove|fsnotify.Rename) != 0 {
+		if event.Op&(fsnotify.Write|fsnotify.Create|fsnotify.Remove|fsnotify.Rename|fsnotify.Chmod) != 0 {
 			msg := FileEvent{
 				Op:    event.Op.String(),
 				Name:  strings.Split(event.Name, "/")[len(strings.Split(event.Name, "/"))-1],

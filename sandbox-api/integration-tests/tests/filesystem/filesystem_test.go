@@ -143,7 +143,7 @@ func TestFileSystemOperations(t *testing.T) {
 	require.NoError(t, err)
 	defer resp.Body.Close()
 
-	assert.Equal(t, http.StatusInternalServerError, resp.StatusCode)
+	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode)
 
 	// 10. Delete directory with recursive flag
 	resp, err = common.MakeRequestAndParse(http.MethodDelete, "/filesystem"+testDir+"?recursive=true", nil, &successResp)
@@ -245,7 +245,6 @@ func TestFileSystemWatch(t *testing.T) {
 		reader := bufio.NewReader(resp.Body)
 		for {
 			line, err := reader.ReadString('\n')
-			fmt.Println("line:", line)
 			if err != nil {
 				break
 			}
@@ -274,8 +273,9 @@ func TestFileSystemWatch(t *testing.T) {
 
 	// Wait for watcher to receive the event or timeout
 	select {
-	case path := <-received:
-		assert.Contains(t, path, filePath, "Watcher should receive the created file path")
+	case event := <-received:
+		assert.Contains(t, event, watchPath, "Watcher should receive the created file path")
+		assert.Contains(t, event, fileName, "Watcher should receive the created file name")
 	case <-time.After(2 * time.Second):
 		t.Fatal("Timeout waiting for file event from watcher")
 	}
@@ -283,7 +283,7 @@ func TestFileSystemWatch(t *testing.T) {
 	<-done
 }
 
-// TestFileSystemWatchWebSocket tests the streaming watch endpoint for file modifications using WebSocket
+// TestFileSystemWatchWebSocket tests the streaming watch endpoint over WebSocket for file modifications
 func TestFileSystemWatchWebSocket(t *testing.T) {
 	dir := fmt.Sprintf("/tmp/test-watchws-%d", time.Now().UnixNano())
 	createDirRequest := map[string]interface{}{
@@ -349,8 +349,9 @@ func TestFileSystemWatchWebSocket(t *testing.T) {
 	// Wait for watcher to receive the event or timeout
 	select {
 	case event := <-received:
-		assert.Equal(t, filePath, event["name"], "Watcher should receive the created file path in event")
-		assert.Contains(t, event["event"], "CREATE")
+		assert.Equal(t, fileName, event["name"], "Watcher should receive the created file path in event")
+		assert.Equal(t, dir, event["path"], "Watcher should receive the created file path in event")
+		assert.Contains(t, event["op"], "CREATE")
 	case <-time.After(2 * time.Second):
 		t.Fatal("Timeout waiting for file event from websocket watcher")
 	}

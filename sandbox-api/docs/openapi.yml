@@ -33,8 +33,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
-        "500":
-          description: Internal server error
+        "422":
+          description: Unprocessable entity
           content:
             application/json:
               schema:
@@ -66,8 +66,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
-        "500":
-          description: Internal server error
+        "422":
+          description: Unprocessable entity
           content:
             application/json:
               schema:
@@ -86,10 +86,20 @@ paths:
             type: string
       requestBody:
         content:
-          application/json:
+          multipart/form-data:
             schema:
-              $ref: "#/components/schemas/FileRequest"
-        description: File or directory information
+              type: object
+              properties:
+                file:
+                  description: File to upload
+                  type: string
+                  format: binary
+                permissions:
+                  description: File permissions (octal format, e.g. 0644)
+                  type: string
+              required:
+                - file
+        description: File or directory details
         required: true
       responses:
         "200":
@@ -99,18 +109,18 @@ paths:
               schema:
                 $ref: "#/components/schemas/SuccessResponse"
         "400":
-          description: Invalid request
+          description: Bad request
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
-        "500":
-          description: Internal server error
+        "422":
+          description: Unprocessable entity
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
-      summary: Create or update file or directory
+      summary: Create or update a file or directory
       tags:
         - filesystem
   "/network/process/{pid}/monitor":
@@ -137,8 +147,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
-        "500":
-          description: Internal server error
+        "422":
+          description: Unprocessable entity
           content:
             application/json:
               schema:
@@ -176,8 +186,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
-        "500":
-          description: Internal server error
+        "422":
+          description: Unprocessable entity
           content:
             application/json:
               schema:
@@ -209,8 +219,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
-        "500":
-          description: Internal server error
+        "422":
+          description: Unprocessable entity
           content:
             application/json:
               schema:
@@ -255,8 +265,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
-        "500":
-          description: Internal server error
+        "422":
+          description: Unprocessable entity
           content:
             application/json:
               schema:
@@ -287,8 +297,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
-        "500":
-          description: Internal server error
+        "422":
+          description: Unprocessable entity
           content:
             application/json:
               schema:
@@ -350,8 +360,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
-        "500":
-          description: Internal server error
+        "422":
+          description: Unprocessable entity
           content:
             application/json:
               schema:
@@ -384,8 +394,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
-        "500":
-          description: Internal server error
+        "422":
+          description: Unprocessable entity
           content:
             application/json:
               schema:
@@ -419,8 +429,8 @@ paths:
             text/plain:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
-        "500":
-          description: Internal server error
+        "422":
+          description: Unprocessable entity
           content:
             text/plain:
               schema:
@@ -428,43 +438,10 @@ paths:
       summary: Stream process logs in real time
       tags:
         - process
-  "/watch/filesystem/{path}":
-    get:
-      description: Streams the path of modified files (one per line) in the given
-        directory. Closes when the client disconnects.
-      parameters:
-        - description: Directory path to watch
-          in: path
-          name: path
-          required: true
-          schema:
-            type: string
-      responses:
-        "200":
-          description: Stream of modified file paths, one per line
-          content:
-            text/plain:
-              schema:
-                type: string
-        "400":
-          description: Invalid path
-          content:
-            text/plain:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "500":
-          description: Internal server error
-          content:
-            text/plain:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-      summary: Stream file modification events in a directory
-      tags:
-        - filesystem
   "/ws/process/{identifier}/logs/stream":
     get:
       description: Streams the stdout and stderr output of a process in real time as
-        JSON messages. Closes when the process exits or the client disconnects.
+        JSON messages.
       parameters:
         - description: Process identifier (PID or name)
           in: path
@@ -485,8 +462,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
-        "500":
-          description: Internal server error
+        "422":
+          description: Unprocessable entity
           content:
             application/json:
               schema:
@@ -656,6 +633,12 @@ components:
           example: Wed, 01 Jan 2023 12:00:00 GMT
           type: string
         status:
+          enum:
+            - failed
+            - killed
+            - stopped
+            - running
+            - completed
           example: running
           type: string
         workingDir:

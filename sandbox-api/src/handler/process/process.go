@@ -11,6 +11,17 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/blaxel-ai/sandbox-api/src/handler/constants"
+)
+
+// Define process status constants
+const (
+	StatusFailed    = constants.ProcessStatusFailed
+	StatusKilled    = constants.ProcessStatusKilled
+	StatusStopped   = constants.ProcessStatusStopped
+	StatusRunning   = constants.ProcessStatusRunning
+	StatusCompleted = constants.ProcessStatusCompleted
 )
 
 // ProcessManager manages the running processes
@@ -107,7 +118,7 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 		Cmd:         cmd,
 		StartedAt:   time.Now(),
 		CompletedAt: nil,
-		Status:      "running",
+		Status:      StatusRunning,
 		WorkingDir:  workingDir,
 		stdout:      stdout,
 		stderr:      stderr,
@@ -187,8 +198,8 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 
 		// Determine exit status and create appropriate message
 		if err != nil {
-			if process.Status != "stopped" && process.Status != "killed" {
-				process.Status = "failed"
+			if process.Status != StatusStopped && process.Status != StatusKilled {
+				process.Status = StatusFailed
 			}
 			if exitErr, ok := err.(*exec.ExitError); ok {
 				process.ExitCode = exitErr.ExitCode()
@@ -196,7 +207,7 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 				process.ExitCode = 1
 			}
 		} else {
-			process.Status = "completed"
+			process.Status = StatusCompleted
 			process.ExitCode = 0
 		}
 
@@ -272,7 +283,7 @@ func (pm *ProcessManager) GetProcessByIdentifier(identifier string) (*ProcessInf
 		}
 
 		// If the process is running, try to get additional information from the OS
-		if process.Status == "running" {
+		if process.Status == StatusRunning {
 			pidInt, err := strconv.Atoi(process.PID)
 			if err == nil {
 				// Get process from OS
@@ -356,7 +367,7 @@ func (pm *ProcessManager) StopProcess(identifier string) error {
 		return fmt.Errorf("process with Identifier %s not found", identifier)
 	}
 
-	if process.Status != "running" {
+	if process.Status != StatusRunning {
 		return fmt.Errorf("process with Identifier %s is not running", identifier)
 	}
 
@@ -380,7 +391,7 @@ func (pm *ProcessManager) StopProcess(identifier string) error {
 			return fmt.Errorf("failed to send SIGTERM to process with Identifier %s: %w", identifier, err)
 		}
 	}
-	process.Status = "stopped"
+	process.Status = StatusStopped
 	return nil
 }
 
@@ -391,7 +402,7 @@ func (pm *ProcessManager) KillProcess(identifier string) error {
 		return fmt.Errorf("process with Identifier %s not found", identifier)
 	}
 
-	if process.Status != "running" {
+	if process.Status != StatusRunning {
 		return fmt.Errorf("process with Identifier %s is not running", identifier)
 	}
 
@@ -418,7 +429,7 @@ func (pm *ProcessManager) KillProcess(identifier string) error {
 	}
 
 	// Remove the process from memory
-	process.Status = "killed"
+	process.Status = StatusKilled
 	return nil
 }
 

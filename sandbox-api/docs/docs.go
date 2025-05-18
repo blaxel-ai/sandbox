@@ -50,8 +50,8 @@ const docTemplate = `{
                             "$ref": "#/definitions/ErrorResponse"
                         }
                     },
-                    "500": {
-                        "description": "Internal server error",
+                    "422": {
+                        "description": "Unprocessable entity",
                         "schema": {
                             "$ref": "#/definitions/ErrorResponse"
                         }
@@ -61,7 +61,8 @@ const docTemplate = `{
             "put": {
                 "description": "Create or update a file or directory",
                 "consumes": [
-                    "application/json"
+                    "application/json",
+                    "multipart/form-data"
                 ],
                 "produces": [
                     "application/json"
@@ -69,7 +70,7 @@ const docTemplate = `{
                 "tags": [
                     "filesystem"
                 ],
-                "summary": "Create or update file or directory",
+                "summary": "Create or update a file or directory",
                 "parameters": [
                     {
                         "type": "string",
@@ -79,13 +80,26 @@ const docTemplate = `{
                         "required": true
                     },
                     {
-                        "description": "File or directory information",
+                        "description": "File or directory details",
                         "name": "request",
                         "in": "body",
                         "required": true,
                         "schema": {
                             "$ref": "#/definitions/FileRequest"
                         }
+                    },
+                    {
+                        "type": "file",
+                        "description": "File to upload",
+                        "name": "file",
+                        "in": "formData",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "File permissions (octal format, e.g. 0644)",
+                        "name": "permissions",
+                        "in": "formData"
                     }
                 ],
                 "responses": {
@@ -96,13 +110,13 @@ const docTemplate = `{
                         }
                     },
                     "400": {
-                        "description": "Invalid request",
+                        "description": "Bad request",
                         "schema": {
                             "$ref": "#/definitions/ErrorResponse"
                         }
                     },
-                    "500": {
-                        "description": "Internal server error",
+                    "422": {
+                        "description": "Unprocessable entity",
                         "schema": {
                             "$ref": "#/definitions/ErrorResponse"
                         }
@@ -149,8 +163,8 @@ const docTemplate = `{
                             "$ref": "#/definitions/ErrorResponse"
                         }
                     },
-                    "500": {
-                        "description": "Internal server error",
+                    "422": {
+                        "description": "Unprocessable entity",
                         "schema": {
                             "$ref": "#/definitions/ErrorResponse"
                         }
@@ -203,8 +217,8 @@ const docTemplate = `{
                             "$ref": "#/definitions/ErrorResponse"
                         }
                     },
-                    "500": {
-                        "description": "Internal server error",
+                    "422": {
+                        "description": "Unprocessable entity",
                         "schema": {
                             "$ref": "#/definitions/ErrorResponse"
                         }
@@ -246,8 +260,8 @@ const docTemplate = `{
                             "$ref": "#/definitions/ErrorResponse"
                         }
                     },
-                    "500": {
-                        "description": "Internal server error",
+                    "422": {
+                        "description": "Unprocessable entity",
                         "schema": {
                             "$ref": "#/definitions/ErrorResponse"
                         }
@@ -291,8 +305,8 @@ const docTemplate = `{
                             "$ref": "#/definitions/ErrorResponse"
                         }
                     },
-                    "500": {
-                        "description": "Internal server error",
+                    "422": {
+                        "description": "Unprocessable entity",
                         "schema": {
                             "$ref": "#/definitions/ErrorResponse"
                         }
@@ -361,8 +375,8 @@ const docTemplate = `{
                             "$ref": "#/definitions/ErrorResponse"
                         }
                     },
-                    "500": {
-                        "description": "Internal server error",
+                    "422": {
+                        "description": "Unprocessable entity",
                         "schema": {
                             "$ref": "#/definitions/ErrorResponse"
                         }
@@ -441,8 +455,8 @@ const docTemplate = `{
                             "$ref": "#/definitions/ErrorResponse"
                         }
                     },
-                    "500": {
-                        "description": "Internal server error",
+                    "422": {
+                        "description": "Unprocessable entity",
                         "schema": {
                             "$ref": "#/definitions/ErrorResponse"
                         }
@@ -493,8 +507,8 @@ const docTemplate = `{
                             "$ref": "#/definitions/ErrorResponse"
                         }
                     },
-                    "500": {
-                        "description": "Internal server error",
+                    "422": {
+                        "description": "Unprocessable entity",
                         "schema": {
                             "$ref": "#/definitions/ErrorResponse"
                         }
@@ -540,8 +554,8 @@ const docTemplate = `{
                             "$ref": "#/definitions/ErrorResponse"
                         }
                     },
-                    "500": {
-                        "description": "Internal server error",
+                    "422": {
+                        "description": "Unprocessable entity",
                         "schema": {
                             "$ref": "#/definitions/ErrorResponse"
                         }
@@ -581,49 +595,8 @@ const docTemplate = `{
                             "$ref": "#/definitions/ErrorResponse"
                         }
                     },
-                    "500": {
-                        "description": "Internal server error",
-                        "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
-                        }
-                    }
-                }
-            }
-        },
-        "/watch/filesystem/{path}": {
-            "get": {
-                "description": "Streams the path of modified files (one per line) in the given directory. Closes when the client disconnects.",
-                "produces": [
-                    "text/plain"
-                ],
-                "tags": [
-                    "filesystem"
-                ],
-                "summary": "Stream file modification events in a directory",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Directory path to watch",
-                        "name": "path",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "Stream of modified file paths, one per line",
-                        "schema": {
-                            "type": "string"
-                        }
-                    },
-                    "400": {
-                        "description": "Invalid path",
-                        "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal server error",
+                    "422": {
+                        "description": "Unprocessable entity",
                         "schema": {
                             "$ref": "#/definitions/ErrorResponse"
                         }
@@ -633,7 +606,7 @@ const docTemplate = `{
         },
         "/ws/process/{identifier}/logs/stream": {
             "get": {
-                "description": "Streams the stdout and stderr output of a process in real time as JSON messages. Closes when the process exits or the client disconnects.",
+                "description": "Streams the stdout and stderr output of a process in real time as JSON messages.",
                 "produces": [
                     "application/json"
                 ],
@@ -663,8 +636,8 @@ const docTemplate = `{
                             "$ref": "#/definitions/ErrorResponse"
                         }
                     },
-                    "500": {
-                        "description": "Internal server error",
+                    "422": {
+                        "description": "Unprocessable entity",
                         "schema": {
                             "$ref": "#/definitions/ErrorResponse"
                         }
@@ -897,6 +870,13 @@ const docTemplate = `{
                 },
                 "status": {
                     "type": "string",
+                    "enum": [
+                        "failed",
+                        "killed",
+                        "stopped",
+                        "running",
+                        "completed"
+                    ],
                     "example": "running"
                 },
                 "workingDir": {

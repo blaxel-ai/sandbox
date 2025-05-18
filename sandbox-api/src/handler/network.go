@@ -56,7 +56,7 @@ func (h *NetworkHandler) UnregisterPortOpenCallback(pid int) {
 // @Param pid path int true "Process ID"
 // @Success 200 {object} map[string]interface{} "Object containing PID and array of network.PortInfo"
 // @Failure 400 {object} ErrorResponse "Invalid process ID"
-// @Failure 500 {object} ErrorResponse "Internal server error"
+// @Failure 422 {object} ErrorResponse "Unprocessable entity"
 // @Router /network/process/{pid}/ports [get]
 func (h *NetworkHandler) HandleGetPorts(c *gin.Context) {
 	pidStr, err := h.GetPathParam(c, "pid")
@@ -73,7 +73,7 @@ func (h *NetworkHandler) HandleGetPorts(c *gin.Context) {
 
 	ports, err := h.GetPortsForPID(pid)
 	if err != nil {
-		h.SendError(c, http.StatusInternalServerError, err)
+		h.SendError(c, http.StatusUnprocessableEntity, err)
 		return
 	}
 
@@ -93,7 +93,7 @@ func (h *NetworkHandler) HandleGetPorts(c *gin.Context) {
 // @Param request body PortMonitorRequest true "Port monitor configuration"
 // @Success 200 {object} map[string]interface{} "Object containing PID and success message"
 // @Failure 400 {object} ErrorResponse "Invalid request"
-// @Failure 500 {object} ErrorResponse "Internal server error"
+// @Failure 422 {object} ErrorResponse "Unprocessable entity"
 // @Router /network/process/{pid}/monitor [post]
 func (h *NetworkHandler) HandleMonitorPorts(c *gin.Context) {
 	pidStr, err := h.GetPathParam(c, "pid")
@@ -146,7 +146,7 @@ func (h *NetworkHandler) HandleMonitorPorts(c *gin.Context) {
 // @Param pid path int true "Process ID"
 // @Success 200 {object} map[string]interface{} "Object containing PID and success message"
 // @Failure 400 {object} ErrorResponse "Invalid process ID"
-// @Failure 500 {object} ErrorResponse "Internal server error"
+// @Failure 422 {object} ErrorResponse "Unprocessable entity"
 // @Router /network/process/{pid}/monitor [delete]
 func (h *NetworkHandler) HandleStopMonitoringPorts(c *gin.Context) {
 	pidStr, err := h.GetPathParam(c, "pid")
