@@ -497,6 +497,11 @@ paths:
       description: Streams the path of modified files (one per line) in the given
         directory. Closes when the client disconnects.
       parameters:
+        - description: Ignore patterns (comma-separated)
+          in: query
+          name: ignore
+          schema:
+            type: string
         - description: Directory path to watch
           in: path
           name: path

@@ -524,6 +524,7 @@ func (h *FileSystemHandler) HandleDeleteTree(c *gin.Context) {
 // @Description Streams the path of modified files (one per line) in the given directory. Closes when the client disconnects.
 // @Tags filesystem
 // @Produce plain
+// @Param ignore query string false "Ignore patterns (comma-separated)"
 // @Param path path string true "Directory path to watch"
 // @Success 200 {string} string "Stream of modified file paths, one per line"
 // @Failure 400 {object} ErrorResponse "Invalid path"

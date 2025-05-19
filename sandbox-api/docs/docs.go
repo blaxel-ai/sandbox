@@ -666,6 +666,12 @@ const docTemplate = `{
                 "parameters": [
                     {
                         "type": "string",
+                        "description": "Ignore patterns (comma-separated)",
+                        "name": "ignore",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
                         "description": "Directory path to watch",
                         "name": "path",
                         "in": "path",
