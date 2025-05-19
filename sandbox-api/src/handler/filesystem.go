@@ -105,6 +105,7 @@ func (h *FileSystemHandler) DeleteFile(path string) error {
 // @Success 200 {object} filesystem.Directory "Directory listing"
 // @Failure 404 {object} ErrorResponse "File or directory not found"
 // @Failure 422 {object} ErrorResponse "Unprocessable entity"
+// @Failure 500 {object} ErrorResponse "Internal server error"
 // @Router /filesystem/{path} [get]
 func (h *FileSystemHandler) HandleGetFile(c *gin.Context) {
 	path, err := h.GetPathParam(c, "path")
@@ -153,15 +154,7 @@ func (h *FileSystemHandler) handleReadFile(c *gin.Context, path string) {
 		return
 	}
 
-	h.SendJSON(c, http.StatusOK, gin.H{
-		"path":         file.Path,
-		"content":      string(file.Content),
-		"permissions":  file.Permissions.String(),
-		"size":         file.Size,
-		"lastModified": file.LastModified,
-		"owner":        file.Owner,
-		"group":        file.Group,
-	})
+	h.SendJSON(c, http.StatusOK, file)
 }
 
 // handleListDirectory handles requests to list a directory
@@ -172,30 +165,7 @@ func (h *FileSystemHandler) handleListDirectory(c *gin.Context, path string) {
 		return
 	}
 
-	files := make([]map[string]interface{}, 0, len(dir.Files))
-	for _, file := range dir.Files {
-		files = append(files, map[string]interface{}{
-			"path":         file.Path,
-			"permissions":  file.Permissions,
-			"size":         file.Size,
-			"lastModified": file.LastModified,
-			"owner":        file.Owner,
-			"group":        file.Group,
-		})
-	}
-
-	subdirs := make([]map[string]interface{}, 0, len(dir.Subdirectories))
-	for _, subdir := range dir.Subdirectories {
-		subdirs = append(subdirs, map[string]interface{}{
-			"path": subdir.Path,
-		})
-	}
-
-	h.SendJSON(c, http.StatusOK, gin.H{
-		"path":           dir.Path,
-		"files":          files,
-		"subdirectories": subdirs,
-	})
+	h.SendJSON(c, http.StatusOK, dir)
 }
 
 // HandleCreateOrUpdateFile handles PUT requests to /filesystem/:path
@@ -209,6 +179,7 @@ func (h *FileSystemHandler) handleListDirectory(c *gin.Context, path string) {
 // @Success 200 {object} SuccessResponse "Success message"
 // @Failure 400 {object} ErrorResponse "Bad request"
 // @Failure 422 {object} ErrorResponse "Unprocessable entity"
+// @Failure 500 {object} ErrorResponse "Internal server error"
 // @Router /filesystem/{path} [put]
 func (h *FileSystemHandler) HandleCreateOrUpdateFile(c *gin.Context) {
 	contentType := c.GetHeader("Content-Type")
@@ -257,7 +228,7 @@ func (h *FileSystemHandler) HandleCreateOrUpdateFileJSON(c *gin.Context) {
 			h.SendError(c, http.StatusUnprocessableEntity, fmt.Errorf("error creating directory: %w", err))
 			return
 		}
-		h.SendSuccess(c, "Directory created successfully")
+		h.SendSuccessWithPath(c, path, "Directory created successfully")
 		return
 	}
 
@@ -267,7 +238,7 @@ func (h *FileSystemHandler) HandleCreateOrUpdateFileJSON(c *gin.Context) {
 		return
 	}
 
-	h.SendSuccess(c, "File created/updated successfully")
+	h.SendSuccessWithPath(c, path, "File created/updated successfully")
 }
 
 func (h *FileSystemHandler) HandleCreateOrUpdateBinary(c *gin.Context) {
@@ -289,7 +260,6 @@ func (h *FileSystemHandler) HandleCreateOrUpdateBinary(c *gin.Context) {
 		h.SendError(c, http.StatusBadRequest, fmt.Errorf("error getting file from request: %w", err))
 		return
 	}
-
 	// Open the uploaded file
 	src, err := file.Open()
 	if err != nil {
@@ -321,7 +291,7 @@ func (h *FileSystemHandler) HandleCreateOrUpdateBinary(c *gin.Context) {
 		return
 	}
 
-	h.SendSuccess(c, "Binary file uploaded successfully")
+	h.SendSuccessWithPath(c, path, "Binary file uploaded successfully")
 }
 
 // HandleDeleteFileOrDirectory handles DELETE requests to /filesystem/:path
@@ -335,6 +305,7 @@ func (h *FileSystemHandler) HandleCreateOrUpdateBinary(c *gin.Context) {
 // @Success 200 {object} SuccessResponse "Success message"
 // @Failure 404 {object} ErrorResponse "File or directory not found"
 // @Failure 422 {object} ErrorResponse "Unprocessable entity"
+// @Failure 500 {object} ErrorResponse "Internal server error"
 // @Router /filesystem/{path} [delete]
 func (h *FileSystemHandler) HandleDeleteFile(c *gin.Context) {
 	path, err := h.GetPathParam(c, "path")
@@ -374,7 +345,7 @@ func (h *FileSystemHandler) HandleDeleteFile(c *gin.Context) {
 			h.SendError(c, http.StatusUnprocessableEntity, fmt.Errorf("error deleting directory: %w", err))
 			return
 		}
-		h.SendSuccess(c, "Directory deleted successfully")
+		h.SendSuccessWithPath(c, path, "Directory deleted successfully")
 		return
 	}
 
@@ -392,7 +363,7 @@ func (h *FileSystemHandler) HandleDeleteFile(c *gin.Context) {
 			h.SendError(c, http.StatusUnprocessableEntity, fmt.Errorf("error deleting file: %w", err))
 			return
 		}
-		h.SendSuccess(c, "File deleted successfully")
+		h.SendSuccessWithPath(c, path, "File deleted successfully")
 		return
 	}
 
@@ -545,7 +516,7 @@ func (h *FileSystemHandler) HandleDeleteTree(c *gin.Context) {
 		return
 	}
 
-	h.SendSuccess(c, "Directory deleted successfully")
+	h.SendSuccessWithPath(c, rootPathStr, "Directory deleted successfully")
 }
 
 // HandleWatchDirectory streams file modification events for a directory

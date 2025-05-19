@@ -188,6 +188,7 @@ func (h *ProcessHandler) HandleListProcesses(c *gin.Context) {
 // @Success 200 {object} ProcessResponse "Process information"
 // @Failure 400 {object} ErrorResponse "Invalid request"
 // @Failure 422 {object} ErrorResponse "Unprocessable entity"
+// @Failure 500 {object} ErrorResponse "Internal server error"
 // @Router /process [post]
 func (h *ProcessHandler) HandleExecuteCommand(c *gin.Context) {
 	var req ProcessRequest
@@ -234,6 +235,7 @@ func (h *ProcessHandler) HandleExecuteCommand(c *gin.Context) {
 // @Success 200 {object} process.ProcessLogs "Process logs"
 // @Failure 404 {object} ErrorResponse "Process not found"
 // @Failure 422 {object} ErrorResponse "Unprocessable entity"
+// @Failure 500 {object} ErrorResponse "Internal server error"
 // @Router /process/{identifier}/logs [get]
 func (h *ProcessHandler) HandleGetProcessLogs(c *gin.Context) {
 	identifier, err := h.GetPathParam(c, "identifier")
@@ -260,6 +262,7 @@ func (h *ProcessHandler) HandleGetProcessLogs(c *gin.Context) {
 // @Success 200 {string} string "Stream of process logs, one line per log (prefixed with stdout:/stderr:)"
 // @Failure 404 {object} ErrorResponse "Process not found"
 // @Failure 422 {object} ErrorResponse "Unprocessable entity"
+// @Failure 500 {object} ErrorResponse "Internal server error"
 // @Router /process/{identifier}/logs/stream [get]
 func (h *ProcessHandler) HandleGetProcessLogsStream(c *gin.Context) {
 	identifier, err := h.GetPathParam(c, "identifier")
@@ -313,6 +316,7 @@ func (h *ProcessHandler) HandleGetProcessLogsStream(c *gin.Context) {
 // @Success 200 {object} SuccessResponse "Process stopped"
 // @Failure 404 {object} ErrorResponse "Process not found"
 // @Failure 422 {object} ErrorResponse "Unprocessable entity"
+// @Failure 500 {object} ErrorResponse "Internal server error"
 // @Router /process/{identifier} [delete]
 func (h *ProcessHandler) HandleStopProcess(c *gin.Context) {
 	identifier, err := h.GetPathParam(c, "identifier")
@@ -341,6 +345,7 @@ func (h *ProcessHandler) HandleStopProcess(c *gin.Context) {
 // @Success 200 {object} SuccessResponse "Process killed"
 // @Failure 404 {object} ErrorResponse "Process not found"
 // @Failure 422 {object} ErrorResponse "Unprocessable entity"
+// @Failure 500 {object} ErrorResponse "Internal server error"
 // @Router /process/{identifier}/kill [delete]
 func (h *ProcessHandler) HandleKillProcess(c *gin.Context) {
 	identifier, err := h.GetPathParam(c, "identifier")
@@ -453,6 +458,7 @@ func (w *wsWriter) Write(data []byte) (int, error) {
 // @Success 101 {string} string "WebSocket connection established"
 // @Failure 404 {object} ErrorResponse "Process not found"
 // @Failure 422 {object} ErrorResponse "Unprocessable entity"
+// @Failure 500 {object} ErrorResponse "Internal server error"
 // @Router /ws/process/{identifier}/logs/stream [get]
 func (h *ProcessHandler) HandleGetProcessLogsStreamWebSocket(c *gin.Context) {
 	identifier, err := h.GetPathParam(c, "identifier")

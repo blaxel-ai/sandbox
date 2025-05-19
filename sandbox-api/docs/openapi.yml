@@ -39,6 +39,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
       summary: Delete file or directory
       tags:
         - filesystem
@@ -68,6 +74,12 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "422":
           description: Unprocessable entity
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
           content:
             application/json:
               schema:
@@ -110,6 +122,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
       summary: Create or update a file or directory
       tags:
         - filesystem
@@ -139,6 +157,12 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "422":
           description: Unprocessable entity
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
           content:
             application/json:
               schema:
@@ -182,6 +206,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
       summary: Start monitoring ports for a process
       tags:
         - network
@@ -211,6 +241,12 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "422":
           description: Unprocessable entity
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
           content:
             application/json:
               schema:
@@ -261,6 +297,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
       summary: Execute a command
       tags:
         - process
@@ -289,6 +331,12 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "422":
           description: Unprocessable entity
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
           content:
             application/json:
               schema:
@@ -356,6 +404,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
       summary: Kill a process
       tags:
         - process
@@ -384,6 +438,12 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "422":
           description: Unprocessable entity
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
           content:
             application/json:
               schema:
@@ -419,6 +479,12 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "422":
           description: Unprocessable entity
+          content:
+            text/plain:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
           content:
             text/plain:
               schema:
@@ -489,6 +555,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
       summary: Stream process logs in real time via WebSocket
       tags:
         - process
@@ -535,6 +607,8 @@ components:
           items:
             $ref: "#/components/schemas/File"
           type: array
+        name:
+          type: string
         path:
           type: string
         subdirectories:
@@ -554,6 +628,8 @@ components:
         group:
           type: string
         lastModified:
+          type: string
+        name:
           type: string
         owner:
           type: string
@@ -583,6 +659,8 @@ components:
         group:
           type: string
         lastModified:
+          type: string
+        name:
           type: string
         owner:
           type: string
@@ -680,6 +758,8 @@ components:
       type: object
     Subdirectory:
       properties:
+        name:
+          type: string
         path:
           type: string
       type: object

@@ -11,11 +11,13 @@ import (
 // Subdirectory represents a subdirectory in the filesystem
 type Subdirectory struct {
 	Path string `json:"path"`
+	Name string `json:"name"`
 } // @name Subdirectory
 
 // Directory represents a directory in the filesystem
 type Directory struct {
 	Path           string          `json:"path"`
+	Name           string          `json:"name"`
 	Files          []*File         `json:"files"`
 	Subdirectories []*Subdirectory `json:"subdirectories"` // @name Subdirectories
 } // @name Directory
@@ -23,6 +25,7 @@ type Directory struct {
 func NewDirectory(path string) *Directory {
 	return &Directory{
 		Path:           path,
+		Name:           filepath.Base(path),
 		Files:          []*File{},
 		Subdirectories: []*Subdirectory{},
 	}

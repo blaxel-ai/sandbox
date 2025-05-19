@@ -1,0 +1,25 @@
+meta {
+  name: Tree
+  type: http
+  seq: 5
+}
+
+put {
+  url: {{URL}}/filesystem/tree/test
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+  X-Blaxel-Workspace: {{WORKSPACE}}
+}
+
+body:json {
+  {
+    "files": {
+      "test.txt": "hello wolrd",
+      "test2/test.txt": "oula"
+    }
+  }
+}
