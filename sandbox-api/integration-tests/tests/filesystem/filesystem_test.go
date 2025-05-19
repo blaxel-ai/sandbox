@@ -359,3 +359,280 @@ func TestFileSystemWatchWebSocket(t *testing.T) {
 	// Clean up
 	_, _ = common.MakeRequest(http.MethodDelete, "/filesystem"+dir+"?recursive=true", nil)
 }
+
+// TestFileSystemWatchRecursive tests recursive streaming watch endpoint for file modifications in subdirectories
+func TestFileSystemWatchRecursive(t *testing.T) {
+	dir := fmt.Sprintf("/tmp/test-watch-recursive-%d", time.Now().UnixNano())
+	subdir := dir + "/subdir"
+	fileName := "watched.txt"
+	filePath := subdir + "/" + fileName
+
+	// Create parent directory
+	createDirRequest := map[string]interface{}{
+		"isDirectory": true,
+	}
+	var successResp handler.SuccessResponse
+	resp, err := common.MakeRequestAndParse(http.MethodPut, "/filesystem"+dir, createDirRequest, &successResp)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Contains(t, successResp.Message, "success")
+
+	// Create subdirectory
+	resp, err = common.MakeRequestAndParse(http.MethodPut, "/filesystem"+subdir, createDirRequest, &successResp)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Contains(t, successResp.Message, "success")
+
+	watchPath := dir + "/**"
+	done := make(chan struct{})
+	received := make(chan map[string]interface{}, 5)
+
+	// Start watcher goroutine
+	go func() {
+		resp, err := common.MakeRequest("GET", "/watch/filesystem"+watchPath, nil)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		reader := bufio.NewReader(resp.Body)
+		for {
+			line, err := reader.ReadString('\n')
+			if err != nil {
+				break
+			}
+			line = strings.TrimSpace(line)
+			if line != "" {
+				var event map[string]interface{}
+				err := json.Unmarshal([]byte(line), &event)
+				if err == nil {
+					received <- event
+				}
+			}
+		}
+	}()
+
+	// Wait a moment to ensure watcher is ready
+	time.Sleep(300 * time.Millisecond)
+
+	// Helper to wait for a specific op and name
+	waitForEvent := func(op, name string) map[string]interface{} {
+		timeout := time.After(50 * time.Millisecond)
+		for {
+			select {
+			case event := <-received:
+				if strings.Contains(fmt.Sprint(event["op"]), op) && event["name"] == name {
+					return event
+				}
+			case <-timeout:
+				t.Fatalf("Timeout waiting for %s event for %s", op, name)
+			}
+		}
+	}
+
+	// 1. Create a file in the subdirectory
+	content := []byte("hello recursive watch!")
+	createFileRequest := map[string]interface{}{
+		"content": string(content),
+	}
+	resp, err = common.MakeRequestAndParse(http.MethodPut, "/filesystem"+filePath, createFileRequest, &successResp)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Contains(t, successResp.Message, "success")
+	_ = waitForEvent("CREATE", fileName)
+
+	// 2. Delete the file
+	resp, err = common.MakeRequestAndParse(http.MethodDelete, "/filesystem"+filePath, nil, &successResp)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	waitForEvent("REMOVE", fileName)
+
+	// 3. Create a new subdirectory
+	newSubdir := dir + "/subdir2"
+	resp, err = common.MakeRequestAndParse(http.MethodPut, "/filesystem"+newSubdir, createDirRequest, &successResp)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	waitForEvent("CREATE", "subdir2")
+
+	// 3. Delete the subdirectory
+	resp, err = common.MakeRequestAndParse(http.MethodDelete, "/filesystem"+newSubdir, nil, &successResp)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	waitForEvent("REMOVE", "subdir2")
+	// Clean up
+	close(done)
+
+	// --- Ignore pattern test ---
+	t.Run("ignore pattern", func(t *testing.T) {
+		// Setup for ignore test
+		dir := fmt.Sprintf("/tmp/test-watch-ignore-%d", time.Now().UnixNano())
+		subdir := dir + "/subdir"
+		fileName := "watched.txt"
+		filePath := subdir + "/" + fileName
+		ignoredFileName := "ignored.txt"
+		ignoredFilePath := subdir + "/" + ignoredFileName
+
+		createDirRequest := map[string]interface{}{
+			"isDirectory": true,
+		}
+		var successResp handler.SuccessResponse
+		resp, err := common.MakeRequestAndParse(http.MethodPut, "/filesystem"+dir, createDirRequest, &successResp)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		resp, err = common.MakeRequestAndParse(http.MethodPut, "/filesystem"+subdir, createDirRequest, &successResp)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+
+		watchPath := dir + "/**"
+		done := make(chan struct{})
+		received := make(chan map[string]interface{}, 10)
+
+		// Start watcher goroutine with ignore=ignored.txt
+		go func() {
+			resp, err := common.MakeRequest("GET", "/watch/filesystem"+watchPath+"?ignore=ignored.txt", nil)
+			require.NoError(t, err)
+			defer resp.Body.Close()
+			reader := bufio.NewReader(resp.Body)
+			for {
+				line, err := reader.ReadString('\n')
+				if err != nil {
+					break
+				}
+				line = strings.TrimSpace(line)
+				if line != "" {
+					var event map[string]interface{}
+					err := json.Unmarshal([]byte(line), &event)
+					if err == nil {
+						received <- event
+					}
+				}
+			}
+		}()
+
+		// Wait a moment to ensure watcher is ready
+		time.Sleep(100 * time.Millisecond)
+
+		// Create a file that should NOT be ignored
+		createFileRequest := map[string]interface{}{
+			"content": "not ignored",
+		}
+		resp, err = common.MakeRequestAndParse(http.MethodPut, "/filesystem"+filePath, createFileRequest, &successResp)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+		assert.Contains(t, successResp.Message, "success")
+
+		// Create a file that SHOULD be ignored
+		createIgnoredFileRequest := map[string]interface{}{
+			"content": "ignored",
+		}
+		resp, err = common.MakeRequestAndParse(http.MethodPut, "/filesystem"+ignoredFilePath, createIgnoredFileRequest, &successResp)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+		assert.Contains(t, successResp.Message, "success")
+
+		// Wait for watcher to receive the event or timeout
+		var gotNotIgnored, gotIgnored bool
+		timeout := time.After(1 * time.Second)
+		timeoutReached := false
+		for !gotNotIgnored && !gotIgnored && !timeoutReached {
+			select {
+			case event := <-received:
+				if event["name"] == fileName {
+					gotNotIgnored = true
+				} else if event["name"] == ignoredFileName {
+					gotIgnored = true
+				}
+			case <-timeout:
+				timeoutReached = true
+			}
+		}
+		assert.True(t, gotNotIgnored, "Should receive event for not-ignored file")
+		assert.False(t, gotIgnored, "Should NOT receive event for ignored file")
+		close(done)
+	})
+
+	// --- Ignore folder pattern test ---
+	t.Run("ignore folder pattern", func(t *testing.T) {
+		dir := fmt.Sprintf("/tmp/test-watch-ignore-folder-%d", time.Now().UnixNano())
+		ignoredSubdir := dir + "/ignored-folder"
+		fileName := "file.txt"
+		filePath := ignoredSubdir + "/" + fileName
+
+		createDirRequest := map[string]interface{}{
+			"isDirectory": true,
+		}
+		var successResp handler.SuccessResponse
+		resp, err := common.MakeRequestAndParse(http.MethodPut, "/filesystem"+dir, createDirRequest, &successResp)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+
+		watchPath := dir + "/**"
+		done := make(chan struct{})
+		received := make(chan map[string]interface{}, 10)
+
+		// Start watcher goroutine with ignore=ignored-folder
+		go func() {
+			resp, err := common.MakeRequest("GET", "/watch/filesystem"+watchPath+"?ignore=ignored-folder", nil)
+			require.NoError(t, err)
+			defer resp.Body.Close()
+			reader := bufio.NewReader(resp.Body)
+			for {
+				line, err := reader.ReadString('\n')
+				if err != nil {
+					break
+				}
+				line = strings.TrimSpace(line)
+				if line != "" {
+					var event map[string]interface{}
+					err := json.Unmarshal([]byte(line), &event)
+					if err == nil {
+						received <- event
+					}
+				}
+			}
+		}()
+
+		// Wait a moment to ensure watcher is ready
+		time.Sleep(100 * time.Millisecond)
+
+		// Create the ignored subdirectory
+		resp, err = common.MakeRequestAndParse(http.MethodPut, "/filesystem"+ignoredSubdir, createDirRequest, &successResp)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+		assert.Contains(t, successResp.Message, "success")
+
+		// Create a file inside the ignored subdirectory
+		createFileRequest := map[string]interface{}{
+			"content": "should be ignored",
+		}
+		resp, err = common.MakeRequestAndParse(http.MethodPut, "/filesystem"+filePath, createFileRequest, &successResp)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+		assert.Contains(t, successResp.Message, "success")
+
+		// Wait for watcher to receive the event or timeout
+		var gotEvent bool
+		timeout := time.After(1 * time.Second)
+		timeoutReached := false
+		for !gotEvent && !timeoutReached {
+			select {
+			case event := <-received:
+				if event["name"] == "ignored-folder" || event["name"] == fileName {
+					gotEvent = true
+				}
+			case <-timeout:
+				timeoutReached = true
+			}
+		}
+		assert.False(t, gotEvent, "Should NOT receive event for ignored folder or its file")
+
+		close(done)
+	})
+}

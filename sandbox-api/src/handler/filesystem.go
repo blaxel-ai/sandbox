@@ -203,12 +203,9 @@ func (h *FileSystemHandler) handleListDirectory(c *gin.Context, path string) {
 // @Description Create or update a file or directory
 // @Tags filesystem
 // @Accept json
-// @Accept multipart/form-data
 // @Produce json
 // @Param path path string true "File or directory path"
 // @Param request body FileRequest true "File or directory details"
-// @Param file formData file true "File to upload"
-// @Param permissions formData string false "File permissions (octal format, e.g. 0644)"
 // @Success 200 {object} SuccessResponse "Success message"
 // @Failure 400 {object} ErrorResponse "Bad request"
 // @Failure 422 {object} ErrorResponse "Unprocessable entity"
@@ -551,7 +548,16 @@ func (h *FileSystemHandler) HandleDeleteTree(c *gin.Context) {
 	h.SendSuccess(c, "Directory deleted successfully")
 }
 
-// HandleWatchDirectory handles GET requests to watch filesystem changes
+// HandleWatchDirectory streams file modification events for a directory
+// @Summary Stream file modification events in a directory
+// @Description Streams the path of modified files (one per line) in the given directory. Closes when the client disconnects.
+// @Tags filesystem
+// @Produce plain
+// @Param path path string true "Directory path to watch"
+// @Success 200 {string} string "Stream of modified file paths, one per line"
+// @Failure 400 {object} ErrorResponse "Invalid path"
+// @Failure 500 {object} ErrorResponse "Internal server error"
+// @Router /watch/filesystem/{path} [get]
 func (h *FileSystemHandler) HandleWatchDirectory(c *gin.Context) {
 	path, err := h.GetPathParam(c, "path")
 	if err != nil {
@@ -564,6 +570,30 @@ func (h *FileSystemHandler) HandleWatchDirectory(c *gin.Context) {
 		return
 	}
 
+	// Parse ignore patterns from query param
+	ignoreParam := c.Query("ignore")
+	var ignorePatterns []string
+	if ignoreParam != "" {
+		ignorePatterns = strings.Split(ignoreParam, ",")
+	}
+	shouldIgnore := func(eventPath string) bool {
+		for _, pattern := range ignorePatterns {
+			if pattern != "" && strings.Contains(eventPath, pattern) {
+				return true
+			}
+		}
+		return false
+	}
+
+	recursive := false
+	if strings.HasSuffix(path, "/**") {
+		recursive = true
+		path = strings.TrimSuffix(path, "/**")
+		if path == "" {
+			path = "/"
+		}
+	}
+
 	isDir, err := h.DirectoryExists(path)
 	if err != nil {
 		h.SendError(c, http.StatusUnprocessableEntity, err)
@@ -571,8 +601,6 @@ func (h *FileSystemHandler) HandleWatchDirectory(c *gin.Context) {
 	}
 
 	if !isDir {
-		// If this isn't a directory, we're in trouble.
-		// We don't want to watch a file, and there's no reason to create a new directory.
 		h.SendError(c, http.StatusBadRequest, fmt.Errorf("path is not a directory"))
 		return
 	}
@@ -590,11 +618,13 @@ func (h *FileSystemHandler) HandleWatchDirectory(c *gin.Context) {
 	ctx := c.Request.Context()
 	done := make(chan struct{})
 
-	// Start watching the directory
-	stop, err := h.fs.WatchDirectory(path, func(event fsnotify.Event) {
-		// Only send file events (not directory events)
-		if event.Op&(fsnotify.Write|fsnotify.Create|fsnotify.Remove|fsnotify.Rename) != 0 {
+	var stop func()
+	if recursive {
+		stop, err = h.fs.WatchDirectoryRecursive(path, func(event fsnotify.Event) {
 			defer func() { _ = recover() }()
+			if shouldIgnore(event.Name) {
+				return
+			}
 			msg := FileEvent{
 				Op:    event.Op.String(),
 				Name:  strings.Split(event.Name, "/")[len(strings.Split(event.Name, "/"))-1],
@@ -611,15 +641,37 @@ func (h *FileSystemHandler) HandleWatchDirectory(c *gin.Context) {
 				return
 			}
 			flusher.Flush()
-		}
-	})
+		})
+	} else {
+		stop, err = h.fs.WatchDirectory(path, func(event fsnotify.Event) {
+			defer func() { _ = recover() }()
+			if shouldIgnore(event.Name) {
+				return
+			}
+			msg := FileEvent{
+				Op:    event.Op.String(),
+				Name:  strings.Split(event.Name, "/")[len(strings.Split(event.Name, "/"))-1],
+				Path:  strings.Join(strings.Split(event.Name, "/")[:len(strings.Split(event.Name, "/"))-1], "/"),
+				Error: nil,
+			}
+			json, err := json.Marshal(msg)
+			if err != nil {
+				fmt.Println("Error marshalling file event:", err)
+				h.SendError(c, http.StatusInternalServerError, err)
+				return
+			}
+			if _, err := c.Writer.Write([]byte(string(json) + "\n")); err != nil {
+				return
+			}
+			flusher.Flush()
+		})
+	}
 	if err != nil {
 		h.SendError(c, http.StatusInternalServerError, err)
 		return
 	}
 	defer stop() // Ensures watcher is removed when handler exits
 
-	// Wait for client disconnect
 	go func() {
 		<-ctx.Done()
 		close(done)
@@ -650,6 +702,21 @@ func (h *FileSystemHandler) HandleWatchDirectoryWebSocket(c *gin.Context) {
 		return
 	}
 
+	// Parse ignore patterns from query param
+	ignoreParam := c.Query("ignore")
+	var ignorePatterns []string
+	if ignoreParam != "" {
+		ignorePatterns = strings.Split(ignoreParam, ",")
+	}
+	shouldIgnore := func(eventPath string) bool {
+		for _, pattern := range ignorePatterns {
+			if pattern != "" && strings.Contains(eventPath, pattern) {
+				return true
+			}
+		}
+		return false
+	}
+
 	isDir, err := h.DirectoryExists(path)
 	if err != nil {
 		h.SendError(c, http.StatusUnprocessableEntity, err)
@@ -674,6 +741,9 @@ func (h *FileSystemHandler) HandleWatchDirectoryWebSocket(c *gin.Context) {
 
 	stop, err := h.fs.WatchDirectory(path, func(event fsnotify.Event) {
 		if event.Op&(fsnotify.Write|fsnotify.Create|fsnotify.Remove|fsnotify.Rename|fsnotify.Chmod) != 0 {
+			if shouldIgnore(event.Name) {
+				return
+			}
 			msg := FileEvent{
 				Op:    event.Op.String(),
 				Name:  strings.Split(event.Name, "/")[len(strings.Split(event.Name, "/"))-1],
