@@ -86,7 +86,7 @@ func (h *ProcessHandler) ExecuteProcess(command string, workingDir string, name 
 		PID:         processInfo.PID,
 		Name:        processInfo.Name,
 		Command:     processInfo.Command,
-		Status:      processInfo.Status,
+		Status:      string(processInfo.Status),
 		StartedAt:   processInfo.StartedAt.Format("Mon, 02 Jan 2006 15:04:05 GMT"),
 		CompletedAt: completedAt,
 		ExitCode:    processInfo.ExitCode,
@@ -107,7 +107,7 @@ func (h *ProcessHandler) ListProcesses() []ProcessResponse {
 			PID:         p.PID,
 			Name:        p.Name,
 			Command:     p.Command,
-			Status:      p.Status,
+			Status:      string(p.Status),
 			StartedAt:   p.StartedAt.Format("Mon, 02 Jan 2006 15:04:05 GMT"),
 			CompletedAt: completedAt,
 			ExitCode:    p.ExitCode,
@@ -132,7 +132,7 @@ func (h *ProcessHandler) GetProcess(identifier string) (ProcessResponse, error) 
 		PID:         processInfo.PID,
 		Name:        processInfo.Name,
 		Command:     processInfo.Command,
-		Status:      processInfo.Status,
+		Status:      string(processInfo.Status),
 		StartedAt:   processInfo.StartedAt.Format("Mon, 02 Jan 2006 15:04:05 GMT"),
 		CompletedAt: completedAt,
 		ExitCode:    processInfo.ExitCode,
@@ -209,7 +209,7 @@ func (h *ProcessHandler) HandleExecuteCommand(c *gin.Context) {
 	// If a name is provided, check if a process with that name already exists
 	if req.Name != "" {
 		alreadyExists, err := GetProcessHandler().GetProcess(req.Name)
-		if err == nil && alreadyExists.Status == constants.ProcessStatusRunning {
+		if err == nil && alreadyExists.Status == string(constants.ProcessStatusRunning) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("process with name '%s' already exists and is running", req.Name)})
 			return
 		}

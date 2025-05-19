@@ -38,15 +38,15 @@ type ProcessLogs struct {
 
 // ProcessInfo stores information about a running process
 type ProcessInfo struct {
-	PID         string     `json:"pid"`
-	Name        string     `json:"name"`
-	Command     string     `json:"command"`
-	Cmd         *exec.Cmd  `json:"cmd"`
-	StartedAt   time.Time  `json:"startedAt"`
-	CompletedAt *time.Time `json:"completedAt"`
-	ExitCode    int        `json:"exitCode"`
-	Status      string     `json:"status"`
-	WorkingDir  string     `json:"workingDir"`
+	PID         string                  `json:"pid"`
+	Name        string                  `json:"name"`
+	Command     string                  `json:"command"`
+	Cmd         *exec.Cmd               `json:"cmd"`
+	StartedAt   time.Time               `json:"startedAt"`
+	CompletedAt *time.Time              `json:"completedAt"`
+	ExitCode    int                     `json:"exitCode"`
+	Status      constants.ProcessStatus `json:"status"`
+	WorkingDir  string                  `json:"workingDir"`
 	stdout      *strings.Builder
 	stderr      *strings.Builder
 	logs        *strings.Builder
