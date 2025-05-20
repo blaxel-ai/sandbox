@@ -35,7 +35,7 @@ func TestDirectoryMethods(t *testing.T) {
 	}
 
 	// Test adding and getting subdirectories
-	subdir := &Subdirectory{Path: "test/subdir"}
+	subdir := &Subdirectory{Path: "test/subdir", Name: "subdir"}
 	dir.AddSubdirectory(subdir)
 
 	if dir.CountSubdirectories() != 1 {

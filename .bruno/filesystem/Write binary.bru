@@ -1,0 +1,25 @@
+meta {
+  name: Write binary
+  type: http
+  seq: 7
+}
+
+put {
+  url: {{URL}}/filesystem/~/tmp/example.pdf
+  body: multipartForm
+  auth: none
+}
+
+headers {
+  X-Blaxel-Workspace: {{WORKSPACE}}
+}
+
+body:json {
+  {
+    "content": "#!/bin/bash\n\ncount=1\nwhile true; do\n  echo \"Iteration $count: Wow, we've looped $count times already! 🚀\"\n  sleep 5\n  ((count++))\ndone\n"
+  }
+}
+
+body:multipart-form {
+  file: @file(/Users/cploujoux/Documents/titre-propriete-corum.pdf)
+}

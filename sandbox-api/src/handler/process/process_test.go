@@ -74,17 +74,17 @@ func TestProcessManagerIntegrationWithPID(t *testing.T) {
 		time.Sleep(1 * time.Second)
 
 		// Get and verify output
-		stdout, stderr, err := pm.GetProcessOutput(echoPID)
+		logs, err := pm.GetProcessOutput(echoPID)
 		if err != nil {
 			t.Fatalf("Error getting echo process output: %v", err)
 		}
 
-		if strings.TrimSpace(stdout) != expectedOutput {
-			t.Errorf("Expected stdout to be '%s', got: '%s'", expectedOutput, strings.TrimSpace(stdout))
+		if strings.TrimSpace(logs.Stdout) != expectedOutput {
+			t.Errorf("Expected stdout to be '%s', got: '%s'", expectedOutput, strings.TrimSpace(logs.Stdout))
 		}
 
-		if stderr != "" {
-			t.Errorf("Expected stderr to be empty, got: '%s'", stderr)
+		if logs.Stderr != "" {
+			t.Errorf("Expected stderr to be empty, got: '%s'", logs.Stderr)
 		}
 
 		// Verify process completed successfully
@@ -114,23 +114,23 @@ func TestProcessManagerIntegrationWithPID(t *testing.T) {
 		time.Sleep(1 * time.Second)
 
 		// Get and verify output
-		stdout, stderr, err := pm.GetProcessOutput(lsPID)
+		logs, err := pm.GetProcessOutput(lsPID)
 		if err != nil {
 			t.Fatalf("Error getting ls process output: %v", err)
 		}
 
 		// Verify that we get some output from listing /tmp
-		if stdout == "" {
+		if logs.Stdout == "" {
 			t.Error("Expected stdout to contain directory listing, got empty string")
 		}
 
 		// Check if common tmp folder entries are in the output
-		if !strings.Contains(stdout, "total") {
-			t.Errorf("Expected ls -la output to contain 'total', output: %s", stdout)
+		if !strings.Contains(logs.Stdout, "total") {
+			t.Errorf("Expected ls -la output to contain 'total', output: %s", logs.Stdout)
 		}
 
-		if stderr != "" {
-			t.Errorf("Expected stderr to be empty, got: '%s'", stderr)
+		if logs.Stderr != "" {
+			t.Errorf("Expected stderr to be empty, got: '%s'", logs.Stderr)
 		}
 
 		// Verify process completed successfully
@@ -247,17 +247,17 @@ func TestProcessManagerIntegrationWithName(t *testing.T) {
 		time.Sleep(1 * time.Second)
 
 		// Get and verify output
-		stdout, stderr, err := pm.GetProcessOutput(name)
+		logs, err := pm.GetProcessOutput(name)
 		if err != nil {
 			t.Fatalf("Error getting echo process output: %v", err)
 		}
 
-		if strings.TrimSpace(stdout) != expectedOutput {
-			t.Errorf("Expected stdout to be '%s', got: '%s'", expectedOutput, strings.TrimSpace(stdout))
+		if strings.TrimSpace(logs.Stdout) != expectedOutput {
+			t.Errorf("Expected stdout to be '%s', got: '%s'", expectedOutput, strings.TrimSpace(logs.Stdout))
 		}
 
-		if stderr != "" {
-			t.Errorf("Expected stderr to be empty, got: '%s'", stderr)
+		if logs.Stderr != "" {
+			t.Errorf("Expected stderr to be empty, got: '%s'", logs.Stderr)
 		}
 
 		// Verify process completed successfully
@@ -288,23 +288,23 @@ func TestProcessManagerIntegrationWithName(t *testing.T) {
 		time.Sleep(1 * time.Second)
 
 		// Get and verify output
-		stdout, stderr, err := pm.GetProcessOutput(name)
+		logs, err := pm.GetProcessOutput(name)
 		if err != nil {
 			t.Fatalf("Error getting ls process output: %v", err)
 		}
 
 		// Verify that we get some output from listing /tmp
-		if stdout == "" {
+		if logs.Stdout == "" {
 			t.Error("Expected stdout to contain directory listing, got empty string")
 		}
 
 		// Check if common tmp folder entries are in the output
-		if !strings.Contains(stdout, "total") {
-			t.Errorf("Expected ls -la output to contain 'total', output: %s", stdout)
+		if !strings.Contains(logs.Stdout, "total") {
+			t.Errorf("Expected ls -la output to contain 'total', output: %s", logs.Stdout)
 		}
 
-		if stderr != "" {
-			t.Errorf("Expected stderr to be empty, got: '%s'", stderr)
+		if logs.Stderr != "" {
+			t.Errorf("Expected stderr to be empty, got: '%s'", logs.Stderr)
 		}
 
 		// Verify process completed successfully

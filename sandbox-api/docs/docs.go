@@ -50,6 +50,12 @@ const docTemplate = `{
                             "$ref": "#/definitions/ErrorResponse"
                         }
                     },
+                    "422": {
+                        "description": "Unprocessable entity",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
@@ -69,7 +75,7 @@ const docTemplate = `{
                 "tags": [
                     "filesystem"
                 ],
-                "summary": "Create or update file or directory",
+                "summary": "Create or update a file or directory",
                 "parameters": [
                     {
                         "type": "string",
@@ -79,7 +85,7 @@ const docTemplate = `{
                         "required": true
                     },
                     {
-                        "description": "File or directory information",
+                        "description": "File or directory details",
                         "name": "request",
                         "in": "body",
                         "required": true,
@@ -96,7 +102,13 @@ const docTemplate = `{
                         }
                     },
                     "400": {
-                        "description": "Invalid request",
+                        "description": "Bad request",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable entity",
                         "schema": {
                             "$ref": "#/definitions/ErrorResponse"
                         }
@@ -145,6 +157,12 @@ const docTemplate = `{
                     },
                     "404": {
                         "description": "File or directory not found",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable entity",
                         "schema": {
                             "$ref": "#/definitions/ErrorResponse"
                         }
@@ -203,6 +221,12 @@ const docTemplate = `{
                             "$ref": "#/definitions/ErrorResponse"
                         }
                     },
+                    "422": {
+                        "description": "Unprocessable entity",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
@@ -242,6 +266,12 @@ const docTemplate = `{
                     },
                     "400": {
                         "description": "Invalid process ID",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable entity",
                         "schema": {
                             "$ref": "#/definitions/ErrorResponse"
                         }
@@ -287,6 +317,12 @@ const docTemplate = `{
                     },
                     "400": {
                         "description": "Invalid process ID",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable entity",
                         "schema": {
                             "$ref": "#/definitions/ErrorResponse"
                         }
@@ -357,6 +393,12 @@ const docTemplate = `{
                     },
                     "400": {
                         "description": "Invalid request",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable entity",
                         "schema": {
                             "$ref": "#/definitions/ErrorResponse"
                         }
@@ -441,6 +483,12 @@ const docTemplate = `{
                             "$ref": "#/definitions/ErrorResponse"
                         }
                     },
+                    "422": {
+                        "description": "Unprocessable entity",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
@@ -493,6 +541,12 @@ const docTemplate = `{
                             "$ref": "#/definitions/ErrorResponse"
                         }
                     },
+                    "422": {
+                        "description": "Unprocessable entity",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
@@ -528,14 +582,17 @@ const docTemplate = `{
                     "200": {
                         "description": "Process logs",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
+                            "$ref": "#/definitions/ProcessLogs"
                         }
                     },
                     "404": {
                         "description": "Process not found",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable entity",
                         "schema": {
                             "$ref": "#/definitions/ErrorResponse"
                         }
@@ -581,6 +638,12 @@ const docTemplate = `{
                             "$ref": "#/definitions/ErrorResponse"
                         }
                     },
+                    "422": {
+                        "description": "Unprocessable entity",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
                     "500": {
                         "description": "Internal server error",
                         "schema": {
@@ -601,6 +664,12 @@ const docTemplate = `{
                 ],
                 "summary": "Stream file modification events in a directory",
                 "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Ignore patterns (comma-separated)",
+                        "name": "ignore",
+                        "in": "query"
+                    },
                     {
                         "type": "string",
                         "description": "Directory path to watch",
@@ -633,7 +702,7 @@ const docTemplate = `{
         },
         "/ws/process/{identifier}/logs/stream": {
             "get": {
-                "description": "Streams the stdout and stderr output of a process in real time as JSON messages. Closes when the process exits or the client disconnects.",
+                "description": "Streams the stdout and stderr output of a process in real time as JSON messages.",
                 "produces": [
                     "application/json"
                 ],
@@ -659,6 +728,12 @@ const docTemplate = `{
                     },
                     "404": {
                         "description": "Process not found",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable entity",
                         "schema": {
                             "$ref": "#/definitions/ErrorResponse"
                         }
@@ -724,6 +799,9 @@ const docTemplate = `{
                         "$ref": "#/definitions/File"
                     }
                 },
+                "name": {
+                    "type": "string"
+                },
                 "path": {
                     "type": "string"
                 },
@@ -752,6 +830,9 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "lastModified": {
+                    "type": "string"
+                },
+                "name": {
                     "type": "string"
                 },
                 "owner": {
@@ -797,6 +878,9 @@ const docTemplate = `{
                 "lastModified": {
                     "type": "string"
                 },
+                "name": {
+                    "type": "string"
+                },
                 "owner": {
                     "type": "string"
                 },
@@ -827,6 +911,23 @@ const docTemplate = `{
                 "signal": {
                     "type": "string",
                     "example": "SIGTERM"
+                }
+            }
+        },
+        "ProcessLogs": {
+            "type": "object",
+            "properties": {
+                "logs": {
+                    "type": "string",
+                    "example": "logs output"
+                },
+                "stderr": {
+                    "type": "string",
+                    "example": "stderr output"
+                },
+                "stdout": {
+                    "type": "string",
+                    "example": "stdout output"
                 }
             }
         },
@@ -897,6 +998,13 @@ const docTemplate = `{
                 },
                 "status": {
                     "type": "string",
+                    "enum": [
+                        "failed",
+                        "killed",
+                        "stopped",
+                        "running",
+                        "completed"
+                    ],
                     "example": "running"
                 },
                 "workingDir": {
@@ -908,6 +1016,9 @@ const docTemplate = `{
         "Subdirectory": {
             "type": "object",
             "properties": {
+                "name": {
+                    "type": "string"
+                },
                 "path": {
                     "type": "string"
                 }

@@ -72,9 +72,12 @@ func SetupRouter() *gin.Engine {
 				fsHandler.HandleCreateOrUpdateTree(c)
 				c.Abort()
 				return
+			} else if method == "DELETE" {
+				fsHandler.HandleDeleteTree(c)
+				c.Abort()
+				return
 			}
 		}
-
 		c.Next()
 	})
 

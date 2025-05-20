@@ -42,6 +42,13 @@ func (h *BaseHandler) SendSuccess(c *gin.Context, message string) {
 	})
 }
 
+func (h *BaseHandler) SendSuccessWithPath(c *gin.Context, path string, message string) {
+	c.JSON(http.StatusOK, SuccessResponse{
+		Path:    path,
+		Message: message,
+	})
+}
+
 // SendJSON sends a JSON response with the given status code
 func (h *BaseHandler) SendJSON(c *gin.Context, status int, data interface{}) {
 	c.JSON(status, data)

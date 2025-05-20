@@ -11,6 +11,17 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/blaxel-ai/sandbox-api/src/handler/constants"
+)
+
+// Define process status constants
+const (
+	StatusFailed    = constants.ProcessStatusFailed
+	StatusKilled    = constants.ProcessStatusKilled
+	StatusStopped   = constants.ProcessStatusStopped
+	StatusRunning   = constants.ProcessStatusRunning
+	StatusCompleted = constants.ProcessStatusCompleted
 )
 
 // ProcessManager manages the running processes
@@ -19,19 +30,26 @@ type ProcessManager struct {
 	mu        sync.RWMutex
 }
 
+type ProcessLogs struct {
+	Stdout string `json:"stdout" example:"stdout output"`
+	Stderr string `json:"stderr" example:"stderr output"`
+	Logs   string `json:"logs" example:"logs output"`
+} // @name ProcessLogs
+
 // ProcessInfo stores information about a running process
 type ProcessInfo struct {
-	PID         string     `json:"pid"`
-	Name        string     `json:"name"`
-	Command     string     `json:"command"`
-	Cmd         *exec.Cmd  `json:"cmd"`
-	StartedAt   time.Time  `json:"startedAt"`
-	CompletedAt *time.Time `json:"completedAt"`
-	ExitCode    int        `json:"exitCode"`
-	Status      string     `json:"status"`
-	WorkingDir  string     `json:"workingDir"`
+	PID         string                  `json:"pid"`
+	Name        string                  `json:"name"`
+	Command     string                  `json:"command"`
+	Cmd         *exec.Cmd               `json:"cmd"`
+	StartedAt   time.Time               `json:"startedAt"`
+	CompletedAt *time.Time              `json:"completedAt"`
+	ExitCode    int                     `json:"exitCode"`
+	Status      constants.ProcessStatus `json:"status"`
+	WorkingDir  string                  `json:"workingDir"`
 	stdout      *strings.Builder
 	stderr      *strings.Builder
+	logs        *strings.Builder
 	stdoutPipe  io.ReadCloser
 	stderrPipe  io.ReadCloser
 	logWriters  []io.Writer
@@ -100,17 +118,18 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 	// Set up stdout and stderr capture
 	stdout := &strings.Builder{}
 	stderr := &strings.Builder{}
-
+	logs := &strings.Builder{}
 	process := &ProcessInfo{
 		Name:        name,
 		Command:     command,
 		Cmd:         cmd,
 		StartedAt:   time.Now(),
 		CompletedAt: nil,
-		Status:      "running",
+		Status:      StatusRunning,
 		WorkingDir:  workingDir,
 		stdout:      stdout,
 		stderr:      stderr,
+		logs:        logs,
 		stdoutPipe:  stdoutPipe,
 		stderrPipe:  stderrPipe,
 		logWriters:  make([]io.Writer, 0),
@@ -135,7 +154,7 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 			if n > 0 {
 				data := buf[:n]
 				process.stdout.Write(data)
-
+				process.logs.Write(data)
 				// Send to any attached log writers, prefix with stdout:
 				process.logLock.RLock()
 				for _, w := range process.logWriters {
@@ -161,7 +180,7 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 			if n > 0 {
 				data := buf[:n]
 				process.stderr.Write(data)
-
+				process.logs.Write(data)
 				// Send to any attached log writers, prefix with stderr:
 				process.logLock.RLock()
 				for _, w := range process.logWriters {
@@ -187,8 +206,8 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 
 		// Determine exit status and create appropriate message
 		if err != nil {
-			if process.Status != "stopped" && process.Status != "killed" {
-				process.Status = "failed"
+			if process.Status != StatusStopped && process.Status != StatusKilled {
+				process.Status = StatusFailed
 			}
 			if exitErr, ok := err.(*exec.ExitError); ok {
 				process.ExitCode = exitErr.ExitCode()
@@ -196,7 +215,7 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 				process.ExitCode = 1
 			}
 		} else {
-			process.Status = "completed"
+			process.Status = StatusCompleted
 			process.ExitCode = 0
 		}
 
@@ -272,7 +291,7 @@ func (pm *ProcessManager) GetProcessByIdentifier(identifier string) (*ProcessInf
 		}
 
 		// If the process is running, try to get additional information from the OS
-		if process.Status == "running" {
+		if process.Status == StatusRunning {
 			pidInt, err := strconv.Atoi(process.PID)
 			if err == nil {
 				// Get process from OS
@@ -356,7 +375,7 @@ func (pm *ProcessManager) StopProcess(identifier string) error {
 		return fmt.Errorf("process with Identifier %s not found", identifier)
 	}
 
-	if process.Status != "running" {
+	if process.Status != StatusRunning {
 		return fmt.Errorf("process with Identifier %s is not running", identifier)
 	}
 
@@ -380,7 +399,7 @@ func (pm *ProcessManager) StopProcess(identifier string) error {
 			return fmt.Errorf("failed to send SIGTERM to process with Identifier %s: %w", identifier, err)
 		}
 	}
-	process.Status = "stopped"
+	process.Status = StatusStopped
 	return nil
 }
 
@@ -391,7 +410,7 @@ func (pm *ProcessManager) KillProcess(identifier string) error {
 		return fmt.Errorf("process with Identifier %s not found", identifier)
 	}
 
-	if process.Status != "running" {
+	if process.Status != StatusRunning {
 		return fmt.Errorf("process with Identifier %s is not running", identifier)
 	}
 
@@ -418,18 +437,22 @@ func (pm *ProcessManager) KillProcess(identifier string) error {
 	}
 
 	// Remove the process from memory
-	process.Status = "killed"
+	process.Status = StatusKilled
 	return nil
 }
 
 // GetProcessOutput returns the stdout and stderr output of a process
-func (pm *ProcessManager) GetProcessOutput(identifier string) (string, string, error) {
+func (pm *ProcessManager) GetProcessOutput(identifier string) (ProcessLogs, error) {
 	process, exists := pm.GetProcessByIdentifier(identifier)
 	if !exists {
-		return "", "", fmt.Errorf("process with PID %s not found", identifier)
+		return ProcessLogs{}, fmt.Errorf("process with PID %s not found", identifier)
 	}
 
-	return process.stdout.String(), process.stderr.String(), nil
+	return ProcessLogs{
+		Stdout: process.stdout.String(),
+		Stderr: process.stderr.String(),
+		Logs:   process.logs.String(),
+	}, nil
 }
 
 func (pm *ProcessManager) StreamProcessOutput(identifier string, w io.Writer) error {

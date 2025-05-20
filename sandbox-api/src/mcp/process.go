@@ -45,17 +45,11 @@ func (s *Server) registerProcessTools() error {
 	// Get process logs
 	if err := s.mcpServer.RegisterTool("processGetLogs", "Get logs for a specific process",
 		func(args ProcessIdentifierArgs) (*mcp_golang.ToolResponse, error) {
-			stdout, stderr, err := s.handlers.Process.GetProcessOutput(args.Identifier)
+			logs, err := s.handlers.Process.GetProcessOutput(args.Identifier)
 			if err != nil {
 				return nil, fmt.Errorf("failed to get process output: %w", err)
 			}
-
-			response := map[string]interface{}{
-				"stdout": stdout,
-				"stderr": stderr,
-			}
-
-			return CreateJSONResponse(response)
+			return CreateJSONResponse(logs)
 		}); err != nil {
 		return fmt.Errorf("failed to register getProcessLogs tool: %w", err)
 	}

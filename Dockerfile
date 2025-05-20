@@ -1,11 +1,18 @@
-FROM --platform=linux/amd64 golang:1.23.3-bookworm as build
+FROM --platform=linux/amd64 node:22-alpine
 
 WORKDIR /blaxel/sandbox-api
 
-RUN go install github.com/air-verse/air@latest
+RUN apk update && apk add --no-cache \
+  git \
+  go \
+  && rm -rf /var/cache/apk/*
 
-EXPOSE 8080
 
 ENV HOME=/blaxel
+ENV GOBIN=/usr/local/bin
+ENV PATH=$PATH:$GOBIN
+
+RUN go install github.com/air-verse/air@latest
+EXPOSE 8080
 
 ENTRYPOINT ["air"]
