@@ -2,6 +2,7 @@ package filesystem
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 
 	"github.com/fsnotify/fsnotify"
@@ -10,11 +11,13 @@ import (
 // Subdirectory represents a subdirectory in the filesystem
 type Subdirectory struct {
 	Path string `json:"path"`
+	Name string `json:"name"`
 } // @name Subdirectory
 
 // Directory represents a directory in the filesystem
 type Directory struct {
 	Path           string          `json:"path"`
+	Name           string          `json:"name"`
 	Files          []*File         `json:"files"`
 	Subdirectories []*Subdirectory `json:"subdirectories"` // @name Subdirectories
 } // @name Directory
@@ -22,6 +25,7 @@ type Directory struct {
 func NewDirectory(path string) *Directory {
 	return &Directory{
 		Path:           path,
+		Name:           filepath.Base(path),
 		Files:          []*File{},
 		Subdirectories: []*Subdirectory{},
 	}
@@ -143,6 +147,71 @@ func (fs *Filesystem) WatchDirectory(path string, callback func(event fsnotify.E
 				if (event.Op&fsnotify.Remove != 0 || event.Op&fsnotify.Rename != 0) && event.Name == absPath {
 					return
 				}
+			case err, ok := <-watcher.Errors:
+				if !ok {
+					return
+				}
+				fmt.Println("error:", err)
+			}
+		}
+	}()
+
+	stop := func() {
+		close(stopChan)
+		watcher.Close()
+	}
+	return stop, nil
+}
+
+// WatchDirectoryRecursive watches a directory and all its subdirectories for changes.
+// The callback is called with the event when a change occurs.
+func (fs *Filesystem) WatchDirectoryRecursive(path string, callback func(event fsnotify.Event)) (func(), error) {
+	absPath, err := fs.GetAbsolutePath(path)
+	if err != nil {
+		return nil, err
+	}
+
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		return nil, err
+	}
+
+	// Helper to add all subdirectories
+	addDirs := func(root string) error {
+		return filepath.Walk(root, func(p string, info os.FileInfo, err error) error {
+			if err != nil {
+				return err
+			}
+			if info.IsDir() {
+				return watcher.Add(p)
+			}
+			return nil
+		})
+	}
+
+	if err := addDirs(absPath); err != nil {
+		watcher.Close()
+		return nil, err
+	}
+
+	stopChan := make(chan struct{})
+
+	go func() {
+		for {
+			select {
+			case event, ok := <-watcher.Events:
+				if !ok {
+					return
+				}
+				callback(event)
+				// If a new directory is created, add it (and its subdirs)
+				if event.Op&fsnotify.Create != 0 {
+					info, err := os.Stat(event.Name)
+					if err == nil && info.IsDir() {
+						_ = addDirs(event.Name)
+					}
+				}
+				// If a directory is removed, watcher will error on it, but fsnotify cleans up
 			case err, ok := <-watcher.Errors:
 				if !ok {
 					return

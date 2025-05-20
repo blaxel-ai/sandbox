@@ -11,6 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 
+	"github.com/blaxel-ai/sandbox-api/src/handler/constants"
 	"github.com/blaxel-ai/sandbox-api/src/handler/process"
 	"github.com/blaxel-ai/sandbox-api/src/lib"
 )
@@ -57,7 +58,7 @@ type ProcessResponse struct {
 	PID         string `json:"pid" example:"1234"`
 	Name        string `json:"name,omitempty" example:"my-process"`
 	Command     string `json:"command" example:"ls -la"`
-	Status      string `json:"status" example:"running"`
+	Status      string `json:"status" example:"running" enums:"failed,killed,stopped,running,completed"`
 	StartedAt   string `json:"startedAt" example:"Wed, 01 Jan 2023 12:00:00 GMT"`
 	CompletedAt string `json:"completedAt,omitempty" example:"Wed, 01 Jan 2023 12:01:00 GMT"`
 	ExitCode    int    `json:"exitCode,omitempty" example:"0"`
@@ -85,7 +86,7 @@ func (h *ProcessHandler) ExecuteProcess(command string, workingDir string, name 
 		PID:         processInfo.PID,
 		Name:        processInfo.Name,
 		Command:     processInfo.Command,
-		Status:      processInfo.Status,
+		Status:      string(processInfo.Status),
 		StartedAt:   processInfo.StartedAt.Format("Mon, 02 Jan 2006 15:04:05 GMT"),
 		CompletedAt: completedAt,
 		ExitCode:    processInfo.ExitCode,
@@ -106,7 +107,7 @@ func (h *ProcessHandler) ListProcesses() []ProcessResponse {
 			PID:         p.PID,
 			Name:        p.Name,
 			Command:     p.Command,
-			Status:      p.Status,
+			Status:      string(p.Status),
 			StartedAt:   p.StartedAt.Format("Mon, 02 Jan 2006 15:04:05 GMT"),
 			CompletedAt: completedAt,
 			ExitCode:    p.ExitCode,
@@ -131,7 +132,7 @@ func (h *ProcessHandler) GetProcess(identifier string) (ProcessResponse, error) 
 		PID:         processInfo.PID,
 		Name:        processInfo.Name,
 		Command:     processInfo.Command,
-		Status:      processInfo.Status,
+		Status:      string(processInfo.Status),
 		StartedAt:   processInfo.StartedAt.Format("Mon, 02 Jan 2006 15:04:05 GMT"),
 		CompletedAt: completedAt,
 		ExitCode:    processInfo.ExitCode,
@@ -140,7 +141,7 @@ func (h *ProcessHandler) GetProcess(identifier string) (ProcessResponse, error) 
 }
 
 // GetProcessOutput gets the output of a process
-func (h *ProcessHandler) GetProcessOutput(identifier string) (string, string, error) {
+func (h *ProcessHandler) GetProcessOutput(identifier string) (process.ProcessLogs, error) {
 	return h.processManager.GetProcessOutput(identifier)
 }
 
@@ -186,6 +187,7 @@ func (h *ProcessHandler) HandleListProcesses(c *gin.Context) {
 // @Param request body ProcessRequest true "Process execution request"
 // @Success 200 {object} ProcessResponse "Process information"
 // @Failure 400 {object} ErrorResponse "Invalid request"
+// @Failure 422 {object} ErrorResponse "Unprocessable entity"
 // @Failure 500 {object} ErrorResponse "Internal server error"
 // @Router /process [post]
 func (h *ProcessHandler) HandleExecuteCommand(c *gin.Context) {
@@ -207,7 +209,7 @@ func (h *ProcessHandler) HandleExecuteCommand(c *gin.Context) {
 	// If a name is provided, check if a process with that name already exists
 	if req.Name != "" {
 		alreadyExists, err := GetProcessHandler().GetProcess(req.Name)
-		if err == nil && alreadyExists.Status == "running" {
+		if err == nil && alreadyExists.Status == string(constants.ProcessStatusRunning) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("process with name '%s' already exists and is running", req.Name)})
 			return
 		}
@@ -216,7 +218,7 @@ func (h *ProcessHandler) HandleExecuteCommand(c *gin.Context) {
 	// Execute the process
 	processInfo, err := h.ExecuteProcess(req.Command, req.WorkingDir, req.Name, req.WaitForCompletion, req.Timeout, req.WaitForPorts)
 	if err != nil {
-		h.SendError(c, http.StatusInternalServerError, err)
+		h.SendError(c, http.StatusUnprocessableEntity, err)
 		return
 	}
 
@@ -230,8 +232,9 @@ func (h *ProcessHandler) HandleExecuteCommand(c *gin.Context) {
 // @Accept json
 // @Produce json
 // @Param identifier path string true "Process identifier (PID or name)"
-// @Success 200 {object} map[string]string "Process logs"
+// @Success 200 {object} process.ProcessLogs "Process logs"
 // @Failure 404 {object} ErrorResponse "Process not found"
+// @Failure 422 {object} ErrorResponse "Unprocessable entity"
 // @Failure 500 {object} ErrorResponse "Internal server error"
 // @Router /process/{identifier}/logs [get]
 func (h *ProcessHandler) HandleGetProcessLogs(c *gin.Context) {
@@ -241,16 +244,13 @@ func (h *ProcessHandler) HandleGetProcessLogs(c *gin.Context) {
 		return
 	}
 
-	stdout, stderr, err := h.GetProcessOutput(identifier)
+	logs, err := h.GetProcessOutput(identifier)
 	if err != nil {
 		h.SendError(c, http.StatusNotFound, err)
 		return
 	}
 
-	h.SendJSON(c, http.StatusOK, gin.H{
-		"stdout": stdout,
-		"stderr": stderr,
-	})
+	h.SendJSON(c, http.StatusOK, logs)
 }
 
 // HandleGetProcessLogsStream handles GET requests to /process/{identifier}/logs/stream
@@ -261,6 +261,7 @@ func (h *ProcessHandler) HandleGetProcessLogs(c *gin.Context) {
 // @Param identifier path string true "Process identifier (PID or name)"
 // @Success 200 {string} string "Stream of process logs, one line per log (prefixed with stdout:/stderr:)"
 // @Failure 404 {object} ErrorResponse "Process not found"
+// @Failure 422 {object} ErrorResponse "Unprocessable entity"
 // @Failure 500 {object} ErrorResponse "Internal server error"
 // @Router /process/{identifier}/logs/stream [get]
 func (h *ProcessHandler) HandleGetProcessLogsStream(c *gin.Context) {
@@ -282,7 +283,7 @@ func (h *ProcessHandler) HandleGetProcessLogsStream(c *gin.Context) {
 
 	err = h.StreamProcessOutput(identifier, rw)
 	if err != nil {
-		h.SendError(c, http.StatusInternalServerError, err)
+		h.SendError(c, http.StatusUnprocessableEntity, err)
 		return
 	}
 
@@ -291,7 +292,7 @@ func (h *ProcessHandler) HandleGetProcessLogsStream(c *gin.Context) {
 	if !exists {
 		return
 	}
-	for process.Status == "running" {
+	for process.Status == constants.ProcessStatusRunning {
 		time.Sleep(200 * time.Millisecond)
 		// If client disconnects, break
 		select {
@@ -314,6 +315,7 @@ func (h *ProcessHandler) HandleGetProcessLogsStream(c *gin.Context) {
 // @Param identifier path string true "Process identifier (PID or name)"
 // @Success 200 {object} SuccessResponse "Process stopped"
 // @Failure 404 {object} ErrorResponse "Process not found"
+// @Failure 422 {object} ErrorResponse "Unprocessable entity"
 // @Failure 500 {object} ErrorResponse "Internal server error"
 // @Router /process/{identifier} [delete]
 func (h *ProcessHandler) HandleStopProcess(c *gin.Context) {
@@ -342,6 +344,7 @@ func (h *ProcessHandler) HandleStopProcess(c *gin.Context) {
 // @Param request body ProcessKillRequest false "Kill options"
 // @Success 200 {object} SuccessResponse "Process killed"
 // @Failure 404 {object} ErrorResponse "Process not found"
+// @Failure 422 {object} ErrorResponse "Unprocessable entity"
 // @Failure 500 {object} ErrorResponse "Internal server error"
 // @Router /process/{identifier}/kill [delete]
 func (h *ProcessHandler) HandleKillProcess(c *gin.Context) {
@@ -448,12 +451,13 @@ func (w *wsWriter) Write(data []byte) (int, error) {
 
 // HandleGetProcessLogsStreamWebSocket streams process logs in real time over WebSocket
 // @Summary Stream process logs in real time via WebSocket
-// @Description Streams the stdout and stderr output of a process in real time as JSON messages. Closes when the process exits or the client disconnects.
+// @Description Streams the stdout and stderr output of a process in real time as JSON messages.
 // @Tags process
 // @Produce json
 // @Param identifier path string true "Process identifier (PID or name)"
 // @Success 101 {string} string "WebSocket connection established"
 // @Failure 404 {object} ErrorResponse "Process not found"
+// @Failure 422 {object} ErrorResponse "Unprocessable entity"
 // @Failure 500 {object} ErrorResponse "Internal server error"
 // @Router /ws/process/{identifier}/logs/stream [get]
 func (h *ProcessHandler) HandleGetProcessLogsStreamWebSocket(c *gin.Context) {
@@ -495,7 +499,7 @@ func (h *ProcessHandler) HandleGetProcessLogsStreamWebSocket(c *gin.Context) {
 			}
 		}
 	}()
-	for process.Status == "running" {
+	for process.Status == constants.ProcessStatusRunning {
 		time.Sleep(200 * time.Millisecond)
 		select {
 		case <-done:

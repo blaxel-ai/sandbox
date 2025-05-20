@@ -33,6 +33,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Unprocessable entity
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "500":
           description: Internal server error
           content:
@@ -66,6 +72,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Unprocessable entity
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "500":
           description: Internal server error
           content:
@@ -89,7 +101,7 @@ paths:
           application/json:
             schema:
               $ref: "#/components/schemas/FileRequest"
-        description: File or directory information
+        description: File or directory details
         required: true
       responses:
         "200":
@@ -99,7 +111,13 @@ paths:
               schema:
                 $ref: "#/components/schemas/SuccessResponse"
         "400":
-          description: Invalid request
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Unprocessable entity
           content:
             application/json:
               schema:
@@ -110,7 +128,7 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
-      summary: Create or update file or directory
+      summary: Create or update a file or directory
       tags:
         - filesystem
   "/network/process/{pid}/monitor":
@@ -133,6 +151,12 @@ paths:
                 type: object
         "400":
           description: Invalid process ID
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Unprocessable entity
           content:
             application/json:
               schema:
@@ -176,6 +200,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Unprocessable entity
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "500":
           description: Internal server error
           content:
@@ -205,6 +235,12 @@ paths:
                 type: object
         "400":
           description: Invalid process ID
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Unprocessable entity
           content:
             application/json:
               schema:
@@ -255,6 +291,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Unprocessable entity
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "500":
           description: Internal server error
           content:
@@ -283,6 +325,12 @@ paths:
                 $ref: "#/components/schemas/SuccessResponse"
         "404":
           description: Process not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Unprocessable entity
           content:
             application/json:
               schema:
@@ -350,6 +398,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Unprocessable entity
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "500":
           description: Internal server error
           content:
@@ -375,11 +429,15 @@ paths:
           content:
             application/json:
               schema:
-                additionalProperties:
-                  type: string
-                type: object
+                $ref: "#/components/schemas/ProcessLogs"
         "404":
           description: Process not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Unprocessable entity
           content:
             application/json:
               schema:
@@ -419,6 +477,12 @@ paths:
             text/plain:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Unprocessable entity
+          content:
+            text/plain:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "500":
           description: Internal server error
           content:
@@ -433,6 +497,11 @@ paths:
       description: Streams the path of modified files (one per line) in the given
         directory. Closes when the client disconnects.
       parameters:
+        - description: Ignore patterns (comma-separated)
+          in: query
+          name: ignore
+          schema:
+            type: string
         - description: Directory path to watch
           in: path
           name: path
@@ -464,7 +533,7 @@ paths:
   "/ws/process/{identifier}/logs/stream":
     get:
       description: Streams the stdout and stderr output of a process in real time as
-        JSON messages. Closes when the process exits or the client disconnects.
+        JSON messages.
       parameters:
         - description: Process identifier (PID or name)
           in: path
@@ -481,6 +550,12 @@ paths:
                 type: string
         "404":
           description: Process not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Unprocessable entity
           content:
             application/json:
               schema:
@@ -537,6 +612,8 @@ components:
           items:
             $ref: "#/components/schemas/File"
           type: array
+        name:
+          type: string
         path:
           type: string
         subdirectories:
@@ -556,6 +633,8 @@ components:
         group:
           type: string
         lastModified:
+          type: string
+        name:
           type: string
         owner:
           type: string
@@ -586,6 +665,8 @@ components:
           type: string
         lastModified:
           type: string
+        name:
+          type: string
         owner:
           type: string
         path:
@@ -606,6 +687,18 @@ components:
       properties:
         signal:
           example: SIGTERM
+          type: string
+      type: object
+    ProcessLogs:
+      properties:
+        logs:
+          example: logs output
+          type: string
+        stderr:
+          example: stderr output
+          type: string
+        stdout:
+          example: stdout output
           type: string
       type: object
     ProcessRequest:
@@ -656,6 +749,12 @@ components:
           example: Wed, 01 Jan 2023 12:00:00 GMT
           type: string
         status:
+          enum:
+            - failed
+            - killed
+            - stopped
+            - running
+            - completed
           example: running
           type: string
         workingDir:
@@ -664,6 +763,8 @@ components:
       type: object
     Subdirectory:
       properties:
+        name:
+          type: string
         path:
           type: string
       type: object

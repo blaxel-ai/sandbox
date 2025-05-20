@@ -31,6 +31,7 @@ type FileByte struct {
 // File is a data transfer object for File with string permissions
 type File struct {
 	Path         string    `json:"path"`
+	Name         string    `json:"name"`
 	Permissions  string    `json:"permissions"`
 	Size         int64     `json:"size"`
 	LastModified time.Time `json:"lastModified"`
@@ -316,7 +317,7 @@ func (fs *Filesystem) ListDirectory(path string) (*Directory, error) {
 		}
 
 		if entry.IsDir() {
-			dir.AddSubdirectory(&Subdirectory{Path: entryPath})
+			dir.AddSubdirectory(&Subdirectory{Path: entryPath, Name: entry.Name()})
 		} else {
 			// It's a file
 			owner, group, err := fs.getFileOwnerAndGroup(absEntryPath)
@@ -324,7 +325,7 @@ func (fs *Filesystem) ListDirectory(path string) (*Directory, error) {
 				return nil, err
 			}
 
-			file := &File{Path: entryPath, Permissions: fmt.Sprintf("%o", info.Mode()), Size: info.Size(), LastModified: info.ModTime(), Owner: owner, Group: group}
+			file := &File{Path: entryPath, Name: entry.Name(), Permissions: fmt.Sprintf("%o", info.Mode()), Size: info.Size(), LastModified: info.ModTime(), Owner: owner, Group: group}
 			dir.AddFile(file)
 		}
 	}

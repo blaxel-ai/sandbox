@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"os"
 	"time"
@@ -51,6 +52,76 @@ func MakeRequest(method, path string, body interface{}) (*http.Response, error) 
 	}
 
 	return Client.Do(req)
+}
+
+// MakeMultipartRequest is a helper function to make multipart form data requests with file uploads
+func MakeMultipartRequest(method, path string, fileContent []byte, filename string, formValues map[string]string) (*http.Response, error) {
+	body := &bytes.Buffer{}
+	writer := NewMultipartWriter(body)
+
+	// Add the file as a form field
+	part, err := writer.CreateFormFile("file", filename)
+	if err != nil {
+		return nil, fmt.Errorf("error creating form file: %w", err)
+	}
+	_, err = part.Write(fileContent)
+	if err != nil {
+		return nil, fmt.Errorf("error writing file content: %w", err)
+	}
+
+	// Add other form values
+	for key, value := range formValues {
+		err = writer.WriteField(key, value)
+		if err != nil {
+			return nil, fmt.Errorf("error writing form field: %w", err)
+		}
+	}
+
+	err = writer.Close()
+	if err != nil {
+		return nil, fmt.Errorf("error closing multipart writer: %w", err)
+	}
+
+	req, err := http.NewRequest(method, BaseURL+path, body)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+
+	return Client.Do(req)
+}
+
+// NewMultipartWriter creates a new multipart writer
+func NewMultipartWriter(body *bytes.Buffer) *MultipartWriter {
+	return &MultipartWriter{
+		writer: multipart.NewWriter(body),
+	}
+}
+
+// MultipartWriter wraps the multipart writer to provide a simpler interface
+type MultipartWriter struct {
+	writer *multipart.Writer
+}
+
+// CreateFormFile creates a new form file field
+func (w *MultipartWriter) CreateFormFile(fieldname, filename string) (io.Writer, error) {
+	return w.writer.CreateFormFile(fieldname, filename)
+}
+
+// WriteField writes a string field
+func (w *MultipartWriter) WriteField(fieldname, value string) error {
+	return w.writer.WriteField(fieldname, value)
+}
+
+// Close closes the multipart writer
+func (w *MultipartWriter) Close() error {
+	return w.writer.Close()
+}
+
+// FormDataContentType returns the content type with boundary
+func (w *MultipartWriter) FormDataContentType() string {
+	return w.writer.FormDataContentType()
 }
 
 // ParseJSONResponse parses a JSON response into the provided target
