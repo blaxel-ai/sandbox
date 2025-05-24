@@ -1,9 +1,15 @@
 package api
 
 import (
+	"fmt"
+	"math"
+	"net/http"
+	"os"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/sirupsen/logrus"
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
 
@@ -14,10 +20,16 @@ import (
 // SetupRouter configures all the routes for the Sandbox API
 func SetupRouter() *gin.Engine {
 	// Initialize the router
-	r := gin.Default()
+	r := gin.New()
+
+	// Add recovery middleware
+	r.Use(gin.Recovery())
 
 	// Add middleware for CORS
 	r.Use(corsMiddleware())
+
+	// Add logrus middleware
+	r.Use(logrusMiddleware())
 
 	// Swagger documentation route
 	r.GET("/swagger", func(c *gin.Context) {
@@ -126,5 +138,59 @@ func corsMiddleware() gin.HandlerFunc {
 		}
 
 		c.Next()
+	}
+}
+
+func logrusMiddleware() gin.HandlerFunc {
+	hostname, err := os.Hostname()
+	if err != nil {
+		hostname = "unknow"
+	}
+	var skip map[string]struct{}
+
+	return func(c *gin.Context) {
+		// other handler can change c.Path so:
+		path := c.Request.URL.Path
+		start := time.Now()
+		c.Next()
+		stop := time.Since(start)
+		latency := int(math.Ceil(float64(stop.Nanoseconds()) / 1000000.0))
+		statusCode := c.Writer.Status()
+		clientIP := c.ClientIP()
+		clientUserAgent := c.Request.UserAgent()
+		referer := c.Request.Referer()
+		dataLength := c.Writer.Size()
+		if dataLength < 0 {
+			dataLength = 0
+		}
+
+		if _, ok := skip[path]; ok {
+			return
+		}
+
+		entry := logrus.WithFields(logrus.Fields{
+			"hostname":   hostname,
+			"statusCode": statusCode,
+			"latency":    latency, // time to process
+			"clientIP":   clientIP,
+			"method":     c.Request.Method,
+			"path":       path,
+			"referer":    referer,
+			"size":       dataLength,
+			"userAgent":  clientUserAgent,
+		})
+
+		if len(c.Errors) > 0 {
+			entry.Error(c.Errors.ByType(gin.ErrorTypePrivate).String())
+		} else {
+			msg := fmt.Sprintf("%s %s %d %d (%dms)", c.Request.Method, path, statusCode, dataLength, latency)
+			if statusCode >= http.StatusInternalServerError {
+				entry.Error(msg)
+			} else if statusCode >= http.StatusBadRequest {
+				entry.Warn(msg)
+			} else {
+				entry.Info(msg)
+			}
+		}
 	}
 }

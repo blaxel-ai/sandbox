@@ -4,7 +4,6 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"log"
 	"os"
 	"os/exec"
 
@@ -12,6 +11,7 @@ import (
 	"github.com/blaxel-ai/sandbox-api/src/api"
 	"github.com/blaxel-ai/sandbox-api/src/mcp"
 	"github.com/joho/godotenv"
+	"github.com/sirupsen/logrus"
 )
 
 // @title           Sandbox API
@@ -23,7 +23,7 @@ import (
 func main() {
 	// Load .env file
 	if err := godotenv.Load(); err != nil {
-		log.Printf("Warning: .env file not found")
+		logrus.Warnf("Warning: .env file not found")
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -66,19 +66,19 @@ func main() {
 		commandValue = *shortCommand
 	}
 
-	log.Printf("Port: %d", portValue)
-	log.Printf("Command: %s", commandValue)
-	log.Printf("Short Command: %s", *shortCommand)
+	logrus.Infof("Port: %d", portValue)
+	logrus.Infof("Command: %s", commandValue)
+	logrus.Infof("Short Command: %s", *shortCommand)
 
 	// Check for command after the flags
 	if commandValue != "" {
 		// Join all remaining arguments as they may form the command
-		log.Printf("Executing command: %s", commandValue)
+		logrus.Infof("Executing command: %s", commandValue)
 
 		// Create the command with the context
 		cmd := exec.CommandContext(ctx, "sh", "-c", commandValue)
-		cmd.Stdout = log.Writer()
-		cmd.Stderr = log.Writer()
+		cmd.Stdout = logrus.StandardLogger().Out
+		cmd.Stderr = logrus.StandardLogger().Out
 
 		cmd.Dir = "/"
 
@@ -86,22 +86,22 @@ func main() {
 		go func() {
 			// Start the command
 			if err := cmd.Start(); err != nil {
-				log.Fatalf("Failed to start command: %v", err)
+				logrus.Fatalf("Failed to start command: %v", err)
 				return
 			}
-			log.Printf("Command started successfully")
+			logrus.Infof("Command started successfully")
 
 			// Wait for the command to complete
 			if err := cmd.Wait(); err != nil {
 				// Check if context was cancelled
 				select {
 				case <-ctx.Done():
-					log.Printf("Command was cancelled")
+					logrus.Infof("Command was cancelled")
 				default:
-					log.Printf("Command exited with error: %v", err)
+					logrus.Infof("Command exited with error: %v", err)
 				}
 			} else {
-				log.Printf("Command completed successfully")
+				logrus.Infof("Command completed successfully")
 			}
 		}()
 	}
@@ -110,18 +110,18 @@ func main() {
 	router := api.SetupRouter()
 	mcpServer, err := mcp.NewServer(router)
 	if err != nil {
-		log.Fatalf("Failed to create MCP server: %v", err)
+		logrus.Fatalf("Failed to create MCP server: %v", err)
 	}
 
 	// Start the server
 	if err := mcpServer.Serve(); err != nil {
-		log.Fatalf("Failed to start MCP server: %v", err)
+		logrus.Fatalf("Failed to start MCP server: %v", err)
 	}
 
 	// Start the server
 	serverAddr := fmt.Sprintf(":%d", portValue)
-	log.Printf("Starting Sandbox API server on %s", serverAddr)
+	logrus.Infof("Starting Sandbox API server on %s", serverAddr)
 	if err := router.Run(serverAddr); err != nil {
-		log.Fatalf("Failed to start server: %v", err)
+		logrus.Fatalf("Failed to start server: %v", err)
 	}
 }

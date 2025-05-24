@@ -4,11 +4,11 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
+	"github.com/sirupsen/logrus"
 
 	"github.com/blaxel-ai/sandbox-api/src/handler/network"
 )
@@ -124,16 +124,16 @@ func (h *NetworkHandler) HandleMonitorPorts(c *gin.Context) {
 		}
 		json, err := json.Marshal(PortCallbackRequest{PID: pid, Port: port.LocalPort})
 		if err != nil {
-			log.Printf("Error marshalling port callback request: %v", err)
+			logrus.Debugf("Error marshalling port callback request: %v", err)
 			return
 		}
 		resp, err := http.Post(req.Callback, "application/json", bytes.NewBuffer(json))
 		if err != nil {
-			log.Printf("Error sending port callback request: %v", err)
+			logrus.Debugf("Error sending port callback request: %v", err)
 			return
 		}
 		defer resp.Body.Close()
-		log.Printf("Port callback request sent to %s", req.Callback)
+		logrus.Debugf("Port callback request sent to %s", req.Callback)
 	})
 
 	h.SendSuccess(c, "Port monitoring started")

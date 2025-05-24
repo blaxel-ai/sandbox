@@ -5,6 +5,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	mcp_golang "github.com/metoro-io/mcp-golang"
+	"github.com/sirupsen/logrus"
 
 	"github.com/blaxel-ai/sandbox-api/src/handler"
 )
@@ -40,14 +41,14 @@ func NewServer(gin *gin.Engine) (*Server, error) {
 		handlers:  handlers,
 	}
 
-	fmt.Println("Registering tools")
+	logrus.Info("Registering tools")
 	// Register all tools
 	err := server.registerTools()
 	if err != nil {
 		return nil, fmt.Errorf("failed to register tools: %w", err)
 	}
 
-	fmt.Println("Tools registered")
+	logrus.Info("Tools registered")
 
 	return server, nil
 }
@@ -63,16 +64,16 @@ func (s *Server) registerTools() error {
 	if err := s.registerProcessTools(); err != nil {
 		return err
 	}
-
+	logrus.Info("Process tools registered")
 	// Filesystem tools
 	if err := s.registerFileSystemTools(); err != nil {
 		return err
 	}
-
+	logrus.Info("Filesystem tools registered")
 	// Network tools
 	if err := s.registerNetworkTools(); err != nil {
 		return err
 	}
-
+	logrus.Info("Network tools registered")
 	return nil
 }
