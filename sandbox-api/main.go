@@ -29,7 +29,7 @@ func main() {
 
 	// Load .env file
 	if err := godotenv.Load(); err != nil {
-		logrus.Warnf("Warning: .env file not found")
+		logrus.Debugf(".env file not found, this is expected in production environment")
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
