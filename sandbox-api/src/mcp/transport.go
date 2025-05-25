@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"github.com/metoro-io/mcp-golang/transport"
+	"github.com/sirupsen/logrus"
 )
 
 // Add a map to store request metadata
@@ -53,37 +54,12 @@ func generateUUID() string {
 	return uuid.New().String()
 }
 
-// debugTracking tracks message flow for debugging
-func (t *WebSocketTransport) debugTracking(prefix string, message *transport.BaseJsonRpcMessage) {
-	var id interface{}
-	var method string
-
-	// Extract any identifiable information
-	if message.JsonRpcRequest != nil {
-		id = message.JsonRpcRequest.Id
-		method = message.JsonRpcRequest.Method
-		fmt.Printf("[DEBUG] %s: Request ID=%v Method=%s\n", prefix, id, method)
-	} else if message.JsonRpcResponse != nil {
-		id = message.JsonRpcResponse.Id
-		fmt.Printf("[DEBUG] %s: Response ID=%v\n", prefix, id)
-	} else if message.JsonRpcError != nil {
-		id = message.JsonRpcError.Id
-		fmt.Printf("[DEBUG] %s: Error ID=%v\n", prefix, id)
-	} else if message.JsonRpcNotification != nil {
-		method = message.JsonRpcNotification.Method
-		fmt.Printf("[DEBUG] %s: Notification Method=%s\n", prefix, method)
-	}
-}
-
 // handleIncomingMessage processes an incoming WebSocket message and returns a response if applicable
 func (t *WebSocketTransport) handleIncomingMessage(ctx context.Context, clientId string, message []byte) (*transport.BaseJsonRpcMessage, error) {
 	var baseMessage map[string]interface{}
 	if err := json.Unmarshal(message, &baseMessage); err != nil {
 		return nil, fmt.Errorf("failed to parse message: %v", err)
 	}
-
-	// Log the incoming message for debugging
-	fmt.Printf("Received message from client %s: %s\n", clientId, string(message))
 
 	// Process the message based on its type
 	var deserialized bool
@@ -153,9 +129,6 @@ func (t *WebSocketTransport) handleIncomingMessage(ctx context.Context, clientId
 		return nil, fmt.Errorf("unknown message format")
 	}
 
-	// Add debug
-	t.debugTracking("RECEIVED", messageObj)
-
 	// Invoke the message handler if set
 	t.mu.RLock()
 	handler := t.messageHandler
@@ -174,8 +147,6 @@ func (t *WebSocketTransport) handleIncomingMessage(ctx context.Context, clientId
 		timeoutCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 		defer cancel()
 
-		fmt.Printf("Waiting for response for request with ID %v from client %s\n", *originalId, clientId)
-
 		t.mu.RLock()
 		responseChan, ok := t.responseMap[responseKey]
 		t.mu.RUnlock()
@@ -191,8 +162,6 @@ func (t *WebSocketTransport) handleIncomingMessage(ctx context.Context, clientId
 		// Add a timeout to prevent blocking forever
 		select {
 		case response := <-responseChan:
-			fmt.Printf("Response received within timeout for request ID %v: %+v\n", *originalId, response)
-
 			// Mark that this response has been handled and clean up resources
 			t.mu.Lock()
 			delete(t.responseMap, responseKey)
@@ -206,8 +175,6 @@ func (t *WebSocketTransport) handleIncomingMessage(ctx context.Context, clientId
 
 			return response, nil
 		case <-timeoutCtx.Done():
-			fmt.Println("Timeout waiting for response for key:", responseKey)
-
 			// We're timing out - mark this request as timed out and clean up resources
 			t.mu.Lock()
 			delete(t.responseMap, responseKey)
@@ -222,11 +189,6 @@ func (t *WebSocketTransport) handleIncomingMessage(ctx context.Context, clientId
 
 	// For notifications and other non-request messages, don't expect a response
 	return nil, nil
-}
-
-// Function to add response context to message IDs
-func (t *WebSocketTransport) formatMessageId(clientId string, id interface{}) string {
-	return fmt.Sprintf("%s:%v", clientId, id)
 }
 
 // Function to extract client ID and original ID from a formatted message ID
@@ -254,8 +216,6 @@ func NewWebSocketTransport(server *gin.Engine) *WebSocketTransport {
 			return
 		}
 
-		fmt.Println("Client connected")
-
 		// Generate a unique client ID
 		clientId := generateUUID()
 
@@ -266,12 +226,10 @@ func NewWebSocketTransport(server *gin.Engine) *WebSocketTransport {
 
 		// Set up ping/pong to detect disconnected clients
 		conn.SetPingHandler(func(data string) error {
-			fmt.Printf("Received ping from client %s\n", clientId)
 			return conn.WriteControl(websocket.PongMessage, []byte(data), time.Now().Add(time.Second*5))
 		})
 
 		conn.SetPongHandler(func(data string) error {
-			fmt.Printf("Received pong from client %s\n", clientId)
 			return nil
 		})
 
@@ -290,7 +248,7 @@ func NewWebSocketTransport(server *gin.Engine) *WebSocketTransport {
 				}
 
 				if err := conn.WriteControl(websocket.PingMessage, []byte{}, time.Now().Add(time.Second*5)); err != nil {
-					fmt.Printf("Failed to ping client %s: %v\n", clientId, err)
+					logrus.Debugf("Failed to ping client %s: %v\n", clientId, err)
 
 					// The client is probably disconnected, clean up
 					t.mu.Lock()
@@ -318,7 +276,7 @@ func NewWebSocketTransport(server *gin.Engine) *WebSocketTransport {
 			t.connectionHandler(clientId)
 		}
 
-		fmt.Println("Client connected ", clientId)
+		logrus.Infof("Client connected %s", clientId)
 
 		// Handle client disconnection
 		defer func() {
@@ -399,18 +357,6 @@ func NewWebSocketTransport(server *gin.Engine) *WebSocketTransport {
 
 			// If we got a response, send it back to the client
 			if response != nil {
-				fmt.Println("Response: ", response)
-
-				// Ensure the response has the correct client ID in its channel map
-				if response.JsonRpcResponse != nil {
-					// Update the response ID format to include client ID if it's not already there
-					idStr := fmt.Sprintf("%v", response.JsonRpcResponse.Id)
-					if !strings.Contains(idStr, ":") {
-						// If this is a raw ID without client prefix, add it for logging
-						fmt.Printf("Adding client ID %s to response ID %s\n", clientId, idStr)
-					}
-				}
-
 				responseBytes, err := json.Marshal(response)
 				if err != nil {
 					if t.errorHandler != nil {
@@ -437,58 +383,38 @@ func (t *WebSocketTransport) Start(ctx context.Context) error {
 }
 
 func (t *WebSocketTransport) Send(ctx context.Context, message *transport.BaseJsonRpcMessage) error {
-	// Add debug before any modification
-	t.debugTracking("SENDING", message)
-
 	// For simplicity, extract the ID from the message based on type
 	var idVal interface{}
-	var messageType string
 	var clientId string
 
 	switch {
 	case message.JsonRpcRequest != nil:
 		idVal = message.JsonRpcRequest.Id
-		messageType = "request"
 	case message.JsonRpcResponse != nil:
 		idVal = message.JsonRpcResponse.Id
-		messageType = "response"
 
 		// Look up the client ID from the request metadata
 		t.mu.RLock()
 		if meta, found := t.requestMeta[idVal]; found {
 			clientId = meta.clientId
-			fmt.Printf("Found client ID %s for response ID %v\n", clientId, idVal)
 		}
 		t.mu.RUnlock()
 	case message.JsonRpcError != nil:
 		idVal = message.JsonRpcError.Id
-		messageType = "error"
 
 		// Look up the client ID from the request metadata
 		t.mu.RLock()
 		if meta, found := t.requestMeta[idVal]; found {
 			clientId = meta.clientId
-			fmt.Printf("Found client ID %s for error ID %v\n", clientId, idVal)
 		}
 		t.mu.RUnlock()
 	default:
-		messageType = "notification"
 		// Notification has no ID
 		return t.Broadcast(ctx, message)
 	}
 
 	// Format the ID string for logging
 	idStr := fmt.Sprintf("%v", idVal)
-
-	// If we have a client ID from the request metadata, use it for logging only
-	var logIdStr string
-	if clientId != "" {
-		logIdStr = fmt.Sprintf("%s:%s", clientId, idStr)
-	} else {
-		logIdStr = idStr
-	}
-
-	fmt.Printf("Sending %s message with ID %s\n", messageType, logIdStr)
 
 	// Try to get client ID if it's not already set
 	if clientId == "" {
@@ -513,15 +439,12 @@ func (t *WebSocketTransport) Send(ctx context.Context, message *transport.BaseJs
 
 	// If we still don't have a client ID, broadcast
 	if clientId == "" {
-		fmt.Println("No client ID available, broadcasting")
 		return t.Broadcast(ctx, message)
 	}
 
 	// The response key is always in the format clientId:messageId
 	// This is the key used to find the response channel
 	responseKey := fmt.Sprintf("%s:%s", clientId, idStr)
-
-	fmt.Printf("Looking for response channel with key: %s\n", responseKey)
 
 	t.mu.RLock()
 	responseChan, chanExists := t.responseMap[responseKey]
@@ -533,14 +456,13 @@ func (t *WebSocketTransport) Send(ctx context.Context, message *transport.BaseJs
 		// This is a response to a pending request, send it through the channel
 		select {
 		case responseChan <- message:
-			fmt.Printf("Sent response through channel for key: %s\n", responseKey)
 			return nil
 		default:
 			// If the channel is full or gone (timed out already), fall through to direct client send
-			fmt.Printf("Channel full or unavailable for key: %s - sending directly to client\n", responseKey)
+			logrus.Debugf("Channel full or unavailable for key: %s - sending directly to client\n", responseKey)
 		}
 	} else {
-		fmt.Printf("No response channel found for key: %s - sending directly to client\n", responseKey)
+		logrus.Debugf("No response channel found for key: %s - sending directly to client\n", responseKey)
 	}
 
 	// Either the request timed out or this is a new message - send directly to the client
@@ -551,7 +473,6 @@ func (t *WebSocketTransport) Send(ctx context.Context, message *transport.BaseJs
 			return fmt.Errorf("failed to marshal message: %v", err)
 		}
 
-		fmt.Printf("Sending message directly to client: %s\n", clientId)
 		if err := client.WriteMessage(websocket.TextMessage, messageBytes); err != nil {
 			return fmt.Errorf("failed to send message to client: %v", err)
 		}
@@ -679,7 +600,7 @@ func (t *WebSocketTransport) cleanupClientChannels(clientId string) {
 		if strings.HasPrefix(key, clientId+":") {
 			close(ch)
 			delete(t.responseMap, key)
-			fmt.Printf("Cleaned up response channel %s for disconnected client\n", key)
+			logrus.Debugf("Cleaned up response channel %s for disconnected client\n", key)
 		}
 	}
 
@@ -687,7 +608,7 @@ func (t *WebSocketTransport) cleanupClientChannels(clientId string) {
 	for id, meta := range t.requestMeta {
 		if meta.clientId == clientId {
 			delete(t.requestMeta, id)
-			fmt.Printf("Cleaned up request metadata for client %s, request ID %v\n", clientId, id)
+			logrus.Debugf("Cleaned up request metadata for client %s, request ID %v\n", clientId, id)
 		}
 	}
 }

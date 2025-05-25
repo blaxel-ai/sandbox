@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"math"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 
@@ -142,10 +141,6 @@ func corsMiddleware() gin.HandlerFunc {
 }
 
 func logrusMiddleware() gin.HandlerFunc {
-	hostname, err := os.Hostname()
-	if err != nil {
-		hostname = "unknow"
-	}
 	var skip map[string]struct{}
 
 	return func(c *gin.Context) {
@@ -156,9 +151,6 @@ func logrusMiddleware() gin.HandlerFunc {
 		stop := time.Since(start)
 		latency := int(math.Ceil(float64(stop.Nanoseconds()) / 1000000.0))
 		statusCode := c.Writer.Status()
-		clientIP := c.ClientIP()
-		clientUserAgent := c.Request.UserAgent()
-		referer := c.Request.Referer()
 		dataLength := c.Writer.Size()
 		if dataLength < 0 {
 			dataLength = 0
@@ -168,28 +160,16 @@ func logrusMiddleware() gin.HandlerFunc {
 			return
 		}
 
-		entry := logrus.WithFields(logrus.Fields{
-			"hostname":   hostname,
-			"statusCode": statusCode,
-			"latency":    latency, // time to process
-			"clientIP":   clientIP,
-			"method":     c.Request.Method,
-			"path":       path,
-			"referer":    referer,
-			"size":       dataLength,
-			"userAgent":  clientUserAgent,
-		})
-
 		if len(c.Errors) > 0 {
-			entry.Error(c.Errors.ByType(gin.ErrorTypePrivate).String())
+			logrus.Error(c.Errors.ByType(gin.ErrorTypePrivate).String())
 		} else {
-			msg := fmt.Sprintf("%s %s %d %d (%dms)", c.Request.Method, path, statusCode, dataLength, latency)
+			msg := fmt.Sprintf("%s %s %d %d %dms", c.Request.Method, path, statusCode, dataLength, latency)
 			if statusCode >= http.StatusInternalServerError {
-				entry.Error(msg)
+				logrus.Error(msg)
 			} else if statusCode >= http.StatusBadRequest {
-				entry.Warn(msg)
+				logrus.Error(msg)
 			} else {
-				entry.Info(msg)
+				logrus.Info(msg)
 			}
 		}
 	}

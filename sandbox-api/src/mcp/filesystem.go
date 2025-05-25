@@ -11,46 +11,47 @@ import (
 // registerFileSystemTools registers filesystem-related tools
 func (s *Server) registerFileSystemTools() error {
 	type GetWorkingDirectoryArgs struct{}
+
 	// Get working directory
 	if err := s.mcpServer.RegisterTool("fsGetWorkingDirectory", "Get the current working directory",
-		func(args GetWorkingDirectoryArgs) (*mcp_golang.ToolResponse, error) {
+		LogToolCall("fsGetWorkingDirectory", func(args GetWorkingDirectoryArgs) (*mcp_golang.ToolResponse, error) {
 			workingDir, err := s.handlers.FileSystem.GetWorkingDirectory()
 			if err != nil {
 				return nil, fmt.Errorf("failed to get working directory: %w", err)
 			}
 
 			return mcp_golang.NewToolResponse(mcp_golang.NewTextContent(workingDir)), nil
-		}); err != nil {
+		})); err != nil {
 		return fmt.Errorf("failed to register getWorkingDirectory tool: %w", err)
 	}
 
 	// List directory
 	if err := s.mcpServer.RegisterTool("fsListDirectory", "List contents of a directory",
-		func(args FsListDirectoryArgs) (*mcp_golang.ToolResponse, error) {
+		LogToolCall("fsListDirectory", func(args FsListDirectoryArgs) (*mcp_golang.ToolResponse, error) {
 			dir, err := s.handlers.FileSystem.ListDirectory(args.Path)
 			if err != nil {
 				return nil, fmt.Errorf("failed to list directory: %w", err)
 			}
 			return CreateJSONResponse(dir)
-		}); err != nil {
+		})); err != nil {
 		return fmt.Errorf("failed to register listDirectory tool: %w", err)
 	}
 
 	// Read file
 	if err := s.mcpServer.RegisterTool("fsReadFile", "Read contents of a file",
-		func(args FsReadFileArgs) (*mcp_golang.ToolResponse, error) {
+		LogToolCall("fsReadFile", func(args FsReadFileArgs) (*mcp_golang.ToolResponse, error) {
 			file, err := s.handlers.FileSystem.ReadFile(args.Path)
 			if err != nil {
 				return nil, fmt.Errorf("failed to read file: %w", err)
 			}
 			return CreateJSONResponse(file)
-		}); err != nil {
+		})); err != nil {
 		return fmt.Errorf("failed to register readFile tool: %w", err)
 	}
 
 	// Write file
 	if err := s.mcpServer.RegisterTool("fsWriteFile", "Create or update a file",
-		func(args FsWriteArgs) (*mcp_golang.ToolResponse, error) {
+		LogToolCall("fsWriteFile", func(args FsWriteArgs) (*mcp_golang.ToolResponse, error) {
 			// Parse permissions or use default
 			var permissions os.FileMode = 0644
 			if args.Permissions != "" {
@@ -84,13 +85,13 @@ func (s *Server) registerFileSystemTools() error {
 
 				return CreateJSONResponse(response)
 			}
-		}); err != nil {
+		})); err != nil {
 		return fmt.Errorf("failed to register writeFile tool: %w", err)
 	}
 
 	// Delete file or directory
 	if err := s.mcpServer.RegisterTool("fsDeleteFileOrDirectory", "Delete a file or directory",
-		func(args FsDeleteArgs) (*mcp_golang.ToolResponse, error) {
+		LogToolCall("fsDeleteFileOrDirectory", func(args FsDeleteArgs) (*mcp_golang.ToolResponse, error) {
 			// Check if it's a directory
 			isDir, err := s.handlers.FileSystem.DirectoryExists(args.Path)
 			if err != nil {
@@ -134,7 +135,7 @@ func (s *Server) registerFileSystemTools() error {
 			}
 
 			return nil, fmt.Errorf("path %s does not exist", args.Path)
-		}); err != nil {
+		})); err != nil {
 		return fmt.Errorf("failed to register deleteFileOrDirectory tool: %w", err)
 	}
 

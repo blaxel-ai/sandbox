@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/sirupsen/logrus"
 )
 
 // PortInfo represents information about an open port
@@ -135,7 +137,7 @@ func (n *Network) startMonitoring() {
 				for pid := range n.monitoredPIDs {
 					oldPorts := n.portsByPID[pid]
 					if err := n.updatePortsForPID(pid); err != nil {
-						fmt.Printf("Error updating ports for PID %d: %v\n", pid, err)
+						logrus.Errorf("Error updating ports for PID %d: %v\n", pid, err)
 						continue
 					}
 

@@ -12,7 +12,7 @@ import (
 func (s *Server) registerNetworkTools() error {
 	// Get ports for process
 	if err := s.mcpServer.RegisterTool("networkGetProcessPorts", "Get ports for a specific process",
-		func(args NetworkArgs) (*mcp_golang.ToolResponse, error) {
+		LogToolCall("networkGetProcessPorts", func(args NetworkArgs) (*mcp_golang.ToolResponse, error) {
 			ports, err := s.handlers.Network.GetPortsForPID(args.PID)
 
 			if err != nil {
@@ -23,15 +23,14 @@ func (s *Server) registerNetworkTools() error {
 				"pid":   args.PID,
 				"ports": ports,
 			}
-
 			return CreateJSONResponse(response)
-		}); err != nil {
+		})); err != nil {
 		return fmt.Errorf("failed to register getProcessPorts tool: %w", err)
 	}
 
 	// Monitor ports for process
 	if err := s.mcpServer.RegisterTool("networkMonitorProcessPorts", "Start monitoring ports for a specific process",
-		func(args NetworkArgs) (*mcp_golang.ToolResponse, error) {
+		LogToolCall("networkMonitorProcessPorts", func(args NetworkArgs) (*mcp_golang.ToolResponse, error) {
 			// Register a callback to be called when a new port is detected
 			s.handlers.Network.RegisterPortOpenCallback(args.PID, func(pid int, port *network.PortInfo) {
 				// In a real implementation, we might make an HTTP call to the callback URL
@@ -45,13 +44,13 @@ func (s *Server) registerNetworkTools() error {
 			}
 
 			return CreateJSONResponse(response)
-		}); err != nil {
+		})); err != nil {
 		return fmt.Errorf("failed to register monitorProcessPorts tool: %w", err)
 	}
 
 	// Stop monitoring ports for process
 	if err := s.mcpServer.RegisterTool("networkStopMonitorProcessPorts", "Stop monitoring ports for a specific process",
-		func(args NetworkArgs) (*mcp_golang.ToolResponse, error) {
+		LogToolCall("networkStopMonitorProcessPorts", func(args NetworkArgs) (*mcp_golang.ToolResponse, error) {
 			s.handlers.Network.UnregisterPortOpenCallback(args.PID)
 
 			response := map[string]interface{}{
@@ -60,7 +59,7 @@ func (s *Server) registerNetworkTools() error {
 			}
 
 			return CreateJSONResponse(response)
-		}); err != nil {
+		})); err != nil {
 		return fmt.Errorf("failed to register stopMonitoringProcessPorts tool: %w", err)
 	}
 
