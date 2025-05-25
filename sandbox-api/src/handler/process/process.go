@@ -410,10 +410,6 @@ func (pm *ProcessManager) KillProcess(identifier string) error {
 		return fmt.Errorf("process with Identifier %s not found", identifier)
 	}
 
-	if process.Status != StatusRunning {
-		return fmt.Errorf("process with Identifier %s is not running", identifier)
-	}
-
 	if process.Cmd == nil || process.Cmd.Process == nil {
 		return fmt.Errorf("process with Identifier %s has no OS process", identifier)
 	}
