@@ -10,6 +10,7 @@ import (
 	"github.com/blaxel-ai/sandbox-api/docs" // swagger generated docs
 	"github.com/blaxel-ai/sandbox-api/src/api"
 	"github.com/blaxel-ai/sandbox-api/src/mcp"
+	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
 	"github.com/sirupsen/logrus"
 )
@@ -21,6 +22,11 @@ import (
 // @host      localhost:8080
 // @BasePath  /
 func main() {
+	logrus.SetFormatter(&logrus.TextFormatter{
+		DisableColors: true,
+	})
+	logrus.SetLevel(logrus.DebugLevel)
+
 	// Load .env file
 	if err := godotenv.Load(); err != nil {
 		logrus.Warnf("Warning: .env file not found")
@@ -47,7 +53,7 @@ func main() {
 		docs.SwaggerInfo.BasePath = "/"
 		docs.SwaggerInfo.Schemes = []string{"http"}
 	}
-
+	gin.SetMode(gin.ReleaseMode)
 	// Define command-line flags
 	port := flag.Int("port", 8080, "Port to listen on")
 	shortPort := flag.Int("p", 8080, "Port to listen on (shorthand)")
@@ -67,8 +73,6 @@ func main() {
 	}
 
 	logrus.Infof("Port: %d", portValue)
-	logrus.Infof("Command: %s", commandValue)
-	logrus.Infof("Short Command: %s", *shortCommand)
 
 	// Check for command after the flags
 	if commandValue != "" {
@@ -112,7 +116,6 @@ func main() {
 	if err != nil {
 		logrus.Fatalf("Failed to create MCP server: %v", err)
 	}
-
 	// Start the server
 	if err := mcpServer.Serve(); err != nil {
 		logrus.Fatalf("Failed to start MCP server: %v", err)

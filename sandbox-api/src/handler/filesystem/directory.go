@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 
 	"github.com/fsnotify/fsnotify"
+	"github.com/sirupsen/logrus"
 )
 
 // Subdirectory represents a subdirectory in the filesystem
@@ -151,7 +152,7 @@ func (fs *Filesystem) WatchDirectory(path string, callback func(event fsnotify.E
 				if !ok {
 					return
 				}
-				fmt.Println("error:", err)
+				logrus.Error("error:", err)
 			}
 		}
 	}()
@@ -216,7 +217,7 @@ func (fs *Filesystem) WatchDirectoryRecursive(path string, callback func(event f
 				if !ok {
 					return
 				}
-				fmt.Println("error:", err)
+				logrus.Error("error:", err)
 			}
 		}
 	}()

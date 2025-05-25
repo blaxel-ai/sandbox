@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	mcp_golang "github.com/metoro-io/mcp-golang"
@@ -25,7 +26,7 @@ type Handlers struct {
 
 // NewServer creates a new MCP server
 func NewServer(gin *gin.Engine) (*Server, error) {
-	fmt.Println("Creating MCP server")
+	logrus.Info("Creating MCP server")
 	transport := NewWebSocketTransport(gin)
 	mcpServer := mcp_golang.NewServer(transport, mcp_golang.WithName("Sandbox API Server"))
 
@@ -76,4 +77,32 @@ func (s *Server) registerTools() error {
 	}
 	logrus.Info("Network tools registered")
 	return nil
+}
+
+// LogToolCall wraps a tool handler function with logging middleware
+func LogToolCall[T any](toolName string, handler func(T) (*mcp_golang.ToolResponse, error)) func(T) (*mcp_golang.ToolResponse, error) {
+	return func(args T) (*mcp_golang.ToolResponse, error) {
+		startTime := time.Now()
+		logrus.WithFields(logrus.Fields{
+			"tool": toolName,
+			"args": args,
+		}).Info("Tool call started")
+
+		response, err := handler(args)
+
+		duration := time.Since(startTime)
+		logEntry := logrus.WithFields(logrus.Fields{
+			"tool":        toolName,
+			"duration":    duration.String(),
+			"duration_ms": duration.Milliseconds(),
+		})
+
+		if err != nil {
+			logEntry.WithError(err).Error("Tool call failed")
+		} else {
+			logEntry.Info("Tool call completed successfully")
+		}
+
+		return response, err
+	}
 }
