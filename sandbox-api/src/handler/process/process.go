@@ -88,7 +88,7 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 	// Check if the command needs a shell by looking for shell special chars
 	if strings.Contains(command, "&&") || strings.Contains(command, "|") ||
 		strings.Contains(command, ">") || strings.Contains(command, "<") ||
-		strings.Contains(command, ";") {
+		strings.Contains(command, ";") || strings.Contains(command, "$") {
 		// Use shell to execute the command
 		cmd = exec.Command("sh", "-c", command)
 	} else {
