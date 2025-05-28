@@ -311,15 +311,17 @@ func (fs *Filesystem) ListDirectory(path string) (*Directory, error) {
 		entryPath := filepath.Join(path, entry.Name())
 		absEntryPath := filepath.Join(absPath, entry.Name())
 
-		info, err := entry.Info()
+		// Use os.Lstat to get info about the symlink itself, not its target
+		// This prevents errors when symlinks point to non-existent targets
+		info, err := os.Lstat(absEntryPath)
 		if err != nil {
 			return nil, err
 		}
 
-		if entry.IsDir() {
+		if info.IsDir() {
 			dir.AddSubdirectory(&Subdirectory{Path: entryPath, Name: entry.Name()})
 		} else {
-			// It's a file
+			// It's a file or symlink
 			owner, group, err := fs.getFileOwnerAndGroup(absEntryPath)
 			if err != nil {
 				return nil, err
@@ -431,7 +433,8 @@ func (fs *Filesystem) MoveFile(src, dst string) error {
 
 // getFileOwnerAndGroup returns the owner and group of a file
 func (fs *Filesystem) getFileOwnerAndGroup(path string) (string, string, error) {
-	info, err := os.Stat(path)
+	// Use Lstat to get info about the symlink itself, not its target
+	info, err := os.Lstat(path)
 	if err != nil {
 		return "", "", err
 	}

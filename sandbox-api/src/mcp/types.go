@@ -15,6 +15,7 @@ type ProcessExecuteArgs struct {
 	WaitForCompletion bool   `json:"waitForCompletion" jsonschema:"description=Whether to wait for the command to complete before returning"`
 	Timeout           int    `json:"timeout" jsonschema:"description=Timeout in seconds for the command,default=30"`
 	WaitForPorts      []int  `json:"waitForPorts" jsonschema:"description=List of ports to wait for before returning"`
+	IncludeLogs       bool   `json:"includeLogs" jsonschema:"description=Whether to include logs in the response"`
 }
 
 // ProcessIdentifierArgs represents arguments for process identifier-related tools
