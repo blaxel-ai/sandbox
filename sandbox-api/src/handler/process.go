@@ -65,6 +65,11 @@ type ProcessResponse struct {
 	WorkingDir  string `json:"workingDir" example:"/home/user"`
 } // @name ProcessResponse
 
+type ProcessResponseWithLogs struct {
+	ProcessResponse
+	Logs string `json:"logs" example:"logs output"`
+}
+
 // ProcessKillRequest is the request body for killing a process
 type ProcessKillRequest struct {
 	Signal string `json:"signal" example:"SIGTERM"`

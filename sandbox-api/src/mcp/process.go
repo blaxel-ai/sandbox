@@ -3,6 +3,7 @@ package mcp
 import (
 	"fmt"
 
+	"github.com/blaxel-ai/sandbox-api/src/handler"
 	mcp_golang "github.com/metoro-io/mcp-golang"
 )
 
@@ -25,7 +26,19 @@ func (s *Server) registerProcessTools() error {
 			if err != nil {
 				return nil, err
 			}
-			return CreateJSONResponse(processInfo)
+			if !args.IncludeLogs {
+				return CreateJSONResponse(processInfo)
+			}
+			logs, err := s.handlers.Process.GetProcessOutput(processInfo.PID)
+			if err != nil {
+				return nil, fmt.Errorf("failed to get process output: %w", err)
+			}
+			processResponseWithLogs := handler.ProcessResponseWithLogs{
+				ProcessResponse: processInfo,
+				Logs:            logs.Logs,
+			}
+			fmt.Println(processResponseWithLogs.Logs)
+			return CreateJSONResponse(processResponseWithLogs)
 		})); err != nil {
 		return fmt.Errorf("failed to register executeCommand tool: %w", err)
 	}
