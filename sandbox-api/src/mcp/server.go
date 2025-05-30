@@ -76,6 +76,11 @@ func (s *Server) registerTools() error {
 		return err
 	}
 	logrus.Info("Network tools registered")
+	// Codegen tools
+	if err := s.registerCodegenTools(); err != nil {
+		return err
+	}
+	logrus.Info("Codegen tools registered")
 	return nil
 }
 

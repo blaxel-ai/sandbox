@@ -1,0 +1,28 @@
+{
+  "name": "codegen-mcp-test",
+  "version": "1.0.0",
+  "description": "Test suite for MCP codegen tools",
+  "type": "module",
+  "main": "dist/run-tests.js",
+  "scripts": {
+    "build": "tsc",
+    "test": "npm run build && node dist/run-tests.js",
+    "dev": "tsc --watch"
+  },
+  "dependencies": {
+    "@blaxel/core": "^0.2.14",
+    "@modelcontextprotocol/sdk": "^1.12.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.8.0",
+    "@types/ws": "^8.5.8",
+    "typescript": "^5.2.2"
+  },
+  "keywords": [
+    "mcp",
+    "codegen",
+    "testing"
+  ],
+  "author": "",
+  "license": "MIT"
+}
