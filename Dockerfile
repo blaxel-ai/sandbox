@@ -13,6 +13,7 @@ ENV GOBIN=/usr/local/bin
 ENV PATH=$PATH:$GOBIN
 
 RUN go install github.com/air-verse/air@latest
+RUN npx create-next-app@latest /blaxel/app --use-npm --typescript --eslint --tailwind --src-dir --app --import-alias "@/*" --no-git --yes --no-turbopack
 EXPOSE 8080
 
 ENTRYPOINT ["air"]
