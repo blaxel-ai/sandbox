@@ -49,12 +49,6 @@ type ReadFileRangeArgs struct {
 	EndLineOneIndexedInclusive int    `json:"endLineOneIndexedInclusive" jsonschema:"required,description=The one-indexed line number to end reading at (inclusive)"`
 }
 
-// RunTerminalCmdArgs represents arguments for the run_terminal_cmd tool
-type RunTerminalCmdArgs struct {
-	Command      string `json:"command" jsonschema:"required,description=The terminal command to execute"`
-	IsBackground bool   `json:"isBackground" jsonschema:"description=Whether the command should be run in the background"`
-}
-
 // ReapplyArgs represents arguments for the reapply tool
 type ReapplyArgs struct {
 	TargetFile string `json:"targetFile" jsonschema:"required,description=The relative path to the file to reapply the last edit to"`
@@ -118,14 +112,6 @@ func (s *Server) registerCodegenTools() error {
 			return s.handleReadFileRange(args)
 		})); err != nil {
 		return fmt.Errorf("failed to register codegenReadFileRange tool: %w", err)
-	}
-
-	// Run terminal command tool
-	if err := s.mcpServer.RegisterTool("codegenRunTerminalCmd", "Execute terminal commands. The command will be proposed to the user for approval before execution.",
-		LogToolCall("codegenRunTerminalCmd", func(args RunTerminalCmdArgs) (*mcp_golang.ToolResponse, error) {
-			return s.handleRunTerminalCmd(args)
-		})); err != nil {
-		return fmt.Errorf("failed to register codegenRunTerminalCmd tool: %w", err)
 	}
 
 	// Reapply tool - error recovery for failed edits
@@ -606,58 +592,6 @@ func (s *Server) handleReadFileRange(args ReadFileRangeArgs) (*mcp_golang.ToolRe
 	}
 
 	return CreateJSONResponse(response)
-}
-
-// handleRunTerminalCmd executes terminal commands
-func (s *Server) handleRunTerminalCmd(args RunTerminalCmdArgs) (*mcp_golang.ToolResponse, error) {
-	// For safety, we'll use the existing process execution from the process handler
-	// But we need to be careful about security
-
-	if args.IsBackground {
-		// Execute in background
-		processInfo, err := s.handlers.Process.ExecuteProcess(args.Command, "/", "", false, 0, []int{})
-		if err != nil {
-			return nil, fmt.Errorf("failed to execute background command: %w", err)
-		}
-
-		response := map[string]interface{}{
-			"message":    "Command started in background",
-			"command":    args.Command,
-			"process_id": processInfo.PID,
-			"background": true,
-		}
-
-		return CreateJSONResponse(response)
-	} else {
-		// Execute synchronously
-		processInfo, err := s.handlers.Process.ExecuteProcess(args.Command, "/", "", true, 30, []int{})
-		if err != nil {
-			return nil, fmt.Errorf("failed to execute command: %w", err)
-		}
-
-		// Get logs
-		logs, err := s.handlers.Process.GetProcessOutput(processInfo.PID)
-		if err != nil {
-			// If we can't get logs, still return basic process info
-			response := map[string]interface{}{
-				"message":    "Command executed successfully",
-				"command":    args.Command,
-				"process_id": processInfo.PID,
-				"status":     processInfo.Status,
-			}
-			return CreateJSONResponse(response)
-		}
-
-		response := map[string]interface{}{
-			"message":    "Command executed successfully",
-			"command":    args.Command,
-			"process_id": processInfo.PID,
-			"status":     processInfo.Status,
-			"logs":       logs.Logs,
-		}
-
-		return CreateJSONResponse(response)
-	}
 }
 
 // handleReapply attempts to reapply the last edit with better intelligence
