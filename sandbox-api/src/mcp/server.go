@@ -2,9 +2,11 @@ package mcp
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	mcp_golang "github.com/metoro-io/mcp-golang"
+	"github.com/sirupsen/logrus"
 
 	"github.com/blaxel-ai/sandbox-api/src/handler"
 )
@@ -24,7 +26,7 @@ type Handlers struct {
 
 // NewServer creates a new MCP server
 func NewServer(gin *gin.Engine) (*Server, error) {
-	fmt.Println("Creating MCP server")
+	logrus.Info("Creating MCP server")
 	transport := NewWebSocketTransport(gin)
 	mcpServer := mcp_golang.NewServer(transport, mcp_golang.WithName("Sandbox API Server"))
 
@@ -40,14 +42,14 @@ func NewServer(gin *gin.Engine) (*Server, error) {
 		handlers:  handlers,
 	}
 
-	fmt.Println("Registering tools")
+	logrus.Info("Registering tools")
 	// Register all tools
 	err := server.registerTools()
 	if err != nil {
 		return nil, fmt.Errorf("failed to register tools: %w", err)
 	}
 
-	fmt.Println("Tools registered")
+	logrus.Info("Tools registered")
 
 	return server, nil
 }
@@ -63,16 +65,49 @@ func (s *Server) registerTools() error {
 	if err := s.registerProcessTools(); err != nil {
 		return err
 	}
-
+	logrus.Info("Process tools registered")
 	// Filesystem tools
 	if err := s.registerFileSystemTools(); err != nil {
 		return err
 	}
-
+	logrus.Info("Filesystem tools registered")
 	// Network tools
 	if err := s.registerNetworkTools(); err != nil {
 		return err
 	}
-
+	logrus.Info("Network tools registered")
+	// Codegen tools
+	if err := s.registerCodegenTools(); err != nil {
+		return err
+	}
+	logrus.Info("Codegen tools registered")
 	return nil
+}
+
+// LogToolCall wraps a tool handler function with logging middleware
+func LogToolCall[T any](toolName string, handler func(T) (*mcp_golang.ToolResponse, error)) func(T) (*mcp_golang.ToolResponse, error) {
+	return func(args T) (*mcp_golang.ToolResponse, error) {
+		startTime := time.Now()
+		logrus.WithFields(logrus.Fields{
+			"tool": toolName,
+			"args": args,
+		}).Info("Tool call started")
+
+		response, err := handler(args)
+
+		duration := time.Since(startTime)
+		logEntry := logrus.WithFields(logrus.Fields{
+			"tool":        toolName,
+			"duration":    duration.String(),
+			"duration_ms": duration.Milliseconds(),
+		})
+
+		if err != nil {
+			logEntry.WithError(err).Error("Tool call failed")
+		} else {
+			logEntry.Info("Tool call completed successfully")
+		}
+
+		return response, err
+	}
 }

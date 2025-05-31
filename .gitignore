@@ -4,3 +4,4 @@ node_modules
 tmp
 processes.db
 .DS_Store
+dist

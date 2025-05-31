@@ -88,7 +88,7 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 	// Check if the command needs a shell by looking for shell special chars
 	if strings.Contains(command, "&&") || strings.Contains(command, "|") ||
 		strings.Contains(command, ">") || strings.Contains(command, "<") ||
-		strings.Contains(command, ";") {
+		strings.Contains(command, ";") || strings.Contains(command, "$") {
 		// Use shell to execute the command
 		cmd = exec.Command("sh", "-c", command)
 	} else {
@@ -408,10 +408,6 @@ func (pm *ProcessManager) KillProcess(identifier string) error {
 	process, exists := pm.GetProcessByIdentifier(identifier)
 	if !exists {
 		return fmt.Errorf("process with Identifier %s not found", identifier)
-	}
-
-	if process.Status != StatusRunning {
-		return fmt.Errorf("process with Identifier %s is not running", identifier)
 	}
 
 	if process.Cmd == nil || process.Cmd.Process == nil {

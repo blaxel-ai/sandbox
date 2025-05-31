@@ -2,11 +2,12 @@ package network
 
 import (
 	"bufio"
-	"fmt"
 	"os/exec"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/sirupsen/logrus"
 )
 
 // TestNetworkPortMonitoring is an integration test that demonstrates both port
@@ -127,13 +128,13 @@ func ExampleNetwork_GetPortsForPID() {
 
 	ports, err := network.GetPortsForPID(pid)
 	if err != nil {
-		fmt.Printf("Error getting ports for PID %d: %v\n", pid, err)
+		logrus.Errorf("Error getting ports for PID %d: %v\n", pid, err)
 		return
 	}
 
-	fmt.Printf("Found %d open ports for PID %d:\n", len(ports), pid)
+	logrus.Infof("Found %d open ports for PID %d:\n", len(ports), pid)
 	for _, port := range ports {
-		fmt.Printf("- %s port %d on %s (state: %s)\n",
+		logrus.Infof("- %s port %d on %s (state: %s)\n",
 			port.Protocol, port.LocalPort, port.LocalAddr, port.State)
 	}
 }
@@ -147,7 +148,7 @@ func ExampleNetwork_RegisterPortOpenCallback() {
 
 	// Register a callback for when the process opens a new port
 	network.RegisterPortOpenCallback(pid, func(pid int, port *PortInfo) {
-		fmt.Printf("Process %d opened %s port %d on %s\n",
+		logrus.Infof("Process %d opened %s port %d on %s\n",
 			pid, port.Protocol, port.LocalPort, port.LocalAddr)
 	})
 
@@ -155,6 +156,6 @@ func ExampleNetwork_RegisterPortOpenCallback() {
 	// network.UnregisterPortOpenCallback(pid)
 
 	// Keep the program running to receive callbacks
-	fmt.Println("Monitoring for port changes. Press Ctrl+C to exit.")
+	logrus.Info("Monitoring for port changes. Press Ctrl+C to exit.")
 	select {} // Block forever
 }

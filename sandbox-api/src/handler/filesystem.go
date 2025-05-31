@@ -14,6 +14,7 @@ import (
 	"github.com/fsnotify/fsnotify"
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
+	"github.com/sirupsen/logrus"
 
 	"github.com/blaxel-ai/sandbox-api/src/handler/filesystem"
 	"github.com/blaxel-ai/sandbox-api/src/lib"
@@ -605,7 +606,7 @@ func (h *FileSystemHandler) HandleWatchDirectory(c *gin.Context) {
 			}
 			json, err := json.Marshal(msg)
 			if err != nil {
-				fmt.Println("Error marshalling file event:", err)
+				logrus.Error("Error marshalling file event:", err)
 				h.SendError(c, http.StatusInternalServerError, err)
 				return
 			}
@@ -628,7 +629,7 @@ func (h *FileSystemHandler) HandleWatchDirectory(c *gin.Context) {
 			}
 			json, err := json.Marshal(msg)
 			if err != nil {
-				fmt.Println("Error marshalling file event:", err)
+				logrus.Error("Error marshalling file event:", err)
 				h.SendError(c, http.StatusInternalServerError, err)
 				return
 			}
