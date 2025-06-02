@@ -3,7 +3,7 @@ info:
   contact: {}
   description: API for manipulating filesystem, processes and network.
   title: Sandbox API
-  version: 0.0.1-preview
+  version: 0.0.1
 paths:
   "/filesystem/{path}":
     delete:
@@ -379,12 +379,6 @@ paths:
           required: true
           schema:
             type: string
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/ProcessKillRequest"
-        description: Kill options
       responses:
         "200":
           description: Process killed
@@ -603,8 +597,18 @@ paths:
       tags:
         - filesystem
 servers:
-  - url: //localhost:8080
+  - url: https://run.blaxel.ai/{workspace_id}/sandboxes/{sandbox_id}
+    variables:
+      workspace_id:
+        default: unknown
+      sandbox_id:
+        default: unknown
 components:
+  securitySchemes:
+    BearerAuth:
+      in: header
+      name: Authorization
+      type: apiKey
   schemas:
     Directory:
       properties:
@@ -681,12 +685,6 @@ components:
         callback:
           description: URL to call when a new port is detected
           example: http://localhost:3000/callback
-          type: string
-      type: object
-    ProcessKillRequest:
-      properties:
-        signal:
-          example: SIGTERM
           type: string
       type: object
     ProcessLogs:

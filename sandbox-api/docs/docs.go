@@ -518,14 +518,6 @@ const docTemplate = `{
                         "name": "identifier",
                         "in": "path",
                         "required": true
-                    },
-                    {
-                        "description": "Kill options",
-                        "name": "request",
-                        "in": "body",
-                        "schema": {
-                            "$ref": "#/definitions/ProcessKillRequest"
-                        }
                     }
                 ],
                 "responses": {
@@ -905,15 +897,6 @@ const docTemplate = `{
                 }
             }
         },
-        "ProcessKillRequest": {
-            "type": "object",
-            "properties": {
-                "signal": {
-                    "type": "string",
-                    "example": "SIGTERM"
-                }
-            }
-        },
         "ProcessLogs": {
             "type": "object",
             "properties": {
@@ -1037,15 +1020,22 @@ const docTemplate = `{
                 }
             }
         }
+    },
+    "securityDefinitions": {
+        "BearerAuth": {
+            "type": "apiKey",
+            "name": "Authorization",
+            "in": "header"
+        }
     }
 }`
 
 // SwaggerInfo holds exported Swagger Info so clients can modify it
 var SwaggerInfo = &swag.Spec{
-	Version:          "0.0.1-preview",
-	Host:             "localhost:8080",
-	BasePath:         "/",
-	Schemes:          []string{},
+	Version:          "0.0.1",
+	Host:             "run.blaxel.ai/{workspace_id}/sandboxes/{sandbox_id}",
+	BasePath:         "",
+	Schemes:          []string{"https"},
 	Title:            "Sandbox API",
 	Description:      "API for manipulating filesystem, processes and network.",
 	InfoInstanceName: "swagger",
