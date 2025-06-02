@@ -84,8 +84,6 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
-      security:
-        - BearerAuth: []
       summary: Get file or directory information
       tags:
         - filesystem
@@ -130,8 +128,6 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
-      security:
-        - BearerAuth: []
       summary: Create or update a file or directory
       tags:
         - filesystem
@@ -451,9 +447,7 @@ paths:
         - process
   "/process/{identifier}/logs/stream":
     get:
-      description: Streams the stdout and stderr output of a process in real time, one
-        line per log, prefixed with 'stdout:' or 'stderr:'. Closes when the
-        process exits or the client disconnects.
+      description: Streams the stdout and stderr output of a process in real time, one line per log, prefixed with 'stdout:' or 'stderr:'. Closes when the process exits or the client disconnects.
       parameters:
         - description: Process identifier (PID or name)
           in: path
@@ -463,8 +457,7 @@ paths:
             type: string
       responses:
         "200":
-          description: Stream of process logs, one line per log (prefixed with
-            stdout:/stderr:)
+          description: Stream of process logs, one line per log (prefixed with stdout:/stderr:)
           content:
             text/plain:
               schema:
@@ -492,8 +485,7 @@ paths:
         - process
   "/watch/filesystem/{path}":
     get:
-      description: Streams the path of modified files (one per line) in the given
-        directory. Closes when the client disconnects.
+      description: Streams the path of modified files (one per line) in the given directory. Closes when the client disconnects.
       parameters:
         - description: Ignore patterns (comma-separated)
           in: query
@@ -530,8 +522,7 @@ paths:
         - filesystem
   "/ws/process/{identifier}/logs/stream":
     get:
-      description: Streams the stdout and stderr output of a process in real time as
-        JSON messages.
+      description: Streams the stdout and stderr output of a process in real time as JSON messages.
       parameters:
         - description: Process identifier (PID or name)
           in: path
@@ -569,8 +560,7 @@ paths:
         - process
   "/ws/watch/filesystem/{path}":
     get:
-      description: Streams JSON events of modified files in the given directory.
-        Closes when the client disconnects.
+      description: Streams JSON events of modified files in the given directory. Closes when the client disconnects.
       parameters:
         - description: Directory path to watch
           in: path
@@ -610,9 +600,9 @@ servers:
 components:
   securitySchemes:
     BearerAuth:
-      in: header
-      name: Authorization
-      type: apiKey
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
   schemas:
     Directory:
       properties:
@@ -779,3 +769,6 @@ components:
           example: /path/to/file
           type: string
       type: object
+security:
+  - BearerAuth:
+      - admin
