@@ -84,6 +84,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+      security:
+        - BearerAuth: []
       summary: Get file or directory information
       tags:
         - filesystem
@@ -128,6 +130,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+      security:
+        - BearerAuth: []
       summary: Create or update a file or directory
       tags:
         - filesystem
