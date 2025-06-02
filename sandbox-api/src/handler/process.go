@@ -346,7 +346,6 @@ func (h *ProcessHandler) HandleStopProcess(c *gin.Context) {
 // @Accept json
 // @Produce json
 // @Param identifier path string true "Process identifier (PID or name)"
-// @Param request body ProcessKillRequest false "Kill options"
 // @Success 200 {object} SuccessResponse "Process killed"
 // @Failure 404 {object} ErrorResponse "Process not found"
 // @Failure 422 {object} ErrorResponse "Unprocessable entity"

@@ -16,11 +16,14 @@ import (
 )
 
 // @title           Sandbox API
-// @version         0.0.1-preview
+// @version         0.0.1
 // @description     API for manipulating filesystem, processes and network.
-
-// @host      localhost:8080
-// @BasePath  /
+// @host            run.blaxel.ai/{workspace_id}/sandboxes/{sandbox_id}
+// @schemes         https
+// @securityDefinitions.apikey BearerAuth
+// @in header
+// @name Authorization
+// @BasePath        /
 func main() {
 	logrus.SetFormatter(&logrus.TextFormatter{
 		DisableColors: true,
