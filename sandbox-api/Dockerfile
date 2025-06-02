@@ -10,6 +10,6 @@ RUN set -xe; \
   -buildmode=pie \
   -ldflags "-linkmode external -extldflags -static-pie" \
   -tags netgo \
-  -o sandbox-api . \
+  -o sandbox-api .
 
-RUN mv sandbox-api /sandbox-api
+RUN mv sandbox-api /
