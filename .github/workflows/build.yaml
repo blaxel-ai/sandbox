@@ -3,10 +3,9 @@ name: Build and Push Sandbox Image
 on:
   push:
     branches:
-      - develop
+      - main
     paths:
       - 'sandbox-api/**'
-      - 'Dockerfile.sandbox'
 
 env:
   REGISTRY: ghcr.io
