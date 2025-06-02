@@ -101,6 +101,7 @@ func (h *FileSystemHandler) DeleteFile(path string) error {
 // @Tags filesystem
 // @Accept json
 // @Produce json
+// @Security BearerAuth
 // @Param path path string true "File or directory path"
 // @Success 200 {object} filesystem.FileWithContent "File content"
 // @Success 200 {object} filesystem.Directory "Directory listing"
@@ -177,6 +178,7 @@ func (h *FileSystemHandler) handleListDirectory(c *gin.Context, path string) {
 // @Produce json
 // @Param path path string true "File or directory path"
 // @Param request body FileRequest true "File or directory details"
+// @Security BearerAuth
 // @Success 200 {object} SuccessResponse "Success message"
 // @Failure 400 {object} ErrorResponse "Bad request"
 // @Failure 422 {object} ErrorResponse "Unprocessable entity"

@@ -17,6 +17,11 @@ const docTemplate = `{
     "paths": {
         "/filesystem/{path}": {
             "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
                 "description": "Get content of a file or listing of a directory",
                 "consumes": [
                     "application/json"
@@ -65,6 +70,11 @@ const docTemplate = `{
                 }
             },
             "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
                 "description": "Create or update a file or directory",
                 "consumes": [
                     "application/json"
