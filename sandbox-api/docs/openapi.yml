@@ -770,5 +770,4 @@ components:
           type: string
       type: object
 security:
-  - BearerAuth:
-      - admin
+  - BearerAuth: []

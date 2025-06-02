@@ -25,6 +25,6 @@ reference:
 	rm -rf sandbox-api/docs/swagger.yml
 	rm -rf sandbox-api/docs/swagger.json
 	# Add security configuration
-	yq eval '.security = [{"BearerAuth": ["admin"]}]' -i sandbox-api/docs/openapi.yml
+	yq eval '.security = [{"BearerAuth": []}]' -i sandbox-api/docs/openapi.yml
 	yq eval '.components.securitySchemes.BearerAuth = {"type": "http", "scheme": "bearer", "bearerFormat": "JWT"}' -i sandbox-api/docs/openapi.yml
 	cd sandbox-api/docs && sh fixopenapi.sh
