@@ -9,7 +9,7 @@
   "longDescription": "The Vite app is a simple Vite app with React and TypeScript. It's ideal for building a simple web app.",
   "url": "https://vitejs.dev",
   "icon": "https://vitejs.dev/logo.svg",
-  "memory": 2048,
+  "memory": 4096,
   "ports": [
     {
       "name": "sandbox-api",

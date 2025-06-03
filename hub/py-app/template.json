@@ -6,7 +6,7 @@
   "longDescription": "The Python App micro VM provides a complete development environment for Python applications. It includes Python runtime, pip package manager, and common development libraries. Ideal for developing web applications, data science projects, automation scripts, and machine learning applications with Python's rich ecosystem of packages and tools.",
   "url": "https://github.com/python",
   "icon": "https://avatars.githubusercontent.com/u/1525981?s=200&v=4",
-  "memory": 2048,
+  "memory": 4096,
   "ports": [
     {
       "name": "sandbox-api",

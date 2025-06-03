@@ -6,7 +6,7 @@
   "icon": "https://assets.vercel.com/image/upload/v1662130559/nextjs/Icon_dark_background.png",
   "longDescription": "Next.js is a React framework for building server-side rendered (SSR), static site generation (SSG), and hybrid client-side rendered (CSR) web applications using React. It includes a routing system, a build optimizer, and a development server.",
   "url": "https://github.com/vercel/next.js",
-  "memory": 2048,
+  "memory": 4096,
   "ports": [
     {
       "name": "sandbox-api",
