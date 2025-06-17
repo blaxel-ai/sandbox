@@ -45,12 +45,13 @@ func NewProcessHandler() *ProcessHandler {
 
 // ProcessRequest is the request body for executing a command
 type ProcessRequest struct {
-	Command           string `json:"command" binding:"required" example:"ls -la"`
-	Name              string `json:"name" example:"my-process"`
-	WorkingDir        string `json:"workingDir" example:"/home/user"`
-	WaitForCompletion bool   `json:"waitForCompletion" example:"false"`
-	Timeout           int    `json:"timeout" example:"30"`
-	WaitForPorts      []int  `json:"waitForPorts" example:"3000,8080"`
+	Command           string            `json:"command" binding:"required" example:"ls -la"`
+	Name              string            `json:"name" example:"my-process"`
+	WorkingDir        string            `json:"workingDir" example:"/home/user"`
+	Env               map[string]string `json:"env" example:"{\"PORT\": \"3000\"}"`
+	WaitForCompletion bool              `json:"waitForCompletion" example:"false"`
+	Timeout           int               `json:"timeout" example:"30"`
+	WaitForPorts      []int             `json:"waitForPorts" example:"3000,8080"`
 } // @name ProcessRequest
 
 // ProcessResponse is the response body for a process
@@ -76,8 +77,8 @@ type ProcessKillRequest struct {
 } // @name ProcessKillRequest
 
 // ExecuteProcess executes a process
-func (h *ProcessHandler) ExecuteProcess(command string, workingDir string, name string, waitForCompletion bool, timeout int, waitForPorts []int) (ProcessResponse, error) {
-	processInfo, err := h.processManager.ExecuteProcess(command, workingDir, name, waitForCompletion, timeout, waitForPorts)
+func (h *ProcessHandler) ExecuteProcess(command string, workingDir string, name string, env map[string]string, waitForCompletion bool, timeout int, waitForPorts []int) (ProcessResponse, error) {
+	processInfo, err := h.processManager.ExecuteProcess(command, workingDir, name, env, waitForCompletion, timeout, waitForPorts)
 	if err != nil {
 		return ProcessResponse{}, err
 	}
@@ -221,7 +222,7 @@ func (h *ProcessHandler) HandleExecuteCommand(c *gin.Context) {
 	}
 
 	// Execute the process
-	processInfo, err := h.ExecuteProcess(req.Command, req.WorkingDir, req.Name, req.WaitForCompletion, req.Timeout, req.WaitForPorts)
+	processInfo, err := h.ExecuteProcess(req.Command, req.WorkingDir, req.Name, req.Env, req.WaitForCompletion, req.Timeout, req.WaitForPorts)
 	if err != nil {
 		h.SendError(c, http.StatusUnprocessableEntity, err)
 		return

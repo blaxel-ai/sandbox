@@ -75,11 +75,13 @@ type EditRegion struct {
 // registerCodegenTools registers all codegen-related tools
 func (s *Server) registerCodegenTools() error {
 	// Edit file tool - the most critical tool for coding agents
-	if err := s.mcpServer.RegisterTool("codegenEditFile", "Use this tool to propose an edit to an existing file or create a new file. This will be read by a less intelligent model, which will quickly apply the edit. You should make it clear what the edit is, while also minimizing the unchanged code you write.",
-		LogToolCall("codegenEditFile", func(args EditFileArgs) (*mcp_golang.ToolResponse, error) {
-			return s.handleEditFile(args)
-		})); err != nil {
-		return fmt.Errorf("failed to register codegenEditFile tool: %w", err)
+	if os.Getenv("MORPH_API_KEY") != "" {
+		if err := s.mcpServer.RegisterTool("codegenEditFile", "Use this tool to propose an edit to an existing file or create a new file. This will be read by a less intelligent model, which will quickly apply the edit. You should make it clear what the edit is, while also minimizing the unchanged code you write.",
+			LogToolCall("codegenEditFile", func(args EditFileArgs) (*mcp_golang.ToolResponse, error) {
+				return s.handleEditFile(os.Getenv("MORPH_API_KEY"), args)
+			})); err != nil {
+			return fmt.Errorf("failed to register codegenEditFile tool: %w", err)
+		}
 	}
 
 	// File search tool - fast fuzzy file search
@@ -142,7 +144,7 @@ func (s *Server) registerCodegenTools() error {
 }
 
 // handleEditFile implements the edit_file tool functionality
-func (s *Server) handleEditFile(args EditFileArgs) (*mcp_golang.ToolResponse, error) {
+func (s *Server) handleEditFile(morphAPIKey string, args EditFileArgs) (*mcp_golang.ToolResponse, error) {
 	// Check if file exists
 	fileExists, err := s.handlers.FileSystem.FileExists(args.TargetFile)
 	if err != nil {
@@ -161,28 +163,17 @@ func (s *Server) handleEditFile(args EditFileArgs) (*mcp_golang.ToolResponse, er
 
 	var updatedContent string
 
-	// Check if MORPH_API_KEY is set and use Morph API if available
-	morphAPIKey := os.Getenv("MORPH_API_KEY")
-	if morphAPIKey != "" {
-		model := os.Getenv("MORPH_MODEL")
-		logrus.Infof("Using MorphAPI to apply code using model: %s", model)
-		morphClient := lib.NewMorphClient(morphAPIKey)
-		morphContent, err := morphClient.ApplyCodeEdit(originalContent, args.CodeEdit)
-		if err != nil {
-			// Fall back to simple edit if Morph API fails
-			updatedContent, err = s.applyCodeEdit(originalContent, args.CodeEdit)
-			if err != nil {
-				return nil, fmt.Errorf("failed to apply edit (Morph failed, fallback also failed): %w", err)
-			}
-		} else {
-			updatedContent = morphContent
-		}
+	model := os.Getenv("MORPH_MODEL")
+	if model == "" {
+		model = "morph-v2"
+	}
+	logrus.Infof("Using MorphAPI to apply code using model: %s", model)
+	morphClient := lib.NewMorphClient(model, morphAPIKey)
+	morphContent, err := morphClient.ApplyCodeEdit(originalContent, args.CodeEdit)
+	if err != nil {
+		return nil, fmt.Errorf("failed to apply edit (Morph failed, fallback also failed): %w", err)
 	} else {
-		// Use the existing simple edit method
-		updatedContent, err = s.applyCodeEdit(originalContent, args.CodeEdit)
-		if err != nil {
-			return nil, fmt.Errorf("failed to apply edit: %w", err)
-		}
+		updatedContent = morphContent
 	}
 
 	// Write the updated content back to the file
@@ -199,66 +190,6 @@ func (s *Server) handleEditFile(args EditFileArgs) (*mcp_golang.ToolResponse, er
 	}
 
 	return CreateJSONResponse(response)
-}
-
-// applyCodeEdit applies code changes to the original content
-func (s *Server) applyCodeEdit(originalContent, codeEdit string) (string, error) {
-	// If original content is empty, return the code edit as the new content
-	if originalContent == "" {
-		// Remove any "// ... existing code ..." markers from new file content
-		lines := strings.Split(codeEdit, "\n")
-		var filteredLines []string
-		for _, line := range lines {
-			trimmed := strings.TrimSpace(line)
-			if !strings.Contains(trimmed, "... existing code ...") {
-				filteredLines = append(filteredLines, line)
-			}
-		}
-		return strings.Join(filteredLines, "\n"), nil
-	}
-
-	// For existing files, we need to intelligently merge the changes
-	// This is a simplified approach - in production, you might want more sophisticated merging
-	editLines := strings.Split(codeEdit, "\n")
-	originalLines := strings.Split(originalContent, "\n")
-
-	var result []string
-	var editIndex int
-
-	for _, editLine := range editLines {
-		trimmed := strings.TrimSpace(editLine)
-		if strings.Contains(trimmed, "... existing code ...") {
-			// Find the next non-placeholder line in the edit
-			nextEditIndex := editIndex + 1
-			for nextEditIndex < len(editLines) {
-				nextTrimmed := strings.TrimSpace(editLines[nextEditIndex])
-				if !strings.Contains(nextTrimmed, "... existing code ...") {
-					break
-				}
-				nextEditIndex++
-			}
-
-			// Copy original lines until we find the next edit line
-			if nextEditIndex < len(editLines) {
-				targetLine := strings.TrimSpace(editLines[nextEditIndex])
-				for _, origLine := range originalLines {
-					if strings.TrimSpace(origLine) == targetLine {
-						break
-					}
-					result = append(result, origLine)
-				}
-			} else {
-				// No more edit lines, copy rest of original
-				result = append(result, originalLines...)
-				break
-			}
-		} else {
-			result = append(result, editLine)
-		}
-		editIndex++
-	}
-
-	return strings.Join(result, "\n"), nil
 }
 
 // handleFileSearch implements fuzzy file search functionality

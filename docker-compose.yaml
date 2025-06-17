@@ -58,4 +58,5 @@ services:
       - "8080:8080"
     volumes:
       - ./sandbox-api:/blaxel/sandbox-api
+      - ./tmp:/blaxel/tmp
     command: ["air"]
