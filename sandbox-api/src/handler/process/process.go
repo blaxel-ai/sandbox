@@ -77,12 +77,12 @@ func GetProcessManager() *ProcessManager {
 	return processManager
 }
 
-func (pm *ProcessManager) StartProcess(command string, workingDir string, callback func(process *ProcessInfo)) (string, error) {
+func (pm *ProcessManager) StartProcess(command string, workingDir string, env map[string]string, callback func(process *ProcessInfo)) (string, error) {
 	name := GenerateRandomName(8)
-	return pm.StartProcessWithName(command, workingDir, name, callback)
+	return pm.StartProcessWithName(command, workingDir, name, env, callback)
 }
 
-func (pm *ProcessManager) StartProcessWithName(command string, workingDir string, name string, callback func(process *ProcessInfo)) (string, error) {
+func (pm *ProcessManager) StartProcessWithName(command string, workingDir string, name string, env map[string]string, callback func(process *ProcessInfo)) (string, error) {
 	var cmd *exec.Cmd
 
 	// Check if the command needs a shell by looking for shell special chars
@@ -102,6 +102,18 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 
 	if workingDir != "" {
 		cmd.Dir = workingDir
+	}
+
+	// Set up process group to ensure all child processes can be killed together
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		Setpgid: true,
+	}
+
+	if env != nil {
+		cmd.Env = os.Environ()
+		for k, v := range env {
+			cmd.Env = append(cmd.Env, k+"="+v)
+		}
 	}
 
 	// Set up stdout and stderr pipes
@@ -393,12 +405,22 @@ func (pm *ProcessManager) StopProcess(identifier string) error {
 
 	// Add termination message to output buffers
 	process.stdout.Write(terminationMsg)
-	err := process.Cmd.Process.Signal(syscall.SIGTERM)
+
+	// Try to gracefully terminate the entire process group first
+	pid := process.Cmd.Process.Pid
+
+	// Send SIGTERM to the process group (negative PID targets the process group)
+	err := syscall.Kill(-pid, syscall.SIGTERM)
 	if err != nil {
-		if err.Error() != "os: process already finished" {
-			return fmt.Errorf("failed to send SIGTERM to process with Identifier %s: %w", identifier, err)
+		// If process group termination fails, fall back to terminating just the process
+		err = process.Cmd.Process.Signal(syscall.SIGTERM)
+		if err != nil {
+			if err.Error() != "os: process already finished" {
+				return fmt.Errorf("failed to send SIGTERM to process with Identifier %s: %w", identifier, err)
+			}
 		}
 	}
+
 	process.Status = StatusStopped
 	return nil
 }
@@ -425,10 +447,20 @@ func (pm *ProcessManager) KillProcess(identifier string) error {
 	// Add termination message to output buffers
 	process.stdout.Write(terminationMsg)
 
-	err := process.Cmd.Process.Kill()
+	// Kill the entire process group to ensure all child processes are terminated
+	// This is crucial for processes like Next.js dev servers that spawn child processes
+	pid := process.Cmd.Process.Pid
+
+	// First try to kill the process group (negative PID kills the process group)
+	err := syscall.Kill(-pid, syscall.SIGKILL)
 	if err != nil {
-		if err.Error() != "os: process already finished" {
-			return fmt.Errorf("failed to kill process with Identifier %s: %w", identifier, err)
+		// If process group kill fails, fall back to killing just the process
+		// This might happen if the process didn't create a process group
+		err = process.Cmd.Process.Kill()
+		if err != nil {
+			if err.Error() != "os: process already finished" {
+				return fmt.Errorf("failed to kill process with Identifier %s: %w", identifier, err)
+			}
 		}
 	}
 

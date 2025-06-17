@@ -924,6 +924,15 @@ const docTemplate = `{
                     "type": "string",
                     "example": "ls -la"
                 },
+                "env": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    },
+                    "example": {
+                        "{\"PORT\"": " \"3000\"}"
+                    }
+                },
                 "name": {
                     "type": "string",
                     "example": "my-process"

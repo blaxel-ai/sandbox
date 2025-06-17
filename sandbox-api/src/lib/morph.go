@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 )
 
 // MorphClient handles communication with the Morph API
@@ -41,13 +40,7 @@ type Choice struct {
 }
 
 // NewMorphClient creates a new Morph API client
-func NewMorphClient(apiKey string) *MorphClient {
-	// Get model from environment variable, default to "morph-v2"
-	model := os.Getenv("MORPH_MODEL")
-	if model == "" {
-		model = "morph-v2"
-	}
-
+func NewMorphClient(model string, apiKey string) *MorphClient {
 	return &MorphClient{
 		APIKey:  apiKey,
 		BaseURL: "https://api.morphllm.com/v1",
