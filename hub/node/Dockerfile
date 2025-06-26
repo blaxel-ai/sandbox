@@ -1,8 +1,8 @@
-FROM node:23-slim
+FROM node:23-alpine
 
-RUN apt-get update && apt-get install -y \
+RUN apk update && apk add --no-cache \
   git \
-  && rm -rf /var/lib/apt/lists/*
+  && rm -rf /var/cache/apk/*
 
 WORKDIR /blaxel
 
