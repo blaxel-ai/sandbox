@@ -4,15 +4,14 @@ on:
   push:
     branches:
       - main
-    paths:
-      - 'sandbox-api/**'
   workflow_dispatch:
     inputs:
       sandbox:
         description: "Sandbox to import"
         type: choice
-        default: "all"
+        default: ""
         options:
+          - all
           - base
           - expo
           - nextjs
@@ -26,11 +25,35 @@ env:
   IMAGE_NAME: blaxel-ai/sandbox
 
 jobs:
+  check-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      sandbox-api-changed: ${{ steps.changes.outputs.sandbox-api }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Check for changes
+        id: changes
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "sandbox-api=true" >> $GITHUB_OUTPUT
+          elif git diff --name-only HEAD^ HEAD | grep -q "sandbox-api/"; then
+            echo "sandbox-api=true" >> $GITHUB_OUTPUT
+          else
+            echo "sandbox-api=false" >> $GITHUB_OUTPUT
+          fi
+
   sandbox-api:
+    needs: check-changes
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
+    # Only run if there are changes to sandbox-api or if workflow is manually triggered
+    if: needs.check-changes.outputs.sandbox-api-changed == 'true'
 
     steps:
       - name: Checkout repository
@@ -67,9 +90,11 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-  generate-sandboxes:
-    needs: sandbox-api
+  trigger-uvm:
+    needs: [check-changes, sandbox-api]
     runs-on: ubuntu-latest
+    # Run if sandbox-api was skipped or completed successfully
+    if: always() && (needs.check-changes.result == 'success')
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -79,7 +104,7 @@ jobs:
         id: retrieve-sandbox
         shell: bash
         run: |
-          if [[ ! -z "${{ inputs.sandbox }}" && "${{ inputs.sandbox }}" != "all" ]]; then
+          if [[ ! -z "${{ inputs.sandbox }}" ]]; then
             echo "sandbox=[\"${{ inputs.sandbox }}\"]" >> $GITHUB_OUTPUT
             exit 0
           fi
