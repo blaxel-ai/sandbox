@@ -3,6 +3,7 @@ package tests
 import (
 	"bufio"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/url"
 	"os"
@@ -99,6 +100,65 @@ func TestProcessOperations(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, "stopped", processDetails["status"])
+
+	processWaitForCompletionName := "test-process-wait-for-completion"
+	processWaitForCompletionRequest := map[string]interface{}{
+		"name":              processWaitForCompletionName,
+		"command":           "echo 'hello world'",
+		"cwd":               "/",
+		"waitForCompletion": true,
+	}
+
+	resp, err = common.MakeRequest(http.MethodPost, "/process", processWaitForCompletionRequest)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var processWaitForCompletionResponse map[string]interface{}
+	err = json.NewDecoder(resp.Body).Decode(&processWaitForCompletionResponse)
+	require.NoError(t, err)
+
+	// Verify process ID is returned
+	require.Contains(t, processWaitForCompletionResponse, "pid")
+	require.Contains(t, processWaitForCompletionResponse, "name")
+	// Verify the exit code is 42 (the failure code we specified)
+	assert.Equal(t, float64(0), processWaitForCompletionResponse["exitCode"]) // JSON unmarshals numbers as float64
+	assert.Equal(t, "completed", processWaitForCompletionResponse["status"])
+	fmt.Println("exit code", processWaitForCompletionResponse["exitCode"])
+	fmt.Println("completed at", processWaitForCompletionResponse["completedAt"])
+
+	// Test a failing process to ensure exit code is correctly set for failures
+	processFailName := "test-process-fail"
+	processFailRequest := map[string]interface{}{
+		"name":              processFailName,
+		"command":           "sh -c 'exit 42'", // This will exit with code 42
+		"cwd":               "/",
+		"waitForCompletion": true,
+	}
+
+	resp, err = common.MakeRequest(http.MethodPost, "/process", processFailRequest)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var processFailResponse map[string]interface{}
+	err = json.NewDecoder(resp.Body).Decode(&processFailResponse)
+	require.NoError(t, err)
+
+	// Verify process ID is returned
+	require.Contains(t, processFailResponse, "pid")
+	require.Contains(t, processFailResponse, "name")
+	require.Contains(t, processFailResponse, "exitCode")
+	require.Contains(t, processFailResponse, "status")
+
+	// Verify the exit code is 42 (the failure code we specified)
+	assert.Equal(t, float64(42), processFailResponse["exitCode"]) // JSON unmarshals numbers as float64
+	assert.Equal(t, "failed", processFailResponse["status"])
+
+	fmt.Println("fail exit code", processFailResponse["exitCode"])
+	fmt.Println("fail status", processFailResponse["status"])
 }
 
 // TestLongRunningProcess tests starting, monitoring, and stopping a long-running process
