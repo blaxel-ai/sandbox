@@ -62,7 +62,7 @@ type ProcessResponse struct {
 	Status      string `json:"status" example:"running" enums:"failed,killed,stopped,running,completed"`
 	StartedAt   string `json:"startedAt" example:"Wed, 01 Jan 2023 12:00:00 GMT"`
 	CompletedAt string `json:"completedAt,omitempty" example:"Wed, 01 Jan 2023 12:01:00 GMT"`
-	ExitCode    int    `json:"exitCode,omitempty" example:"0"`
+	ExitCode    int    `json:"exitCode" example:"0"`
 	WorkingDir  string `json:"workingDir" example:"/home/user"`
 } // @name ProcessResponse
 
