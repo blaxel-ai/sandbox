@@ -318,6 +318,10 @@ func (pm *ProcessManager) GetProcessByIdentifier(identifier string) (*ProcessInf
 				}
 			}
 		}
+		if process.logs != nil {
+			logs := process.logs.String()
+			process.Logs = &logs
+		}
 		return process, true
 	}
 	// Search by name - find the most recent process with this name
@@ -331,42 +335,14 @@ func (pm *ProcessManager) GetProcessByIdentifier(identifier string) (*ProcessInf
 	}
 
 	if latestProcess != nil {
+		if latestProcess.logs != nil {
+			logs := latestProcess.logs.String()
+			latestProcess.Logs = &logs
+		}
 		return latestProcess, true
 	}
 
 	return nil, false
-}
-
-// GetProcessByPid returns information about a specific process
-func (pm *ProcessManager) GetProcessByPid(pid string) (*ProcessInfo, bool) {
-	pm.mu.RLock()
-	defer pm.mu.RUnlock()
-	process, exists := pm.processes[pid]
-	return process, exists
-}
-
-func (pm *ProcessManager) GetProcessByName(name string) (*ProcessInfo, bool) {
-	if name == "" {
-		return nil, false
-	}
-
-	pm.mu.RLock()
-	defer pm.mu.RUnlock()
-
-	// Find the most recent process with the given name
-	var latestProcess *ProcessInfo
-	for _, process := range pm.processes {
-		if process.Name == name {
-			if latestProcess == nil || process.StartedAt.After(latestProcess.StartedAt) {
-				latestProcess = process
-			}
-		}
-	}
-
-	if latestProcess == nil {
-		return nil, false
-	}
-	return latestProcess, true
 }
 
 // ListProcesses returns information about all processes
