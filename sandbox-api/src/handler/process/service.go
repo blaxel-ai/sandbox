@@ -153,5 +153,9 @@ func (pm *ProcessManager) ExecuteProcess(
 	if !exists {
 		return nil, fmt.Errorf("process creation failed")
 	}
+	if waitForCompletion {
+		logs := processInfo.logs.String()
+		processInfo.Logs = &logs
+	}
 	return processInfo, nil
 }

@@ -31,9 +31,9 @@ type ProcessManager struct {
 }
 
 type ProcessLogs struct {
-	Stdout string `json:"stdout" example:"stdout output"`
-	Stderr string `json:"stderr" example:"stderr output"`
-	Logs   string `json:"logs" example:"logs output"`
+	Stdout string `json:"stdout" example:"stdout output" binding:"required"`
+	Stderr string `json:"stderr" example:"stderr output" binding:"required"`
+	Logs   string `json:"logs" example:"logs output" binding:"required"`
 } // @name ProcessLogs
 
 // ProcessInfo stores information about a running process
@@ -47,6 +47,7 @@ type ProcessInfo struct {
 	ExitCode    int                     `json:"exitCode"`
 	Status      constants.ProcessStatus `json:"status"`
 	WorkingDir  string                  `json:"workingDir"`
+	Logs        *string                 `json:"logs"`
 	stdout      *strings.Builder
 	stderr      *strings.Builder
 	logs        *strings.Builder

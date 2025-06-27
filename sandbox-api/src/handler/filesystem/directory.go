@@ -11,16 +11,16 @@ import (
 
 // Subdirectory represents a subdirectory in the filesystem
 type Subdirectory struct {
-	Path string `json:"path"`
-	Name string `json:"name"`
+	Path string `json:"path" binding:"required"`
+	Name string `json:"name" binding:"required"`
 } // @name Subdirectory
 
 // Directory represents a directory in the filesystem
 type Directory struct {
-	Path           string          `json:"path"`
-	Name           string          `json:"name"`
-	Files          []*File         `json:"files"`
-	Subdirectories []*Subdirectory `json:"subdirectories"` // @name Subdirectories
+	Path           string          `json:"path" binding:"required"`
+	Name           string          `json:"name" binding:"required"`
+	Files          []*File         `json:"files" binding:"required"`
+	Subdirectories []*Subdirectory `json:"subdirectories" binding:"required"` // @name Subdirectories
 } // @name Directory
 
 func NewDirectory(path string) *Directory {

@@ -619,12 +619,19 @@ components:
           items:
             $ref: "#/components/schemas/Subdirectory"
           type: array
+      required:
+        - files
+        - name
+        - path
+        - subdirectories
       type: object
     ErrorResponse:
       properties:
         error:
           example: Error message
           type: string
+      required:
+        - error
       type: object
     File:
       properties:
@@ -642,6 +649,14 @@ components:
           type: string
         size:
           type: integer
+      required:
+        - group
+        - lastModified
+        - name
+        - owner
+        - path
+        - permissions
+        - size
       type: object
     FileRequest:
       properties:
@@ -673,6 +688,15 @@ components:
           type: string
         size:
           type: integer
+      required:
+        - content
+        - group
+        - lastModified
+        - name
+        - owner
+        - path
+        - permissions
+        - size
       type: object
     PortMonitorRequest:
       properties:
@@ -692,6 +716,10 @@ components:
         stdout:
           example: stdout output
           type: string
+      required:
+        - logs
+        - stderr
+        - stdout
       type: object
     ProcessRequest:
       properties:
@@ -737,6 +765,9 @@ components:
         exitCode:
           example: 0
           type: integer
+        logs:
+          example: logs output
+          type: string
         name:
           example: my-process
           type: string
@@ -758,6 +789,16 @@ components:
         workingDir:
           example: /home/user
           type: string
+      required:
+        - command
+        - completedAt
+        - exitCode
+        - logs
+        - name
+        - pid
+        - startedAt
+        - status
+        - workingDir
       type: object
     Subdirectory:
       properties:
@@ -765,6 +806,9 @@ components:
           type: string
         path:
           type: string
+      required:
+        - name
+        - path
       type: object
     SuccessResponse:
       properties:
@@ -774,6 +818,9 @@ components:
         path:
           example: /path/to/file
           type: string
+      required:
+        - message
+        - path
       type: object
 security:
   - BearerAuth: []
