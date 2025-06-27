@@ -784,6 +784,12 @@ const docTemplate = `{
     "definitions": {
         "Directory": {
             "type": "object",
+            "required": [
+                "files",
+                "name",
+                "path",
+                "subdirectories"
+            ],
             "properties": {
                 "files": {
                     "type": "array",
@@ -808,6 +814,9 @@ const docTemplate = `{
         },
         "ErrorResponse": {
             "type": "object",
+            "required": [
+                "error"
+            ],
             "properties": {
                 "error": {
                     "type": "string",
@@ -817,6 +826,15 @@ const docTemplate = `{
         },
         "File": {
             "type": "object",
+            "required": [
+                "group",
+                "lastModified",
+                "name",
+                "owner",
+                "path",
+                "permissions",
+                "size"
+            ],
             "properties": {
                 "group": {
                     "type": "string"
@@ -860,6 +878,16 @@ const docTemplate = `{
         },
         "FileWithContent": {
             "type": "object",
+            "required": [
+                "content",
+                "group",
+                "lastModified",
+                "name",
+                "owner",
+                "path",
+                "permissions",
+                "size"
+            ],
             "properties": {
                 "content": {
                     "type": "string"
@@ -899,6 +927,11 @@ const docTemplate = `{
         },
         "ProcessLogs": {
             "type": "object",
+            "required": [
+                "logs",
+                "stderr",
+                "stdout"
+            ],
             "properties": {
                 "logs": {
                     "type": "string",
@@ -963,6 +996,17 @@ const docTemplate = `{
         },
         "ProcessResponse": {
             "type": "object",
+            "required": [
+                "command",
+                "completedAt",
+                "exitCode",
+                "logs",
+                "name",
+                "pid",
+                "startedAt",
+                "status",
+                "workingDir"
+            ],
             "properties": {
                 "command": {
                     "type": "string",
@@ -975,6 +1019,10 @@ const docTemplate = `{
                 "exitCode": {
                     "type": "integer",
                     "example": 0
+                },
+                "logs": {
+                    "type": "string",
+                    "example": "logs output"
                 },
                 "name": {
                     "type": "string",
@@ -1007,6 +1055,10 @@ const docTemplate = `{
         },
         "Subdirectory": {
             "type": "object",
+            "required": [
+                "name",
+                "path"
+            ],
             "properties": {
                 "name": {
                     "type": "string"
@@ -1018,6 +1070,10 @@ const docTemplate = `{
         },
         "SuccessResponse": {
             "type": "object",
+            "required": [
+                "message",
+                "path"
+            ],
             "properties": {
                 "message": {
                     "type": "string",

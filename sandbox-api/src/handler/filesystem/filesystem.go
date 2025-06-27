@@ -30,13 +30,13 @@ type FileByte struct {
 
 // File is a data transfer object for File with string permissions
 type File struct {
-	Path         string    `json:"path"`
-	Name         string    `json:"name"`
-	Permissions  string    `json:"permissions"`
-	Size         int64     `json:"size"`
-	LastModified time.Time `json:"lastModified"`
-	Owner        string    `json:"owner"`
-	Group        string    `json:"group"`
+	Path         string    `json:"path" binding:"required"`
+	Name         string    `json:"name" binding:"required"`
+	Permissions  string    `json:"permissions" binding:"required"`
+	Size         int64     `json:"size" binding:"required"`
+	LastModified time.Time `json:"lastModified" binding:"required"`
+	Owner        string    `json:"owner" binding:"required"`
+	Group        string    `json:"group" binding:"required"`
 } // @name File
 
 // MarshalJSON implements json.Marshaler for custom JSON marshaling
@@ -129,7 +129,7 @@ type FileWithContentByte struct {
 // FileWithContent is a data transfer object for FileWithContent with encoded content
 type FileWithContent struct {
 	File
-	Content string `json:"content"`
+	Content string `json:"content" binding:"required"`
 } // @name FileWithContent
 
 // MarshalJSON implements json.Marshaler for custom JSON marshaling

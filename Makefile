@@ -16,9 +16,6 @@ test:
 integration-test:
 	cd sandbox-api/integration-tests && ./run_tests.sh
 
-integration-test-with-docker:
-	cd sandbox-api/integration-tests && START_API=true ./run_tests.sh
-
 mcp:
 	cd sandbox-api/mcp-inspect && npm run inspect
 

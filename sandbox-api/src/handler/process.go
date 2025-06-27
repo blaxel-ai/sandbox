@@ -45,7 +45,7 @@ func NewProcessHandler() *ProcessHandler {
 
 // ProcessRequest is the request body for executing a command
 type ProcessRequest struct {
-	Command           string            `json:"command" binding:"required" example:"ls -la"`
+	Command           string            `json:"command" example:"ls -la" binding:"required"`
 	Name              string            `json:"name" example:"my-process"`
 	WorkingDir        string            `json:"workingDir" example:"/home/user"`
 	Env               map[string]string `json:"env" example:"{\"PORT\": \"3000\"}"`
@@ -56,14 +56,15 @@ type ProcessRequest struct {
 
 // ProcessResponse is the response body for a process
 type ProcessResponse struct {
-	PID         string `json:"pid" example:"1234"`
-	Name        string `json:"name,omitempty" example:"my-process"`
-	Command     string `json:"command" example:"ls -la"`
-	Status      string `json:"status" example:"running" enums:"failed,killed,stopped,running,completed"`
-	StartedAt   string `json:"startedAt" example:"Wed, 01 Jan 2023 12:00:00 GMT"`
-	CompletedAt string `json:"completedAt,omitempty" example:"Wed, 01 Jan 2023 12:01:00 GMT"`
-	ExitCode    int    `json:"exitCode" example:"0"`
-	WorkingDir  string `json:"workingDir" example:"/home/user"`
+	PID         string  `json:"pid" example:"1234" binding:"required"`
+	Name        string  `json:"name,omitempty" example:"my-process" binding:"required"`
+	Command     string  `json:"command" example:"ls -la" binding:"required"`
+	Status      string  `json:"status" example:"running" enums:"failed,killed,stopped,running,completed" binding:"required"`
+	StartedAt   string  `json:"startedAt" example:"Wed, 01 Jan 2023 12:00:00 GMT" binding:"required"`
+	CompletedAt string  `json:"completedAt,omitempty" example:"Wed, 01 Jan 2023 12:01:00 GMT" binding:"required"`
+	ExitCode    int     `json:"exitCode" example:"0" binding:"required"`
+	WorkingDir  string  `json:"workingDir" example:"/home/user" binding:"required"`
+	Logs        *string `json:"logs" example:"logs output" binding:"required"`
 } // @name ProcessResponse
 
 type ProcessResponseWithLogs struct {
@@ -97,6 +98,7 @@ func (h *ProcessHandler) ExecuteProcess(command string, workingDir string, name 
 		CompletedAt: completedAt,
 		ExitCode:    processInfo.ExitCode,
 		WorkingDir:  processInfo.WorkingDir,
+		Logs:        processInfo.Logs,
 	}, nil
 }
 
@@ -118,6 +120,7 @@ func (h *ProcessHandler) ListProcesses() []ProcessResponse {
 			CompletedAt: completedAt,
 			ExitCode:    p.ExitCode,
 			WorkingDir:  p.WorkingDir,
+			Logs:        p.Logs,
 		})
 	}
 	return result
@@ -143,6 +146,7 @@ func (h *ProcessHandler) GetProcess(identifier string) (ProcessResponse, error) 
 		CompletedAt: completedAt,
 		ExitCode:    processInfo.ExitCode,
 		WorkingDir:  processInfo.WorkingDir,
+		Logs:        processInfo.Logs,
 	}, nil
 }
 

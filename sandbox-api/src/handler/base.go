@@ -19,13 +19,13 @@ func NewBaseHandler() *BaseHandler {
 
 // ErrorResponse represents an error response
 type ErrorResponse struct {
-	Error string `json:"error" example:"Error message"`
+	Error string `json:"error" example:"Error message" binding:"required"`
 } // @name ErrorResponse
 
 // SuccessResponse represents a success response
 type SuccessResponse struct {
-	Path    string `json:"path" example:"/path/to/file"`
-	Message string `json:"message" example:"File created successfully"`
+	Path    string `json:"path" example:"/path/to/file" binding:"required"`
+	Message string `json:"message" example:"File created successfully" binding:"required"`
 } // @name SuccessResponse
 
 // SendError sends a standardized error response

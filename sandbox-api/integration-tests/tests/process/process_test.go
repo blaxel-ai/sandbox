@@ -3,7 +3,6 @@ package tests
 import (
 	"bufio"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/url"
 	"os"
@@ -24,7 +23,7 @@ func TestProcessOperations(t *testing.T) {
 	processName := "test-process"
 	processRequest := map[string]interface{}{
 		"name":    processName,
-		"command": "echo 'hello world'",
+		"command": "echo 'hello world' && sleep 1",
 		"cwd":     "/",
 	}
 
@@ -42,6 +41,8 @@ func TestProcessOperations(t *testing.T) {
 	require.Contains(t, processResponse, "pid")
 	processID := processResponse["pid"].(string)
 	require.Contains(t, processResponse, "name")
+	require.Contains(t, processResponse, "logs")
+	require.IsType(t, nil, processResponse["logs"])
 
 	// Test getting process details by PID
 	resp, err = common.MakeRequest(http.MethodGet, "/process/"+processID, nil)
@@ -125,8 +126,10 @@ func TestProcessOperations(t *testing.T) {
 	// Verify the exit code is 42 (the failure code we specified)
 	assert.Equal(t, float64(0), processWaitForCompletionResponse["exitCode"]) // JSON unmarshals numbers as float64
 	assert.Equal(t, "completed", processWaitForCompletionResponse["status"])
-	fmt.Println("exit code", processWaitForCompletionResponse["exitCode"])
-	fmt.Println("completed at", processWaitForCompletionResponse["completedAt"])
+
+	// Verify the logs are returned
+	require.Contains(t, processWaitForCompletionResponse, "logs")
+	assert.Equal(t, "hello world\n", processWaitForCompletionResponse["logs"])
 
 	// Test a failing process to ensure exit code is correctly set for failures
 	processFailName := "test-process-fail"
@@ -156,9 +159,6 @@ func TestProcessOperations(t *testing.T) {
 	// Verify the exit code is 42 (the failure code we specified)
 	assert.Equal(t, float64(42), processFailResponse["exitCode"]) // JSON unmarshals numbers as float64
 	assert.Equal(t, "failed", processFailResponse["status"])
-
-	fmt.Println("fail exit code", processFailResponse["exitCode"])
-	fmt.Println("fail status", processFailResponse["status"])
 }
 
 // TestLongRunningProcess tests starting, monitoring, and stopping a long-running process
