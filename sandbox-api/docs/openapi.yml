@@ -820,7 +820,6 @@ components:
           type: string
       required:
         - message
-        - path
       type: object
 security:
   - BearerAuth: []
