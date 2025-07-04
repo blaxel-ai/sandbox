@@ -1071,8 +1071,7 @@ const docTemplate = `{
         "SuccessResponse": {
             "type": "object",
             "required": [
-                "message",
-                "path"
+                "message"
             ],
             "properties": {
                 "message": {

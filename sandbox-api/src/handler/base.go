@@ -24,7 +24,7 @@ type ErrorResponse struct {
 
 // SuccessResponse represents a success response
 type SuccessResponse struct {
-	Path    string `json:"path" example:"/path/to/file" binding:"required"`
+	Path    string `json:"path" example:"/path/to/file"`
 	Message string `json:"message" example:"File created successfully" binding:"required"`
 } // @name SuccessResponse
 
