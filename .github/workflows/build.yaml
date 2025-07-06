@@ -104,10 +104,6 @@ jobs:
         id: retrieve-sandbox
         shell: bash
         run: |
-          if [[ ! -z "${{ inputs.sandbox }}" ]]; then
-            echo "sandbox=[\"${{ inputs.sandbox }}\"]" >> $GITHUB_OUTPUT
-            exit 0
-          fi
 
           # Get list of all Sandbox files
           all_uvm=$(tree -J -L 1 hub | jq -c '.[0].contents | map(select(.name) | .name)')
@@ -116,6 +112,11 @@ jobs:
           if [[ "${{ inputs.sandbox }}" == "all" ]]; then
             echo "Importing all Sandbox"
             echo "sandbox=$all_uvm" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          if [[ ! -z "${{ inputs.sandbox }}" ]]; then
+            echo "sandbox=[\"${{ inputs.sandbox }}\"]" >> $GITHUB_OUTPUT
             exit 0
           fi
 
