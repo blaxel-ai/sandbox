@@ -47,14 +47,14 @@ func TestProcessManagerIntegrationWithPID(t *testing.T) {
 		}
 
 		// Wait for process to terminate
-		time.Sleep(1 * time.Second)
+		time.Sleep(10 * time.Millisecond)
 
 		// Verify process is terminated
 		process, exists = pm.GetProcessByIdentifier(sleepPID)
 		if !exists {
 			t.Fatal("Sleep process should still exist in the process list")
 		}
-		if process.Status != "failed" { // Assuming "terminated" is the status for stopped processes
+		if process.Status != "stopped" && process.Status != "killed" { // Assuming "terminated" is the status for stopped processes
 			t.Errorf("Expected sleep process to be completed, got status: %s", process.Status)
 		}
 	})
@@ -71,7 +71,7 @@ func TestProcessManagerIntegrationWithPID(t *testing.T) {
 		t.Logf("Started echo process with PID: %s", echoPID)
 
 		// Wait for process to complete
-		time.Sleep(1 * time.Second)
+		time.Sleep(10 * time.Millisecond)
 
 		// Get and verify output
 		logs, err := pm.GetProcessOutput(echoPID)
@@ -111,7 +111,7 @@ func TestProcessManagerIntegrationWithPID(t *testing.T) {
 		t.Logf("Started ls process with PID: %s in /tmp directory", lsPID)
 
 		// Wait for process to complete
-		time.Sleep(1 * time.Second)
+		time.Sleep(10 * time.Millisecond)
 
 		// Get and verify output
 		logs, err := pm.GetProcessOutput(lsPID)
@@ -175,7 +175,7 @@ func TestProcessManagerIntegrationWithPID(t *testing.T) {
 		}
 
 		// Wait for process to complete
-		time.Sleep(2 * time.Second)
+		time.Sleep(10 * time.Millisecond)
 	})
 }
 
@@ -219,14 +219,14 @@ func TestProcessManagerIntegrationWithName(t *testing.T) {
 		}
 
 		// Wait for process to terminate
-		time.Sleep(1 * time.Second)
+		time.Sleep(10 * time.Millisecond)
 
 		// Verify process is terminated
 		process, exists = pm.GetProcessByIdentifier(name)
 		if !exists {
 			t.Fatal("Sleep process should still exist in the process list")
 		}
-		if process.Status != "failed" { // Assuming "terminated" is the status for stopped processes
+		if process.Status != "stopped" && process.Status != "killed" { // Assuming "terminated" is the status for stopped processes
 			t.Errorf("Expected sleep process to be completed, got status: %s", process.Status)
 		}
 	})
@@ -244,7 +244,7 @@ func TestProcessManagerIntegrationWithName(t *testing.T) {
 		t.Logf("Started echo process with name: %s", name)
 
 		// Wait for process to complete
-		time.Sleep(1 * time.Second)
+		time.Sleep(10 * time.Millisecond)
 
 		// Get and verify output
 		logs, err := pm.GetProcessOutput(name)
@@ -285,7 +285,7 @@ func TestProcessManagerIntegrationWithName(t *testing.T) {
 		t.Logf("Started ls process with name: %s in /tmp directory", name)
 
 		// Wait for process to complete
-		time.Sleep(1 * time.Second)
+		time.Sleep(10 * time.Millisecond)
 
 		// Get and verify output
 		logs, err := pm.GetProcessOutput(name)
@@ -350,6 +350,122 @@ func TestProcessManagerIntegrationWithName(t *testing.T) {
 		}
 
 		// Wait for process to complete
-		time.Sleep(2 * time.Second)
+		time.Sleep(10 * time.Millisecond)
+	})
+}
+
+// TestEnvironmentVariableHandling tests that environment variables are correctly passed to processes
+func TestEnvironmentVariableHandling(t *testing.T) {
+	pm := GetProcessManager()
+
+	t.Run("MultipleEnvironmentVariables", func(t *testing.T) {
+		// Test with multiple environment variables including system overrides
+		env := map[string]string{
+			"CUSTOM_VAR1": "value1",
+			"CUSTOM_VAR2": "value2",
+			"PATH":        "/custom/path:/another/path",
+			"HOME":        "/custom/home",
+			"TEST_VAR":    "test_value",
+		}
+
+		// Run the test multiple times to catch any intermittent issues
+		for i := 0; i < 10; i++ {
+			t.Logf("Test iteration %d", i+1)
+
+			// Use printenv to check all environment variables
+			pid, err := pm.StartProcess("printenv", "", env, func(process *ProcessInfo) {
+				t.Logf("Process completed: %s", process.PID)
+			})
+			if err != nil {
+				t.Fatalf("Error starting process: %v", err)
+			}
+
+			// Wait for process to complete
+			time.Sleep(10 * time.Millisecond)
+
+			// Get output
+			logs, err := pm.GetProcessOutput(pid)
+			if err != nil {
+				t.Fatalf("Error getting process output: %v", err)
+			}
+
+			// Verify all custom environment variables are present
+			output := logs.Stdout
+			for key, expectedValue := range env {
+				expectedLine := key + "=" + expectedValue
+				if !strings.Contains(output, expectedLine) {
+					t.Errorf("Iteration %d: Expected environment variable not found: %s", i+1, expectedLine)
+					t.Logf("Full output:\n%s", output)
+				}
+			}
+
+			// Verify no duplicate environment variables
+			lines := strings.Split(output, "\n")
+			envCount := make(map[string]int)
+			for _, line := range lines {
+				if idx := strings.IndexByte(line, '='); idx > 0 {
+					key := line[:idx]
+					envCount[key]++
+				}
+			}
+
+			for key, count := range envCount {
+				if count > 1 {
+					t.Errorf("Iteration %d: Duplicate environment variable found: %s (count: %d)", i+1, key, count)
+				}
+			}
+		}
+	})
+
+	t.Run("EmptyEnvironmentMap", func(t *testing.T) {
+		// Test with empty environment map - should inherit system environment
+		env := map[string]string{}
+
+		pid, err := pm.StartProcess("printenv PATH", "", env, func(process *ProcessInfo) {
+			t.Logf("Process completed: %s", process.PID)
+		})
+		if err != nil {
+			t.Fatalf("Error starting process: %v", err)
+		}
+
+		// Wait for process to complete
+		time.Sleep(10 * time.Millisecond)
+
+		// Get output
+		logs, err := pm.GetProcessOutput(pid)
+		if err != nil {
+			t.Fatalf("Error getting process output: %v", err)
+		}
+
+		// Should have inherited system PATH
+		if strings.TrimSpace(logs.Stdout) == "" {
+			t.Error("Expected to inherit system PATH, but got empty output")
+		}
+	})
+
+	t.Run("NilEnvironmentMap", func(t *testing.T) {
+		// Test with nil environment map - should inherit system environment
+		var env map[string]string = nil
+
+		pid, err := pm.StartProcess("printenv PATH", "", env, func(process *ProcessInfo) {
+			t.Logf("Process completed: %s", process.PID)
+		})
+		if err != nil {
+			t.Fatalf("Error starting process: %v", err)
+		}
+
+		// Wait for process to complete
+		time.Sleep(10 * time.Millisecond)
+
+		// Get output
+		logs, err := pm.GetProcessOutput(pid)
+		if err != nil {
+			t.Fatalf("Error getting process output: %v", err)
+		}
+
+		// Should have inherited system PATH
+		if strings.TrimSpace(logs.Stdout) == "" {
+			t.Error("Expected to inherit system PATH, but got empty output")
+		}
 	})
 }

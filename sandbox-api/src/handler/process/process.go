@@ -110,12 +110,36 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 		Setpgid: true,
 	}
 
-	if env != nil {
-		cmd.Env = os.Environ()
-		for k, v := range env {
-			cmd.Env = append(cmd.Env, k+"="+v)
+	// Start with system environment
+	systemEnv := os.Environ()
+
+	// Create a map to track which env vars we're overriding
+	envOverrides := make(map[string]bool)
+	for k := range env {
+		envOverrides[k] = true
+	}
+
+	// Build the final environment
+	finalEnv := make([]string, 0, len(systemEnv)+len(env))
+
+	// Add system environment variables that are not being overridden
+	for _, envVar := range systemEnv {
+		// Find the key part (everything before the first '=')
+		idx := strings.IndexByte(envVar, '=')
+		if idx > 0 {
+			key := envVar[:idx]
+			if !envOverrides[key] {
+				finalEnv = append(finalEnv, envVar)
+			}
 		}
 	}
+
+	// Add all custom environment variables
+	for k, v := range env {
+		finalEnv = append(finalEnv, k+"="+v)
+	}
+
+	cmd.Env = finalEnv
 
 	// Set up stdout and stderr pipes
 	stdoutPipe, err := cmd.StdoutPipe()
