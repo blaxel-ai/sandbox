@@ -27,6 +27,9 @@ func SetupRouter() *gin.Engine {
 	// Add middleware for CORS
 	r.Use(corsMiddleware())
 
+	// Add middleware to prevent caching
+	r.Use(noCacheMiddleware())
+
 	// Add logrus middleware
 	r.Use(logrusMiddleware())
 
@@ -135,6 +138,18 @@ func corsMiddleware() gin.HandlerFunc {
 			c.AbortWithStatus(204)
 			return
 		}
+
+		c.Next()
+	}
+}
+
+// noCacheMiddleware adds no-cache headers to all responses to prevent caching issues
+func noCacheMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.Writer.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+		c.Writer.Header().Set("Pragma", "no-cache")
+		c.Writer.Header().Set("Expires", "0")
+		c.Writer.Header().Set("X-Content-Type-Options", "nosniff")
 
 		c.Next()
 	}
