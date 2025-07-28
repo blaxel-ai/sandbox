@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"os/exec"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -81,6 +82,7 @@ func (n *Network) GetPortsForPID(pid int) ([]*PortInfo, error) {
 }
 
 // RegisterPortOpenCallback registers a callback function that will be called when the specified PID opens a new port
+// If pid is 0, it monitors all processes
 func (n *Network) RegisterPortOpenCallback(pid int, callback PortOpenCallback) {
 	n.mutex.Lock()
 	defer n.mutex.Unlock()
@@ -135,19 +137,26 @@ func (n *Network) startMonitoring() {
 				defer n.mutex.Unlock()
 
 				for pid := range n.monitoredPIDs {
-					oldPorts := n.portsByPID[pid]
-					if err := n.updatePortsForPID(pid); err != nil {
-						logrus.Errorf("Error updating ports for PID %d: %v\n", pid, err)
-						continue
-					}
+					if pid == 0 {
+						// Special case: monitor all processes
+						if err := n.updateAllProcessPorts(); err != nil {
+							logrus.Errorf("Error updating ports for all processes: %v\n", err)
+						}
+					} else {
+						oldPorts := n.portsByPID[pid]
+						if err := n.updatePortsForPID(pid); err != nil {
+							logrus.Errorf("Error updating ports for PID %d: %v\n", pid, err)
+							continue
+						}
 
-					// Check for new ports
-					newPorts := n.portsByPID[pid]
-					for portNum, portInfo := range newPorts {
-						if _, exists := oldPorts[portNum]; !exists {
-							// New port detected, trigger callbacks
-							for _, callback := range n.callbacks[pid] {
-								go callback(pid, portInfo)
+						// Check for new ports
+						newPorts := n.portsByPID[pid]
+						for portNum, portInfo := range newPorts {
+							if _, exists := oldPorts[portNum]; !exists {
+								// New port detected, trigger callbacks
+								for _, callback := range n.callbacks[pid] {
+									go callback(pid, portInfo)
+								}
 							}
 						}
 					}
@@ -162,8 +171,51 @@ func (n *Network) startMonitoring() {
 	}
 }
 
+// updateAllProcessPorts updates ports for all processes (used when monitoring PID 0)
+func (n *Network) updateAllProcessPorts() error {
+	allPorts, err := getAllOpenPorts()
+	if err != nil {
+		return err
+	}
+
+	// Group ports by PID
+	portsByPID := make(map[int][]*PortInfo)
+	for _, port := range allPorts {
+		portsByPID[port.PID] = append(portsByPID[port.PID], port)
+	}
+
+	// Check for new ports and trigger callbacks
+	for pid, ports := range portsByPID {
+		oldPorts := n.portsByPID[pid]
+		if oldPorts == nil {
+			oldPorts = make(map[int]*PortInfo)
+		}
+
+		// Update with new port information
+		newPortMap := make(map[int]*PortInfo)
+		for _, port := range ports {
+			newPortMap[port.LocalPort] = port
+
+			// Check if this is a new port
+			if _, exists := oldPorts[port.LocalPort]; !exists {
+				// New port detected, trigger callbacks for PID 0
+				for _, callback := range n.callbacks[0] {
+					go callback(pid, port)
+				}
+			}
+		}
+		n.portsByPID[pid] = newPortMap
+	}
+
+	return nil
+}
+
 // updatePortsForPID updates the internal cache of ports for a specific PID
 func (n *Network) updatePortsForPID(pid int) error {
+	if pid == 0 {
+		return n.updateAllProcessPorts()
+	}
+
 	ports, err := getOpenPortsForPID(pid)
 	if err != nil {
 		return err
@@ -184,16 +236,175 @@ func (n *Network) updatePortsForPID(pid int) error {
 	return nil
 }
 
-// getOpenPortsForPID uses ss or netstat to get open ports for a specific PID
+// getAllOpenPorts gets all open ports for all processes
+func getAllOpenPorts() ([]*PortInfo, error) {
+	switch runtime.GOOS {
+	case "darwin":
+		return getPortsUsingLsof(0) // 0 means all processes
+	case "linux":
+		return getPortsUsingSS(0)
+	default:
+		return getPortsUsingNetstat(0)
+	}
+}
+
+// getOpenPortsForPID uses the appropriate command based on OS to get open ports for a specific PID
 func getOpenPortsForPID(pid int) ([]*PortInfo, error) {
-	// Try ss command first (newer and more efficient)
-	portsInfo, err := getPortsUsingSS(pid)
-	if err == nil {
-		return portsInfo, nil
+	switch runtime.GOOS {
+	case "darwin":
+		return getPortsUsingLsof(pid)
+	case "linux":
+		// Try ss command first (newer and more efficient)
+		portsInfo, err := getPortsUsingSS(pid)
+		if err == nil {
+			return portsInfo, nil
+		}
+		// Fall back to netstat if ss fails
+		return getPortsUsingNetstat(pid)
+	default:
+		return getPortsUsingNetstat(pid)
+	}
+}
+
+// getPortsUsingLsof uses the 'lsof' command to get port information (works on macOS and Linux)
+func getPortsUsingLsof(pid int) ([]*PortInfo, error) {
+	var cmd *exec.Cmd
+	if pid == 0 {
+		// Get all processes
+		cmd = exec.Command("lsof", "-i", "-P", "-n")
+	} else {
+		// Get specific PID
+		cmd = exec.Command("lsof", "-i", "-P", "-n", "-p", strconv.Itoa(pid))
 	}
 
-	// Fall back to netstat if ss fails
-	return getPortsUsingNetstat(pid)
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, err
+	}
+
+	if err := cmd.Start(); err != nil {
+		return nil, err
+	}
+
+	// Parse the output line by line
+	scanner := bufio.NewScanner(stdout)
+	portsInfo := make([]*PortInfo, 0)
+
+	// Skip header line
+	if scanner.Scan() {
+		// Skip header
+	}
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		fields := strings.Fields(line)
+
+		if len(fields) < 9 {
+			continue
+		}
+
+		// Parse fields: COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME
+		processName := fields[0]
+		processPID, err := strconv.Atoi(fields[1])
+		if err != nil {
+			continue
+		}
+
+		// Skip if not the PID we're looking for (when pid != 0)
+		if pid != 0 && processPID != pid {
+			continue
+		}
+
+		// Parse the NAME field which contains the connection info
+		name := fields[8]
+		if !strings.Contains(name, ":") {
+			continue
+		}
+
+		// Parse protocol from TYPE field
+		typeField := fields[4]
+		var protocol string
+		if strings.Contains(strings.ToLower(typeField), "tcp") {
+			protocol = "tcp"
+		} else if strings.Contains(strings.ToLower(typeField), "udp") {
+			protocol = "udp"
+		} else {
+			continue
+		}
+
+		// Parse local and remote addresses
+		var localAddr, remoteAddr string
+		var localPort, remotePort int
+		var state string
+
+		if strings.Contains(name, "->") {
+			// Connected socket: local->remote
+			parts := strings.Split(name, "->")
+			if len(parts) == 2 {
+				localAddr, localPort = parseAddress(parts[0])
+				remoteAddr, remotePort = parseAddress(parts[1])
+				state = "ESTABLISHED"
+			}
+		} else if strings.Contains(name, "(LISTEN)") {
+			// Listening socket
+			addr := strings.Replace(name, " (LISTEN)", "", 1)
+			localAddr, localPort = parseAddress(addr)
+			state = "LISTEN"
+		} else {
+			// Other socket types
+			localAddr, localPort = parseAddress(name)
+			state = "UNKNOWN"
+		}
+
+		if localPort == 0 {
+			continue // Skip if we couldn't parse the port
+		}
+
+		portInfo := &PortInfo{
+			PID:         processPID,
+			Protocol:    protocol,
+			LocalAddr:   localAddr,
+			LocalPort:   localPort,
+			RemoteAddr:  remoteAddr,
+			RemotePort:  remotePort,
+			State:       state,
+			ProcessName: processName,
+		}
+
+		portsInfo = append(portsInfo, portInfo)
+	}
+
+	if err := cmd.Wait(); err != nil {
+		return nil, err
+	}
+
+	return portsInfo, nil
+}
+
+// parseAddress parses an address string like "*:8080" or "127.0.0.1:8080"
+func parseAddress(addr string) (string, int) {
+	// Handle IPv6 addresses in brackets
+	if strings.HasPrefix(addr, "[") {
+		if idx := strings.LastIndex(addr, "]:"); idx != -1 {
+			host := addr[:idx+1]
+			portStr := addr[idx+2:]
+			if port, err := strconv.Atoi(portStr); err == nil {
+				return host, port
+			}
+		}
+		return addr, 0
+	}
+
+	// Handle IPv4 addresses
+	if idx := strings.LastIndex(addr, ":"); idx != -1 {
+		host := addr[:idx]
+		portStr := addr[idx+1:]
+		if port, err := strconv.Atoi(portStr); err == nil {
+			return host, port
+		}
+	}
+
+	return addr, 0
 }
 
 // getPortsUsingSS uses the 'ss' command to get port information for a specific PID
@@ -212,11 +423,16 @@ func getPortsUsingSS(pid int) ([]*PortInfo, error) {
 	// Parse the output line by line
 	scanner := bufio.NewScanner(stdout)
 	portsInfo := make([]*PortInfo, 0)
-	pidStr := fmt.Sprintf("pid=%d", pid)
+	var pidStr string
+	if pid == 0 {
+		pidStr = "pid=" // Match any PID
+	} else {
+		pidStr = fmt.Sprintf("pid=%d", pid)
+	}
 
 	for scanner.Scan() {
 		line := scanner.Text()
-		if !strings.Contains(line, pidStr) {
+		if pid != 0 && !strings.Contains(line, pidStr) {
 			continue
 		}
 
@@ -252,20 +468,30 @@ func getPortsUsingSS(pid int) ([]*PortInfo, error) {
 			}
 		}
 
-		// Extract process name if available
+		// Extract process info
+		processPID := 0
 		processName := ""
 		for _, field := range fields {
+			if strings.Contains(field, "pid=") {
+				pidPart := strings.Split(field, "pid=")[1]
+				pidPart = strings.Split(pidPart, ",")[0]
+				processPID, _ = strconv.Atoi(pidPart)
+			}
 			if strings.Contains(field, "\"") {
 				parts := strings.Split(field, "\"")
 				if len(parts) >= 2 {
 					processName = parts[1]
 				}
-				break
 			}
 		}
 
+		// Skip if not the PID we're looking for (when pid != 0)
+		if pid != 0 && processPID != pid {
+			continue
+		}
+
 		portInfo := &PortInfo{
-			PID:         pid,
+			PID:         processPID,
 			Protocol:    protocol,
 			LocalAddr:   localAddr,
 			LocalPort:   localPort,
@@ -301,7 +527,12 @@ func getPortsUsingNetstat(pid int) ([]*PortInfo, error) {
 	// Parse the output line by line
 	scanner := bufio.NewScanner(stdout)
 	portsInfo := make([]*PortInfo, 0)
-	pidStr := fmt.Sprintf("%d/", pid)
+	var pidStr string
+	if pid == 0 {
+		pidStr = "/" // Match any PID format
+	} else {
+		pidStr = fmt.Sprintf("%d/", pid)
+	}
 
 	// Skip header lines
 	for i := 0; i < 2 && scanner.Scan(); i++ {
@@ -310,7 +541,7 @@ func getPortsUsingNetstat(pid int) ([]*PortInfo, error) {
 
 	for scanner.Scan() {
 		line := scanner.Text()
-		if !strings.Contains(line, pidStr) {
+		if pid != 0 && !strings.Contains(line, pidStr) {
 			continue
 		}
 
@@ -345,15 +576,24 @@ func getPortsUsingNetstat(pid int) ([]*PortInfo, error) {
 		// Parse state
 		state := fields[5]
 
-		// Parse process name
-		processNameParts := strings.Split(fields[6], "/")
+		// Parse process info
+		processPID := 0
 		processName := ""
-		if len(processNameParts) >= 2 {
-			processName = processNameParts[1]
+		if len(fields) > 6 {
+			processNameParts := strings.Split(fields[6], "/")
+			if len(processNameParts) >= 2 {
+				processPID, _ = strconv.Atoi(processNameParts[0])
+				processName = processNameParts[1]
+			}
+		}
+
+		// Skip if not the PID we're looking for (when pid != 0)
+		if pid != 0 && processPID != pid {
+			continue
 		}
 
 		portInfo := &PortInfo{
-			PID:         pid,
+			PID:         processPID,
 			Protocol:    protocol,
 			LocalAddr:   localAddr,
 			LocalPort:   localPort,

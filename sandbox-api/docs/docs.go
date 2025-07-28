@@ -966,9 +966,17 @@ const docTemplate = `{
                         "{\"PORT\"": " \"3000\"}"
                     }
                 },
+                "maxRestarts": {
+                    "type": "integer",
+                    "example": 0
+                },
                 "name": {
                     "type": "string",
                     "example": "my-process"
+                },
+                "restartOnFailure": {
+                    "type": "boolean",
+                    "example": false
                 },
                 "timeout": {
                     "type": "integer",
@@ -999,10 +1007,13 @@ const docTemplate = `{
             "required": [
                 "command",
                 "completedAt",
+                "currentRestarts",
                 "exitCode",
                 "logs",
+                "maxRestarts",
                 "name",
                 "pid",
+                "restartOnFailure",
                 "startedAt",
                 "status",
                 "workingDir"
@@ -1016,6 +1027,10 @@ const docTemplate = `{
                     "type": "string",
                     "example": "Wed, 01 Jan 2023 12:01:00 GMT"
                 },
+                "currentRestarts": {
+                    "type": "integer",
+                    "example": 1
+                },
                 "exitCode": {
                     "type": "integer",
                     "example": 0
@@ -1024,6 +1039,10 @@ const docTemplate = `{
                     "type": "string",
                     "example": "logs output"
                 },
+                "maxRestarts": {
+                    "type": "integer",
+                    "example": 0
+                },
                 "name": {
                     "type": "string",
                     "example": "my-process"
@@ -1031,6 +1050,10 @@ const docTemplate = `{
                 "pid": {
                     "type": "string",
                     "example": "1234"
+                },
+                "restartOnFailure": {
+                    "type": "boolean",
+                    "example": false
                 },
                 "startedAt": {
                     "type": "string",

@@ -732,9 +732,15 @@ components:
           example:
             "{\"PORT\"": ' "3000"}'
           type: object
+        maxRestarts:
+          example: 0
+          type: integer
         name:
           example: my-process
           type: string
+        restartOnFailure:
+          example: false
+          type: boolean
         timeout:
           example: 30
           type: integer
@@ -762,18 +768,27 @@ components:
         completedAt:
           example: Wed, 01 Jan 2023 12:01:00 GMT
           type: string
+        currentRestarts:
+          example: 1
+          type: integer
         exitCode:
           example: 0
           type: integer
         logs:
           example: logs output
           type: string
+        maxRestarts:
+          example: 0
+          type: integer
         name:
           example: my-process
           type: string
         pid:
           example: "1234"
           type: string
+        restartOnFailure:
+          example: false
+          type: boolean
         startedAt:
           example: Wed, 01 Jan 2023 12:00:00 GMT
           type: string
@@ -792,10 +807,13 @@ components:
       required:
         - command
         - completedAt
+        - currentRestarts
         - exitCode
         - logs
+        - maxRestarts
         - name
         - pid
+        - restartOnFailure
         - startedAt
         - status
         - workingDir
