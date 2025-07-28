@@ -22,7 +22,7 @@ func (s *Server) registerProcessTools() error {
 	// Execute command
 	if err := s.mcpServer.RegisterTool("processExecute", "Execute a command",
 		LogToolCall("processExecute", func(args ProcessExecuteArgs) (*mcp_golang.ToolResponse, error) {
-			processInfo, err := s.handlers.Process.ExecuteProcess(args.Command, args.WorkingDir, args.Name, args.Env, args.WaitForCompletion, args.Timeout, args.WaitForPorts)
+			processInfo, err := s.handlers.Process.ExecuteProcess(args.Command, args.WorkingDir, args.Name, args.Env, args.WaitForCompletion, args.Timeout, args.WaitForPorts, args.RestartOnFailure, args.MaxRestarts)
 			if err != nil {
 				return nil, err
 			}

@@ -1,5 +1,6 @@
 dependencies:
 	cd sandbox-api && go install github.com/air-verse/air@latest
+	go install github.com/swaggo/swag/cmd/swag@latest
 
 api:
 	cd sandbox-api && air
@@ -8,7 +9,7 @@ docker-build:
 	docker build -t blaxel/sandbox-api .
 
 docker-run:
-	docker run -p 8080:8080 -p 3000:3000 --rm --name sandbox-dev -v ./sandbox-api:/blaxel/sandbox-api -v ./tmp:/blaxel/tmp localhost/sandbox-dev:latest
+	docker run -p 8080:8080 -p 3000:3000 --rm --name sandbox-dev -v ./sandbox-api:/blaxel/sandbox-api -v ./tmp:/blaxel/tmp blaxel/sandbox-api:latest
 
 test:
 	cd sandbox-api && go test -v ./...
