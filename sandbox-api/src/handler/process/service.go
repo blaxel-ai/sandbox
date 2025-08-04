@@ -24,6 +24,16 @@ func (pm *ProcessManager) ExecuteProcess(
 	restartOnFailure bool,
 	maxRestarts int,
 ) (*ProcessInfo, error) {
+	// Validate maxRestarts limit
+	if maxRestarts > 25 {
+		return nil, fmt.Errorf("maxRestarts cannot exceed 25, got %d", maxRestarts)
+	}
+
+	// Convert maxRestarts = 0 (unlimited) to maxRestarts = 25 (our max limit)
+	if maxRestarts == 0 {
+		maxRestarts = 25
+	}
+
 	portCh := make(chan int)
 	completionCh := make(chan string)
 
@@ -137,10 +147,14 @@ func (pm *ProcessManager) ExecuteProcess(
 	}
 
 	// Wait for completion if requested
+	// Track the final PID (might change due to restarts)
+	finalPID := pid
+
 	if waitForCompletion {
 		select {
-		case pid := <-completionCh:
-			_, exists := pm.GetProcessByIdentifier(pid)
+		case completedPID := <-completionCh:
+			finalPID = completedPID // Use the final PID after any restarts
+			_, exists := pm.GetProcessByIdentifier(finalPID)
 			if !exists {
 				return nil, fmt.Errorf("process creation failed")
 			}
@@ -150,9 +164,10 @@ func (pm *ProcessManager) ExecuteProcess(
 		}
 	}
 
-	// Get the process info
-	processInfo, exists := pm.GetProcessByIdentifier(pid)
+	// Get the process info using the correct PID
+	processInfo, exists := pm.GetProcessByIdentifier(finalPID)
 	if !exists {
+		fmt.Println("here process creation failed")
 		return nil, fmt.Errorf("process creation failed")
 	}
 	if waitForCompletion {

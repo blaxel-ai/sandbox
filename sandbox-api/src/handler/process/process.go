@@ -88,6 +88,16 @@ func (pm *ProcessManager) StartProcess(command string, workingDir string, env ma
 }
 
 func (pm *ProcessManager) StartProcessWithName(command string, workingDir string, name string, env map[string]string, restartOnFailure bool, maxRestarts int, callback func(process *ProcessInfo)) (string, error) {
+	// Validate maxRestarts limit
+	if maxRestarts > 25 {
+		return "", fmt.Errorf("maxRestarts cannot exceed 25, got %d", maxRestarts)
+	}
+
+	// Convert maxRestarts = 0 (unlimited) to maxRestarts = 25 (our max limit)
+	if maxRestarts == 0 && restartOnFailure {
+		maxRestarts = 25
+	}
+
 	process := &ProcessInfo{
 		Name:             name,
 		Command:          command,
