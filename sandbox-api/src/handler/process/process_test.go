@@ -586,45 +586,61 @@ func TestProcessRestartOnFailure(t *testing.T) {
 		}
 	})
 
-	t.Run("UnlimitedRestarts", func(t *testing.T) {
-		// Test with maxRestarts = 0 (unlimited)
-		// We'll only let it run for a short time to avoid infinite loop
-		pid, err := pm.StartProcessWithName(
+	t.Run("MaxRestartsFromZero", func(t *testing.T) {
+		// Test with maxRestarts = 0 (should be converted to 25)
+		// Process will fail and eventually reach the limit
+		completionCount := 0
+		var lastProcess *ProcessInfo
+
+		_, err := pm.StartProcessWithName(
 			"sh -c 'exit 1'",
 			"",
-			"test-unlimited-restarts",
+			"test-max-restarts-from-zero",
 			nil,
 			true, // restartOnFailure
-			0,    // maxRestarts = 0 means unlimited
+			0,    // maxRestarts = 0 should be converted to 25
 			func(process *ProcessInfo) {
-				t.Logf("Process restart: CurrentRestarts=%d", process.CurrentRestarts)
+				completionCount++
+				lastProcess = process
+				t.Logf("Process completion: CurrentRestarts=%d, Status=%s", process.CurrentRestarts, process.Status)
 			},
 		)
 		if err != nil {
 			t.Fatalf("Error starting process: %v", err)
 		}
 
-		// Let it restart a few times
-		time.Sleep(500 * time.Millisecond)
+		// Wait for the process to exhaust all restarts (this might take a while)
+		// We'll wait up to 30 seconds, but it should complete much faster
+		maxWaitTime := 30 * time.Second
+		checkInterval := 100 * time.Millisecond
+		elapsed := time.Duration(0)
 
-		// Stop the process to prevent infinite restarts
-		err = pm.StopProcess(pid)
-		if err != nil {
-			// If stop fails, kill it
-			pm.KillProcess(pid)
+		for elapsed < maxWaitTime {
+			if completionCount > 0 && lastProcess != nil && lastProcess.Status == StatusFailed {
+				break
+			}
+			time.Sleep(checkInterval)
+			elapsed += checkInterval
 		}
 
-		time.Sleep(100 * time.Millisecond)
-
-		// Get the process by name to get the latest one
-		process, exists := pm.GetProcessByIdentifier("test-unlimited-restarts")
-		if !exists {
-			t.Fatal("Process should exist")
+		// Verify that the process eventually failed after exhausting restarts
+		if lastProcess == nil {
+			t.Fatal("Expected process completion callback")
 		}
 
-		// Should have restarted multiple times (we let it run for 3 seconds, should get at least a few restarts)
-		if process.CurrentRestarts < 2 {
-			t.Errorf("Expected at least 2 restarts with unlimited restarts, got %d", process.CurrentRestarts)
+		// Should have attempted 25 restarts (converted from 0)
+		if lastProcess.CurrentRestarts != 25 {
+			t.Errorf("Expected CurrentRestarts to be 25 (converted from 0), got %d", lastProcess.CurrentRestarts)
+		}
+
+		// Final status should be failed
+		if lastProcess.Status != StatusFailed {
+			t.Errorf("Expected final status to be %s, got %s", StatusFailed, lastProcess.Status)
+		}
+
+		// Verify the process has the expected MaxRestarts value
+		if lastProcess.MaxRestarts != 25 {
+			t.Errorf("Expected MaxRestarts to be 25 (converted from 0), got %d", lastProcess.MaxRestarts)
 		}
 	})
 }
