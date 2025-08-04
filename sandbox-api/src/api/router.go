@@ -161,6 +161,9 @@ func logrusMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// other handler can change c.Path so:
 		path := c.Request.URL.Path
+		if c.Request.URL.RawQuery != "" {
+			path = path + "?" + c.Request.URL.RawQuery
+		}
 		start := time.Now()
 		c.Next()
 		stop := time.Since(start)
