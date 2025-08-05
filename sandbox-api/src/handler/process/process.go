@@ -145,6 +145,8 @@ func (pm *ProcessManager) startProcess(process *ProcessInfo, callback func(proce
 
 	// Start the process
 	if err := cmd.Start(); err != nil {
+		// Clean up pipes if process startup fails
+		pm.closePipes(process)
 		return err
 	}
 
@@ -402,6 +404,21 @@ func (pm *ProcessManager) cleanupProcess(process *ProcessInfo) {
 	process.logLock.Lock()
 	process.logWriters = nil
 	process.logLock.Unlock()
+
+	// Close pipes if they exist to prevent file descriptor leaks
+	pm.closePipes(process)
+}
+
+// closePipes safely closes the process pipes
+func (pm *ProcessManager) closePipes(process *ProcessInfo) {
+	if process.stdoutPipe != nil {
+		process.stdoutPipe.Close()
+		process.stdoutPipe = nil
+	}
+	if process.stderrPipe != nil {
+		process.stderrPipe.Close()
+		process.stderrPipe = nil
+	}
 }
 
 // parseCommand splits a command string into arguments while respecting quotes
@@ -549,6 +566,10 @@ func (pm *ProcessManager) StopProcess(identifier string) error {
 	}
 
 	process.Status = StatusStopped
+
+	// Clean up pipes to prevent file descriptor leaks
+	pm.closePipes(process)
+
 	return nil
 }
 
@@ -585,6 +606,10 @@ func (pm *ProcessManager) KillProcess(identifier string) error {
 
 	// Remove the process from memory
 	process.Status = StatusKilled
+
+	// Clean up pipes to prevent file descriptor leaks
+	pm.closePipes(process)
+
 	return nil
 }
 
