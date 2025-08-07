@@ -185,6 +185,12 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 
 	// Handle stdout
 	go func() {
+		defer func() {
+			if process.stdoutPipe != nil {
+				_ = process.stdoutPipe.Close()
+				process.stdoutPipe = nil
+			}
+		}()
 		buf := make([]byte, 4096)
 		for {
 			n, err := stdoutPipe.Read(buf)
@@ -211,6 +217,12 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 
 	// Handle stderr
 	go func() {
+		defer func() {
+			if process.stderrPipe != nil {
+				_ = process.stderrPipe.Close()
+				process.stderrPipe = nil
+			}
+		}()
 		buf := make([]byte, 4096)
 		for {
 			n, err := stderrPipe.Read(buf)
@@ -265,6 +277,16 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 		process.logLock.Lock()
 		process.logWriters = nil // Clear all log writers
 		process.logLock.Unlock()
+
+		// Close any open pipes to release file descriptors
+		if process.stdoutPipe != nil {
+			_ = process.stdoutPipe.Close()
+			process.stdoutPipe = nil
+		}
+		if process.stderrPipe != nil {
+			_ = process.stderrPipe.Close()
+			process.stderrPipe = nil
+		}
 
 		callback(process)
 	}()
