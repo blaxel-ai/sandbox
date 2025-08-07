@@ -8,7 +8,7 @@ docker-build:
 	docker build -t blaxel/sandbox-api .
 
 docker-run:
-	docker run -p 8080:8080 -p 3000:3000 --rm --name sandbox-dev -v ./sandbox-api:/blaxel/sandbox-api -v ./tmp:/blaxel/tmp localhost/sandbox-dev:latest
+	docker run -p 8080:8080 -p 3000:3000 --rm --name sandbox-dev -v ./sandbox-api:/blaxel/sandbox-api -v ./tmp:/blaxel/tmp localhost/blaxel/sandbox-api:latest
 
 test:
 	cd sandbox-api && go test -v ./...

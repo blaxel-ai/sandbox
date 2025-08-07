@@ -128,6 +128,9 @@ func (pm *ProcessManager) ExecuteProcess(
 							portChClosed = true
 						}
 						mu.Unlock()
+
+						// Unregister callbacks for this PID to stop monitoring
+						n.UnregisterPortOpenCallback(pidInt)
 					}()
 				}
 			})
