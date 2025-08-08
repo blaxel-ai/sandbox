@@ -8,6 +8,6 @@ RUN apk update && apk add --no-cache \
 
 WORKDIR /app
 
-COPY --from=ghcr.io/blaxel-ai/sandbox:main-f7c711f /sandbox-api /usr/local/bin/sandbox-api
+COPY --from=ghcr.io/blaxel-ai/sandbox:develop /sandbox-api /usr/local/bin/sandbox-api
 
 ENTRYPOINT ["/usr/local/bin/sandbox-api"]

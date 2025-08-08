@@ -1,0 +1,5 @@
+type = "sandbox"
+
+[runtime]
+generation = "mk3"
+memory = 8192

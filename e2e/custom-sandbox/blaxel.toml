@@ -4,10 +4,6 @@ type = "sandbox"
 generation = "mk3"
 memory = 8192
 
-[env]
-PATH = "/usr/local/go/bin:$PATH"
-GOBIN = "/usr/local/bin"
-
 [[runtime.ports]]
 name = "code-server"
 target = 8081
