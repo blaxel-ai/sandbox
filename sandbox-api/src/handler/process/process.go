@@ -41,7 +41,7 @@ type ProcessInfo struct {
 	PID         string                  `json:"pid"`
 	Name        string                  `json:"name"`
 	Command     string                  `json:"command"`
-	ProcessPid  int                     `json:"-"` // Store the OS process PID for kill/stop operations
+	Cmd         *exec.Cmd               `json:"cmd"`
 	StartedAt   time.Time               `json:"startedAt"`
 	CompletedAt *time.Time              `json:"completedAt"`
 	ExitCode    int                     `json:"exitCode"`
@@ -159,6 +159,7 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 	process := &ProcessInfo{
 		Name:        name,
 		Command:     command,
+		Cmd:         cmd,
 		StartedAt:   time.Now(),
 		CompletedAt: nil,
 		Status:      StatusRunning,
@@ -176,7 +177,6 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 		return "", err
 	}
 	process.PID = fmt.Sprintf("%d", cmd.Process.Pid)
-	process.ProcessPid = cmd.Process.Pid
 
 	// Store process in memory
 	pm.mu.Lock()
@@ -185,6 +185,12 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 
 	// Handle stdout
 	go func() {
+		defer func() {
+			if process.stdoutPipe != nil {
+				_ = process.stdoutPipe.Close()
+				process.stdoutPipe = nil
+			}
+		}()
 		buf := make([]byte, 4096)
 		for {
 			n, err := stdoutPipe.Read(buf)
@@ -211,6 +217,12 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 
 	// Handle stderr
 	go func() {
+		defer func() {
+			if process.stderrPipe != nil {
+				_ = process.stderrPipe.Close()
+				process.stderrPipe = nil
+			}
+		}()
 		buf := make([]byte, 4096)
 		for {
 			n, err := stderrPipe.Read(buf)
@@ -239,12 +251,6 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 		err := cmd.Wait()
 		now := time.Now()
 
-		// IMPORTANT: Release process resources immediately after Wait() to close pidfd
-		// This must be done right after Wait() completes to prevent FD leaks
-		if cmd.Process != nil {
-			_ = cmd.Process.Release()
-		}
-
 		process.CompletedAt = &now
 
 		// Determine exit status and create appropriate message
@@ -271,6 +277,16 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 		process.logLock.Lock()
 		process.logWriters = nil // Clear all log writers
 		process.logLock.Unlock()
+
+		// Close any open pipes to release file descriptors
+		if process.stdoutPipe != nil {
+			_ = process.stdoutPipe.Close()
+			process.stdoutPipe = nil
+		}
+		if process.stderrPipe != nil {
+			_ = process.stderrPipe.Close()
+			process.stderrPipe = nil
+		}
 
 		callback(process)
 	}()
@@ -337,11 +353,18 @@ func (pm *ProcessManager) GetProcessByIdentifier(identifier string) (*ProcessInf
 		if process.Status == StatusRunning {
 			pidInt, err := strconv.Atoi(process.PID)
 			if err == nil {
-				// Store the OS process PID for kill/stop operations
-				process.ProcessPid = pidInt
+				// Get process from OS
+				osProcess, err := os.FindProcess(pidInt)
+				if err == nil {
+					// Create a new exec.Cmd with the process
+					cmd := &exec.Cmd{
+						Process: osProcess,
+					}
+					process.Cmd = cmd
+				}
 			}
 		}
-		if process.logs != nil && process.logs.Len() > 0 {
+		if process.logs != nil {
 			logs := process.logs.String()
 			process.Logs = &logs
 		}
@@ -391,7 +414,7 @@ func (pm *ProcessManager) StopProcess(identifier string) error {
 		return fmt.Errorf("process with Identifier %s is not running", identifier)
 	}
 
-	if process.ProcessPid == 0 {
+	if process.Cmd == nil || process.Cmd.Process == nil {
 		return fmt.Errorf("process with Identifier %s has no OS process", identifier)
 	}
 
@@ -407,13 +430,13 @@ func (pm *ProcessManager) StopProcess(identifier string) error {
 	process.stdout.Write(terminationMsg)
 
 	// Try to gracefully terminate the entire process group first
-	pid := process.ProcessPid
+	pid := process.Cmd.Process.Pid
 
 	// Send SIGTERM to the process group (negative PID targets the process group)
 	err := syscall.Kill(-pid, syscall.SIGTERM)
 	if err != nil {
 		// If process group termination fails, fall back to terminating just the process
-		err = syscall.Kill(pid, syscall.SIGTERM)
+		err = process.Cmd.Process.Signal(syscall.SIGTERM)
 		if err != nil {
 			if err.Error() != "os: process already finished" {
 				return fmt.Errorf("failed to send SIGTERM to process with Identifier %s: %w", identifier, err)
@@ -432,7 +455,7 @@ func (pm *ProcessManager) KillProcess(identifier string) error {
 		return fmt.Errorf("process with Identifier %s not found", identifier)
 	}
 
-	if process.ProcessPid == 0 {
+	if process.Cmd == nil || process.Cmd.Process == nil {
 		return fmt.Errorf("process with Identifier %s has no OS process", identifier)
 	}
 
@@ -449,14 +472,14 @@ func (pm *ProcessManager) KillProcess(identifier string) error {
 
 	// Kill the entire process group to ensure all child processes are terminated
 	// This is crucial for processes like Next.js dev servers that spawn child processes
-	pid := process.ProcessPid
+	pid := process.Cmd.Process.Pid
 
 	// First try to kill the process group (negative PID kills the process group)
 	err := syscall.Kill(-pid, syscall.SIGKILL)
 	if err != nil {
 		// If process group kill fails, fall back to killing just the process
 		// This might happen if the process didn't create a process group
-		err = syscall.Kill(pid, syscall.SIGKILL)
+		err = process.Cmd.Process.Kill()
 		if err != nil {
 			if err.Error() != "os: process already finished" {
 				return fmt.Errorf("failed to kill process with Identifier %s: %w", identifier, err)
