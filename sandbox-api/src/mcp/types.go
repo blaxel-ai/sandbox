@@ -17,6 +17,8 @@ type ProcessExecuteArgs struct {
 	Timeout           int               `json:"timeout" jsonschema:"description=Timeout in seconds for the command,default=30"`
 	WaitForPorts      []int             `json:"waitForPorts" jsonschema:"description=List of ports to wait for before returning"`
 	IncludeLogs       bool              `json:"includeLogs" jsonschema:"description=Whether to include logs in the response"`
+	RestartOnFailure  bool              `json:"restartOnFailure" jsonschema:"description=Whether to restart the process on failure"`
+	MaxRestarts       int               `json:"maxRestarts" jsonschema:"description=Maximum number of restart attempts (capped at 25),default=0"`
 }
 
 // ProcessIdentifierArgs represents arguments for process identifier-related tools

@@ -52,6 +52,8 @@ type ProcessRequest struct {
 	WaitForCompletion bool              `json:"waitForCompletion" example:"false"`
 	Timeout           int               `json:"timeout" example:"30"`
 	WaitForPorts      []int             `json:"waitForPorts" example:"3000,8080"`
+	RestartOnFailure  bool              `json:"restartOnFailure" example:"true"`
+	MaxRestarts       int               `json:"maxRestarts" example:"3"`
 } // @name ProcessRequest
 
 // ProcessResponse is the response body for a process
@@ -78,8 +80,8 @@ type ProcessKillRequest struct {
 } // @name ProcessKillRequest
 
 // ExecuteProcess executes a process
-func (h *ProcessHandler) ExecuteProcess(command string, workingDir string, name string, env map[string]string, waitForCompletion bool, timeout int, waitForPorts []int) (ProcessResponse, error) {
-	processInfo, err := h.processManager.ExecuteProcess(command, workingDir, name, env, waitForCompletion, timeout, waitForPorts)
+func (h *ProcessHandler) ExecuteProcess(command string, workingDir string, name string, env map[string]string, waitForCompletion bool, timeout int, waitForPorts []int, restartOnFailure bool, maxRestarts int) (ProcessResponse, error) {
+	processInfo, err := h.processManager.ExecuteProcess(command, workingDir, name, env, waitForCompletion, timeout, waitForPorts, restartOnFailure, maxRestarts)
 	if err != nil {
 		return ProcessResponse{}, err
 	}
@@ -219,7 +221,7 @@ func (h *ProcessHandler) HandleExecuteCommand(c *gin.Context) {
 
 	// If a name is provided, check if a process with that name already exists
 	if req.Name != "" {
-		alreadyExists, err := GetProcessHandler().GetProcess(req.Name)
+		alreadyExists, err := h.GetProcess(req.Name)
 		if err == nil && alreadyExists.Status == string(constants.ProcessStatusRunning) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("process with name '%s' already exists and is running", req.Name)})
 			return
@@ -227,7 +229,7 @@ func (h *ProcessHandler) HandleExecuteCommand(c *gin.Context) {
 	}
 
 	// Execute the process
-	processInfo, err := h.ExecuteProcess(req.Command, req.WorkingDir, req.Name, req.Env, req.WaitForCompletion, req.Timeout, req.WaitForPorts)
+	processInfo, err := h.ExecuteProcess(req.Command, req.WorkingDir, req.Name, req.Env, req.WaitForCompletion, req.Timeout, req.WaitForPorts, req.RestartOnFailure, req.MaxRestarts)
 	if err != nil {
 		h.SendError(c, http.StatusUnprocessableEntity, err)
 		return

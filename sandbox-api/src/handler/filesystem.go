@@ -225,6 +225,10 @@ func (h *FileSystemHandler) HandleCreateOrUpdateFileJSON(c *gin.Context) {
 
 	// Handle directory creation
 	if request.IsDirectory {
+		// Directories need different default permissions than files
+		if request.Permissions == "" {
+			permissions = 0755
+		}
 		if err := h.CreateDirectory(path, permissions); err != nil {
 			h.SendError(c, http.StatusUnprocessableEntity, fmt.Errorf("error creating directory: %w", err))
 			return
