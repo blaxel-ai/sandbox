@@ -1,0 +1,13 @@
+{
+	"scripts": {
+		"test": "node index.js",
+		"test:local": "node index.js --mode local",
+		"test:get": "node index.js --mode get",
+		"test:create": "node index.js --mode create",
+		"help": "node index.js --help"
+	},
+	"dependencies": {
+		"@blaxel/core": "^0.2.26",
+		"yargs": "^17.7.2"
+	}
+}
