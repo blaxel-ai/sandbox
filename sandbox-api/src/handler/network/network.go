@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"os/exec"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -184,9 +185,14 @@ func (n *Network) updatePortsForPID(pid int) error {
 	return nil
 }
 
-// getOpenPortsForPID uses ss or netstat to get open ports for a specific PID
+// getOpenPortsForPID uses platform-specific commands to get open ports for a specific PID
 func getOpenPortsForPID(pid int) ([]*PortInfo, error) {
-	// Try ss command first (newer and more efficient)
+	// Use different commands based on the operating system
+	if runtime.GOOS == "darwin" {
+		return getPortsUsingLsof(pid)
+	}
+
+	// For Linux systems, try ss command first (newer and more efficient)
 	portsInfo, err := getPortsUsingSS(pid)
 	if err == nil {
 		return portsInfo, nil
@@ -280,6 +286,130 @@ func getPortsUsingSS(pid int) ([]*PortInfo, error) {
 
 	if err := cmd.Wait(); err != nil {
 		return nil, err
+	}
+
+	return portsInfo, nil
+}
+
+// getPortsUsingLsof uses the 'lsof' command to get port information for a specific PID (macOS)
+func getPortsUsingLsof(pid int) ([]*PortInfo, error) {
+	// Run lsof command: lsof -iTCP -iUDP -n -P -a -p <pid>
+	cmd := exec.Command("lsof", "-iTCP", "-iUDP", "-n", "-P", "-a", "-p", strconv.Itoa(pid))
+	output, err := cmd.Output()
+	if err != nil {
+		// lsof returns exit code 1 if no files are found, which is not an error for our use case
+		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
+			return []*PortInfo{}, nil
+		}
+		return nil, err
+	}
+
+	// Parse the output line by line
+	scanner := bufio.NewScanner(strings.NewReader(string(output)))
+	portsInfo := make([]*PortInfo, 0)
+
+	// Skip header line
+	if scanner.Scan() {
+		// Skip the header
+	}
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		fields := strings.Fields(line)
+
+		// lsof output format:
+		// COMMAND   PID   USER   FD   TYPE     DEVICE SIZE/OFF NODE NAME
+		// Example: node    12345 user   23u  IPv4 0x1234     0t0  TCP *:8000 (LISTEN)
+		if len(fields) < 9 {
+			continue
+		}
+
+		// Get the protocol from TYPE field (fields[4])
+		protocol := ""
+		if strings.Contains(fields[4], "IPv4") || strings.Contains(fields[4], "IPv6") {
+			// Get protocol from NAME field (fields[8])
+			if strings.Contains(fields[8], "TCP") {
+				protocol = "tcp"
+			} else if strings.Contains(fields[8], "UDP") {
+				protocol = "udp"
+			}
+		}
+
+		if protocol == "" {
+			continue
+		}
+
+		// Parse NAME field for address and port
+		// Format examples:
+		// *:8000 (LISTEN)
+		// 127.0.0.1:8000->127.0.0.1:54321 (ESTABLISHED)
+		nameField := fields[8]
+
+		// Extract state if present
+		state := ""
+		if strings.Contains(line, "(LISTEN)") {
+			state = "LISTEN"
+		} else if strings.Contains(line, "(ESTABLISHED)") {
+			state = "ESTABLISHED"
+		} else if strings.Contains(line, "(CLOSE_WAIT)") {
+			state = "CLOSE_WAIT"
+		}
+
+		// Parse local and remote addresses
+		var localAddr, remoteAddr string
+		var localPort, remotePort int
+
+		// Check if it's a connection (contains ->)
+		if strings.Contains(nameField, "->") {
+			parts := strings.Split(nameField, "->")
+			if len(parts) == 2 {
+				// Parse local address
+				localParts := strings.Split(parts[0], ":")
+				if len(localParts) >= 2 {
+					localAddr = strings.Join(localParts[:len(localParts)-1], ":")
+					localPort, _ = strconv.Atoi(localParts[len(localParts)-1])
+				}
+
+				// Parse remote address
+				remoteParts := strings.Split(parts[1], ":")
+				if len(remoteParts) >= 2 {
+					remoteAddr = strings.Join(remoteParts[:len(remoteParts)-1], ":")
+					remotePort, _ = strconv.Atoi(remoteParts[len(remoteParts)-1])
+				}
+			}
+		} else {
+			// It's a listening port
+			localParts := strings.Split(nameField, ":")
+			if len(localParts) >= 2 {
+				localAddr = strings.Join(localParts[:len(localParts)-1], ":")
+				localPort, _ = strconv.Atoi(localParts[len(localParts)-1])
+
+				// Convert * to 0.0.0.0 for consistency
+				if localAddr == "*" {
+					localAddr = "0.0.0.0"
+				}
+			}
+		}
+
+		if localPort == 0 {
+			continue
+		}
+
+		// Get process name from COMMAND field
+		processName := fields[0]
+
+		portInfo := &PortInfo{
+			PID:         pid,
+			Protocol:    protocol,
+			LocalAddr:   localAddr,
+			LocalPort:   localPort,
+			RemoteAddr:  remoteAddr,
+			RemotePort:  remotePort,
+			State:       state,
+			ProcessName: processName,
+		}
+
+		portsInfo = append(portsInfo, portInfo)
 	}
 
 	return portsInfo, nil
