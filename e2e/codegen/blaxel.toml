@@ -1,0 +1,9 @@
+type = "sandbox"
+
+[runtime]
+generation = "mk3"
+memory = 8192
+[[runtime.ports]]
+name = "nextjs-dev"
+target = 3000
+protocol = "tcp"
