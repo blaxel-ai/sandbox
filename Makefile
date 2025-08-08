@@ -31,3 +31,7 @@ reference:
 	yq eval '.security = [{"BearerAuth": []}]' -i sandbox-api/docs/openapi.yml
 	yq eval '.components.securitySchemes.BearerAuth = {"type": "http", "scheme": "bearer", "bearerFormat": "JWT"}' -i sandbox-api/docs/openapi.yml
 	cd sandbox-api/docs && sh fixopenapi.sh
+
+deploy-custom-sandbox:
+	cp -r sandbox-api e2e/custom-sandbox
+	cd e2e/custom-sandbox && bl deploy && rm -rf sandbox-api
