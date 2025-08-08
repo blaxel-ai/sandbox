@@ -8,7 +8,7 @@ docker-build:
 	docker build -t blaxel/sandbox-api .
 
 docker-run:
-	docker run -p 8080:8080 -p 3000:3000 --rm --name sandbox-dev -v ./sandbox-api:/blaxel/sandbox-api -v ./tmp:/blaxel/tmp localhost/sandbox-dev:latest
+	docker run -p 8080:8080 -p 3000:3000 --rm --name sandbox-dev -v ./sandbox-api:/blaxel/sandbox-api -v ./tmp:/blaxel/tmp localhost/blaxel/sandbox-api:latest
 
 test:
 	cd sandbox-api && go test -v ./...
@@ -31,3 +31,7 @@ reference:
 	yq eval '.security = [{"BearerAuth": []}]' -i sandbox-api/docs/openapi.yml
 	yq eval '.components.securitySchemes.BearerAuth = {"type": "http", "scheme": "bearer", "bearerFormat": "JWT"}' -i sandbox-api/docs/openapi.yml
 	cd sandbox-api/docs && sh fixopenapi.sh
+
+deploy-custom-sandbox:
+	cp -r sandbox-api e2e/custom-sandbox
+	cd e2e/custom-sandbox && bl deploy && rm -rf sandbox-api
