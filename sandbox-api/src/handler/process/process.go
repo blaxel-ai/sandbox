@@ -84,22 +84,9 @@ func (pm *ProcessManager) StartProcess(command string, workingDir string, env ma
 }
 
 func (pm *ProcessManager) StartProcessWithName(command string, workingDir string, name string, env map[string]string, callback func(process *ProcessInfo)) (string, error) {
-	var cmd *exec.Cmd
-
-	// Check if the command needs a shell by looking for shell special chars
-	if strings.Contains(command, "&&") || strings.Contains(command, "|") ||
-		strings.Contains(command, ">") || strings.Contains(command, "<") ||
-		strings.Contains(command, ";") || strings.Contains(command, "$") {
-		// Use shell to execute the command
-		cmd = exec.Command("sh", "-c", command)
-	} else {
-		// Parse command string into command and arguments while respecting quotes
-		args := parseCommand(command)
-		if len(args) == 0 {
-			return "", fmt.Errorf("empty command")
-		}
-		cmd = exec.Command(args[0], args[1:]...)
-	}
+	// Always use shell to execute commands
+	// This ensures shell built-ins (cd, export, alias) work properly
+	cmd := exec.Command("sh", "-c", command)
 
 	if workingDir != "" {
 		cmd.Dir = workingDir
@@ -276,48 +263,6 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 	}()
 
 	return process.PID, nil
-}
-
-// parseCommand splits a command string into arguments while respecting quotes
-func parseCommand(command string) []string {
-	var args []string
-	var currentArg strings.Builder
-	inQuotes := false
-	quoteChar := rune(0)
-
-	for _, char := range command {
-		switch {
-		case char == '"' || char == '\'':
-			if inQuotes && char == quoteChar {
-				// End of quoted section
-				inQuotes = false
-				quoteChar = rune(0)
-			} else if !inQuotes {
-				// Start of quoted section
-				inQuotes = true
-				quoteChar = char
-			} else {
-				// Quote character inside another type of quotes, treat as literal
-				currentArg.WriteRune(char)
-			}
-		case char == ' ' && !inQuotes:
-			// Space outside quotes ends the current argument
-			if currentArg.Len() > 0 {
-				args = append(args, currentArg.String())
-				currentArg.Reset()
-			}
-		default:
-			// Add character to current argument
-			currentArg.WriteRune(char)
-		}
-	}
-
-	// Add the last argument if any
-	if currentArg.Len() > 0 {
-		args = append(args, currentArg.String())
-	}
-
-	return args
 }
 
 // GetProcessByIdentifier returns a process by either PID or name
