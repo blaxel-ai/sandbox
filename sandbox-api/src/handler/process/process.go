@@ -435,13 +435,32 @@ func (pm *ProcessManager) StreamProcessOutput(identifier string, w io.Writer) er
 	}
 
 	// Write current content first
-	w.Write([]byte(process.stdout.String()))
-	w.Write([]byte(process.stderr.String()))
+	w.Write([]byte(process.logs.String()))
 
 	// Attach writer for future output
 	process.logLock.Lock()
 	process.logWriters = append(process.logWriters, w)
 	process.logLock.Unlock()
+
+	// Start keepalive goroutine to prevent connection timeout
+	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+
+		for range ticker.C {
+			process, exists = pm.GetProcessByIdentifier(identifier)
+			// Check if process is still running
+			if !exists || process.Status != StatusRunning {
+				return
+			}
+			// Send keepalive message only to this specific writer
+			keepaliveMsg := []byte("[keepalive]\n")
+			w.Write(keepaliveMsg)
+			if f, ok := w.(interface{ Flush() }); ok {
+				f.Flush()
+			}
+		}
+	}()
 
 	return nil
 }
