@@ -236,10 +236,10 @@ jobs:
           BUILD_ID: ${{ github.run_id }}-${{ github.run_attempt }}
           LOG_LEVEL: debug
           IMAGE_BUCKET_MK3: ${{ env.BL_ENV == 'prod' && env.PROD_IMAGE_BUCKET || env.DEV_IMAGE_BUCKET }}
-          DEPOT_PROJECT_ID: ${{ secrets.DEPOT_PROJECT_ID }}
+          DEPOT_PROJECT_ID: ${{ env.BL_ENV == 'prod' && secrets.DEPOT_PROJECT_ID_PROD || secrets.DEPOT_PROJECT_ID_DEV }}
           LAMBDA_FUNCTION_NAME: controlplane-${{ env.BL_ENV }}-metamorph
-          LAMBDA_REGION: ${{ vars.LAMBDA_REGION || 'us-west-2' }}
-          DEPOT_TOKEN: ${{ secrets.DEPOT_TOKEN }}
+          LAMBDA_REGION: ${{ env.BL_ENV == 'prod' && (vars.LAMBDA_REGION_PROD || 'us-west-2') || (vars.LAMBDA_REGION_DEV || 'eu-west-1') }}
+          DEPOT_TOKEN: ${{ env.BL_ENV == 'prod' && secrets.DEPOT_TOKEN_PROD || secrets.DEPOT_TOKEN_DEV }}
           REPOSITORY_URL: ${{ github.server_url }}/${{ github.repository }}
           SOURCE_BRANCH: ${{ github.ref_name }}
         run: |
