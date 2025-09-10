@@ -228,7 +228,7 @@ jobs:
       - name: Build sandbox image
         env:
           SANDBOX_NAME: ${{ matrix.sandbox }}
-          IMAGE_TAG: ${{ github.ref_name == 'main' && 'latest' || github.ref_name == 'develop' && 'develop' || env.TAG }}
+          IMAGE_TAG: latest
           BL_TYPE: sandbox
           STAGE: ${{ env.BL_ENV }}
           SRC_REGISTRY: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-${{ matrix.sandbox }}
