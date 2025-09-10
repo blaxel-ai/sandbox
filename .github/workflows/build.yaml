@@ -202,7 +202,7 @@ jobs:
       - name: Build and push sandbox image
         uses: docker/build-push-action@v5
         with:
-          context: ./hub/${{ matrix.sandbox }}
+          context: .
           file: ./hub/${{ matrix.sandbox }}/Dockerfile
           platforms: linux/amd64
           push: true
