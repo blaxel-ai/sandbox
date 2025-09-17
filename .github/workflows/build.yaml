@@ -26,8 +26,8 @@ env:
   IMAGE_NAME: blaxel-ai/sandbox
   TAG: ${{ github.sha }}
   BL_ENV: ${{ github.ref_name == 'main' && 'prod' || 'dev' }}
-  DEV_IMAGE_BUCKET: controlplane-dev-build-images-eu-west-1-89f8d3
-  PROD_IMAGE_BUCKET: controlplane-prod-build-images-us-west-2-3c9279
+  DEV_IMAGE_BUCKET: controlplane-dev-build-images-eu-west-1-37df18
+  PROD_IMAGE_BUCKET: controlplane-prod-build-images-us-west-2-466b17
 
 jobs:
   check-changes:
