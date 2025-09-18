@@ -219,6 +219,10 @@ jobs:
       || github.ref_name == 'develop' && 'dev'
       || 'dev'
       }}
+    env:
+      BL_API_URL: ${{ vars.BL_API_URL }}
+      BL_ADMIN_USERNAME: ${{ secrets.BL_ADMIN_USERNAME }}
+      BL_ADMIN_PASSWORD: ${{ secrets.BL_ADMIN_PASSWORD }}
     needs: [generate-matrix, publish-sandboxes]
     if: always() && needs.generate-matrix.outputs.sandboxes != '[]' && needs.publish-sandboxes.result == 'success'
     strategy:
@@ -255,7 +259,7 @@ jobs:
           {
             "otel_enabled": false,
             "bl_env": "$STAGE",
-            "output_s3": "s3://$IMAGE_BUCKET_MK3/$SANDBOX_NAME/$IMAGE_TAG",
+            "output_s3": "s3://$IMAGE_BUCKET_MK3/blaxel/$SANDBOX_NAME/latest",
             "no_optimize": false,
             "depot_token": "$DEPOT_TOKEN",
             "bl_build_id": "$BUILD_ID",
@@ -293,11 +297,15 @@ jobs:
 
           # Check response
           if [ -f /tmp/response.json ]; then
+            echo "Lambda response received, parsing..."
+            
+            # Display the full response for debugging
             cat /tmp/response.json | jq '.'
-
-            # Check if build was successful
-            SUCCESS=$(jq -r '.success // false' /tmp/response.json)
-            if [ "$SUCCESS" != "true" ]; then
+            
+            # Check if the build was successful
+            # The response has a 'success' field that indicates build status
+            BUILD_SUCCESS=$(jq -r '.success // false' /tmp/response.json 2>/dev/null)
+            if [ "$BUILD_SUCCESS" != "true" ]; then
               echo "Build failed"
               MESSAGE=$(jq -r '.message // "No message provided"' /tmp/response.json)
               echo "Error: $MESSAGE"
@@ -305,6 +313,75 @@ jobs:
             fi
 
             echo "Build completed successfully"
+            
+            # Update image registry after successful build
+            echo "Updating image registry..."
+            
+            # Create Basic auth header (base64 encode username:password)
+            AUTH_HEADER=$(echo -n "$BL_ADMIN_USERNAME:$BL_ADMIN_PASSWORD" | base64)
+            
+            # Workspace is always blaxel
+            WORKSPACE="blaxel"
+            
+            # Determine registry type based on the registry URL
+            if [[ "${{ env.REGISTRY }}" == "ghcr.io" ]]; then
+              REGISTRY_TYPE="github"
+            else
+              REGISTRY_TYPE="docker_hub"
+            fi
+            
+            # Prepare the JSON payload for the API
+            API_PAYLOAD=$(jq -n \
+              --arg registry "${{ env.REGISTRY }}" \
+              --arg workspace "$WORKSPACE" \
+              --arg repository "sandbox-$SANDBOX_NAME" \
+              --arg tag "latest" \
+              --arg registry_type "$REGISTRY_TYPE" \
+              --arg original "$SANDBOX_NAME:latest" \
+              --arg region "$LAMBDA_REGION" \
+              --arg bucket "$IMAGE_BUCKET_MK3" \
+              '{
+                registry: $registry,
+                workspace: $workspace,
+                repository: $repository,
+                tag: $tag,
+                registry_type: $registry_type,
+                original: $original,
+                region: $region,
+                bucket: $bucket
+              }')
+            
+            echo "Calling Blaxel API to register image..."
+            echo "URL: $BL_API_URL/admin/images"
+            echo "Workspace: $WORKSPACE"
+            echo "Repository: sandbox-$SANDBOX_NAME"
+            echo "Tag: latest"
+            echo "Payload: $API_PAYLOAD"
+            
+            # Make the API call
+            HTTP_RESPONSE=$(curl -s -w "\n%{http_code}" --request PUT \
+              --url "$BL_API_URL/admin/images" \
+              --header "Authorization: Basic $AUTH_HEADER" \
+              --header "Content-Type: application/json" \
+              --data "$API_PAYLOAD")
+            
+            # Extract HTTP status code
+            HTTP_STATUS=$(echo "$HTTP_RESPONSE" | tail -n 1)
+            HTTP_BODY=$(echo "$HTTP_RESPONSE" | sed '$d')
+            
+            echo "API Response Status: $HTTP_STATUS"
+            if [ ! -z "$HTTP_BODY" ]; then
+              echo "API Response Body: $HTTP_BODY"
+            fi
+            
+            # Check if the API call was successful
+            if [ "$HTTP_STATUS" -ge 200 ] && [ "$HTTP_STATUS" -lt 300 ]; then
+              echo "Image successfully registered in Blaxel"
+            else
+              echo "Warning: Failed to register image in Blaxel (HTTP $HTTP_STATUS)"
+              # Don't fail the build if image registration fails
+              # exit 1
+            fi
           else
             echo "No response from Lambda"
             exit 1
