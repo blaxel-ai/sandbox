@@ -30,8 +30,10 @@ if [ -z "$BL_ADMIN_PASSWORD" ]; then
     exit 1
 fi
 
-# Set defaults
-TAG="${TAG:-latest}"
+if [ -z "$TAG" ]; then
+    echo "Error: TAG environment variable is required"
+    exit 1
+fi
 
 echo "Publishing sandbox: $SANDBOX_NAME"
 echo "Environment: $BL_ENV"

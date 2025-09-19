@@ -234,7 +234,7 @@ jobs:
       - name: Build sandbox image
         env:
           SANDBOX_NAME: ${{ matrix.sandbox }}
-          IMAGE_TAG: latest
+          IMAGE_TAG: ${{ env.TAG }}
           BL_TYPE: sandbox
           BL_ENV: ${{ env.BL_ENV }}
           SRC_REGISTRY: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-${{ matrix.sandbox }}
@@ -252,7 +252,7 @@ jobs:
       - name: Publish sandbox
         env:
           SANDBOX_NAME: ${{ matrix.sandbox }}
-          TAG: latest
+          TAG: ${{ env.TAG }}
           BL_ENV: ${{ env.BL_ENV }}
         run: |
           chmod +x ./scripts/publish-sandbox.sh

@@ -96,7 +96,7 @@ PAYLOAD=$(cat <<EOF
 {
   "otel_enabled": false,
   "bl_env": "$BL_ENV",
-  "output_s3": "s3://$IMAGE_BUCKET_MK3/blaxel/sbx/$SANDBOX_NAME/latest",
+  "output_s3": "s3://$IMAGE_BUCKET_MK3/blaxel/sbx/$SANDBOX_NAME/$IMAGE_TAG",
   "no_optimize": false,
   "depot_token": "$DEPOT_TOKEN",
   "bl_build_id": "$BUILD_ID",
@@ -170,9 +170,9 @@ API_PAYLOAD=$(jq -n \
   --arg registry "$REGISTRY_URL" \
   --arg workspace "$WORKSPACE" \
   --arg repository "sandbox-$SANDBOX_NAME" \
-  --arg tag "latest" \
+  --arg tag "$IMAGE_TAG" \
   --arg registry_type "$REGISTRY_TYPE" \
-  --arg original "sbx/$SANDBOX_NAME:latest" \
+  --arg original "sbx/$SANDBOX_NAME:$IMAGE_TAG" \
   --arg region "$LAMBDA_REGION" \
   --arg bucket "$IMAGE_BUCKET_MK3" \
   '{
@@ -190,7 +190,7 @@ echo "Calling Blaxel API to register image..."
 echo "URL: $BL_API_URL/admin/images"
 echo "Workspace: $WORKSPACE"
 echo "Repository: sandbox-$SANDBOX_NAME"
-echo "Tag: latest"
+echo "Tag: $IMAGE_TAG"
 echo "Payload: $API_PAYLOAD"
 
 # Make the API call
