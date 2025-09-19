@@ -169,7 +169,7 @@ REGISTRY_URL=$(echo "$SRC_REGISTRY" | cut -d'/' -f1)
 API_PAYLOAD=$(jq -n \
   --arg registry "$REGISTRY_URL" \
   --arg workspace "$WORKSPACE" \
-  --arg repository "sandbox-$SANDBOX_NAME" \
+  --arg repository "$SANDBOX_NAME" \
   --arg tag "$IMAGE_TAG" \
   --arg registry_type "$REGISTRY_TYPE" \
   --arg original "sbx/$SANDBOX_NAME:$IMAGE_TAG" \
@@ -189,7 +189,7 @@ API_PAYLOAD=$(jq -n \
 echo "Calling Blaxel API to register image..."
 echo "URL: $BL_API_URL/admin/images"
 echo "Workspace: $WORKSPACE"
-echo "Repository: sandbox-$SANDBOX_NAME"
+echo "Repository: $SANDBOX_NAME"
 echo "Tag: $IMAGE_TAG"
 echo "Payload: $API_PAYLOAD"
 
