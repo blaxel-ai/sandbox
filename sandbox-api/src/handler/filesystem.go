@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/gin-gonic/gin"
@@ -645,9 +646,25 @@ func (h *FileSystemHandler) HandleWatchDirectory(c *gin.Context) {
 	}
 	defer stop() // Ensures watcher is removed when handler exits
 
+	// Keepalive ticker to prevent idle timeouts while watching
+	keepaliveTicker := time.NewTicker(30 * time.Second)
+	defer keepaliveTicker.Stop()
+
 	go func() {
-		<-ctx.Done()
-		close(done)
+		for {
+			select {
+			case <-ctx.Done():
+				close(done)
+				return
+			case <-keepaliveTicker.C:
+				// Send a keepalive line
+				if _, err := c.Writer.Write([]byte("[keepalive]\n")); err != nil {
+					close(done)
+					return
+				}
+				flusher.Flush()
+			}
+		}
 	}()
 
 	<-done
@@ -734,10 +751,25 @@ func (h *FileSystemHandler) HandleWatchDirectoryWebSocket(c *gin.Context) {
 	}
 	defer stop() // Ensures watcher is removed when handler exits
 
+	// Periodic keepalive ping
+	keepaliveTicker := time.NewTicker(30 * time.Second)
+	defer keepaliveTicker.Stop()
+
+	// Reader goroutine to detect client closure
 	go func() {
 		for {
 			_, _, err := conn.ReadMessage()
 			if err != nil {
+				once.Do(func() { close(done) })
+				return
+			}
+		}
+	}()
+
+	// Pinger goroutine to keep the WS alive
+	go func() {
+		for range keepaliveTicker.C {
+			if err := conn.WriteControl(websocket.PingMessage, []byte{}, time.Now().Add(5*time.Second)); err != nil {
 				once.Do(func() { close(done) })
 				return
 			}
