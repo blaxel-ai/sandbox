@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -281,6 +282,31 @@ func (fs *Filesystem) WriteFile(path string, content []byte, perm os.FileMode) e
 	}
 
 	return os.WriteFile(absPath, content, perm)
+}
+
+// WriteFileFromReader streams content from a reader to a file on disk
+func (fs *Filesystem) WriteFileFromReader(path string, r io.Reader, perm os.FileMode) error {
+	absPath, err := fs.GetAbsolutePath(path)
+	if err != nil {
+		return err
+	}
+
+	// Ensure parent directory exists
+	dir := filepath.Dir(absPath)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return err
+	}
+
+	f, err := os.OpenFile(absPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, perm)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	if _, err := io.Copy(f, r); err != nil {
+		return err
+	}
+	return nil
 }
 
 // CreateDirectory creates a directory at the given path

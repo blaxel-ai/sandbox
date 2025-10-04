@@ -256,40 +256,58 @@ func (h *FileSystemHandler) HandleCreateOrUpdateBinary(c *gin.Context) {
 		return
 	}
 
-	// Get the file from form data
-	file, err := c.FormFile("file")
+	// Use streaming multipart reader to avoid extra buffering/copies
+	mr, err := c.Request.MultipartReader()
 	if err != nil {
-		h.SendError(c, http.StatusBadRequest, fmt.Errorf("error getting file from request: %w", err))
-		return
-	}
-	// Open the uploaded file
-	src, err := file.Open()
-	if err != nil {
-		h.SendError(c, http.StatusUnprocessableEntity, fmt.Errorf("error opening uploaded file: %w", err))
-		return
-	}
-	defer src.Close()
-
-	// Read file data
-	fileData, err := io.ReadAll(src)
-	if err != nil {
-		h.SendError(c, http.StatusUnprocessableEntity, fmt.Errorf("error reading uploaded file: %w", err))
+		h.SendError(c, http.StatusBadRequest, fmt.Errorf("error reading multipart data: %w", err))
 		return
 	}
 
-	// Parse permissions or use default
 	var permissions os.FileMode = 0644
-	permStr := c.PostForm("permissions")
-	if permStr != "" {
-		permInt, err := strconv.ParseUint(permStr, 8, 32)
-		if err == nil {
-			permissions = os.FileMode(permInt)
+	var wroteFile bool
+
+	for {
+		part, err := mr.NextPart()
+		if err == io.EOF {
+			break
 		}
+		if err != nil {
+			h.SendError(c, http.StatusBadRequest, fmt.Errorf("error reading multipart part: %w", err))
+			return
+		}
+
+		name := part.FormName()
+		filename := part.FileName()
+		if name == "permissions" && filename == "" {
+			// read small permission value
+			data, _ := io.ReadAll(part)
+			if len(data) > 0 {
+				if permInt, perr := strconv.ParseUint(strings.TrimSpace(string(data)), 8, 32); perr == nil {
+					permissions = os.FileMode(permInt)
+				}
+			}
+			part.Close()
+			continue
+		}
+
+		if name == "file" && filename != "" && !wroteFile {
+			// Stream directly to disk with requested permissions
+			if err := h.fs.WriteFileFromReader(path, part, permissions); err != nil {
+				part.Close()
+				h.SendError(c, http.StatusUnprocessableEntity, fmt.Errorf("error writing binary file: %w", err))
+				return
+			}
+			wroteFile = true
+			part.Close()
+			continue
+		}
+
+		// Close any unhandled parts
+		part.Close()
 	}
 
-	// Write the file
-	if err := h.WriteFile(path, fileData, permissions); err != nil {
-		h.SendError(c, http.StatusUnprocessableEntity, fmt.Errorf("error writing binary file: %w", err))
+	if !wroteFile {
+		h.SendError(c, http.StatusBadRequest, fmt.Errorf("missing 'file' field in multipart form"))
 		return
 	}
 

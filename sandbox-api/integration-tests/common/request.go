@@ -94,6 +94,40 @@ func MakeMultipartRequest(method, path string, fileContent []byte, filename stri
 	return Client.Do(req)
 }
 
+// MakeMultipartRequestStream streams a multipart request body using io.Pipe
+func MakeMultipartRequestStream(method, path string, fileReader io.Reader, filename string, formValues map[string]string) (*http.Response, error) {
+	pr, pw := io.Pipe()
+	writer := multipart.NewWriter(pw)
+
+	// Write multipart content in a goroutine
+	go func() {
+		defer pw.Close()
+		defer writer.Close()
+
+		for key, value := range formValues {
+			_ = writer.WriteField(key, value)
+		}
+
+		part, err := writer.CreateFormFile("file", filename)
+		if err != nil {
+			pw.CloseWithError(err)
+			return
+		}
+		if _, err := io.Copy(part, fileReader); err != nil {
+			pw.CloseWithError(err)
+			return
+		}
+	}()
+
+	req, err := http.NewRequest(method, BaseURL+path, pr)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+
+	return Client.Do(req)
+}
+
 // NewMultipartWriter creates a new multipart writer
 func NewMultipartWriter(body *bytes.Buffer) *MultipartWriter {
 	return &MultipartWriter{
