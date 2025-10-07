@@ -15,7 +15,8 @@ import (
 
 // Filesystem represents the root directory of the filesystem
 type Filesystem struct {
-	Root string `json:"root"`
+	Root       string `json:"root"`
+	WorkingDir string `json:"workingDir"`
 } // @name Filesystem
 
 // FileByte represents a file in the filesystem
@@ -174,16 +175,38 @@ func (f *FileWithContentByte) UnmarshalJSON(data []byte) error {
 }
 
 func NewFilesystem(root string) *Filesystem {
-	return &Filesystem{Root: root}
+	return &Filesystem{Root: root, WorkingDir: root}
+}
+
+func NewFilesystemWithWorkingDir(root string, workingDir string) *Filesystem {
+	return &Filesystem{Root: root, WorkingDir: workingDir}
 }
 
 // GetAbsolutePath gets the absolute path, ensuring it's within the root
 func (fs *Filesystem) GetAbsolutePath(path string) (string, error) {
-	absPath := filepath.Join(fs.Root, path)
-	// Verify the path is within the root to prevent path traversal
-	if relPath, err := filepath.Rel(fs.Root, absPath); err != nil || relPath == ".." || strings.HasPrefix(relPath, ".."+string(filepath.Separator)) {
-		return "", errors.New("path is outside of the root directory")
+	var absPath string
+
+	// If path is absolute (starts with /), use it directly
+	if filepath.IsAbs(path) {
+		absPath = path
+	} else {
+		// If path is relative, resolve it from the working directory
+		absPath = filepath.Join(fs.WorkingDir, path)
 	}
+
+	// Clean the path to resolve . and .. references
+	absPath = filepath.Clean(absPath)
+
+	// For absolute paths outside the root, we don't restrict access
+	// This allows accessing system directories when using absolute paths
+	// For relative paths, we still ensure they're within bounds
+	if !filepath.IsAbs(path) {
+		// Verify the path is within the root to prevent path traversal for relative paths
+		if relPath, err := filepath.Rel(fs.Root, absPath); err != nil || strings.HasPrefix(relPath, ".."+string(filepath.Separator)) {
+			return "", errors.New("path is outside of the root directory")
+		}
+	}
+
 	return absPath, nil
 }
 
