@@ -1,5 +1,9 @@
 dependencies:
-	cd sandbox-api && go install github.com/air-verse/air@latest
+	cd sandbox-api && \
+		go install github.com/air-verse/air@latest && \
+		go install github.com/swaggo/swag/cmd/swag@latest && \
+		brew install yq
+
 
 api:
 	cd sandbox-api && air

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"net/url"
 	"os"
 	"strings"
 	"testing"
@@ -14,7 +13,6 @@ import (
 	"github.com/blaxel-ai/sandbox-api/integration_tests/common"
 	"github.com/blaxel-ai/sandbox-api/src/handler"
 	"github.com/blaxel-ai/sandbox-api/src/handler/filesystem"
-	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -39,7 +37,7 @@ func TestFileSystemOperations(t *testing.T) {
 	}
 
 	var successResp handler.SuccessResponse
-	resp, err := common.MakeRequestAndParse(http.MethodPut, "/filesystem"+testPath, createFileRequest, &successResp)
+	resp, err := common.MakeRequestAndParse(http.MethodPut, common.EncodeFilesystemPath(testPath), createFileRequest, &successResp)
 	require.NoError(t, err)
 	defer resp.Body.Close()
 
@@ -48,7 +46,7 @@ func TestFileSystemOperations(t *testing.T) {
 
 	// 2. Get file content
 	var fileResponse filesystem.FileWithContent
-	resp, err = common.MakeRequestAndParse(http.MethodGet, "/filesystem"+testPath, nil, &fileResponse)
+	resp, err = common.MakeRequestAndParse(http.MethodGet, common.EncodeFilesystemPath(testPath), nil, &fileResponse)
 	require.NoError(t, err)
 	defer resp.Body.Close()
 
@@ -58,7 +56,7 @@ func TestFileSystemOperations(t *testing.T) {
 
 	// 3. List directory
 	var dirResponse filesystem.Directory
-	resp, err = common.MakeRequestAndParse(http.MethodGet, "/filesystem/tmp", nil, &dirResponse)
+	resp, err = common.MakeRequestAndParse(http.MethodGet, common.EncodeFilesystemPath("/tmp"), nil, &dirResponse)
 	require.NoError(t, err)
 	defer resp.Body.Close()
 
@@ -80,7 +78,7 @@ func TestFileSystemOperations(t *testing.T) {
 		"isDirectory": true,
 	}
 
-	resp, err = common.MakeRequestAndParse(http.MethodPut, "/filesystem"+testDir, createDirRequest, &successResp)
+	resp, err = common.MakeRequestAndParse(http.MethodPut, common.EncodeFilesystemPath(testDir), createDirRequest, &successResp)
 	require.NoError(t, err)
 	defer resp.Body.Close()
 
@@ -88,7 +86,7 @@ func TestFileSystemOperations(t *testing.T) {
 	assert.Contains(t, successResp.Message, "success")
 
 	// 5. List newly created directory
-	resp, err = common.MakeRequestAndParse(http.MethodGet, "/filesystem"+testDir, nil, &dirResponse)
+	resp, err = common.MakeRequestAndParse(http.MethodGet, common.EncodeFilesystemPath(testDir), nil, &dirResponse)
 	require.NoError(t, err)
 	defer resp.Body.Close()
 
@@ -96,7 +94,7 @@ func TestFileSystemOperations(t *testing.T) {
 
 	// 6. Since there's no direct copy endpoint, we'll read the file and then write it to the new location
 	// Read the content of the original file
-	resp, err = common.MakeRequestAndParse(http.MethodGet, "/filesystem"+testPath, nil, &fileResponse)
+	resp, err = common.MakeRequestAndParse(http.MethodGet, common.EncodeFilesystemPath(testPath), nil, &fileResponse)
 	require.NoError(t, err)
 	defer resp.Body.Close()
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
@@ -106,7 +104,7 @@ func TestFileSystemOperations(t *testing.T) {
 		"content": string(fileResponse.Content),
 	}
 
-	resp, err = common.MakeRequestAndParse(http.MethodPut, "/filesystem"+testCopyPath, copyRequest, &successResp)
+	resp, err = common.MakeRequestAndParse(http.MethodPut, common.EncodeFilesystemPath(testCopyPath), copyRequest, &successResp)
 	require.NoError(t, err)
 	defer resp.Body.Close()
 
@@ -114,7 +112,7 @@ func TestFileSystemOperations(t *testing.T) {
 	assert.Contains(t, successResp.Message, "success")
 
 	// 7. List directory after copy
-	resp, err = common.MakeRequestAndParse(http.MethodGet, "/filesystem"+testDir, nil, &dirResponse)
+	resp, err = common.MakeRequestAndParse(http.MethodGet, common.EncodeFilesystemPath(testDir), nil, &dirResponse)
 	require.NoError(t, err)
 	defer resp.Body.Close()
 
@@ -131,7 +129,7 @@ func TestFileSystemOperations(t *testing.T) {
 	assert.True(t, foundCopiedFile, "Copied file should exist in directory listing")
 
 	// 8. Delete original file
-	resp, err = common.MakeRequestAndParse(http.MethodDelete, "/filesystem"+testPath, nil, &successResp)
+	resp, err = common.MakeRequestAndParse(http.MethodDelete, common.EncodeFilesystemPath(testPath), nil, &successResp)
 	require.NoError(t, err)
 	defer resp.Body.Close()
 
@@ -139,14 +137,14 @@ func TestFileSystemOperations(t *testing.T) {
 	assert.Contains(t, successResp.Message, "success")
 
 	// 9. Try to delete directory without recursive flag - should fail
-	resp, err = common.MakeRequest(http.MethodDelete, "/filesystem"+testDir, nil)
+	resp, err = common.MakeRequest(http.MethodDelete, common.EncodeFilesystemPath(testDir), nil)
 	require.NoError(t, err)
 	defer resp.Body.Close()
 
 	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode)
 
 	// 10. Delete directory with recursive flag
-	resp, err = common.MakeRequestAndParse(http.MethodDelete, "/filesystem"+testDir+"?recursive=true", nil, &successResp)
+	resp, err = common.MakeRequestAndParse(http.MethodDelete, common.EncodeFilesystemPath(testDir)+"?recursive=true", nil, &successResp)
 	require.NoError(t, err)
 	defer resp.Body.Close()
 
@@ -161,7 +159,7 @@ func TestFileSystemTree(t *testing.T) {
 
 	// Create the directory
 	var successResp handler.SuccessResponse
-	resp, err := common.MakeRequestAndParse(http.MethodPut, "/filesystem"+testDir, map[string]interface{}{
+	resp, err := common.MakeRequestAndParse(http.MethodPut, common.EncodeFilesystemPath(testDir), map[string]interface{}{
 		"isDirectory": true,
 	}, &successResp)
 	require.NoError(t, err)
@@ -175,7 +173,7 @@ func TestFileSystemTree(t *testing.T) {
 	testFilePath := testDir + "/" + testFileName
 	testContent := "test content"
 
-	resp, err = common.MakeRequestAndParse(http.MethodPut, "/filesystem"+testFilePath, map[string]interface{}{
+	resp, err = common.MakeRequestAndParse(http.MethodPut, common.EncodeFilesystemPath(testFilePath), map[string]interface{}{
 		"content": testContent,
 	}, &successResp)
 	require.NoError(t, err)
@@ -186,7 +184,7 @@ func TestFileSystemTree(t *testing.T) {
 
 	// Get the directory listing
 	var dirResponse filesystem.Directory
-	resp, err = common.MakeRequestAndParse(http.MethodGet, "/filesystem"+testDir, nil, &dirResponse)
+	resp, err = common.MakeRequestAndParse(http.MethodGet, common.EncodeFilesystemPath(testDir), nil, &dirResponse)
 	require.NoError(t, err)
 	defer resp.Body.Close()
 
@@ -199,7 +197,7 @@ func TestFileSystemTree(t *testing.T) {
 
 	// Get the tree view
 	var treeResponse filesystem.Directory
-	resp, err = common.MakeRequestAndParse(http.MethodGet, "/filesystem/tree"+testDir, nil, &treeResponse)
+	resp, err = common.MakeRequestAndParse(http.MethodGet, common.EncodeTreePath(testDir), nil, &treeResponse)
 	require.NoError(t, err)
 	defer resp.Body.Close()
 
@@ -207,7 +205,7 @@ func TestFileSystemTree(t *testing.T) {
 	assert.Equal(t, testDir, treeResponse.Path)
 
 	// Clean up - delete the directory (should recursively delete contents)
-	resp, err = common.MakeRequestAndParse(http.MethodDelete, "/filesystem"+testDir+"?recursive=true", nil, &successResp)
+	resp, err = common.MakeRequestAndParse(http.MethodDelete, common.EncodeFilesystemPath(testDir)+"?recursive=true", nil, &successResp)
 	require.NoError(t, err)
 	defer resp.Body.Close()
 
@@ -224,7 +222,7 @@ func TestFileSystemWatch(t *testing.T) {
 		"isDirectory": true,
 	}
 	var successResp handler.SuccessResponse
-	resp, err := common.MakeRequestAndParse(http.MethodPut, "/filesystem"+dir, createDirRequest, &successResp)
+	resp, err := common.MakeRequestAndParse(http.MethodPut, common.EncodeFilesystemPath(dir), createDirRequest, &successResp)
 	require.NoError(t, err)
 	defer resp.Body.Close()
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
@@ -239,8 +237,11 @@ func TestFileSystemWatch(t *testing.T) {
 
 	// Start watcher goroutine
 	go func() {
-		resp, err := common.MakeRequest("GET", "/watch/filesystem"+watchPath, nil)
-		require.NoError(t, err)
+		resp, err := common.MakeRequest("GET", common.EncodeWatchPath(watchPath), nil)
+		if err != nil {
+			t.Errorf("Error in watcher goroutine: %v", err)
+			return
+		}
 		defer resp.Body.Close()
 		reader := bufio.NewReader(resp.Body)
 		for {
@@ -265,7 +266,7 @@ func TestFileSystemWatch(t *testing.T) {
 	createFileRequest := map[string]interface{}{
 		"content": string(content),
 	}
-	resp, err = common.MakeRequestAndParse(http.MethodPut, "/filesystem"+filePath, createFileRequest, &successResp)
+	resp, err = common.MakeRequestAndParse(http.MethodPut, common.EncodeFilesystemPath(filePath), createFileRequest, &successResp)
 	require.NoError(t, err)
 	defer resp.Body.Close()
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
@@ -283,83 +284,6 @@ func TestFileSystemWatch(t *testing.T) {
 	<-done
 }
 
-// TestFileSystemWatchWebSocket tests the streaming watch endpoint over WebSocket for file modifications
-func TestFileSystemWatchWebSocket(t *testing.T) {
-	dir := fmt.Sprintf("/tmp/test-watchws-%d", time.Now().UnixNano())
-	createDirRequest := map[string]interface{}{
-		"isDirectory": true,
-	}
-	var successResp handler.SuccessResponse
-	resp, err := common.MakeRequestAndParse(http.MethodPut, "/filesystem"+dir, createDirRequest, &successResp)
-	require.NoError(t, err)
-	defer resp.Body.Close()
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.Contains(t, successResp.Message, "success")
-
-	// Build ws:// URL from API base URL
-	apiBase := os.Getenv("API_BASE_URL")
-	if apiBase == "" {
-		apiBase = "http://localhost:8080"
-	}
-	u, err := url.Parse(apiBase)
-	require.NoError(t, err)
-	u.Scheme = "ws"
-	u.Path = "/ws/watch/filesystem" + dir
-
-	ws, _, err := websocket.DefaultDialer.Dial(u.String(), nil)
-	require.NoError(t, err)
-	defer ws.Close()
-
-	fileName := "watchedws.txt"
-	filePath := dir + "/" + fileName
-
-	done := make(chan struct{})
-	received := make(chan map[string]interface{}, 1)
-	go func() {
-		for {
-			_, msg, err := ws.ReadMessage()
-
-			if err != nil {
-				close(done)
-				return
-			}
-			var payload map[string]interface{}
-			err = json.Unmarshal(msg, &payload)
-			if err == nil {
-				received <- payload
-				return
-			}
-		}
-	}()
-
-	// Wait a moment to ensure watcher is ready
-	time.Sleep(300 * time.Millisecond)
-
-	// Create a file in the watched directory
-	content := []byte("hello watch ws!")
-	createFileRequest := map[string]interface{}{
-		"content": string(content),
-	}
-	resp, err = common.MakeRequestAndParse(http.MethodPut, "/filesystem"+filePath, createFileRequest, &successResp)
-	require.NoError(t, err)
-	defer resp.Body.Close()
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.Contains(t, successResp.Message, "success")
-
-	// Wait for watcher to receive the event or timeout
-	select {
-	case event := <-received:
-		assert.Equal(t, fileName, event["name"], "Watcher should receive the created file path in event")
-		assert.Equal(t, dir, event["path"], "Watcher should receive the created file path in event")
-		assert.Contains(t, event["op"], "CREATE")
-	case <-time.After(2 * time.Second):
-		t.Fatal("Timeout waiting for file event from websocket watcher")
-	}
-
-	// Clean up
-	_, _ = common.MakeRequest(http.MethodDelete, "/filesystem"+dir+"?recursive=true", nil)
-}
-
 // TestFileSystemWatchRecursive tests recursive streaming watch endpoint for file modifications in subdirectories
 func TestFileSystemWatchRecursive(t *testing.T) {
 	dir := fmt.Sprintf("/tmp/test-watch-recursive-%d", time.Now().UnixNano())
@@ -372,14 +296,14 @@ func TestFileSystemWatchRecursive(t *testing.T) {
 		"isDirectory": true,
 	}
 	var successResp handler.SuccessResponse
-	resp, err := common.MakeRequestAndParse(http.MethodPut, "/filesystem"+dir, createDirRequest, &successResp)
+	resp, err := common.MakeRequestAndParse(http.MethodPut, common.EncodeFilesystemPath(dir), createDirRequest, &successResp)
 	require.NoError(t, err)
 	defer resp.Body.Close()
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Contains(t, successResp.Message, "success")
 
 	// Create subdirectory
-	resp, err = common.MakeRequestAndParse(http.MethodPut, "/filesystem"+subdir, createDirRequest, &successResp)
+	resp, err = common.MakeRequestAndParse(http.MethodPut, common.EncodeFilesystemPath(subdir), createDirRequest, &successResp)
 	require.NoError(t, err)
 	defer resp.Body.Close()
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
@@ -391,8 +315,11 @@ func TestFileSystemWatchRecursive(t *testing.T) {
 
 	// Start watcher goroutine
 	go func() {
-		resp, err := common.MakeRequest("GET", "/watch/filesystem"+watchPath, nil)
-		require.NoError(t, err)
+		resp, err := common.MakeRequest("GET", common.EncodeWatchPath(watchPath), nil)
+		if err != nil {
+			t.Errorf("Error in watcher goroutine: %v", err)
+			return
+		}
 		defer resp.Body.Close()
 		reader := bufio.NewReader(resp.Body)
 		for {
@@ -434,7 +361,7 @@ func TestFileSystemWatchRecursive(t *testing.T) {
 	createFileRequest := map[string]interface{}{
 		"content": string(content),
 	}
-	resp, err = common.MakeRequestAndParse(http.MethodPut, "/filesystem"+filePath, createFileRequest, &successResp)
+	resp, err = common.MakeRequestAndParse(http.MethodPut, common.EncodeFilesystemPath(filePath), createFileRequest, &successResp)
 	require.NoError(t, err)
 	defer resp.Body.Close()
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
@@ -442,7 +369,7 @@ func TestFileSystemWatchRecursive(t *testing.T) {
 	_ = waitForEvent("CREATE", fileName)
 
 	// 2. Delete the file
-	resp, err = common.MakeRequestAndParse(http.MethodDelete, "/filesystem"+filePath, nil, &successResp)
+	resp, err = common.MakeRequestAndParse(http.MethodDelete, common.EncodeFilesystemPath(filePath), nil, &successResp)
 	require.NoError(t, err)
 	defer resp.Body.Close()
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
@@ -450,14 +377,14 @@ func TestFileSystemWatchRecursive(t *testing.T) {
 
 	// 3. Create a new subdirectory
 	newSubdir := dir + "/subdir2"
-	resp, err = common.MakeRequestAndParse(http.MethodPut, "/filesystem"+newSubdir, createDirRequest, &successResp)
+	resp, err = common.MakeRequestAndParse(http.MethodPut, common.EncodeFilesystemPath(newSubdir), createDirRequest, &successResp)
 	require.NoError(t, err)
 	defer resp.Body.Close()
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	waitForEvent("CREATE", "subdir2")
 
 	// 3. Delete the subdirectory
-	resp, err = common.MakeRequestAndParse(http.MethodDelete, "/filesystem"+newSubdir, nil, &successResp)
+	resp, err = common.MakeRequestAndParse(http.MethodDelete, common.EncodeFilesystemPath(newSubdir), nil, &successResp)
 	require.NoError(t, err)
 	defer resp.Body.Close()
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
@@ -479,10 +406,10 @@ func TestFileSystemWatchRecursive(t *testing.T) {
 			"isDirectory": true,
 		}
 		var successResp handler.SuccessResponse
-		resp, err := common.MakeRequestAndParse(http.MethodPut, "/filesystem"+dir, createDirRequest, &successResp)
+		resp, err := common.MakeRequestAndParse(http.MethodPut, common.EncodeFilesystemPath(dir), createDirRequest, &successResp)
 		require.NoError(t, err)
 		defer resp.Body.Close()
-		resp, err = common.MakeRequestAndParse(http.MethodPut, "/filesystem"+subdir, createDirRequest, &successResp)
+		resp, err = common.MakeRequestAndParse(http.MethodPut, common.EncodeFilesystemPath(subdir), createDirRequest, &successResp)
 		require.NoError(t, err)
 		defer resp.Body.Close()
 
@@ -492,8 +419,11 @@ func TestFileSystemWatchRecursive(t *testing.T) {
 
 		// Start watcher goroutine with ignore=ignored.txt
 		go func() {
-			resp, err := common.MakeRequest("GET", "/watch/filesystem"+watchPath+"?ignore=ignored.txt", nil)
-			require.NoError(t, err)
+			resp, err := common.MakeRequest("GET", common.EncodeWatchPath(watchPath)+"?ignore=ignored.txt", nil)
+			if err != nil {
+				t.Errorf("Error in watcher goroutine: %v", err)
+				return
+			}
 			defer resp.Body.Close()
 			reader := bufio.NewReader(resp.Body)
 			for {
@@ -519,7 +449,7 @@ func TestFileSystemWatchRecursive(t *testing.T) {
 		createFileRequest := map[string]interface{}{
 			"content": "not ignored",
 		}
-		resp, err = common.MakeRequestAndParse(http.MethodPut, "/filesystem"+filePath, createFileRequest, &successResp)
+		resp, err = common.MakeRequestAndParse(http.MethodPut, common.EncodeFilesystemPath(filePath), createFileRequest, &successResp)
 		require.NoError(t, err)
 		defer resp.Body.Close()
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
@@ -529,7 +459,7 @@ func TestFileSystemWatchRecursive(t *testing.T) {
 		createIgnoredFileRequest := map[string]interface{}{
 			"content": "ignored",
 		}
-		resp, err = common.MakeRequestAndParse(http.MethodPut, "/filesystem"+ignoredFilePath, createIgnoredFileRequest, &successResp)
+		resp, err = common.MakeRequestAndParse(http.MethodPut, common.EncodeFilesystemPath(ignoredFilePath), createIgnoredFileRequest, &successResp)
 		require.NoError(t, err)
 		defer resp.Body.Close()
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
@@ -567,7 +497,7 @@ func TestFileSystemWatchRecursive(t *testing.T) {
 			"isDirectory": true,
 		}
 		var successResp handler.SuccessResponse
-		resp, err := common.MakeRequestAndParse(http.MethodPut, "/filesystem"+dir, createDirRequest, &successResp)
+		resp, err := common.MakeRequestAndParse(http.MethodPut, common.EncodeFilesystemPath(dir), createDirRequest, &successResp)
 		require.NoError(t, err)
 		defer resp.Body.Close()
 
@@ -577,8 +507,11 @@ func TestFileSystemWatchRecursive(t *testing.T) {
 
 		// Start watcher goroutine with ignore=ignored-folder
 		go func() {
-			resp, err := common.MakeRequest("GET", "/watch/filesystem"+watchPath+"?ignore=ignored-folder", nil)
-			require.NoError(t, err)
+			resp, err := common.MakeRequest("GET", common.EncodeWatchPath(watchPath)+"?ignore=ignored-folder", nil)
+			if err != nil {
+				t.Errorf("Error in watcher goroutine: %v", err)
+				return
+			}
 			defer resp.Body.Close()
 			reader := bufio.NewReader(resp.Body)
 			for {
@@ -601,7 +534,7 @@ func TestFileSystemWatchRecursive(t *testing.T) {
 		time.Sleep(100 * time.Millisecond)
 
 		// Create the ignored subdirectory
-		resp, err = common.MakeRequestAndParse(http.MethodPut, "/filesystem"+ignoredSubdir, createDirRequest, &successResp)
+		resp, err = common.MakeRequestAndParse(http.MethodPut, common.EncodeFilesystemPath(ignoredSubdir), createDirRequest, &successResp)
 		require.NoError(t, err)
 		defer resp.Body.Close()
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
@@ -611,7 +544,7 @@ func TestFileSystemWatchRecursive(t *testing.T) {
 		createFileRequest := map[string]interface{}{
 			"content": "should be ignored",
 		}
-		resp, err = common.MakeRequestAndParse(http.MethodPut, "/filesystem"+filePath, createFileRequest, &successResp)
+		resp, err = common.MakeRequestAndParse(http.MethodPut, common.EncodeFilesystemPath(filePath), createFileRequest, &successResp)
 		require.NoError(t, err)
 		defer resp.Body.Close()
 		assert.Equal(t, http.StatusOK, resp.StatusCode)

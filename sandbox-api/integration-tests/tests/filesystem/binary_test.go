@@ -32,7 +32,7 @@ func TestBinaryFileUpload(t *testing.T) {
 	// Test binary file upload
 	resp, err := common.MakeMultipartRequest(
 		http.MethodPut,
-		"/filesystem"+testFilePath,
+		common.EncodeFilesystemPath(testFilePath),
 		binaryData,
 		"test-binary.bin",
 		map[string]string{
@@ -59,7 +59,7 @@ func TestBinaryFileUpload(t *testing.T) {
 
 	// Verify the file exists by requesting it
 	var fileResponse filesystem.FileWithContent
-	resp, err = common.MakeRequestAndParse(http.MethodGet, "/filesystem"+testFilePath, nil, &fileResponse)
+	resp, err = common.MakeRequestAndParse(http.MethodGet, common.EncodeFilesystemPath(testFilePath), nil, &fileResponse)
 	require.NoError(t, err)
 	defer resp.Body.Close()
 
@@ -73,7 +73,7 @@ func TestBinaryFileUpload(t *testing.T) {
 	assert.Equal(t, int64(len(binaryData)), fileResponse.Size, "File size should match our uploaded data")
 
 	// Clean up - delete the file
-	resp, err = common.MakeRequestAndParse(http.MethodDelete, "/filesystem"+testFilePath, nil, &successResp)
+	resp, err = common.MakeRequestAndParse(http.MethodDelete, common.EncodeFilesystemPath(testFilePath), nil, &successResp)
 	require.NoError(t, err)
 	defer resp.Body.Close()
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
