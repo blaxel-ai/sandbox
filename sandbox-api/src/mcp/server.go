@@ -1,11 +1,13 @@
 package mcp
 
 import (
+	"context"
 	"fmt"
+	"net/http"
 	"time"
 
 	"github.com/gin-gonic/gin"
-	mcp_golang "github.com/metoro-io/mcp-golang"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/sirupsen/logrus"
 
 	"github.com/blaxel-ai/sandbox-api/src/handler"
@@ -13,8 +15,9 @@ import (
 
 // Server represents the MCP server
 type Server struct {
-	mcpServer *mcp_golang.Server
+	mcpServer *mcp.Server
 	handlers  *Handlers
+	engine    *gin.Engine
 }
 
 // Handlers contains all the handlers used by the MCP server
@@ -24,11 +27,18 @@ type Handlers struct {
 	Network    *handler.NetworkHandler
 }
 
-// NewServer creates a new MCP server
-func NewServer(gin *gin.Engine) (*Server, error) {
+// NewServer creates a new MCP server using the official SDK
+func NewServer(ginEngine *gin.Engine) (*Server, error) {
 	logrus.Info("Creating MCP server")
-	transport := NewWebSocketTransport(gin)
-	mcpServer := mcp_golang.NewServer(transport, mcp_golang.WithName("Sandbox API Server"))
+
+	// Create MCP server with the official SDK
+	mcpServer := mcp.NewServer(
+		&mcp.Implementation{
+			Name:    "Sandbox API Server",
+			Version: "1.0.0",
+		},
+		nil,
+	)
 
 	// Initialize handlers
 	handlers := &Handlers{
@@ -40,23 +50,44 @@ func NewServer(gin *gin.Engine) (*Server, error) {
 	server := &Server{
 		mcpServer: mcpServer,
 		handlers:  handlers,
+		engine:    ginEngine,
 	}
 
 	logrus.Info("Registering tools")
 	// Register all tools
-	err := server.registerTools()
-	if err != nil {
+	if err := server.registerTools(); err != nil {
 		return nil, fmt.Errorf("failed to register tools: %w", err)
 	}
 
 	logrus.Info("Tools registered")
+
+	// Set up HTTP endpoints using the official SDK pattern
+	server.setupHTTPEndpoints()
 
 	return server, nil
 }
 
 // Serve starts the MCP server
 func (s *Server) Serve() error {
-	return s.mcpServer.Serve()
+	// The server is served via HTTP endpoints through Gin
+	return nil
+}
+
+// setupHTTPEndpoints sets up the HTTP endpoints using the official SDK pattern
+func (s *Server) setupHTTPEndpoints() {
+	// Create the streamable HTTP handler using the official SDK
+	handler := mcp.NewStreamableHTTPHandler(func(req *http.Request) *mcp.Server {
+		// Return the MCP server for each request
+		return s.mcpServer
+	}, nil)
+
+	// Wrap the handler with Gin
+	s.engine.Any("/mcp/*path", gin.WrapH(http.StripPrefix("/mcp", handler)))
+
+	// Also handle the base /mcp endpoint without trailing slash
+	s.engine.Any("/mcp", gin.WrapH(handler))
+
+	logrus.Info("MCP HTTP endpoints configured at /mcp")
 }
 
 // registerTools registers all the tools with the MCP server
@@ -66,6 +97,7 @@ func (s *Server) registerTools() error {
 		return err
 	}
 	logrus.Info("Process tools registered")
+
 	// Filesystem tools
 	if err := s.registerFileSystemTools(); err != nil {
 		return err
@@ -77,33 +109,25 @@ func (s *Server) registerTools() error {
 		return err
 	}
 	logrus.Info("Codegen tools registered")
+
 	return nil
 }
 
 // LogToolCall wraps a tool handler function with logging middleware
-func LogToolCall[T any](toolName string, handler func(T) (*mcp_golang.ToolResponse, error)) func(T) (*mcp_golang.ToolResponse, error) {
-	return func(args T) (*mcp_golang.ToolResponse, error) {
-		startTime := time.Now()
-		logrus.WithFields(logrus.Fields{
-			"tool": toolName,
-			"args": args,
-		}).Info("Tool call started")
+func LogToolCall[T any, R any](toolName string, handler func(ctx context.Context, req *mcp.CallToolRequest, args T) (*mcp.CallToolResult, R, error)) func(context.Context, *mcp.CallToolRequest, T) (*mcp.CallToolResult, R, error) {
+	return func(ctx context.Context, req *mcp.CallToolRequest, args T) (*mcp.CallToolResult, R, error) {
+		start := time.Now()
+		logrus.Infof("Tool call started: %s", toolName)
 
-		response, err := handler(args)
+		result, output, err := handler(ctx, req, args)
 
-		duration := time.Since(startTime)
-		logEntry := logrus.WithFields(logrus.Fields{
-			"tool":        toolName,
-			"duration":    duration.String(),
-			"duration_ms": duration.Milliseconds(),
-		})
-
+		duration := time.Since(start)
 		if err != nil {
-			logEntry.WithError(err).Error("Tool call failed")
+			logrus.Errorf("Tool call failed: %s (duration: %v, error: %v)", toolName, duration, err)
 		} else {
-			logEntry.Info("Tool call completed successfully")
+			logrus.Infof("Tool call completed: %s (duration: %v)", toolName, duration)
 		}
 
-		return response, err
+		return result, output, err
 	}
 }
