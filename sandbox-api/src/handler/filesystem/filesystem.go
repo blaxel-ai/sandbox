@@ -183,6 +183,14 @@ func NewFilesystemWithWorkingDir(root string, workingDir string) *Filesystem {
 	return &Filesystem{Root: root, WorkingDir: workingDir}
 }
 
+// ResolveDisplayPath converts "." to the actual working directory for display purposes
+func (fs *Filesystem) ResolveDisplayPath(path string) string {
+	if path == "." || path == "./" {
+		return fs.WorkingDir
+	}
+	return path
+}
+
 // GetAbsolutePath gets the absolute path, ensuring it's within the root
 func (fs *Filesystem) GetAbsolutePath(path string) (string, error) {
 	var absPath string
@@ -281,7 +289,7 @@ func (fs *Filesystem) ReadFile(path string) (*FileWithContentByte, error) {
 		Content: content,
 	}
 	// Set File fields
-	result.Path = path
+	result.Path = fs.ResolveDisplayPath(path)
 	result.Permissions = info.Mode()
 	result.Size = info.Size()
 	result.LastModified = info.ModTime()
@@ -349,7 +357,9 @@ func (fs *Filesystem) ListDirectory(path string) (*Directory, error) {
 		return nil, err
 	}
 
-	dir := NewDirectory(path)
+	// Use the resolved display path for the directory
+	displayPath := fs.ResolveDisplayPath(path)
+	dir := NewDirectory(displayPath)
 
 	entries, err := os.ReadDir(absPath)
 	if err != nil {
@@ -357,7 +367,8 @@ func (fs *Filesystem) ListDirectory(path string) (*Directory, error) {
 	}
 
 	for _, entry := range entries {
-		entryPath := filepath.Join(path, entry.Name())
+		// Use displayPath for the entry paths too
+		entryPath := filepath.Join(displayPath, entry.Name())
 		absEntryPath := filepath.Join(absPath, entry.Name())
 
 		// Use os.Lstat to get info about the symlink itself, not its target

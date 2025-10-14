@@ -49,8 +49,8 @@ func NewFileSystemHandler() *FileSystemHandler {
 		if cwd, err := os.Getwd(); err == nil {
 			workingDir = cwd
 		} else {
-			// Default to /blaxel if we can't get the current directory
-			workingDir = "/blaxel"
+			// Default to / if we can't get the current directory
+			workingDir = "/"
 		}
 	}
 
