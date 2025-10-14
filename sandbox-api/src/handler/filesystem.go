@@ -248,12 +248,21 @@ func (h *FileSystemHandler) HandleCreateOrUpdateFileJSON(c *gin.Context) {
 		return
 	}
 
-	// Parse permissions or use default
-	var permissions os.FileMode = 0644
+	// Parse permissions or use appropriate defaults
+	var permissions os.FileMode
 	if request.Permissions != "" {
 		permInt, err := strconv.ParseUint(request.Permissions, 8, 32)
-		if err == nil {
-			permissions = os.FileMode(permInt)
+		if err != nil {
+			h.SendError(c, http.StatusBadRequest, fmt.Errorf("invalid permissions format '%s': %w", request.Permissions, err))
+			return
+		}
+		permissions = os.FileMode(permInt)
+	} else {
+		// Use appropriate defaults: 0755 for directories, 0644 for files
+		if request.IsDirectory {
+			permissions = 0755
+		} else {
+			permissions = 0644
 		}
 	}
 
@@ -312,9 +321,13 @@ func (h *FileSystemHandler) HandleCreateOrUpdateBinary(c *gin.Context) {
 			// read small permission value
 			data, _ := io.ReadAll(part)
 			if len(data) > 0 {
-				if permInt, perr := strconv.ParseUint(strings.TrimSpace(string(data)), 8, 32); perr == nil {
-					permissions = os.FileMode(permInt)
+				permInt, perr := strconv.ParseUint(strings.TrimSpace(string(data)), 8, 32)
+				if perr != nil {
+					part.Close()
+					h.SendError(c, http.StatusBadRequest, fmt.Errorf("invalid permissions format '%s': %w", strings.TrimSpace(string(data)), perr))
+					return
 				}
+				permissions = os.FileMode(permInt)
 			}
 			part.Close()
 			continue

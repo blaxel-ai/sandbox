@@ -335,6 +335,9 @@ func (fs *Filesystem) WriteFileFromReader(path string, r io.Reader, perm os.File
 	defer f.Close()
 
 	if _, err := io.Copy(f, r); err != nil {
+		// Clean up the partially written file on error
+		f.Close() // Close file before attempting to remove
+		os.Remove(absPath)
 		return err
 	}
 	return nil
@@ -573,12 +576,20 @@ func (fs *Filesystem) Walk(root string, fn filepath.WalkFunc) error {
 
 // CreateOrUpdateFile creates or updates a file
 func (fs *Filesystem) CreateOrUpdateFile(path string, content string, isDirectory bool, permissions string) error {
-	// Parse permissions or use default
-	var perm os.FileMode = 0644
+	// Parse permissions or use appropriate defaults
+	var perm os.FileMode
 	if permissions != "" {
 		permInt, err := strconv.ParseUint(permissions, 8, 32)
-		if err == nil {
-			perm = os.FileMode(permInt)
+		if err != nil {
+			return fmt.Errorf("invalid permissions format '%s': %w", permissions, err)
+		}
+		perm = os.FileMode(permInt)
+	} else {
+		// Use appropriate defaults: 0755 for directories, 0644 for files
+		if isDirectory {
+			perm = 0755
+		} else {
+			perm = 0644
 		}
 	}
 
