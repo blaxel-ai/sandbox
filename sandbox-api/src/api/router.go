@@ -115,10 +115,6 @@ func SetupRouter() *gin.Engine {
 	r.POST("/network/process/:pid/monitor", networkHandler.HandleMonitorPorts)
 	r.DELETE("/network/process/:pid/monitor", networkHandler.HandleStopMonitoringPorts)
 
-	// Register WebSocket endpoints for watch and logs stream
-	r.GET("/ws/watch/filesystem/*path", fsHandler.HandleWatchDirectoryWebSocket)
-	r.GET("/ws/process/:identifier/logs/stream", processHandler.HandleGetProcessLogsStreamWebSocket)
-
 	// Health check route
 	r.GET("/health", func(c *gin.Context) {
 		c.JSON(200, gin.H{"status": "ok"})

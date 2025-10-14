@@ -1,0 +1,20 @@
+type = "sandbox"
+
+[runtime]
+generation = "mk3"
+memory = 8192
+
+[[runtime.ports]]
+name = "code-server"
+target = 8081
+protocol = "tcp"
+
+[[runtime.ports]]
+name = "debug-sandbox"
+target = 8082
+protocol = "tcp"
+
+[[runtime.ports]]
+name = "nextjs"
+target = 3000
+protocol = "tcp"

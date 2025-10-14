@@ -160,3 +160,50 @@ func WaitForAPI(maxRetries int, retryDelay time.Duration) error {
 
 	return fmt.Errorf("API did not become ready in time")
 }
+
+// EncodeFilesystemPath encodes a path for the filesystem API
+// Absolute paths (starting with /) need to have the leading slash URL-encoded as %2F
+// Relative paths are used as-is
+func EncodeFilesystemPath(path string) string {
+	if path == "" {
+		return "/filesystem/"
+	}
+
+	if path[0] == '/' {
+		// For absolute paths, encode only the leading slash to indicate absolute path
+		// The rest of the path remains as-is
+		return "/filesystem%2F" + path[1:]
+	}
+	// For relative paths, just append to /filesystem/
+	return "/filesystem/" + path
+}
+
+// EncodeWatchPath encodes a path for the watch filesystem API
+// Similar to EncodeFilesystemPath but for /watch/filesystem endpoint
+func EncodeWatchPath(path string) string {
+	if path == "" {
+		return "/watch/filesystem/"
+	}
+
+	if path[0] == '/' {
+		// For absolute paths, encode only the leading slash to indicate absolute path
+		return "/watch/filesystem%2F" + path[1:]
+	}
+	// For relative paths, just append to /watch/filesystem/
+	return "/watch/filesystem/" + path
+}
+
+// EncodeTreePath encodes a path for the tree filesystem API
+// Similar to EncodeFilesystemPath but for /filesystem/tree endpoint
+func EncodeTreePath(path string) string {
+	if path == "" {
+		return "/filesystem/tree/"
+	}
+
+	if path[0] == '/' {
+		// For absolute paths, encode only the leading slash to indicate absolute path
+		return "/filesystem/tree%2F" + path[1:]
+	}
+	// For relative paths, just append to /filesystem/tree/
+	return "/filesystem/tree/" + path
+}

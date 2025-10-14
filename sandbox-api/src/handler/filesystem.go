@@ -9,12 +9,10 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/gin-gonic/gin"
-	"github.com/gorilla/websocket"
 	"github.com/sirupsen/logrus"
 
 	"github.com/blaxel-ai/sandbox-api/src/handler/filesystem"
@@ -44,15 +42,56 @@ type FileRequest struct {
 
 // NewFileSystemHandler creates a new filesystem handler
 func NewFileSystemHandler() *FileSystemHandler {
+	// Get working directory from environment or use default
+	workingDir := os.Getenv("WORKDIR")
+	if workingDir == "" {
+		// Try to get current working directory
+		if cwd, err := os.Getwd(); err == nil {
+			workingDir = cwd
+		} else {
+			// Default to / if we can't get the current directory
+			workingDir = "/"
+		}
+	}
+
 	return &FileSystemHandler{
 		BaseHandler: NewBaseHandler(),
-		fs:          filesystem.NewFilesystem("/"),
+		fs:          filesystem.NewFilesystemWithWorkingDir("/", workingDir),
 	}
+}
+
+// extractPathFromRequest extracts the path from the request and determines if it's relative or absolute
+func (h *FileSystemHandler) extractPathFromRequest(c *gin.Context) string {
+	path := c.Param("path")
+
+	// Check if the request URL explicitly contains %2F (encoded /)
+	rawURL := c.Request.URL.RawPath
+	if rawURL == "" {
+		rawURL = c.Request.URL.Path
+	}
+
+	// If the raw URL contains %2F, it's an explicit absolute path request
+	if strings.Contains(rawURL, "%2F") {
+		// Keep the path as-is for absolute paths
+		return path
+	}
+
+	// If path starts with "/" but doesn't have %2F in the URL, treat as relative
+	// by removing the leading slash (Gin adds it)
+	if path == "/" {
+		// Special case: /filesystem/ means current directory
+		return "."
+	} else if strings.HasPrefix(path, "/") {
+		// Remove leading slash for relative paths like /src -> src
+		return path[1:]
+	}
+
+	return path
 }
 
 // GetWorkingDirectory gets the current working directory
 func (h *FileSystemHandler) GetWorkingDirectory() (string, error) {
-	return h.fs.GetAbsolutePath("/")
+	return h.fs.WorkingDir, nil
 }
 
 // ListDirectory lists the contents of a directory
@@ -110,12 +149,9 @@ func (h *FileSystemHandler) DeleteFile(path string) error {
 // @Failure 500 {object} ErrorResponse "Internal server error"
 // @Router /filesystem/{path} [get]
 func (h *FileSystemHandler) HandleGetFile(c *gin.Context) {
-	path, err := h.GetPathParam(c, "path")
-	if err != nil {
-		h.SendError(c, http.StatusBadRequest, err)
-		return
-	}
-	path, err = lib.FormatPath(path)
+	path := h.extractPathFromRequest(c)
+
+	path, err := lib.FormatPath(path)
 	if err != nil {
 		h.SendError(c, http.StatusBadRequest, err)
 		return
@@ -193,12 +229,9 @@ func (h *FileSystemHandler) HandleCreateOrUpdateFile(c *gin.Context) {
 }
 
 func (h *FileSystemHandler) HandleCreateOrUpdateFileJSON(c *gin.Context) {
-	path, err := h.GetPathParam(c, "path")
-	if err != nil {
-		h.SendError(c, http.StatusBadRequest, err)
-		return
-	}
-	path, err = lib.FormatPath(path)
+	path := h.extractPathFromRequest(c)
+
+	path, err := lib.FormatPath(path)
 	if err != nil {
 		h.SendError(c, http.StatusBadRequest, err)
 		return
@@ -245,12 +278,9 @@ func (h *FileSystemHandler) HandleCreateOrUpdateFileJSON(c *gin.Context) {
 
 func (h *FileSystemHandler) HandleCreateOrUpdateBinary(c *gin.Context) {
 	// Get path from form data
-	path, err := h.GetPathParam(c, "path")
-	if err != nil {
-		h.SendError(c, http.StatusBadRequest, err)
-		return
-	}
-	path, err = lib.FormatPath(path)
+	path := h.extractPathFromRequest(c)
+
+	path, err := lib.FormatPath(path)
 	if err != nil {
 		h.SendError(c, http.StatusBadRequest, err)
 		return
@@ -310,28 +340,15 @@ func (h *FileSystemHandler) HandleCreateOrUpdateBinary(c *gin.Context) {
 // @Failure 500 {object} ErrorResponse "Internal server error"
 // @Router /filesystem/{path} [delete]
 func (h *FileSystemHandler) HandleDeleteFile(c *gin.Context) {
-	path, err := h.GetPathParam(c, "path")
-	if err != nil {
-		h.SendError(c, http.StatusBadRequest, err)
-		return
-	}
-	path, err = lib.FormatPath(path)
+	path := h.extractPathFromRequest(c)
+
+	path, err := lib.FormatPath(path)
 	if err != nil {
 		h.SendError(c, http.StatusBadRequest, err)
 		return
 	}
 
 	recursive := c.Query("recursive")
-
-	// Default to root if path is empty
-	if path == "" {
-		path = "/"
-	}
-
-	// Ensure path starts with a slash
-	if path != "/" && len(path) > 0 && path[0] != '/' {
-		path = "/" + path
-	}
 
 	// Check if it's a directory
 	isDir, err := h.DirectoryExists(path)
@@ -533,12 +550,9 @@ func (h *FileSystemHandler) HandleDeleteTree(c *gin.Context) {
 // @Failure 500 {object} ErrorResponse "Internal server error"
 // @Router /watch/filesystem/{path} [get]
 func (h *FileSystemHandler) HandleWatchDirectory(c *gin.Context) {
-	path, err := h.GetPathParam(c, "path")
-	if err != nil {
-		h.SendError(c, http.StatusBadRequest, err)
-		return
-	}
-	path, err = lib.FormatPath(path)
+	path := h.extractPathFromRequest(c)
+
+	path, err := lib.FormatPath(path)
 	if err != nil {
 		h.SendError(c, http.StatusBadRequest, err)
 		return
@@ -663,115 +677,6 @@ func (h *FileSystemHandler) HandleWatchDirectory(c *gin.Context) {
 					return
 				}
 				flusher.Flush()
-			}
-		}
-	}()
-
-	<-done
-}
-
-// HandleWatchDirectoryWebSocket streams file modification events for a directory over WebSocket
-// @Summary Stream file modification events in a directory via WebSocket
-// @Description Streams JSON events of modified files in the given directory. Closes when the client disconnects.
-// @Tags filesystem
-// @Produce json
-// @Param path path string true "Directory path to watch"
-// @Success 101 {string} string "WebSocket connection established"
-// @Failure 400 {object} ErrorResponse "Invalid path"
-// @Failure 500 {object} ErrorResponse "Internal server error"
-// @Router /ws/watch/filesystem/{path} [get]
-func (h *FileSystemHandler) HandleWatchDirectoryWebSocket(c *gin.Context) {
-	path, err := h.GetPathParam(c, "path")
-	if err != nil {
-		h.SendError(c, http.StatusBadRequest, err)
-		return
-	}
-	path, err = lib.FormatPath(path)
-	if err != nil {
-		h.SendError(c, http.StatusUnprocessableEntity, err)
-		return
-	}
-
-	// Parse ignore patterns from query param
-	ignoreParam := c.Query("ignore")
-	var ignorePatterns []string
-	if ignoreParam != "" {
-		ignorePatterns = strings.Split(ignoreParam, ",")
-	}
-	shouldIgnore := func(eventPath string) bool {
-		for _, pattern := range ignorePatterns {
-			if pattern != "" && strings.Contains(eventPath, pattern) {
-				return true
-			}
-		}
-		return false
-	}
-
-	isDir, err := h.DirectoryExists(path)
-	if err != nil {
-		h.SendError(c, http.StatusUnprocessableEntity, err)
-		return
-	}
-
-	if !isDir {
-		h.SendError(c, http.StatusBadRequest, fmt.Errorf("path is not a directory"))
-		return
-	}
-
-	upgrader := websocket.Upgrader{
-		CheckOrigin: func(r *http.Request) bool { return true },
-	}
-	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
-	if err != nil {
-		return
-	}
-	defer conn.Close()
-	done := make(chan struct{})
-	var once sync.Once
-
-	stop, err := h.fs.WatchDirectory(path, func(event fsnotify.Event) {
-		if event.Op&(fsnotify.Write|fsnotify.Create|fsnotify.Remove|fsnotify.Rename|fsnotify.Chmod) != 0 {
-			if shouldIgnore(event.Name) {
-				return
-			}
-			msg := FileEvent{
-				Op:    event.Op.String(),
-				Name:  strings.Split(event.Name, "/")[len(strings.Split(event.Name, "/"))-1],
-				Path:  strings.Join(strings.Split(event.Name, "/")[:len(strings.Split(event.Name, "/"))-1], "/"),
-				Error: nil,
-			}
-			if err := conn.WriteJSON(msg); err != nil {
-				once.Do(func() { close(done) })
-			}
-		}
-	})
-	if err != nil {
-		conn.WriteJSON(map[string]string{"error": err.Error()})
-		return
-	}
-	defer stop() // Ensures watcher is removed when handler exits
-
-	// Periodic keepalive ping
-	keepaliveTicker := time.NewTicker(30 * time.Second)
-	defer keepaliveTicker.Stop()
-
-	// Reader goroutine to detect client closure
-	go func() {
-		for {
-			_, _, err := conn.ReadMessage()
-			if err != nil {
-				once.Do(func() { close(done) })
-				return
-			}
-		}
-	}()
-
-	// Pinger goroutine to keep the WS alive
-	go func() {
-		for range keepaliveTicker.C {
-			if err := conn.WriteControl(websocket.PingMessage, []byte{}, time.Now().Add(5*time.Second)); err != nil {
-				once.Do(func() { close(done) })
-				return
 			}
 		}
 	}()
