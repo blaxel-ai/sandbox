@@ -1,5 +1,9 @@
 dependencies:
-	cd sandbox-api && go install github.com/air-verse/air@latest
+	cd sandbox-api && \
+		go install github.com/air-verse/air@latest && \
+		go install github.com/swaggo/swag/cmd/swag@latest && \
+		brew install yq
+
 
 api:
 	cd sandbox-api && air
@@ -35,6 +39,10 @@ reference:
 deploy-custom-sandbox:
 	cp -r sandbox-api e2e/custom-sandbox
 	cd e2e/custom-sandbox && bl deploy && rm -rf sandbox-api
+
+deploy-simple-custom-sandbox:
+	cd sandbox-api && GOOS=linux GOARCH=amd64 go build -o ../e2e/simple-custom-sandbox/sandbox-api
+	cd e2e/simple-custom-sandbox && bl deploy && rm sandbox-api
 
 build-custom-sandbox:
 	cp -r sandbox-api e2e/custom-sandbox
