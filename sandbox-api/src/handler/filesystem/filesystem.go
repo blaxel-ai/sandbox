@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -314,6 +315,34 @@ func (fs *Filesystem) WriteFile(path string, content []byte, perm os.FileMode) e
 	return os.WriteFile(absPath, content, perm)
 }
 
+// WriteFileFromReader streams content from a reader to a file on disk
+func (fs *Filesystem) WriteFileFromReader(path string, r io.Reader, perm os.FileMode) error {
+	absPath, err := fs.GetAbsolutePath(path)
+	if err != nil {
+		return err
+	}
+
+	// Ensure parent directory exists
+	dir := filepath.Dir(absPath)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return err
+	}
+
+	f, err := os.OpenFile(absPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, perm)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	if _, err := io.Copy(f, r); err != nil {
+		// Clean up the partially written file on error
+		f.Close() // Close file before attempting to remove
+		os.Remove(absPath)
+		return err
+	}
+	return nil
+}
+
 // CreateDirectory creates a directory at the given path
 func (fs *Filesystem) CreateDirectory(path string, perm os.FileMode) error {
 	absPath, err := fs.GetAbsolutePath(path)
@@ -547,12 +576,20 @@ func (fs *Filesystem) Walk(root string, fn filepath.WalkFunc) error {
 
 // CreateOrUpdateFile creates or updates a file
 func (fs *Filesystem) CreateOrUpdateFile(path string, content string, isDirectory bool, permissions string) error {
-	// Parse permissions or use default
-	var perm os.FileMode = 0644
+	// Parse permissions or use appropriate defaults
+	var perm os.FileMode
 	if permissions != "" {
 		permInt, err := strconv.ParseUint(permissions, 8, 32)
-		if err == nil {
-			perm = os.FileMode(permInt)
+		if err != nil {
+			return fmt.Errorf("invalid permissions format '%s': %w", permissions, err)
+		}
+		perm = os.FileMode(permInt)
+	} else {
+		// Use appropriate defaults: 0755 for directories, 0644 for files
+		if isDirectory {
+			perm = 0755
+		} else {
+			perm = 0644
 		}
 	}
 
