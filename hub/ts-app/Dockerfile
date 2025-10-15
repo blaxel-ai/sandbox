@@ -1,4 +1,5 @@
 ARG SANDBOX_VERSION=latest
+FROM ghcr.io/blaxel-ai/sandbox:${SANDBOX_VERSION} AS sandbox-api
 
 # Use an official Python runtime as a parent image
 FROM node:22-slim
@@ -8,7 +9,7 @@ RUN apt-get update && apt-get install -y git \
 
 WORKDIR /blaxel
 
-COPY --from=ghcr.io/blaxel-ai/sandbox:${SANDBOX_VERSION} /sandbox-api /usr/local/bin/sandbox-api
+COPY --from=sandbox-api /sandbox-api /usr/local/bin/sandbox-api
 
 EXPOSE 8080 3000
 
