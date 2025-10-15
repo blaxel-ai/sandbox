@@ -1,8 +1,9 @@
 ARG SANDBOX_VERSION=latest
+FROM ghcr.io/blaxel-ai/sandbox:${SANDBOX_VERSION} AS sandbox-api
 
 FROM node:22-alpine
 
-COPY --from=ghcr.io/blaxel-ai/sandbox:${SANDBOX_VERSION} /sandbox-api /usr/local/bin/sandbox-api
+COPY --from=sandbox-api /sandbox-api /usr/local/bin/sandbox-api
 
 RUN apk update && apk add --no-cache \
   git \
