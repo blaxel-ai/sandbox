@@ -86,7 +86,25 @@ func (pm *ProcessManager) StartProcess(command string, workingDir string, env ma
 func (pm *ProcessManager) StartProcessWithName(command string, workingDir string, name string, env map[string]string, callback func(process *ProcessInfo)) (string, error) {
 	// Always use shell to execute commands
 	// This ensures shell built-ins (cd, export, alias) work properly
-	cmd := exec.Command("sh", "-c", command)
+	// Use SHELL and SHELL_ARGS environment variables if set
+	shell := os.Getenv("SHELL")
+	if shell == "" {
+		shell = "sh"
+	}
+
+	shellArgs := os.Getenv("SHELL_ARGS")
+	if shellArgs == "" {
+		shellArgs = "-c"
+	}
+
+	// Build command arguments
+	cmdArgs := []string{}
+	if shellArgs != "" {
+		cmdArgs = append(cmdArgs, strings.Fields(shellArgs)...)
+	}
+	cmdArgs = append(cmdArgs, command)
+
+	cmd := exec.Command(shell, cmdArgs...)
 
 	if workingDir != "" {
 		cmd.Dir = workingDir

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 
 	"github.com/blaxel-ai/sandbox-api/docs" // swagger generated docs
 	"github.com/blaxel-ai/sandbox-api/src/api"
@@ -76,6 +77,12 @@ func main() {
 	}
 
 	logrus.Infof("Port: %d", portValue)
+	if os.Getenv("SHELL") != "" {
+		logrus.Infof("Shell: %s", os.Getenv("SHELL"))
+	}
+	if os.Getenv("SHELL_ARGS") != "" {
+		logrus.Infof("Shell args: %s", os.Getenv("SHELL_ARGS"))
+	}
 
 	// Check for command after the flags
 	if commandValue != "" {
@@ -83,7 +90,25 @@ func main() {
 		logrus.Infof("Executing command: %s", commandValue)
 
 		// Create the command with the context
-		cmd := exec.CommandContext(ctx, "sh", "-c", commandValue)
+		// Use SHELL and SHELL_ARGS environment variables if set
+		shell := os.Getenv("SHELL")
+		if shell == "" {
+			shell = "sh"
+		}
+
+		shellArgs := os.Getenv("SHELL_ARGS")
+		if shellArgs == "" {
+			shellArgs = "-c"
+		}
+
+		// Build command arguments
+		cmdArgs := []string{}
+		if shellArgs != "" {
+			cmdArgs = append(cmdArgs, strings.Fields(shellArgs)...)
+		}
+		cmdArgs = append(cmdArgs, commandValue)
+
+		cmd := exec.CommandContext(ctx, shell, cmdArgs...)
 		cmd.Stdout = logrus.StandardLogger().Out
 		cmd.Stderr = logrus.StandardLogger().Out
 

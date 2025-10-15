@@ -38,7 +38,7 @@ func uploadViaJSON(path, content string) (time.Duration, error) {
 	}
 
 	var successResp handler.SuccessResponse
-	resp, err := common.MakeRequestAndParse(http.MethodPut, "/filesystem"+path, request, &successResp)
+	resp, err := common.MakeRequestAndParse(http.MethodPut, common.EncodeFilesystemPath(path), request, &successResp)
 	if err != nil {
 		return 0, err
 	}
@@ -54,7 +54,7 @@ func uploadViaJSON(path, content string) (time.Duration, error) {
 // uploadViaMultipart uploads a file using multipart/form-data
 func uploadViaMultipart(path, content string) (time.Duration, error) {
 	start := time.Now()
-	resp, err := common.MakeMultipartRequestStream(http.MethodPut, "/filesystem"+path, bytes.NewReader([]byte(content)), "upload", nil)
+	resp, err := common.MakeMultipartRequestStream(http.MethodPut, common.EncodeFilesystemPath(path), bytes.NewReader([]byte(content)), "upload", nil)
 	if err != nil {
 		return 0, err
 	}
@@ -107,7 +107,7 @@ func TestUploadPerformanceComparison(t *testing.T) {
 				jsonTotal += duration
 
 				// Clean up
-				_, _ = common.MakeRequest(http.MethodDelete, "/filesystem"+path, nil)
+				_, _ = common.MakeRequest(http.MethodDelete, common.EncodeFilesystemPath(path), nil)
 			}
 
 			// Test multipart uploads
@@ -118,7 +118,7 @@ func TestUploadPerformanceComparison(t *testing.T) {
 				multipartTotal += duration
 
 				// Clean up
-				_, _ = common.MakeRequest(http.MethodDelete, "/filesystem"+path, nil)
+				_, _ = common.MakeRequest(http.MethodDelete, common.EncodeFilesystemPath(path), nil)
 			}
 
 			jsonAvg := jsonTotal / time.Duration(iterations)
@@ -182,7 +182,7 @@ func BenchmarkUploadJSON(b *testing.B) {
 					b.Fatal(err)
 				}
 				// Clean up
-				_, _ = common.MakeRequest(http.MethodDelete, "/filesystem"+path, nil)
+				_, _ = common.MakeRequest(http.MethodDelete, common.EncodeFilesystemPath(path), nil)
 			}
 		})
 	}
@@ -205,7 +205,7 @@ func BenchmarkUploadMultipart(b *testing.B) {
 					b.Fatal(err)
 				}
 				// Clean up
-				_, _ = common.MakeRequest(http.MethodDelete, "/filesystem"+path, nil)
+				_, _ = common.MakeRequest(http.MethodDelete, common.EncodeFilesystemPath(path), nil)
 			}
 		})
 	}
@@ -223,7 +223,7 @@ func TestMultipartBackwardCompatibility(t *testing.T) {
 		require.NoError(t, err, "JSON upload should work")
 
 		// Verify file was created correctly
-		resp, err := common.MakeRequest(http.MethodGet, "/filesystem"+jsonPath, nil)
+		resp, err := common.MakeRequest(http.MethodGet, common.EncodeFilesystemPath(jsonPath), nil)
 		require.NoError(t, err)
 		defer resp.Body.Close()
 
@@ -241,7 +241,7 @@ func TestMultipartBackwardCompatibility(t *testing.T) {
 		require.NoError(t, err, "Multipart upload should work")
 
 		// Verify file was created correctly
-		resp, err := common.MakeRequest(http.MethodGet, "/filesystem"+multipartPath, nil)
+		resp, err := common.MakeRequest(http.MethodGet, common.EncodeFilesystemPath(multipartPath), nil)
 		require.NoError(t, err)
 		defer resp.Body.Close()
 
@@ -254,8 +254,8 @@ func TestMultipartBackwardCompatibility(t *testing.T) {
 	})
 
 	// Clean up
-	_, _ = common.MakeRequest(http.MethodDelete, "/filesystem"+jsonPath, nil)
-	_, _ = common.MakeRequest(http.MethodDelete, "/filesystem"+multipartPath, nil)
+	_, _ = common.MakeRequest(http.MethodDelete, common.EncodeFilesystemPath(jsonPath), nil)
+	_, _ = common.MakeRequest(http.MethodDelete, common.EncodeFilesystemPath(multipartPath), nil)
 }
 
 // TestMultipartStreamingLargeFile validates streaming multipart upload for large file
@@ -265,7 +265,7 @@ func TestMultipartStreamingLargeFile(t *testing.T) {
 	path := fmt.Sprintf("/tmp/test-stream-multipart-%d", time.Now().UnixNano())
 
 	// Upload via streaming multipart
-	resp, err := common.MakeMultipartRequestStream(http.MethodPut, "/filesystem"+path, bytes.NewReader([]byte(content)), "upload", map[string]string{"permissions": "0644"})
+	resp, err := common.MakeMultipartRequestStream(http.MethodPut, common.EncodeFilesystemPath(path), bytes.NewReader([]byte(content)), "upload", map[string]string{"permissions": "0644"})
 	require.NoError(t, err)
 	defer resp.Body.Close()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
@@ -274,11 +274,11 @@ func TestMultipartStreamingLargeFile(t *testing.T) {
 	var fileResponse struct {
 		Content string `json:"content"`
 	}
-	resp, err = common.MakeRequestAndParse(http.MethodGet, "/filesystem"+path, nil, &fileResponse)
+	resp, err = common.MakeRequestAndParse(http.MethodGet, common.EncodeFilesystemPath(path), nil, &fileResponse)
 	require.NoError(t, err)
 	defer resp.Body.Close()
 	require.Equal(t, content, fileResponse.Content, "content should match exactly")
 
 	// Cleanup
-	_, _ = common.MakeRequest(http.MethodDelete, "/filesystem"+path, nil)
+	_, _ = common.MakeRequest(http.MethodDelete, common.EncodeFilesystemPath(path), nil)
 }
