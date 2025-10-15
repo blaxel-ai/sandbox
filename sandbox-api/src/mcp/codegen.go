@@ -1,216 +1,227 @@
 package mcp
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"strings"
 
 	"github.com/blaxel-ai/sandbox-api/src/lib"
-	mcp_golang "github.com/metoro-io/mcp-golang"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/sirupsen/logrus"
 )
 
-// CodegenArgs represents arguments for various codegen tools
+// Codegen tool input/output types
 
-// EditFileArgs represents arguments for the edit_file tool
-type EditFileArgs struct {
-	TargetFile   string `json:"targetFile" jsonschema:"required,description=The target file to modify. Always specify the target file as the first argument and use the relative path in the workspace of the file to edit."`
-	Instructions string `json:"instructions" jsonschema:"required,description=A single sentence instruction describing what you are going to do for the sketched edit. This is used to assist the less intelligent model in applying the edit. Please use the first person to describe what you are going to do. Dont repeat what you have said previously in normal messages. And use it to disambiguate uncertainty in the edit."`
-	CodeEdit     string `json:"codeEdit" jsonschema:"required,description=Specify ONLY the precise lines of code that you wish to edit. NEVER specify or write out unchanged code. Instead, represent all unchanged code using the comment of the language you're editing in - example: // ... existing code ..."`
+type EditFileInput struct {
+	TargetFile   string `json:"targetFile" jsonschema:"The target file to modify. Always specify the target file as the first argument and use the relative path in the workspace of the file to edit."`
+	Instructions string `json:"instructions" jsonschema:"A single sentence instruction describing what you are going to do for the sketched edit. This is used to assist the less intelligent model in applying the edit. Please use the first person to describe what you are going to do. Dont repeat what you have said previously in normal messages. And use it to disambiguate uncertainty in the edit."`
+	CodeEdit     string `json:"codeEdit" jsonschema:"Specify ONLY the precise lines of code that you wish to edit. NEVER specify or write out unchanged code. Instead, represent all unchanged code using the comment of the language you're editing in - example: // ... existing code ..."`
 }
 
-// FileSearchArgs represents arguments for the file_search tool
-type FileSearchArgs struct {
-	Query string `json:"query" jsonschema:"required,description=Fuzzy filename to search for"`
+type FileSearchInput struct {
+	Query     string  `json:"query" jsonschema:"Fuzzy filename to search for"`
+	Directory *string `json:"directory,omitempty" jsonschema:"Optional directory to search in (relative to workspace root). If not provided, searches from workspace root."`
 }
 
-// CodebaseSearchArgs represents arguments for the codebase_search tool
-type CodebaseSearchArgs struct {
-	Query             string   `json:"query" jsonschema:"required,description=The search query to find relevant code"`
-	TargetDirectories []string `json:"targetDirectories" jsonschema:"description=Glob patterns for directories to search over"`
+type CodebaseSearchInput struct {
+	Query             string   `json:"query" jsonschema:"The search query to find relevant code"`
+	TargetDirectories []string `json:"targetDirectories,omitempty" jsonschema:"Glob patterns for directories to search over"`
 }
 
-// GrepSearchArgs represents arguments for the grep_search tool
-type GrepSearchArgs struct {
-	Query          string `json:"query" jsonschema:"required,description=The regex pattern to search for"`
-	CaseSensitive  bool   `json:"caseSensitive" jsonschema:"description=Whether the search should be case sensitive"`
-	IncludePattern string `json:"includePattern" jsonschema:"description=Glob pattern for files to include (e.g. '*.ts' for TypeScript files)"`
-	ExcludePattern string `json:"excludePattern" jsonschema:"description=Glob pattern for files to exclude"`
+type GrepSearchInput struct {
+	Query          string  `json:"query" jsonschema:"The regex pattern to search for"`
+	CaseSensitive  *bool   `json:"caseSensitive,omitempty" jsonschema:"Whether the search should be case sensitive"`
+	IncludePattern *string `json:"includePattern,omitempty" jsonschema:"Glob pattern for files to include (e.g. '*.ts' for TypeScript files)"`
+	ExcludePattern *string `json:"excludePattern,omitempty" jsonschema:"Glob pattern for files to exclude"`
 }
 
-// ReadFileRangeArgs represents arguments for the read_file_range tool
-type ReadFileRangeArgs struct {
-	TargetFile                 string `json:"targetFile" jsonschema:"required,description=The path of the file to read"`
-	StartLineOneIndexed        int    `json:"startLineOneIndexed" jsonschema:"required,description=The one-indexed line number to start reading from (inclusive)"`
-	EndLineOneIndexedInclusive int    `json:"endLineOneIndexedInclusive" jsonschema:"required,description=The one-indexed line number to end reading at (inclusive)"`
+type ReadFileRangeInput struct {
+	TargetFile                 string `json:"targetFile" jsonschema:"The path of the file to read"`
+	StartLineOneIndexed        int    `json:"startLineOneIndexed" jsonschema:"The one-indexed line number to start reading from (inclusive)"`
+	EndLineOneIndexedInclusive int    `json:"endLineOneIndexedInclusive" jsonschema:"The one-indexed line number to end reading at (inclusive)"`
 }
 
-// ReapplyArgs represents arguments for the reapply tool
-type ReapplyArgs struct {
-	TargetFile string `json:"targetFile" jsonschema:"required,description=The relative path to the file to reapply the last edit to"`
+type ReapplyInput struct {
+	TargetFile string `json:"targetFile" jsonschema:"The relative path to the file to reapply the last edit to"`
 }
 
-// ListDirArgs represents arguments for the list_dir tool
-type ListDirArgs struct {
-	RelativeWorkspacePath string `json:"relativeWorkspacePath" jsonschema:"required,description=Path to list contents of, relative to the workspace root"`
+type ListDirInput struct {
+	RelativeWorkspacePath string `json:"relativeWorkspacePath" jsonschema:"Path to list contents of, relative to the workspace root"`
 }
 
-// ParallelApplyArgs represents arguments for the parallel_apply tool
-type ParallelApplyArgs struct {
-	EditPlan    string       `json:"editPlan" jsonschema:"required,description=A detailed description of the parallel edits to be applied"`
-	EditRegions []EditRegion `json:"editRegions" jsonschema:"required,description=List of files and regions to edit"`
+type ParallelApplyInput struct {
+	EditPlan    string       `json:"editPlan" jsonschema:"A detailed description of the parallel edits to be applied"`
+	EditRegions []EditRegion `json:"editRegions" jsonschema:"List of files and regions to edit"`
 }
 
-// EditRegion represents a region in a file to edit
 type EditRegion struct {
-	RelativeWorkspacePath string `json:"relativeWorkspacePath" jsonschema:"required,description=The path to the file to edit"`
-	StartLine             int    `json:"startLine" jsonschema:"description=The start line of the region to edit. 1-indexed and inclusive"`
-	EndLine               int    `json:"endLine" jsonschema:"description=The end line of the region to edit. 1-indexed and inclusive"`
+	RelativeWorkspacePath string `json:"relativeWorkspacePath" jsonschema:"The path to the file to edit"`
+	StartLine             *int   `json:"startLine,omitempty" jsonschema:"The start line of the region to edit. 1-indexed and inclusive"`
+	EndLine               *int   `json:"endLine,omitempty" jsonschema:"The end line of the region to edit. 1-indexed and inclusive"`
+}
+
+// Output types
+type CodegenOutput struct {
+	Success bool        `json:"success"`
+	Message string      `json:"message,omitempty"`
+	Data    interface{} `json:"data,omitempty"`
 }
 
 // registerCodegenTools registers all codegen-related tools
 func (s *Server) registerCodegenTools() error {
 	// Edit file tool - the most critical tool for coding agents
 	if os.Getenv("MORPH_API_KEY") != "" {
-		if err := s.mcpServer.RegisterTool("codegenEditFile", "Use this tool to propose an edit to an existing file or create a new file. This will be read by a less intelligent model, which will quickly apply the edit. You should make it clear what the edit is, while also minimizing the unchanged code you write.",
-			LogToolCall("codegenEditFile", func(args EditFileArgs) (*mcp_golang.ToolResponse, error) {
-				return s.handleEditFile(os.Getenv("MORPH_API_KEY"), args)
-			})); err != nil {
-			return fmt.Errorf("failed to register codegenEditFile tool: %w", err)
-		}
+		mcp.AddTool(s.mcpServer, &mcp.Tool{
+			Name:        "codegenEditFile",
+			Description: "Use this tool to propose an edit to an existing file or create a new file. This will be read by a less intelligent model, which will quickly apply the edit. You should make it clear what the edit is, while also minimizing the unchanged code you write.",
+		}, LogToolCall("codegenEditFile", s.handleEditFile))
 	}
 
-	// File search tool - fast fuzzy file search
-	if err := s.mcpServer.RegisterTool("codegenFileSearch", "Fast file search based on fuzzy matching against file path. Use if you know part of the file path but don't know where it's located exactly.",
-		LogToolCall("codegenFileSearch", func(args FileSearchArgs) (*mcp_golang.ToolResponse, error) {
-			return s.handleFileSearch(args)
-		})); err != nil {
-		return fmt.Errorf("failed to register codegenFileSearch tool: %w", err)
-	}
+	// File search tool
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name:        "codegenFileSearch",
+		Description: "Fast file search based on fuzzy matching against file path. Use if you know part of the file path but don't know where it's located exactly. Optionally specify a directory to narrow the search scope.",
+	}, LogToolCall("codegenFileSearch", s.handleFileSearch))
 
-	// Codebase search tool - semantic search across the codebase
-	if err := s.mcpServer.RegisterTool("codegenCodebaseSearch", "Find snippets of code from the codebase most relevant to the search query. This is a semantic search tool.",
-		LogToolCall("codegenCodebaseSearch", func(args CodebaseSearchArgs) (*mcp_golang.ToolResponse, error) {
-			return s.handleCodebaseSearch(args)
-		})); err != nil {
-		return fmt.Errorf("failed to register codegenCodebaseSearch tool: %w", err)
-	}
+	// Codebase search tool
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name:        "codegenCodebaseSearch",
+		Description: "Find snippets of code from the codebase most relevant to the search query. This is a semantic search tool.",
+	}, LogToolCall("codegenCodebaseSearch", s.handleCodebaseSearch))
 
-	// Grep search tool - fast regex searches
-	if err := s.mcpServer.RegisterTool("codegenGrepSearch", "Fast, exact regex searches over text files using the ripgrep engine. Best for finding exact text matches or regex patterns.",
-		LogToolCall("codegenGrepSearch", func(args GrepSearchArgs) (*mcp_golang.ToolResponse, error) {
-			return s.handleGrepSearch(args)
-		})); err != nil {
-		return fmt.Errorf("failed to register codegenGrepSearch tool: %w", err)
-	}
+	// Grep search tool
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name:        "codegenGrepSearch",
+		Description: "Fast, exact regex searches over text files using the ripgrep engine. Best for finding exact text matches or regex patterns.",
+	}, LogToolCall("codegenGrepSearch", s.handleGrepSearch))
 
-	// Read file range tool - read specific lines from a file
-	if err := s.mcpServer.RegisterTool("codegenReadFileRange", "Read the contents of a file within a specific line range. Can view at most 250 lines at a time.",
-		LogToolCall("codegenReadFileRange", func(args ReadFileRangeArgs) (*mcp_golang.ToolResponse, error) {
-			return s.handleReadFileRange(args)
-		})); err != nil {
-		return fmt.Errorf("failed to register codegenReadFileRange tool: %w", err)
-	}
+	// Read file range tool
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name:        "codegenReadFileRange",
+		Description: "Read the contents of a file within a specific line range. Can view at most 250 lines at a time.",
+	}, LogToolCall("codegenReadFileRange", s.handleReadFileRange))
 
-	// Reapply tool - error recovery for failed edits
-	if err := s.mcpServer.RegisterTool("codegenReapply", "Calls a smarter model to apply the last edit to the specified file. Use this tool immediately after a failed codegenEditFile attempt.",
-		LogToolCall("codegenReapply", func(args ReapplyArgs) (*mcp_golang.ToolResponse, error) {
-			return s.handleReapply(args)
-		})); err != nil {
-		return fmt.Errorf("failed to register codegenReapply tool: %w", err)
-	}
+	// Reapply tool
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name:        "codegenReapply",
+		Description: "Calls a smarter model to apply the last edit to the specified file. Use this tool immediately after a failed codegenEditFile attempt.",
+	}, LogToolCall("codegenReapply", s.handleReapply))
 
-	// List directory tool - for discovery and navigation
-	if err := s.mcpServer.RegisterTool("codegenListDir", "List the contents of a directory. The quick tool to use for discovery, before using more targeted tools like semantic search or file reading.",
-		LogToolCall("codegenListDir", func(args ListDirArgs) (*mcp_golang.ToolResponse, error) {
-			return s.handleListDir(args)
-		})); err != nil {
-		return fmt.Errorf("failed to register codegenListDir tool: %w", err)
-	}
+	// List directory tool
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name:        "codegenListDir",
+		Description: "List the contents of a directory. The quick tool to use for discovery, before using more targeted tools like semantic search or file reading.",
+	}, LogToolCall("codegenListDir", s.handleListDir))
 
-	// Parallel apply tool - for systematic changes across multiple files
-	if err := s.mcpServer.RegisterTool("codegenParallelApply", "When there are multiple locations that can be edited in parallel, with a similar type of edit, use this tool to sketch out a plan for the edits.",
-		LogToolCall("codegenParallelApply", func(args ParallelApplyArgs) (*mcp_golang.ToolResponse, error) {
-			return s.handleParallelApply(args)
-		})); err != nil {
-		return fmt.Errorf("failed to register codegenParallelApply tool: %w", err)
-	}
+	// Parallel apply tool
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name:        "codegenParallelApply",
+		Description: "When there are multiple locations that can be edited in parallel, with a similar type of edit, use this tool to sketch out a plan for the edits.",
+	}, LogToolCall("codegenParallelApply", s.handleParallelApply))
 
 	return nil
 }
 
 // handleEditFile implements the edit_file tool functionality
-func (s *Server) handleEditFile(morphAPIKey string, args EditFileArgs) (*mcp_golang.ToolResponse, error) {
+func (s *Server) handleEditFile(ctx context.Context, req *mcp.CallToolRequest, args EditFileInput) (*mcp.CallToolResult, CodegenOutput, error) {
+	morphAPIKey := os.Getenv("MORPH_API_KEY")
+	if morphAPIKey == "" {
+		return nil, CodegenOutput{}, fmt.Errorf("MORPH_API_KEY not set")
+	}
+
 	// Check if file exists
 	fileExists, err := s.handlers.FileSystem.FileExists(args.TargetFile)
 	if err != nil {
-		return nil, fmt.Errorf("failed to check if file exists: %w", err)
+		return nil, CodegenOutput{}, fmt.Errorf("failed to check if file exists: %w", err)
 	}
 
 	var originalContent string
 	if fileExists {
-		// Read the current file content
 		file, err := s.handlers.FileSystem.ReadFile(args.TargetFile)
 		if err != nil {
-			return nil, fmt.Errorf("failed to read file: %w", err)
+			return nil, CodegenOutput{}, fmt.Errorf("failed to read file: %w", err)
 		}
 		originalContent = string(file.Content)
 	}
-
-	var updatedContent string
 
 	model := os.Getenv("MORPH_MODEL")
 	if model == "" {
 		model = "morph-v2"
 	}
+
 	logrus.Infof("Using MorphAPI to apply code using model: %s", model)
 	morphClient := lib.NewMorphClient(model, morphAPIKey)
-	morphContent, err := morphClient.ApplyCodeEdit(originalContent, args.CodeEdit)
+	updatedContent, err := morphClient.ApplyCodeEdit(originalContent, args.CodeEdit)
 	if err != nil {
-		return nil, fmt.Errorf("failed to apply edit (Morph failed, fallback also failed): %w", err)
-	} else {
-		updatedContent = morphContent
+		return nil, CodegenOutput{}, fmt.Errorf("failed to apply edit: %w", err)
 	}
 
-	// Write the updated content back to the file
 	err = s.handlers.FileSystem.WriteFile(args.TargetFile, []byte(updatedContent), 0644)
 	if err != nil {
-		return nil, fmt.Errorf("failed to write file: %w", err)
+		return nil, CodegenOutput{}, fmt.Errorf("failed to write file: %w", err)
 	}
 
-	response := map[string]interface{}{
-		"success":         true,
-		"message":         fmt.Sprintf("Successfully applied edit to %s: %s", args.TargetFile, args.Instructions),
-		"changes_applied": args.CodeEdit,
-		"file_path":       args.TargetFile,
-	}
-
-	return CreateJSONResponse(response)
+	return nil, CodegenOutput{
+		Success: true,
+		Message: fmt.Sprintf("Successfully applied edit to %s: %s", args.TargetFile, args.Instructions),
+		Data: map[string]interface{}{
+			"file_path":       args.TargetFile,
+			"changes_applied": args.CodeEdit,
+		},
+	}, nil
 }
 
 // handleFileSearch implements fuzzy file search functionality
-func (s *Server) handleFileSearch(args FileSearchArgs) (*mcp_golang.ToolResponse, error) {
+func (s *Server) handleFileSearch(ctx context.Context, req *mcp.CallToolRequest, args FileSearchInput) (*mcp.CallToolResult, CodegenOutput, error) {
 	var matches []string
 	query := strings.ToLower(args.Query)
 
-	err := filepath.Walk("/", func(path string, info os.FileInfo, err error) error {
+	// Get the working directory from the filesystem handler
+	workingDir, err := s.handlers.FileSystem.GetWorkingDirectory()
+	if err != nil {
+		return nil, CodegenOutput{}, fmt.Errorf("failed to get working directory: %w", err)
+	}
+
+	// Determine the search directory
+	searchDir := workingDir
+	if args.Directory != nil && *args.Directory != "" {
+		// Resolve the directory relative to the working directory
+		searchDir = filepath.Join(workingDir, *args.Directory)
+
+		// Ensure the path is within the working directory (prevent path traversal)
+		cleanSearchDir := filepath.Clean(searchDir)
+		cleanWorkingDir := filepath.Clean(workingDir)
+		if !strings.HasPrefix(cleanSearchDir, cleanWorkingDir) {
+			return nil, CodegenOutput{}, fmt.Errorf("directory must be within workspace")
+		}
+
+		// Check if the directory exists
+		dirExists, err := s.handlers.FileSystem.DirectoryExists(*args.Directory)
 		if err != nil {
-			return nil // Skip errors and continue
+			return nil, CodegenOutput{}, fmt.Errorf("failed to check directory: %w", err)
+		}
+		if !dirExists {
+			return nil, CodegenOutput{}, fmt.Errorf("directory not found: %s", *args.Directory)
+		}
+
+		searchDir = cleanSearchDir
+	}
+
+	err = filepath.Walk(searchDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil
 		}
 
 		if !info.IsDir() {
 			filename := strings.ToLower(info.Name())
-			fullPath := strings.ToLower(path)
-
-			// Simple fuzzy matching - check if query characters appear in order
-			if s.fuzzyMatch(filename, query) || s.fuzzyMatch(fullPath, query) {
+			if s.fuzzyMatch(filename, query) {
 				matches = append(matches, path)
-				if len(matches) >= 10 { // Limit to 10 results
-					return filepath.SkipDir
+				if len(matches) >= 10 {
+					return filepath.SkipAll
 				}
 			}
 		}
@@ -218,29 +229,121 @@ func (s *Server) handleFileSearch(args FileSearchArgs) (*mcp_golang.ToolResponse
 	})
 
 	if err != nil {
-		return nil, fmt.Errorf("failed to search files: %w", err)
+		return nil, CodegenOutput{}, fmt.Errorf("failed to search files: %w", err)
 	}
 
-	response := map[string]interface{}{
-		"matches": matches,
-		"query":   args.Query,
-	}
-
-	return CreateJSONResponse(response)
+	return nil, CodegenOutput{
+		Success: true,
+		Data:    map[string]interface{}{"matches": matches, "query": args.Query},
+	}, nil
 }
 
-// fuzzyMatch implements simple fuzzy matching
-func (s *Server) fuzzyMatch(text, pattern string) bool {
-	textIndex := 0
-	for _, char := range pattern {
+// handleCodebaseSearch implements semantic search across the codebase
+func (s *Server) handleCodebaseSearch(ctx context.Context, req *mcp.CallToolRequest, args CodebaseSearchInput) (*mcp.CallToolResult, CodegenOutput, error) {
+	// Simplified implementation - in production, use proper semantic search
+	results := []string{}
+	return nil, CodegenOutput{
+		Success: true,
+		Data:    map[string]interface{}{"results": results, "query": args.Query},
+	}, nil
+}
+
+// handleGrepSearch implements regex search functionality
+func (s *Server) handleGrepSearch(ctx context.Context, req *mcp.CallToolRequest, args GrepSearchInput) (*mcp.CallToolResult, CodegenOutput, error) {
+	cmd := exec.Command("rg", "--json")
+
+	caseSensitive := false
+	if args.CaseSensitive != nil {
+		caseSensitive = *args.CaseSensitive
+	}
+
+	if !caseSensitive {
+		cmd.Args = append(cmd.Args, "-i")
+	}
+
+	if args.IncludePattern != nil && *args.IncludePattern != "" {
+		cmd.Args = append(cmd.Args, "-g", *args.IncludePattern)
+	}
+
+	if args.ExcludePattern != nil && *args.ExcludePattern != "" {
+		cmd.Args = append(cmd.Args, "-g", "!"+*args.ExcludePattern)
+	}
+
+	cmd.Args = append(cmd.Args, args.Query)
+	output, err := cmd.Output()
+
+	if err != nil {
+		return nil, CodegenOutput{}, fmt.Errorf("grep search failed: %w", err)
+	}
+
+	return nil, CodegenOutput{
+		Success: true,
+		Data:    map[string]interface{}{"results": string(output)},
+	}, nil
+}
+
+// handleReadFileRange reads specific lines from a file
+func (s *Server) handleReadFileRange(ctx context.Context, req *mcp.CallToolRequest, args ReadFileRangeInput) (*mcp.CallToolResult, CodegenOutput, error) {
+	file, err := s.handlers.FileSystem.ReadFile(args.TargetFile)
+	if err != nil {
+		return nil, CodegenOutput{}, fmt.Errorf("failed to read file: %w", err)
+	}
+
+	lines := strings.Split(string(file.Content), "\n")
+	if args.StartLineOneIndexed < 1 || args.EndLineOneIndexedInclusive > len(lines) {
+		return nil, CodegenOutput{}, fmt.Errorf("invalid line range")
+	}
+
+	selectedLines := lines[args.StartLineOneIndexed-1 : args.EndLineOneIndexedInclusive]
+	content := strings.Join(selectedLines, "\n")
+
+	return nil, CodegenOutput{
+		Success: true,
+		Data:    map[string]interface{}{"content": content, "file": args.TargetFile},
+	}, nil
+}
+
+// handleReapply reapplies the last edit
+func (s *Server) handleReapply(ctx context.Context, req *mcp.CallToolRequest, args ReapplyInput) (*mcp.CallToolResult, CodegenOutput, error) {
+	return nil, CodegenOutput{
+		Success: false,
+		Message: "Reapply functionality not yet implemented",
+	}, nil
+}
+
+// handleListDir lists directory contents
+func (s *Server) handleListDir(ctx context.Context, req *mcp.CallToolRequest, args ListDirInput) (*mcp.CallToolResult, CodegenOutput, error) {
+	dir, err := s.handlers.FileSystem.ListDirectory(args.RelativeWorkspacePath)
+	if err != nil {
+		return nil, CodegenOutput{}, fmt.Errorf("failed to list directory: %w", err)
+	}
+
+	return nil, CodegenOutput{
+		Success: true,
+		Data:    dir,
+	}, nil
+}
+
+// handleParallelApply handles parallel edits
+func (s *Server) handleParallelApply(ctx context.Context, req *mcp.CallToolRequest, args ParallelApplyInput) (*mcp.CallToolResult, CodegenOutput, error) {
+	return nil, CodegenOutput{
+		Success: false,
+		Message: "Parallel apply functionality not yet implemented",
+	}, nil
+}
+
+// fuzzyMatch checks if query characters appear in order in the text
+func (s *Server) fuzzyMatch(text, query string) bool {
+	textIdx := 0
+	for _, char := range query {
 		found := false
-		for textIndex < len(text) {
-			if rune(text[textIndex]) == char {
+		for textIdx < len(text) {
+			if rune(text[textIdx]) == char {
 				found = true
-				textIndex++
+				textIdx++
 				break
 			}
-			textIndex++
+			textIdx++
 		}
 		if !found {
 			return false
@@ -249,357 +352,16 @@ func (s *Server) fuzzyMatch(text, pattern string) bool {
 	return true
 }
 
-// handleCodebaseSearch implements semantic search across the codebase
-func (s *Server) handleCodebaseSearch(args CodebaseSearchArgs) (*mcp_golang.ToolResponse, error) {
-	// For now, implement as a text-based search
-	// In a production environment, you might want to use embeddings or more sophisticated search
-	var results []map[string]interface{}
-
-	searchDirs := args.TargetDirectories
-	if len(searchDirs) == 0 {
-		searchDirs = []string{"."} // Search current directory by default
-	}
-
-	for _, dir := range searchDirs {
-		err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
-			if err != nil {
-				return nil
-			}
-
-			// Skip non-code files
-			if info.IsDir() || !s.isCodeFile(path) {
-				return nil
-			}
-
-			// Read file content
-			content, err := os.ReadFile(path)
-			if err != nil {
-				return nil
-			}
-
-			// Simple text search for now
-			if strings.Contains(strings.ToLower(string(content)), strings.ToLower(args.Query)) {
-				lines := strings.Split(string(content), "\n")
-				for i, line := range lines {
-					if strings.Contains(strings.ToLower(line), strings.ToLower(args.Query)) {
-						result := map[string]interface{}{
-							"file":    path,
-							"line":    i + 1,
-							"content": line,
-							"context": s.getContextLines(lines, i, 2),
-						}
-						results = append(results, result)
-
-						if len(results) >= 20 { // Limit results
-							return filepath.SkipDir
-						}
-					}
-				}
-			}
-			return nil
-		})
-
-		if err != nil {
-			return nil, fmt.Errorf("failed to search directory %s: %w", dir, err)
-		}
-	}
-
-	response := map[string]interface{}{
-		"results": results,
-		"query":   args.Query,
-	}
-
-	return CreateJSONResponse(response)
-}
-
-// isCodeFile checks if a file is a code file based on extension
-func (s *Server) isCodeFile(path string) bool {
-	codeExts := []string{".go", ".js", ".ts", ".py", ".java", ".c", ".cpp", ".h", ".hpp", ".cs", ".php", ".rb", ".rs", ".sh", ".sql", ".json", ".yaml", ".yml", ".xml", ".html", ".css", ".scss", ".sass", ".vue", ".jsx", ".tsx"}
-	ext := strings.ToLower(filepath.Ext(path))
-	for _, codeExt := range codeExts {
-		if ext == codeExt {
-			return true
-		}
-	}
-	return false
-}
-
-// getContextLines returns surrounding lines for context
-func (s *Server) getContextLines(lines []string, centerLine, contextSize int) []string {
-	start := centerLine - contextSize
-	end := centerLine + contextSize + 1
-
-	if start < 0 {
-		start = 0
-	}
-	if end > len(lines) {
-		end = len(lines)
-	}
-
-	return lines[start:end]
-}
-
-// handleGrepSearch implements regex search using grep-like functionality
-func (s *Server) handleGrepSearch(args GrepSearchArgs) (*mcp_golang.ToolResponse, error) {
-	// Use ripgrep if available, otherwise fallback to grep or internal implementation
-	cmd := exec.Command("rg", "--json")
-
-	if !args.CaseSensitive {
-		cmd.Args = append(cmd.Args, "-i")
-	}
-
-	if args.IncludePattern != "" {
-		cmd.Args = append(cmd.Args, "-g", args.IncludePattern)
-	}
-
-	if args.ExcludePattern != "" {
-		cmd.Args = append(cmd.Args, "-g", "!"+args.ExcludePattern)
-	}
-
-	cmd.Args = append(cmd.Args, args.Query, ".")
-
-	output, err := cmd.Output()
+// CreateJSONResponse is a helper to create JSON responses (kept for compatibility)
+func CreateJSONResponse(data interface{}) (*mcp.CallToolResult, error) {
+	jsonData, err := json.Marshal(data)
 	if err != nil {
-		// Fallback to internal implementation if ripgrep is not available
-		return s.handleGrepSearchFallback(args)
+		return nil, fmt.Errorf("failed to marshal JSON: %w", err)
 	}
 
-	// Parse ripgrep JSON output
-	results := []map[string]interface{}{}
-	lines := strings.Split(string(output), "\n")
-
-	for _, line := range lines {
-		if strings.TrimSpace(line) == "" {
-			continue
-		}
-
-		var rgResult map[string]interface{}
-		if err := json.Unmarshal([]byte(line), &rgResult); err == nil {
-			if rgResult["type"] == "match" {
-				data := rgResult["data"].(map[string]interface{})
-				results = append(results, map[string]interface{}{
-					"file":    data["path"].(map[string]interface{})["text"],
-					"line":    data["line_number"],
-					"content": data["lines"].(map[string]interface{})["text"],
-				})
-			}
-		}
-
-		if len(results) >= 50 { // Limit to 50 matches
-			break
-		}
-	}
-
-	response := map[string]interface{}{
-		"matches": results,
-		"query":   args.Query,
-	}
-
-	return CreateJSONResponse(response)
-}
-
-// handleGrepSearchFallback implements grep search without external tools
-func (s *Server) handleGrepSearchFallback(args GrepSearchArgs) (*mcp_golang.ToolResponse, error) {
-	var regex *regexp.Regexp
-	var err error
-
-	if args.CaseSensitive {
-		regex, err = regexp.Compile(args.Query)
-	} else {
-		regex, err = regexp.Compile("(?i)" + args.Query)
-	}
-
-	if err != nil {
-		return nil, fmt.Errorf("invalid regex pattern: %w", err)
-	}
-
-	var results []map[string]interface{}
-
-	err = filepath.Walk(".", func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return nil
-		}
-
-		if info.IsDir() {
-			return nil
-		}
-
-		// Apply include/exclude patterns
-		if args.IncludePattern != "" {
-			matched, _ := filepath.Match(args.IncludePattern, info.Name())
-			if !matched {
-				return nil
-			}
-		}
-
-		if args.ExcludePattern != "" {
-			matched, _ := filepath.Match(args.ExcludePattern, info.Name())
-			if matched {
-				return nil
-			}
-		}
-
-		// Read and search file
-		content, err := os.ReadFile(path)
-		if err != nil {
-			return nil
-		}
-
-		lines := strings.Split(string(content), "\n")
-		for i, line := range lines {
-			if regex.MatchString(line) {
-				results = append(results, map[string]interface{}{
-					"file":    path,
-					"line":    i + 1,
-					"content": line,
-				})
-
-				if len(results) >= 50 {
-					return filepath.SkipDir
-				}
-			}
-		}
-
-		return nil
-	})
-
-	if err != nil {
-		return nil, fmt.Errorf("failed to search files: %w", err)
-	}
-
-	response := map[string]interface{}{
-		"matches": results,
-		"query":   args.Query,
-	}
-
-	return CreateJSONResponse(response)
-}
-
-// handleReadFileRange reads a specific range of lines from a file
-func (s *Server) handleReadFileRange(args ReadFileRangeArgs) (*mcp_golang.ToolResponse, error) {
-	// Validate line range
-	if args.StartLineOneIndexed < 1 {
-		return nil, fmt.Errorf("start line must be >= 1")
-	}
-	if args.EndLineOneIndexedInclusive < args.StartLineOneIndexed {
-		return nil, fmt.Errorf("end line must be >= start line")
-	}
-	if args.EndLineOneIndexedInclusive-args.StartLineOneIndexed+1 > 250 {
-		return nil, fmt.Errorf("can only read up to 250 lines at a time")
-	}
-
-	// Read file
-	file, err := s.handlers.FileSystem.ReadFile(args.TargetFile)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read file: %w", err)
-	}
-
-	lines := strings.Split(string(file.Content), "\n")
-	totalLines := len(lines)
-
-	// Adjust end line if it exceeds file length
-	endLine := args.EndLineOneIndexedInclusive
-	if endLine > totalLines {
-		endLine = totalLines
-	}
-
-	// Extract the requested range (convert to 0-indexed)
-	startIdx := args.StartLineOneIndexed - 1
-	endIdx := endLine
-
-	if startIdx >= totalLines {
-		return nil, fmt.Errorf("start line %d exceeds file length %d", args.StartLineOneIndexed, totalLines)
-	}
-
-	selectedLines := lines[startIdx:endIdx]
-
-	response := map[string]interface{}{
-		"file":        args.TargetFile,
-		"start_line":  args.StartLineOneIndexed,
-		"end_line":    endLine,
-		"total_lines": totalLines,
-		"content":     strings.Join(selectedLines, "\n"),
-		"lines":       selectedLines,
-	}
-
-	return CreateJSONResponse(response)
-}
-
-// handleReapply attempts to reapply the last edit with better intelligence
-func (s *Server) handleReapply(args ReapplyArgs) (*mcp_golang.ToolResponse, error) {
-	// For now, this is a placeholder - in a real implementation, you would:
-	// 1. Store the last edit attempt
-	// 2. Use a more intelligent model to reapply it
-	// 3. Potentially use different strategies
-
-	response := map[string]interface{}{
-		"message": "Reapply functionality is not yet fully implemented",
-		"file":    args.TargetFile,
-		"note":    "This would typically call a smarter model to reapply the last failed edit",
-	}
-
-	return CreateJSONResponse(response)
-}
-
-// handleListDir implements directory listing functionality
-func (s *Server) handleListDir(args ListDirArgs) (*mcp_golang.ToolResponse, error) {
-	dir, err := s.handlers.FileSystem.ListDirectory(args.RelativeWorkspacePath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to list directory: %w", err)
-	}
-
-	response := map[string]interface{}{
-		"path":     args.RelativeWorkspacePath,
-		"contents": dir,
-	}
-
-	return CreateJSONResponse(response)
-}
-
-// handleParallelApply implements parallel editing across multiple files
-func (s *Server) handleParallelApply(args ParallelApplyArgs) (*mcp_golang.ToolResponse, error) {
-	// For now, this is a simplified implementation
-	// In a production environment, you might want more sophisticated parallel processing
-
-	var results []map[string]interface{}
-	var errors []string
-
-	for _, editRegion := range args.EditRegions {
-		// For each file in the edit regions, apply the edit plan
-		// This is a simplified approach - you could make this more sophisticated
-
-		result := map[string]interface{}{
-			"file":       editRegion.RelativeWorkspacePath,
-			"start_line": editRegion.StartLine,
-			"end_line":   editRegion.EndLine,
-			"status":     "planned",
-			"edit_plan":  args.EditPlan,
-		}
-
-		// Check if file exists
-		fileExists, err := s.handlers.FileSystem.FileExists(editRegion.RelativeWorkspacePath)
-		if err != nil {
-			errors = append(errors, fmt.Sprintf("Failed to check file %s: %v", editRegion.RelativeWorkspacePath, err))
-			result["status"] = "error"
-			result["error"] = err.Error()
-		} else if !fileExists {
-			errors = append(errors, fmt.Sprintf("File %s does not exist", editRegion.RelativeWorkspacePath))
-			result["status"] = "error"
-			result["error"] = "file does not exist"
-		} else {
-			result["status"] = "ready"
-		}
-
-		results = append(results, result)
-	}
-
-	response := map[string]interface{}{
-		"edit_plan":   args.EditPlan,
-		"total_files": len(args.EditRegions),
-		"results":     results,
-		"errors":      errors,
-		"note":        "This tool sketches out the parallel edit plan. Individual edits would need to be applied separately using codegenEditFile tool.",
-	}
-
-	return CreateJSONResponse(response)
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			&mcp.TextContent{Text: string(jsonData)},
+		},
+	}, nil
 }

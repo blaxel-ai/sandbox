@@ -1,143 +1,192 @@
 package mcp
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strconv"
 
-	mcp_golang "github.com/metoro-io/mcp-golang"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
+
+// Filesystem tool input/output types
+type GetWorkingDirectoryInput struct{}
+
+type GetWorkingDirectoryOutput struct {
+	Path string `json:"path"`
+}
+
+type ListDirectoryInput struct {
+	Path string `json:"path" jsonschema:"Path to the file or directory"`
+}
+
+type ListDirectoryOutput struct {
+	Entries []interface{} `json:"entries"`
+}
+
+type ReadFileInput struct {
+	Path string `json:"path" jsonschema:"Path to the file"`
+}
+
+type ReadFileOutput struct {
+	Content interface{} `json:"content"`
+}
+
+type WriteFileInput struct {
+	Path        string  `json:"path" jsonschema:"Path to the file or directory"`
+	Content     *string `json:"content,omitempty" jsonschema:"Content to write to the file"`
+	Permissions *string `json:"permissions,omitempty" jsonschema:"Permissions for the file or directory (octal string)"`
+	IsDirectory *bool   `json:"isDirectory,omitempty" jsonschema:"Whether the path refers to a directory"`
+}
+
+type WriteFileOutput struct {
+	Path    string `json:"path"`
+	Message string `json:"message"`
+}
+
+type DeleteFileInput struct {
+	Path        string `json:"path" jsonschema:"Path to the file or directory"`
+	IsDirectory *bool  `json:"isDirectory,omitempty" jsonschema:"Whether the path refers to a directory"`
+	Recursive   *bool  `json:"recursive,omitempty" jsonschema:"Whether to perform the operation recursively"`
+}
+
+type DeleteFileOutput struct {
+	Path    string `json:"path"`
+	Message string `json:"message"`
+}
 
 // registerFileSystemTools registers filesystem-related tools
 func (s *Server) registerFileSystemTools() error {
-	type GetWorkingDirectoryArgs struct{}
-
 	// Get working directory
-	if err := s.mcpServer.RegisterTool("fsGetWorkingDirectory", "Get the current working directory",
-		LogToolCall("fsGetWorkingDirectory", func(args GetWorkingDirectoryArgs) (*mcp_golang.ToolResponse, error) {
-			workingDir, err := s.handlers.FileSystem.GetWorkingDirectory()
-			if err != nil {
-				return nil, fmt.Errorf("failed to get working directory: %w", err)
-			}
-
-			return mcp_golang.NewToolResponse(mcp_golang.NewTextContent(workingDir)), nil
-		})); err != nil {
-		return fmt.Errorf("failed to register getWorkingDirectory tool: %w", err)
-	}
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name:        "fsGetWorkingDirectory",
+		Description: "Get the current working directory",
+	}, LogToolCall("fsGetWorkingDirectory", func(ctx context.Context, req *mcp.CallToolRequest, input GetWorkingDirectoryInput) (*mcp.CallToolResult, GetWorkingDirectoryOutput, error) {
+		workingDir, err := s.handlers.FileSystem.GetWorkingDirectory()
+		if err != nil {
+			return nil, GetWorkingDirectoryOutput{}, fmt.Errorf("failed to get working directory: %w", err)
+		}
+		return nil, GetWorkingDirectoryOutput{Path: workingDir}, nil
+	}))
 
 	// List directory
-	if err := s.mcpServer.RegisterTool("fsListDirectory", "List contents of a directory",
-		LogToolCall("fsListDirectory", func(args FsListDirectoryArgs) (*mcp_golang.ToolResponse, error) {
-			dir, err := s.handlers.FileSystem.ListDirectory(args.Path)
-			if err != nil {
-				return nil, fmt.Errorf("failed to list directory: %w", err)
-			}
-			return CreateJSONResponse(dir)
-		})); err != nil {
-		return fmt.Errorf("failed to register listDirectory tool: %w", err)
-	}
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name:        "fsListDirectory",
+		Description: "List contents of a directory",
+	}, LogToolCall("fsListDirectory", func(ctx context.Context, req *mcp.CallToolRequest, input ListDirectoryInput) (*mcp.CallToolResult, ListDirectoryOutput, error) {
+		dir, err := s.handlers.FileSystem.ListDirectory(input.Path)
+		if err != nil {
+			return nil, ListDirectoryOutput{}, fmt.Errorf("failed to list directory: %w", err)
+		}
+		// Convert to interface{} slice
+		entries := make([]interface{}, 0)
+		entries = append(entries, dir)
+		return nil, ListDirectoryOutput{Entries: entries}, nil
+	}))
 
 	// Read file
-	if err := s.mcpServer.RegisterTool("fsReadFile", "Read contents of a file",
-		LogToolCall("fsReadFile", func(args FsReadFileArgs) (*mcp_golang.ToolResponse, error) {
-			file, err := s.handlers.FileSystem.ReadFile(args.Path)
-			if err != nil {
-				return nil, fmt.Errorf("failed to read file: %w", err)
-			}
-			return CreateJSONResponse(file)
-		})); err != nil {
-		return fmt.Errorf("failed to register readFile tool: %w", err)
-	}
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name:        "fsReadFile",
+		Description: "Read contents of a file",
+	}, LogToolCall("fsReadFile", func(ctx context.Context, req *mcp.CallToolRequest, input ReadFileInput) (*mcp.CallToolResult, ReadFileOutput, error) {
+		file, err := s.handlers.FileSystem.ReadFile(input.Path)
+		if err != nil {
+			return nil, ReadFileOutput{}, fmt.Errorf("failed to read file: %w", err)
+		}
+		return nil, ReadFileOutput{Content: file}, nil
+	}))
 
 	// Write file
-	if err := s.mcpServer.RegisterTool("fsWriteFile", "Create or update a file",
-		LogToolCall("fsWriteFile", func(args FsWriteArgs) (*mcp_golang.ToolResponse, error) {
-			// Parse permissions or use default
-			var permissions os.FileMode = 0644
-			if args.Permissions != "" {
-				permInt, err := strconv.ParseUint(args.Permissions, 8, 32)
-				if err == nil {
-					permissions = os.FileMode(permInt)
-				}
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name:        "fsWriteFile",
+		Description: "Create or update a file",
+	}, LogToolCall("fsWriteFile", func(ctx context.Context, req *mcp.CallToolRequest, input WriteFileInput) (*mcp.CallToolResult, WriteFileOutput, error) {
+		// Parse permissions or use default
+		var permissions os.FileMode = 0644
+		if input.Permissions != nil && *input.Permissions != "" {
+			permInt, err := strconv.ParseUint(*input.Permissions, 8, 32)
+			if err == nil {
+				permissions = os.FileMode(permInt)
 			}
-			if args.IsDirectory {
-				// Create directory
-				err := s.handlers.FileSystem.CreateDirectory(args.Path, permissions)
-				if err != nil {
-					return nil, fmt.Errorf("failed to create directory: %w", err)
-				}
-				response := map[string]interface{}{
-					"path":    args.Path,
-					"message": "Directory created successfully",
-				}
-				return CreateJSONResponse(response)
-			} else {
-				// Create or update file
-				err := s.handlers.FileSystem.WriteFile(args.Path, []byte(args.Content), permissions)
-				if err != nil {
-					return nil, fmt.Errorf("failed to write file: %w", err)
-				}
+		}
 
-				response := map[string]interface{}{
-					"path":    args.Path,
-					"message": "File created/updated successfully",
-				}
+		isDirectory := false
+		if input.IsDirectory != nil {
+			isDirectory = *input.IsDirectory
+		}
 
-				return CreateJSONResponse(response)
+		if isDirectory {
+			// Create directory
+			err := s.handlers.FileSystem.CreateDirectory(input.Path, permissions)
+			if err != nil {
+				return nil, WriteFileOutput{}, fmt.Errorf("failed to create directory: %w", err)
 			}
-		})); err != nil {
-		return fmt.Errorf("failed to register writeFile tool: %w", err)
-	}
+			return nil, WriteFileOutput{
+				Path:    input.Path,
+				Message: "Directory created successfully",
+			}, nil
+		} else {
+			// Create or update file
+			content := ""
+			if input.Content != nil {
+				content = *input.Content
+			}
+			err := s.handlers.FileSystem.WriteFile(input.Path, []byte(content), permissions)
+			if err != nil {
+				return nil, WriteFileOutput{}, fmt.Errorf("failed to write file: %w", err)
+			}
+			return nil, WriteFileOutput{
+				Path:    input.Path,
+				Message: "File created/updated successfully",
+			}, nil
+		}
+	}))
 
 	// Delete file or directory
-	if err := s.mcpServer.RegisterTool("fsDeleteFileOrDirectory", "Delete a file or directory",
-		LogToolCall("fsDeleteFileOrDirectory", func(args FsDeleteArgs) (*mcp_golang.ToolResponse, error) {
-			// Check if it's a directory
-			isDir, err := s.handlers.FileSystem.DirectoryExists(args.Path)
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name:        "fsDeleteFileOrDirectory",
+		Description: "Delete a file or directory",
+	}, LogToolCall("fsDeleteFileOrDirectory", func(ctx context.Context, req *mcp.CallToolRequest, input DeleteFileInput) (*mcp.CallToolResult, DeleteFileOutput, error) {
+		// Check if it's a directory (or use the hint from input)
+		isDir := false
+		if input.IsDirectory != nil {
+			isDir = *input.IsDirectory
+		} else {
+			// Auto-detect if not specified
+			var err error
+			isDir, err = s.handlers.FileSystem.DirectoryExists(input.Path)
 			if err != nil {
-				return nil, fmt.Errorf("failed to check if path is a directory: %w", err)
+				return nil, DeleteFileOutput{}, fmt.Errorf("failed to check if path is a directory: %w", err)
 			}
+		}
 
-			if isDir {
-				// Delete directory
-				err := s.handlers.FileSystem.DeleteDirectory(args.Path, args.Recursive)
-				if err != nil {
-					return nil, fmt.Errorf("failed to delete directory: %w", err)
-				}
+		recursive := false
+		if input.Recursive != nil {
+			recursive = *input.Recursive
+		}
 
-				response := map[string]interface{}{
-					"path":    args.Path,
-					"message": "Directory deleted successfully",
-				}
-
-				return CreateJSONResponse(response)
-			}
-
-			// Check if it's a file
-			isFile, err := s.handlers.FileSystem.FileExists(args.Path)
+		if isDir {
+			// Delete directory
+			err := s.handlers.FileSystem.DeleteDirectory(input.Path, recursive)
 			if err != nil {
-				return nil, fmt.Errorf("failed to check if path is a file: %w", err)
+				return nil, DeleteFileOutput{}, fmt.Errorf("failed to delete directory: %w", err)
 			}
-
-			if isFile {
-				// Delete file
-				err := s.handlers.FileSystem.DeleteFile(args.Path)
-				if err != nil {
-					return nil, fmt.Errorf("failed to delete file: %w", err)
-				}
-
-				response := map[string]interface{}{
-					"path":    args.Path,
-					"message": "File deleted successfully",
-				}
-
-				return CreateJSONResponse(response)
+			return nil, DeleteFileOutput{
+				Path:    input.Path,
+				Message: "Directory deleted successfully",
+			}, nil
+		} else {
+			// Delete file
+			err := s.handlers.FileSystem.DeleteFile(input.Path)
+			if err != nil {
+				return nil, DeleteFileOutput{}, fmt.Errorf("failed to delete file: %w", err)
 			}
-
-			return nil, fmt.Errorf("path %s does not exist", args.Path)
-		})); err != nil {
-		return fmt.Errorf("failed to register deleteFileOrDirectory tool: %w", err)
-	}
+			return nil, DeleteFileOutput{
+				Path:    input.Path,
+				Message: "File deleted successfully",
+			}, nil
+		}
+	}))
 
 	return nil
 }
