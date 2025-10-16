@@ -40,6 +40,7 @@ func SetupRouter() *gin.Engine {
 	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 
 	// Initialize handlers
+	baseHandler := handler.NewBaseHandler()
 	fsHandler := handler.NewFileSystemHandler()
 	processHandler := handler.NewProcessHandler()
 	networkHandler := handler.NewNetworkHandler()
@@ -119,6 +120,14 @@ func SetupRouter() *gin.Engine {
 	r.GET("/health", func(c *gin.Context) {
 		c.JSON(200, gin.H{"status": "ok"})
 	})
+
+	// Root welcome endpoint - handles all HTTP methods
+	r.GET("/", baseHandler.HandleWelcome)
+	r.POST("/", baseHandler.HandleWelcome)
+	r.PUT("/", baseHandler.HandleWelcome)
+	r.DELETE("/", baseHandler.HandleWelcome)
+	r.PATCH("/", baseHandler.HandleWelcome)
+	r.OPTIONS("/", baseHandler.HandleWelcome)
 
 	return r
 }
