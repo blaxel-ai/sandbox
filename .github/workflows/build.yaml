@@ -233,14 +233,17 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+      - name: Set short SHA
+        id: short-sha
+        run: echo "sha_short=$(git rev-parse --short ${{ github.sha }})" >> $GITHUB_OUTPUT
       - name: Build sandbox image
         env:
           SANDBOX_NAME: ${{ matrix.sandbox }}
-          IMAGE_TAG: ${{ env.TAG }}
+          IMAGE_TAG: ${{ github.ref_name }}-${{ steps.short-sha.outputs.sha_short }}
           BL_TYPE: sandbox
           BL_ENV: ${{ env.BL_ENV }}
           SRC_REGISTRY: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-${{ matrix.sandbox }}
-          BASE_IMAGE_TAG: ${{ env.TAG }}
+          BASE_IMAGE_TAG: ${{ github.ref_name }}-${{ steps.short-sha.outputs.sha_short }}
           BUILD_ID: ${{ github.run_id }}-${{ github.run_attempt }}
           LOG_LEVEL: debug
           IMAGE_BUCKET_MK3: ${{ env.BL_ENV == 'prod' && env.PROD_IMAGE_BUCKET || env.DEV_IMAGE_BUCKET }}
@@ -254,7 +257,7 @@ jobs:
       - name: Publish sandbox
         env:
           SANDBOX_NAME: ${{ matrix.sandbox }}
-          TAG: ${{ env.TAG }}
+          TAG: ${{ github.ref_name }}-${{ steps.short-sha.outputs.sha_short }}
           BL_ENV: ${{ env.BL_ENV }}
         run: |
           chmod +x ./scripts/publish-sandbox.sh
