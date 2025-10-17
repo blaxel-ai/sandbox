@@ -42,7 +42,7 @@ mkdir -p tmp/$SANDBOX_NAME
 # Read and update the JSON file
 if [ -f "hub/$SANDBOX_NAME/template.json" ]; then
     echo "Updating hub/$SANDBOX_NAME/template.json with image information"
-    jq --arg img "$SANDBOX_NAME:$TAG" '. + {"image": $img}' "hub/$SANDBOX_NAME/template.json" > "tmp/$SANDBOX_NAME/template.json.tmp"
+    jq --arg img "blaxel/$SANDBOX_NAME:$TAG" '. + {"image": $img}' "hub/$SANDBOX_NAME/template.json" > "tmp/$SANDBOX_NAME/template.json.tmp"
 else
     echo "Warning: hub/$SANDBOX_NAME/template.json not found"
     exit 1
