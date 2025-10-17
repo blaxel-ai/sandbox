@@ -37,20 +37,12 @@ echo "Publishing sandbox: $SANDBOX_NAME"
 echo "Environment: $BL_ENV"
 echo "Tag: $TAG"
 
-# Set up image prefix based on environment
-PREFIX="blaxel"
-if [ "$BL_ENV" = "dev" ]; then
-    PREFIX="$PREFIX/dev"
-elif [ "$BL_ENV" = "prod" ]; then
-    PREFIX="$PREFIX/prod"
-fi
-
 mkdir -p tmp/$SANDBOX_NAME
 
 # Read and update the JSON file
 if [ -f "hub/$SANDBOX_NAME/template.json" ]; then
     echo "Updating hub/$SANDBOX_NAME/template.json with image information"
-    jq --arg img "$PREFIX-$SANDBOX_NAME:$TAG" '. + {"image": $img}' "hub/$SANDBOX_NAME/template.json" > "tmp/$SANDBOX_NAME/template.json.tmp"
+    jq --arg img "$SANDBOX_NAME:$TAG" '. + {"image": $img}' "hub/$SANDBOX_NAME/template.json" > "tmp/$SANDBOX_NAME/template.json.tmp"
 else
     echo "Warning: hub/$SANDBOX_NAME/template.json not found"
     exit 1
