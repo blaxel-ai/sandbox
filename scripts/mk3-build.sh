@@ -170,6 +170,7 @@ API_PAYLOAD=$(jq -n \
   --arg registry "$REGISTRY_URL" \
   --arg workspace "$WORKSPACE" \
   --arg repository "$SANDBOX_NAME" \
+  --arg mk3 "blaxel/blaxel/sbx/$SANDBOX_NAME:$IMAGE_TAG" \
   --arg tag "$IMAGE_TAG" \
   --arg registry_type "$REGISTRY_TYPE" \
   --arg original "sbx/$SANDBOX_NAME:$IMAGE_TAG" \
@@ -183,7 +184,8 @@ API_PAYLOAD=$(jq -n \
     registry_type: $registry_type,
     original: $original,
     region: $region,
-    bucket: $bucket
+    bucket: $bucket,
+    mk3: $mk3
   }')
 
 echo "Calling Blaxel API to register image..."
