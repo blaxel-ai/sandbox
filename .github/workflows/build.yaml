@@ -257,7 +257,7 @@ jobs:
       - name: Publish sandbox
         env:
           SANDBOX_NAME: ${{ matrix.sandbox }}
-          TAG: ${{ github.ref_name }}-${{ steps.short-sha.outputs.sha_short }}
+          TAG: latest # We want to display latest in UI, controlplane will automaticly use the latest tag
           BL_ENV: ${{ env.BL_ENV }}
         run: |
           chmod +x ./scripts/publish-sandbox.sh
