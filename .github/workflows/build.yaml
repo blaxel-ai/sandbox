@@ -209,7 +209,7 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
-            SANDBOX_VERSION=${{ env.TAG }}
+            SANDBOX_VERSION=${{ github.ref_name == 'main' && 'latest' || github.ref_name == 'develop' && 'develop' || 'latest' }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
