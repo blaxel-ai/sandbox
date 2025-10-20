@@ -23,7 +23,7 @@ Sandbox Hub is a collection of development environment templates for creating se
 
 The hub directory contains the following templates:
 
-### Base
+### Basic
 A minimal micro VM environment with basic system utilities and networking capabilities. Provides a lightweight, secure foundation for running basic applications and services, featuring a minimal attack surface and optimized resource usage.
 
 ### Python App
@@ -71,7 +71,7 @@ Sandbox operations:
 
 Each template exposes specific ports for access:
 
-- **Base**: Accessible via port 8080 (sandbox-api)
+- **Basic**: Accessible via port 8080 (sandbox-api)
 - **Python App**: Accessible via ports 8080 (sandbox-api) and 8000 (python-app)
 - **TypeScript App**: Accessible via ports 8080 (sandbox-api) and 3000 (ts-app)
 - **Expo**: Accessible via multiple ports for various Expo services (19000-19006, 8081)
