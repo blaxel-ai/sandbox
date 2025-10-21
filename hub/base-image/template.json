@@ -1,9 +1,9 @@
 {
-  "name": "basic",
-  "displayName": "Basic",
+  "name": "base-image",
+  "displayName": "Base Image",
   "categories": [],
   "description": "A minimal micro VM environment with basic system utilities and networking capabilities",
-  "longDescription": "The Basic micro VM provides a lightweight, secure environment with essential system utilities and networking capabilities. It's designed as a foundation for running basic applications and services, featuring a minimal attack surface and optimized resource usage.",
+  "longDescription": "The Base Image micro VM provides a lightweight, secure environment with essential system utilities and networking capabilities. It's designed as a foundation for running basic applications and services, featuring a minimal attack surface and optimized resource usage.",
   "url": "https://github.com/firecracker-microvm",
   "icon": "https://avatars.githubusercontent.com/u/44477506?s=200&v=4",
   "memory": 4096,

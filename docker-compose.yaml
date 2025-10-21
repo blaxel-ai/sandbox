@@ -22,11 +22,11 @@ services:
       - "8080:8080"
       - "8000:8000"
 
-  basic:
+  base-image:
     platform: linux/amd64
     build:
       context: .
-      dockerfile: hub/basic/Dockerfile
+      dockerfile: hub/base-image/Dockerfile
     env_file:
       - .env
     ports:
