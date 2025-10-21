@@ -22,7 +22,7 @@ const argv = yargs(hideBin(process.argv))
       .option('image', {
         describe: 'Docker image for creating sandbox (only used with create mode)',
         type: 'string',
-        default: 'blaxel/prod-basic:latest'
+        default: 'blaxel/base-image:latest'
       })
       .option('url', {
         describe: 'Force URL for sandbox (only used with local mode)',
