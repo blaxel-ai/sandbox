@@ -102,12 +102,13 @@ type ApplyEditResponse struct {
 // @Tags fastapply
 // @Accept json
 // @Produce json
+// @Param path path string true "Path to the file to edit (relative to workspace)"
 // @Param request body ApplyEditRequest true "Code edit request"
 // @Success 200 {object} ApplyEditResponse "Code edit applied successfully"
 // @Failure 400 {object} ErrorResponse "Invalid request"
 // @Failure 422 {object} ErrorResponse "Unprocessable entity - failed to process the request"
 // @Failure 503 {object} ErrorResponse "Service unavailable - no provider configured"
-// @Router /codegen/fastapply/*path [put]
+// @Router /codegen/fastapply/{path} [put]
 func (h *CodegenHandler) HandleFastApply(c *gin.Context) {
 	// Check if fastapply is enabled
 	if !codegen.IsEnabled() {
@@ -246,7 +247,7 @@ type RankedFile = codegen.RankedFile // @name RankedFile
 // @Failure 400 {object} ErrorResponse "Invalid request"
 // @Failure 422 {object} ErrorResponse "Unprocessable entity - failed to process the request"
 // @Failure 503 {object} ErrorResponse "Service unavailable - Relace not configured"
-// @Router /codegen/reranking/*path [get]
+// @Router /codegen/reranking/{path} [get]
 func (h *CodegenHandler) HandleReranking(c *gin.Context) {
 	// Check if codegen tools are enabled (we need Relace for reranking)
 	if !codegen.IsEnabled() {
