@@ -1,0 +1,28 @@
+meta {
+  name: reranking
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{URL}}/codegen/reranking/tmp?query="createUser"&filePattern=test.txt&scoreThreshold=0.001
+  body: none
+  auth: inherit
+}
+
+params:query {
+  query: "createUser"
+  filePattern: test.txt
+  scoreThreshold: 0.001
+}
+
+body:json {
+  {
+    "codeEdit": "// ... keep existing code\n\n function createUser(userData) {\n  const validation = validateUser(userData);\n  \n  if (!validation.valid) {\n    throw new Error(validation.error);\n  }\n  \n  const user = {\n    id: generateId(),\n    name: userData.name,\n    email: userData.email,\n    createdAt: new Date(),\n    role: userData.role || 'user',\n    active: true,\n    lastLogin: null\n  };\n  \n  // Log user creation\n  console.log(`Created new user: ${user.name} (${user.id})`);\n  \n  return user;\n\n// ... keep rest of code\n\n}"
+  }
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}

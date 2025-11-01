@@ -277,9 +277,32 @@ func TestProcessOutputByName(t *testing.T) {
 
 	require.Contains(t, processResponse, "name")
 	processName := processResponse["name"].(string)
+	require.Contains(t, processResponse, "pid")
+	pid := processResponse["pid"].(string)
 
-	// Wait a bit for the process to complete
-	time.Sleep(100 * time.Millisecond)
+	// Wait for the process to actually complete (poll status)
+	maxWait := 5 * time.Second
+	pollInterval := 50 * time.Millisecond
+	deadline := time.Now().Add(maxWait)
+
+	for time.Now().Before(deadline) {
+		statusResp, err := common.MakeRequest(http.MethodGet, "/process/"+pid, nil)
+		require.NoError(t, err)
+
+		var statusResponse map[string]interface{}
+		err = json.NewDecoder(statusResp.Body).Decode(&statusResponse)
+		statusResp.Body.Close()
+		require.NoError(t, err)
+
+		if status, ok := statusResponse["status"].(string); ok {
+			if status == "completed" || status == "failed" {
+				// Process has finished, wait a bit more for output buffers to flush
+				time.Sleep(100 * time.Millisecond)
+				break
+			}
+		}
+		time.Sleep(pollInterval)
+	}
 
 	// Test getting process output by name
 	resp, err = common.MakeRequest(http.MethodGet, "/process/"+processName+"/logs", nil)
@@ -375,6 +398,11 @@ func TestProcessKillWithChildProcesses(t *testing.T) {
 	// Test similar to the TypeScript example: start a dev-like process, stream logs, then kill
 	// This test runs twice to verify that ports are properly freed after killing
 
+	// Check if prerequisites exist (Next.js app, npm, etc.)
+	if !checkNextJsPrerequisites(t) {
+		t.Skip("Skipping Next.js test: prerequisites not available (requires /blaxel/app with npm)")
+	}
+
 	// First run: Start Next.js, verify it binds to port 3000, then kill it
 	t.Log("=== First run: Starting Next.js dev server ===")
 	firstRunSuccess := runNextJsAndKill(t, "dev")
@@ -393,6 +421,43 @@ func TestProcessKillWithChildProcesses(t *testing.T) {
 	assert.True(t, secondRunSuccess, "Second run should also successfully start Next.js, proving port 3000 was freed")
 
 	t.Log("=== Test passed: Process group killing properly frees ports ===")
+}
+
+// checkNextJsPrerequisites checks if the Next.js app and npm are available
+func checkNextJsPrerequisites(t *testing.T) bool {
+	// Try to execute a simple command to check if the working directory exists
+	checkRequest := map[string]interface{}{
+		"name":              "check-nextjs",
+		"command":           "test -d /blaxel/app && test -f /blaxel/app/package.json",
+		"workingDir":        "/",
+		"waitForCompletion": true,
+		"timeout":           5,
+	}
+
+	resp, err := common.MakeRequest(http.MethodPost, "/process", checkRequest)
+	if err != nil {
+		t.Logf("Failed to check prerequisites: %v", err)
+		return false
+	}
+	defer resp.Body.Close()
+
+	// If the command failed (non-zero exit), prerequisites don't exist
+	if resp.StatusCode != http.StatusOK {
+		return false
+	}
+
+	var processResponse map[string]interface{}
+	err = json.NewDecoder(resp.Body).Decode(&processResponse)
+	if err != nil {
+		return false
+	}
+
+	// Check if the process completed successfully (exit code 0)
+	if status, ok := processResponse["status"].(string); ok {
+		return status == "completed" || status == "running"
+	}
+
+	return false
 }
 
 // runNextJsAndKill starts a Next.js dev process, waits for it to show localhost:3000, then kills it
