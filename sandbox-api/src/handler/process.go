@@ -173,7 +173,7 @@ func (h *ProcessHandler) StreamProcessOutput(identifier string, writer io.Writer
 
 // RemoveLogWriter removes a log writer from a process
 func (h *ProcessHandler) RemoveLogWriter(identifier string, writer io.Writer) {
-	h.processManager.RemoveLogWriter(identifier, writer)
+	_ = h.processManager.RemoveLogWriter(identifier, writer)
 }
 
 // HandleListProcesses handles GET requests to /process/

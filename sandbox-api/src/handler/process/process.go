@@ -87,7 +87,6 @@ func (pm *ProcessManager) StartProcess(command string, workingDir string, env ma
 }
 
 func (pm *ProcessManager) StartProcessWithName(command string, workingDir string, name string, env map[string]string, restartOnFailure bool, maxRestarts int, callback func(process *ProcessInfo)) (string, error) {
-	var cmd *exec.Cmd
 	// Always use shell to execute commands
 	// This ensures shell built-ins (cd, export, alias) work properly
 	// Use SHELL and SHELL_ARGS environment variables if set
@@ -213,7 +212,7 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 				process.logLock.RLock()
 				for _, w := range process.logWriters {
 					fullMsg := append([]byte("stdout:"), data...)
-					w.Write(fullMsg)
+					_, _ = w.Write(fullMsg)
 					if f, ok := w.(interface{ Flush() }); ok {
 						f.Flush()
 					}
@@ -239,7 +238,7 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 				process.logLock.RLock()
 				for _, w := range process.logWriters {
 					fullMsg := append([]byte("stderr:"), data...)
-					w.Write(fullMsg)
+					_, _ = w.Write(fullMsg)
 					if f, ok := w.(interface{ Flush() }); ok {
 						f.Flush()
 					}
@@ -296,7 +295,7 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 			// Notify log writers about the restart
 			process.logLock.RLock()
 			for _, w := range process.logWriters {
-				w.Write([]byte(restartMsg))
+				_, _ = w.Write([]byte(restartMsg))
 				if f, ok := w.(interface{ Flush() }); ok {
 					f.Flush()
 				}
@@ -419,7 +418,7 @@ func (pm *ProcessManager) restartProcess(oldProcess *ProcessInfo, callback func(
 				oldProcess.logLock.RLock()
 				for _, w := range oldProcess.logWriters {
 					fullMsg := append([]byte("stdout:"), data...)
-					w.Write(fullMsg)
+					_, _ = w.Write(fullMsg)
 					if f, ok := w.(interface{ Flush() }); ok {
 						f.Flush()
 					}
@@ -445,7 +444,7 @@ func (pm *ProcessManager) restartProcess(oldProcess *ProcessInfo, callback func(
 				oldProcess.logLock.RLock()
 				for _, w := range oldProcess.logWriters {
 					fullMsg := append([]byte("stderr:"), data...)
-					w.Write(fullMsg)
+					_, _ = w.Write(fullMsg)
 					if f, ok := w.(interface{ Flush() }); ok {
 						f.Flush()
 					}
@@ -503,7 +502,7 @@ func (pm *ProcessManager) restartProcess(oldProcess *ProcessInfo, callback func(
 			// Notify log writers about the restart
 			oldProcess.logLock.RLock()
 			for _, w := range oldProcess.logWriters {
-				w.Write([]byte(restartMsg))
+				_, _ = w.Write([]byte(restartMsg))
 				if f, ok := w.(interface{ Flush() }); ok {
 					f.Flush()
 				}
@@ -668,7 +667,7 @@ func (pm *ProcessManager) StopProcess(identifier string) error {
 	process.logLock.RLock()
 	terminationMsg := []byte("\n[Process is being gracefully terminated]\n")
 	for _, w := range process.logWriters {
-		w.Write(terminationMsg)
+		_, _ = w.Write(terminationMsg)
 	}
 	process.logLock.RUnlock()
 
@@ -709,7 +708,7 @@ func (pm *ProcessManager) KillProcess(identifier string) error {
 	process.logLock.RLock()
 	terminationMsg := []byte("\n[Process is being forcefully killed]\n")
 	for _, w := range process.logWriters {
-		w.Write(terminationMsg)
+		_, _ = w.Write(terminationMsg)
 	}
 	process.logLock.RUnlock()
 
@@ -759,7 +758,7 @@ func (pm *ProcessManager) StreamProcessOutput(identifier string, w io.Writer) er
 	}
 
 	// Write current content first
-	w.Write([]byte(process.logs.String()))
+	_, _ = w.Write([]byte(process.logs.String()))
 
 	// Attach writer for future output
 	process.logLock.Lock()
@@ -779,7 +778,7 @@ func (pm *ProcessManager) StreamProcessOutput(identifier string, w io.Writer) er
 			}
 			// Send keepalive message only to this specific writer
 			keepaliveMsg := []byte("[keepalive]\n")
-			w.Write(keepaliveMsg)
+			_, _ = w.Write(keepaliveMsg)
 			if f, ok := w.(interface{ Flush() }); ok {
 				f.Flush()
 			}
@@ -814,9 +813,6 @@ func GenerateRandomName(length int) string {
 	const charset = "abcdefghijklmnopqrstuvwxyz0123456789"
 	randomName := strings.Builder{}
 	randomName.WriteString("proc-")
-
-	// Seed the random number generator
-	rand.Seed(time.Now().UnixNano())
 
 	// Generate random string
 	for i := 0; i < length; i++ {

@@ -308,12 +308,12 @@ func getPortsUsingLsof(pid int) ([]*PortInfo, error) {
 	scanner := bufio.NewScanner(strings.NewReader(string(output)))
 	portsInfo := make([]*PortInfo, 0)
 
-	// Skip header line
-	if scanner.Scan() {
-		// Skip the header
-	}
-
+	i := 0
 	for scanner.Scan() {
+		if i == 0 {
+			// Skip the header
+			continue
+		}
 		line := scanner.Text()
 		fields := strings.Fields(line)
 
@@ -410,6 +410,7 @@ func getPortsUsingLsof(pid int) ([]*PortInfo, error) {
 		}
 
 		portsInfo = append(portsInfo, portInfo)
+		i++
 	}
 
 	return portsInfo, nil

@@ -327,30 +327,30 @@ func (h *FileSystemHandler) HandleCreateOrUpdateBinary(c *gin.Context) {
 			if len(data) > 0 {
 				permInt, perr := strconv.ParseUint(strings.TrimSpace(string(data)), 8, 32)
 				if perr != nil {
-					part.Close()
+					_ = part.Close()
 					h.SendError(c, http.StatusBadRequest, fmt.Errorf("invalid permissions format '%s': %w", strings.TrimSpace(string(data)), perr))
 					return
 				}
 				permissions = os.FileMode(permInt)
 			}
-			part.Close()
+			_ = part.Close()
 			continue
 		}
 
 		if name == "file" && filename != "" && !wroteFile {
 			// Stream directly to disk with requested permissions
 			if err := h.fs.WriteFileFromReader(path, part, permissions); err != nil {
-				part.Close()
+				_ = part.Close()
 				h.SendError(c, http.StatusUnprocessableEntity, fmt.Errorf("error writing binary file: %w", err))
 				return
 			}
 			wroteFile = true
-			part.Close()
+			_ = part.Close()
 			continue
 		}
 
 		// Close any unhandled parts
-		part.Close()
+		_ = part.Close()
 	}
 
 	if !wroteFile {

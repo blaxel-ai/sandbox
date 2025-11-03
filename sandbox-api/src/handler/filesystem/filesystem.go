@@ -332,12 +332,12 @@ func (fs *Filesystem) WriteFileFromReader(path string, r io.Reader, perm os.File
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	if _, err := io.Copy(f, r); err != nil {
 		// Clean up the partially written file on error
-		f.Close() // Close file before attempting to remove
-		os.Remove(absPath)
+		_ = os.Remove(absPath)
+		_ = f.Close() // Close file before attempting to remove
 		return err
 	}
 	return nil

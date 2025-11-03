@@ -86,7 +86,7 @@ func (m *MorphClient) ApplyCodeEdit(originalContent, codeEdit string) (string, e
 	if err != nil {
 		return "", fmt.Errorf("failed to make request to Morph API: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	// Check response status
 	if resp.StatusCode != http.StatusOK {

@@ -24,6 +24,8 @@ type ProcessExecuteInput struct {
 	Timeout           *int              `json:"timeout,omitempty" jsonschema:"Timeout in seconds for the command (default: 30)"`
 	WaitForPorts      []int             `json:"waitForPorts,omitempty" jsonschema:"List of ports to wait for before returning"`
 	IncludeLogs       *bool             `json:"includeLogs,omitempty" jsonschema:"Whether to include logs in the response"`
+	RestartOnFailure  *bool             `json:"restartOnFailure,omitempty" jsonschema:"Whether to restart the process on failure (default: false)"`
+	MaxRestarts       *int              `json:"maxRestarts,omitempty" jsonschema:"Maximum number of restarts (default: 0)"`
 }
 
 type ProcessExecuteOutput struct {
@@ -95,6 +97,15 @@ func (s *Server) registerProcessTools() error {
 			includeLogs = *input.IncludeLogs
 		}
 
+		restartOnFailure := false
+		if input.RestartOnFailure != nil {
+			restartOnFailure = *input.RestartOnFailure
+		}
+
+		maxRestarts := 0
+		if input.MaxRestarts != nil {
+			maxRestarts = *input.MaxRestarts
+		}
 		processInfo, err := s.handlers.Process.ExecuteProcess(
 			input.Command,
 			workingDir,
@@ -103,6 +114,8 @@ func (s *Server) registerProcessTools() error {
 			waitForCompletion,
 			timeout,
 			waitForPorts,
+			restartOnFailure,
+			maxRestarts,
 		)
 		if err != nil {
 			return nil, ProcessExecuteOutput{}, err

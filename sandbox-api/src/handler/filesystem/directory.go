@@ -159,7 +159,7 @@ func (fs *Filesystem) WatchDirectory(path string, callback func(event fsnotify.E
 
 	stop := func() {
 		close(stopChan)
-		watcher.Close()
+		_ = watcher.Close()
 	}
 	return stop, nil
 }
@@ -191,7 +191,7 @@ func (fs *Filesystem) WatchDirectoryRecursive(path string, callback func(event f
 	}
 
 	if err := addDirs(absPath); err != nil {
-		watcher.Close()
+		_ = watcher.Close()
 		return nil, err
 	}
 
@@ -224,7 +224,7 @@ func (fs *Filesystem) WatchDirectoryRecursive(path string, callback func(event f
 
 	stop := func() {
 		close(stopChan)
-		watcher.Close()
+		_ = watcher.Close()
 	}
 	return stop, nil
 }

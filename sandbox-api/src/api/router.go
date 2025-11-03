@@ -79,15 +79,16 @@ func SetupRouter() *gin.Engine {
 			c.Set("rootPath", trimmedPath)
 
 			// Handle based on method
-			if method == "GET" {
+			switch method {
+			case "GET":
 				fsHandler.HandleGetTree(c)
 				c.Abort()
 				return
-			} else if method == "PUT" {
+			case "PUT":
 				fsHandler.HandleCreateOrUpdateTree(c)
 				c.Abort()
 				return
-			} else if method == "DELETE" {
+			case "DELETE":
 				fsHandler.HandleDeleteTree(c)
 				c.Abort()
 				return

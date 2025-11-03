@@ -67,9 +67,7 @@ func (pm *ProcessManager) ExecuteProcess(
 			if !closed {
 				// Use a recover block in case of a race condition
 				defer func() {
-					if r := recover(); r != nil {
-						// Optionally log the panic
-					}
+					_ = recover()
 				}()
 				completionCh <- p.PID
 			}
@@ -95,9 +93,7 @@ func (pm *ProcessManager) ExecuteProcess(
 			// Just close the channel without trying to monitor ports
 			func() {
 				defer func() {
-					if r := recover(); r != nil {
-						// Log the panic but continue
-					}
+					_ = recover()
 				}()
 
 				mu.Lock()
@@ -119,9 +115,7 @@ func (pm *ProcessManager) ExecuteProcess(
 					// Safely close the channel with defer-recover to prevent panics
 					func() {
 						defer func() {
-							if r := recover(); r != nil {
-								// Log the panic but continue
-							}
+							_ = recover()
 						}()
 
 						mu.Lock()

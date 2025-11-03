@@ -132,7 +132,7 @@ func (h *NetworkHandler) HandleMonitorPorts(c *gin.Context) {
 			logrus.Debugf("Error sending port callback request: %v", err)
 			return
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		logrus.Debugf("Port callback request sent to %s", req.Callback)
 	})
 
