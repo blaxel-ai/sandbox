@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -15,7 +16,8 @@ import (
 
 // Filesystem represents the root directory of the filesystem
 type Filesystem struct {
-	Root string `json:"root"`
+	Root       string `json:"root"`
+	WorkingDir string `json:"workingDir"`
 } // @name Filesystem
 
 // FileByte represents a file in the filesystem
@@ -174,16 +176,46 @@ func (f *FileWithContentByte) UnmarshalJSON(data []byte) error {
 }
 
 func NewFilesystem(root string) *Filesystem {
-	return &Filesystem{Root: root}
+	return &Filesystem{Root: root, WorkingDir: root}
+}
+
+func NewFilesystemWithWorkingDir(root string, workingDir string) *Filesystem {
+	return &Filesystem{Root: root, WorkingDir: workingDir}
+}
+
+// ResolveDisplayPath converts "." to the actual working directory for display purposes
+func (fs *Filesystem) ResolveDisplayPath(path string) string {
+	if path == "." || path == "./" {
+		return fs.WorkingDir
+	}
+	return path
 }
 
 // GetAbsolutePath gets the absolute path, ensuring it's within the root
 func (fs *Filesystem) GetAbsolutePath(path string) (string, error) {
-	absPath := filepath.Join(fs.Root, path)
-	// Verify the path is within the root to prevent path traversal
-	if relPath, err := filepath.Rel(fs.Root, absPath); err != nil || relPath == ".." || strings.HasPrefix(relPath, ".."+string(filepath.Separator)) {
-		return "", errors.New("path is outside of the root directory")
+	var absPath string
+
+	// If path is absolute (starts with /), use it directly
+	if filepath.IsAbs(path) {
+		absPath = path
+	} else {
+		// If path is relative, resolve it from the working directory
+		absPath = filepath.Join(fs.WorkingDir, path)
 	}
+
+	// Clean the path to resolve . and .. references
+	absPath = filepath.Clean(absPath)
+
+	// For absolute paths outside the root, we don't restrict access
+	// This allows accessing system directories when using absolute paths
+	// For relative paths, we still ensure they're within bounds
+	if !filepath.IsAbs(path) {
+		// Verify the path is within the root to prevent path traversal for relative paths
+		if relPath, err := filepath.Rel(fs.Root, absPath); err != nil || strings.HasPrefix(relPath, ".."+string(filepath.Separator)) {
+			return "", errors.New("path is outside of the root directory")
+		}
+	}
+
 	return absPath, nil
 }
 
@@ -257,7 +289,7 @@ func (fs *Filesystem) ReadFile(path string) (*FileWithContentByte, error) {
 		Content: content,
 	}
 	// Set File fields
-	result.Path = path
+	result.Path = fs.ResolveDisplayPath(path)
 	result.Permissions = info.Mode()
 	result.Size = info.Size()
 	result.LastModified = info.ModTime()
@@ -283,6 +315,34 @@ func (fs *Filesystem) WriteFile(path string, content []byte, perm os.FileMode) e
 	return os.WriteFile(absPath, content, perm)
 }
 
+// WriteFileFromReader streams content from a reader to a file on disk
+func (fs *Filesystem) WriteFileFromReader(path string, r io.Reader, perm os.FileMode) error {
+	absPath, err := fs.GetAbsolutePath(path)
+	if err != nil {
+		return err
+	}
+
+	// Ensure parent directory exists
+	dir := filepath.Dir(absPath)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return err
+	}
+
+	f, err := os.OpenFile(absPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, perm)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	if _, err := io.Copy(f, r); err != nil {
+		// Clean up the partially written file on error
+		f.Close() // Close file before attempting to remove
+		os.Remove(absPath)
+		return err
+	}
+	return nil
+}
+
 // CreateDirectory creates a directory at the given path
 func (fs *Filesystem) CreateDirectory(path string, perm os.FileMode) error {
 	absPath, err := fs.GetAbsolutePath(path)
@@ -300,7 +360,9 @@ func (fs *Filesystem) ListDirectory(path string) (*Directory, error) {
 		return nil, err
 	}
 
-	dir := NewDirectory(path)
+	// Use the resolved display path for the directory
+	displayPath := fs.ResolveDisplayPath(path)
+	dir := NewDirectory(displayPath)
 
 	entries, err := os.ReadDir(absPath)
 	if err != nil {
@@ -308,7 +370,8 @@ func (fs *Filesystem) ListDirectory(path string) (*Directory, error) {
 	}
 
 	for _, entry := range entries {
-		entryPath := filepath.Join(path, entry.Name())
+		// Use displayPath for the entry paths too
+		entryPath := filepath.Join(displayPath, entry.Name())
 		absEntryPath := filepath.Join(absPath, entry.Name())
 
 		// Use os.Lstat to get info about the symlink itself, not its target
@@ -513,12 +576,20 @@ func (fs *Filesystem) Walk(root string, fn filepath.WalkFunc) error {
 
 // CreateOrUpdateFile creates or updates a file
 func (fs *Filesystem) CreateOrUpdateFile(path string, content string, isDirectory bool, permissions string) error {
-	// Parse permissions or use default
-	var perm os.FileMode = 0644
+	// Parse permissions or use appropriate defaults
+	var perm os.FileMode
 	if permissions != "" {
 		permInt, err := strconv.ParseUint(permissions, 8, 32)
-		if err == nil {
-			perm = os.FileMode(permInt)
+		if err != nil {
+			return fmt.Errorf("invalid permissions format '%s': %w", permissions, err)
+		}
+		perm = os.FileMode(permInt)
+	} else {
+		// Use appropriate defaults: 0755 for directories, 0644 for files
+		if isDirectory {
+			perm = 0755
+		} else {
+			perm = 0644
 		}
 	}
 

@@ -5,3 +5,4 @@ tmp
 processes.db
 .DS_Store
 dist
+reports

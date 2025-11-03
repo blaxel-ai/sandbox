@@ -70,8 +70,8 @@ func TestProcessManagerIntegrationWithPID(t *testing.T) {
 		}
 		t.Logf("Started echo process with PID: %s", echoPID)
 
-		// Wait for process to complete
-		time.Sleep(10 * time.Millisecond)
+		// Wait for process to complete (shell wrapper needs more time)
+		time.Sleep(20 * time.Millisecond)
 
 		// Get and verify output
 		logs, err := pm.GetProcessOutput(echoPID)
@@ -110,8 +110,8 @@ func TestProcessManagerIntegrationWithPID(t *testing.T) {
 		}
 		t.Logf("Started ls process with PID: %s in /tmp directory", lsPID)
 
-		// Wait for process to complete
-		time.Sleep(10 * time.Millisecond)
+		// Wait for process to complete (shell wrapper needs more time)
+		time.Sleep(20 * time.Millisecond)
 
 		// Get and verify output
 		logs, err := pm.GetProcessOutput(lsPID)
@@ -174,8 +174,8 @@ func TestProcessManagerIntegrationWithPID(t *testing.T) {
 			t.Errorf("Test process PID %s not found in process list", testPID)
 		}
 
-		// Wait for process to complete
-		time.Sleep(10 * time.Millisecond)
+		// Wait for process to complete (shell wrapper needs more time)
+		time.Sleep(20 * time.Millisecond)
 	})
 }
 
@@ -243,8 +243,8 @@ func TestProcessManagerIntegrationWithName(t *testing.T) {
 		}
 		t.Logf("Started echo process with name: %s", name)
 
-		// Wait for process to complete
-		time.Sleep(10 * time.Millisecond)
+		// Wait for process to complete (shell wrapper needs more time)
+		time.Sleep(20 * time.Millisecond)
 
 		// Get and verify output
 		logs, err := pm.GetProcessOutput(name)
@@ -284,8 +284,8 @@ func TestProcessManagerIntegrationWithName(t *testing.T) {
 		}
 		t.Logf("Started ls process with name: %s in /tmp directory", name)
 
-		// Wait for process to complete
-		time.Sleep(10 * time.Millisecond)
+		// Wait for process to complete (shell wrapper needs more time)
+		time.Sleep(20 * time.Millisecond)
 
 		// Get and verify output
 		logs, err := pm.GetProcessOutput(name)
@@ -349,8 +349,8 @@ func TestProcessManagerIntegrationWithName(t *testing.T) {
 			t.Errorf("Test process name %s not found in process list", name)
 		}
 
-		// Wait for process to complete
-		time.Sleep(10 * time.Millisecond)
+		// Wait for process to complete (shell wrapper needs more time)
+		time.Sleep(20 * time.Millisecond)
 	})
 }
 
@@ -363,7 +363,7 @@ func TestEnvironmentVariableHandling(t *testing.T) {
 		env := map[string]string{
 			"CUSTOM_VAR1": "value1",
 			"CUSTOM_VAR2": "value2",
-			"PATH":        "/custom/path:/another/path",
+			"PATH":        "/custom/path:/another/path:/usr/bin:/bin", // Include standard paths for printenv
 			"HOME":        "/custom/home",
 			"TEST_VAR":    "test_value",
 		}
@@ -391,11 +391,24 @@ func TestEnvironmentVariableHandling(t *testing.T) {
 
 			// Verify all custom environment variables are present
 			output := logs.Stdout
+			if output == "" {
+				t.Errorf("Iteration %d: Got empty output from printenv", i+1)
+				t.Logf("Stdout: '%s', Stderr: '%s', Logs: '%s'", logs.Stdout, logs.Stderr, logs.Logs)
+
+				// Check process status
+				process, exists := pm.GetProcessByIdentifier(pid)
+				if exists {
+					t.Logf("Process status: %s, exit code: %d", process.Status, process.ExitCode)
+				}
+			}
 			for key, expectedValue := range env {
+				// Check if the key exists with the expected value
 				expectedLine := key + "=" + expectedValue
 				if !strings.Contains(output, expectedLine) {
 					t.Errorf("Iteration %d: Expected environment variable not found: %s", i+1, expectedLine)
-					t.Logf("Full output:\n%s", output)
+					if i == 0 { // Only log full output on first iteration to avoid spam
+						t.Logf("Full output:\n%s", output)
+					}
 				}
 			}
 
@@ -428,8 +441,8 @@ func TestEnvironmentVariableHandling(t *testing.T) {
 			t.Fatalf("Error starting process: %v", err)
 		}
 
-		// Wait for process to complete
-		time.Sleep(10 * time.Millisecond)
+		// Wait for process to complete (shell wrapper needs more time)
+		time.Sleep(20 * time.Millisecond)
 
 		// Get output
 		logs, err := pm.GetProcessOutput(pid)
@@ -454,8 +467,8 @@ func TestEnvironmentVariableHandling(t *testing.T) {
 			t.Fatalf("Error starting process: %v", err)
 		}
 
-		// Wait for process to complete
-		time.Sleep(10 * time.Millisecond)
+		// Wait for process to complete (shell wrapper needs more time)
+		time.Sleep(20 * time.Millisecond)
 
 		// Get output
 		logs, err := pm.GetProcessOutput(pid)

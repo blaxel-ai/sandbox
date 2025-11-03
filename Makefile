@@ -1,5 +1,9 @@
 dependencies:
-	cd sandbox-api && go install github.com/air-verse/air@latest
+	cd sandbox-api && \
+		go install github.com/air-verse/air@latest && \
+		go install github.com/swaggo/swag/cmd/swag@latest && \
+		brew install yq
+
 
 api:
 	cd sandbox-api && air
@@ -8,7 +12,7 @@ docker-build:
 	docker build -t blaxel/sandbox-api .
 
 docker-run:
-	docker run -p 8080:8080 -p 3000:3000 --rm --name sandbox-dev -v ./sandbox-api:/blaxel/sandbox-api -v ./tmp:/blaxel/tmp localhost/blaxel/sandbox-api:latest
+	docker run -p 8080:8080 -p 3000:3000 --rm --name sandbox-dev -v ./sandbox-api:/blaxel/sandbox-api -v ./tmp:/blaxel/tmp blaxel/sandbox-api:latest
 
 test:
 	cd sandbox-api && go test -v ./...
@@ -35,6 +39,10 @@ reference:
 deploy-custom-sandbox:
 	cp -r sandbox-api e2e/custom-sandbox
 	cd e2e/custom-sandbox && bl deploy && rm -rf sandbox-api
+
+deploy-simple-custom-sandbox:
+	cd sandbox-api && GOOS=linux GOARCH=amd64 go build -o ../e2e/simple-custom-sandbox/sandbox-api
+	cd e2e/simple-custom-sandbox && bl deploy && rm sandbox-api
 
 build-custom-sandbox:
 	cp -r sandbox-api e2e/custom-sandbox
@@ -65,3 +73,7 @@ e2e:
 	@docker exec sandbox-dev ls /proc/$$(docker exec sandbox-dev pgrep -f sandbox-api)/fd | wc -l
 
 .PHONY: e2e
+
+mr_develop:
+	$(eval BRANCH_NAME := $(shell git rev-parse --abbrev-ref HEAD))
+	gh pr create --base develop --head $(BRANCH_NAME) --title "$(BRANCH_NAME)" --body "Merge request from $(BRANCH_NAME) to develop"

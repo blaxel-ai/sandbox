@@ -1,3 +1,6 @@
+ARG SANDBOX_VERSION=latest
+FROM ghcr.io/blaxel-ai/sandbox:${SANDBOX_VERSION} AS sandbox-api
+
 FROM node:22-alpine
 
 RUN apk update && apk add --no-cache \
@@ -6,7 +9,7 @@ RUN apk update && apk add --no-cache \
 
 WORKDIR /blaxel
 
-COPY --from=ghcr.io/blaxel-ai/sandbox:latest /sandbox-api /usr/local/bin/sandbox-api
+COPY --from=sandbox-api /sandbox-api /usr/local/bin/sandbox-api
 
 # Option 1: Start with a fresh Next.js project
 RUN mkdir -p /blaxel/app

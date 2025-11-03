@@ -4,12 +4,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/gorilla/websocket"
 
 	"github.com/blaxel-ai/sandbox-api/src/handler/constants"
 	"github.com/blaxel-ai/sandbox-api/src/handler/process"
@@ -439,86 +437,4 @@ func (w *ResponseWriter) Close() {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.closed = true
-}
-
-// wsWriter is a custom writer to send logs as JSON over WebSocket
-// Used by HandleGetProcessLogsStreamWebSocket
-// Implements io.Writer
-type wsWriter struct {
-	conn *websocket.Conn
-	mu   sync.Mutex
-}
-
-func (w *wsWriter) Write(data []byte) (int, error) {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	logStr := string(data)
-	logStr = strings.TrimRight(logStr, "\n")
-	msg := map[string]interface{}{"type": "log", "log": logStr}
-	if err := w.conn.WriteJSON(msg); err != nil {
-		return 0, err
-	}
-	return len(data), nil
-}
-
-// HandleGetProcessLogsStreamWebSocket streams process logs in real time over WebSocket
-// @Summary Stream process logs in real time via WebSocket
-// @Description Streams the stdout and stderr output of a process in real time as JSON messages.
-// @Tags process
-// @Produce json
-// @Param identifier path string true "Process identifier (PID or name)"
-// @Success 101 {string} string "WebSocket connection established"
-// @Failure 404 {object} ErrorResponse "Process not found"
-// @Failure 422 {object} ErrorResponse "Unprocessable entity"
-// @Failure 500 {object} ErrorResponse "Internal server error"
-// @Router /ws/process/{identifier}/logs/stream [get]
-func (h *ProcessHandler) HandleGetProcessLogsStreamWebSocket(c *gin.Context) {
-	identifier, err := h.GetPathParam(c, "identifier")
-	if err != nil {
-		h.SendError(c, http.StatusBadRequest, err)
-		return
-	}
-
-	upgrader := websocket.Upgrader{
-		CheckOrigin: func(r *http.Request) bool { return true },
-	}
-	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
-	if err != nil {
-		return
-	}
-	defer conn.Close()
-	done := make(chan struct{})
-	var once sync.Once
-
-	writer := &wsWriter{conn: conn}
-
-	err = h.StreamProcessOutput(identifier, writer)
-	if err != nil {
-		conn.WriteJSON(map[string]string{"type": "error", "log": err.Error()})
-		return
-	}
-
-	process, exists := h.processManager.GetProcessByIdentifier(identifier)
-	if !exists {
-		return
-	}
-	go func() {
-		for {
-			_, _, err := conn.ReadMessage()
-			if err != nil {
-				once.Do(func() { close(done) })
-				return
-			}
-		}
-	}()
-	for process.Status == constants.ProcessStatusRunning {
-		time.Sleep(200 * time.Millisecond)
-		select {
-		case <-done:
-			h.RemoveLogWriter(identifier, writer)
-			return
-		default:
-		}
-	}
-	h.RemoveLogWriter(identifier, writer)
 }

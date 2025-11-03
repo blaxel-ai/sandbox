@@ -94,6 +94,40 @@ func MakeMultipartRequest(method, path string, fileContent []byte, filename stri
 	return Client.Do(req)
 }
 
+// MakeMultipartRequestStream streams a multipart request body using io.Pipe
+func MakeMultipartRequestStream(method, path string, fileReader io.Reader, filename string, formValues map[string]string) (*http.Response, error) {
+	pr, pw := io.Pipe()
+	writer := multipart.NewWriter(pw)
+
+	// Write multipart content in a goroutine
+	go func() {
+		defer pw.Close()
+		defer writer.Close()
+
+		for key, value := range formValues {
+			_ = writer.WriteField(key, value)
+		}
+
+		part, err := writer.CreateFormFile("file", filename)
+		if err != nil {
+			pw.CloseWithError(err)
+			return
+		}
+		if _, err := io.Copy(part, fileReader); err != nil {
+			pw.CloseWithError(err)
+			return
+		}
+	}()
+
+	req, err := http.NewRequest(method, BaseURL+path, pr)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+
+	return Client.Do(req)
+}
+
 // NewMultipartWriter creates a new multipart writer
 func NewMultipartWriter(body *bytes.Buffer) *MultipartWriter {
 	return &MultipartWriter{
@@ -159,4 +193,51 @@ func WaitForAPI(maxRetries int, retryDelay time.Duration) error {
 	}
 
 	return fmt.Errorf("API did not become ready in time")
+}
+
+// EncodeFilesystemPath encodes a path for the filesystem API
+// Absolute paths (starting with /) need to have the leading slash URL-encoded as %2F
+// Relative paths are used as-is
+func EncodeFilesystemPath(path string) string {
+	if path == "" {
+		return "/filesystem/"
+	}
+
+	if path[0] == '/' {
+		// For absolute paths, encode only the leading slash to indicate absolute path
+		// The rest of the path remains as-is
+		return "/filesystem%2F" + path[1:]
+	}
+	// For relative paths, just append to /filesystem/
+	return "/filesystem/" + path
+}
+
+// EncodeWatchPath encodes a path for the watch filesystem API
+// Similar to EncodeFilesystemPath but for /watch/filesystem endpoint
+func EncodeWatchPath(path string) string {
+	if path == "" {
+		return "/watch/filesystem/"
+	}
+
+	if path[0] == '/' {
+		// For absolute paths, encode only the leading slash to indicate absolute path
+		return "/watch/filesystem%2F" + path[1:]
+	}
+	// For relative paths, just append to /watch/filesystem/
+	return "/watch/filesystem/" + path
+}
+
+// EncodeTreePath encodes a path for the tree filesystem API
+// Similar to EncodeFilesystemPath but for /filesystem/tree endpoint
+func EncodeTreePath(path string) string {
+	if path == "" {
+		return "/filesystem/tree/"
+	}
+
+	if path[0] == '/' {
+		// For absolute paths, encode only the leading slash to indicate absolute path
+		return "/filesystem/tree%2F" + path[1:]
+	}
+	// For relative paths, just append to /filesystem/tree/
+	return "/filesystem/tree/" + path
 }
