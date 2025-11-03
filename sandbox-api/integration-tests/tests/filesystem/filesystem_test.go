@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"strings"
@@ -567,5 +568,237 @@ func TestFileSystemWatchRecursive(t *testing.T) {
 		assert.False(t, gotEvent, "Should NOT receive event for ignored folder or its file")
 
 		close(done)
+	})
+}
+
+// TestFileSystemDownload tests the file download functionality with different Accept headers and query parameters
+func TestFileSystemDownload(t *testing.T) {
+	// Create test files with different extensions
+	testFiles := []struct {
+		name         string
+		content      string
+		extension    string
+		expectedType string
+	}{
+		{"test-txt", "Hello, World!", ".txt", "text/plain"},
+		{"test-json", `{"key": "value"}`, ".json", "application/json"},
+		{"test-html", "<html><body>Test</body></html>", ".html", "text/html"},
+		{"test-js", "console.log('test');", ".js", "application/javascript"},
+		{"test-css", "body { color: red; }", ".css", "text/css"},
+		{"test-binary", "binary content here", ".bin", "application/octet-stream"},
+	}
+
+	t.Run("download with Accept header", func(t *testing.T) {
+		for _, tf := range testFiles {
+			t.Run(tf.name, func(t *testing.T) {
+				// Create the test file
+				testPath := fmt.Sprintf("/tmp/%s-%d%s", tf.name, time.Now().UnixNano(), tf.extension)
+
+				createFileRequest := map[string]interface{}{
+					"content": tf.content,
+				}
+				var successResp handler.SuccessResponse
+				resp, err := common.MakeRequestAndParse(http.MethodPut, common.EncodeFilesystemPath(testPath), createFileRequest, &successResp)
+				require.NoError(t, err)
+				resp.Body.Close()
+				assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+				// Make a request with Accept: application/octet-stream header
+				req, err := http.NewRequest(http.MethodGet, common.BaseURL+common.EncodeFilesystemPath(testPath), nil)
+				require.NoError(t, err)
+				req.Header.Set("Accept", "application/octet-stream")
+
+				resp, err = common.Client.Do(req)
+				require.NoError(t, err)
+				defer resp.Body.Close()
+
+				// Verify status code
+				assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+				// Verify Content-Type header
+				contentType := resp.Header.Get("Content-Type")
+				assert.Equal(t, tf.expectedType, contentType, "Content-Type should match expected type")
+
+				// Verify Content-Disposition header
+				contentDisposition := resp.Header.Get("Content-Disposition")
+				assert.Contains(t, contentDisposition, "attachment", "Content-Disposition should indicate attachment")
+				assert.Contains(t, contentDisposition, tf.extension, "Content-Disposition should contain file extension")
+
+				// Verify content
+				body, err := io.ReadAll(resp.Body)
+				require.NoError(t, err)
+				assert.Equal(t, tf.content, string(body), "Downloaded content should match original content")
+
+				// Clean up
+				resp2, err := common.MakeRequestAndParse(http.MethodDelete, common.EncodeFilesystemPath(testPath), nil, &successResp)
+				require.NoError(t, err)
+				resp2.Body.Close()
+			})
+		}
+	})
+
+	t.Run("download with query parameter", func(t *testing.T) {
+		// Create a test file
+		testContent := "Download via query parameter"
+		testPath := fmt.Sprintf("/tmp/test-download-%d.txt", time.Now().UnixNano())
+
+		createFileRequest := map[string]interface{}{
+			"content": testContent,
+		}
+		var successResp handler.SuccessResponse
+		resp, err := common.MakeRequestAndParse(http.MethodPut, common.EncodeFilesystemPath(testPath), createFileRequest, &successResp)
+		require.NoError(t, err)
+		resp.Body.Close()
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+		// Make a request with download=true query parameter
+		resp, err = common.MakeRequest(http.MethodGet, common.EncodeFilesystemPath(testPath)+"?download=true", nil)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+
+		// Verify status code
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+		// Verify Content-Type header
+		contentType := resp.Header.Get("Content-Type")
+		assert.Equal(t, "text/plain", contentType)
+
+		// Verify Content-Disposition header
+		contentDisposition := resp.Header.Get("Content-Disposition")
+		assert.Contains(t, contentDisposition, "attachment")
+
+		// Verify content
+		body, err := io.ReadAll(resp.Body)
+		require.NoError(t, err)
+		assert.Equal(t, testContent, string(body))
+
+		// Clean up
+		resp2, err := common.MakeRequestAndParse(http.MethodDelete, common.EncodeFilesystemPath(testPath), nil, &successResp)
+		require.NoError(t, err)
+		resp2.Body.Close()
+	})
+
+	t.Run("JSON mode by default", func(t *testing.T) {
+		// Create a test file
+		testContent := "Default JSON mode"
+		testPath := fmt.Sprintf("/tmp/test-json-mode-%d.txt", time.Now().UnixNano())
+
+		createFileRequest := map[string]interface{}{
+			"content": testContent,
+		}
+		var successResp handler.SuccessResponse
+		resp, err := common.MakeRequestAndParse(http.MethodPut, common.EncodeFilesystemPath(testPath), createFileRequest, &successResp)
+		require.NoError(t, err)
+		resp.Body.Close()
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+		// Make a request without special headers (should return JSON)
+		var fileResponse filesystem.FileWithContent
+		resp, err = common.MakeRequestAndParse(http.MethodGet, common.EncodeFilesystemPath(testPath), nil, &fileResponse)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+
+		// Verify status code and JSON response
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+		assert.Equal(t, testContent, string(fileResponse.Content))
+		assert.Equal(t, testPath, fileResponse.Path)
+		assert.NotEmpty(t, fileResponse.Permissions)
+		assert.NotEmpty(t, fileResponse.Owner)
+
+		// Clean up
+		resp2, err := common.MakeRequestAndParse(http.MethodDelete, common.EncodeFilesystemPath(testPath), nil, &successResp)
+		require.NoError(t, err)
+		resp2.Body.Close()
+	})
+
+	t.Run("JSON mode with explicit Accept header", func(t *testing.T) {
+		// Create a test file
+		testContent := "Explicit JSON mode"
+		testPath := fmt.Sprintf("/tmp/test-explicit-json-%d.txt", time.Now().UnixNano())
+
+		createFileRequest := map[string]interface{}{
+			"content": testContent,
+		}
+		var successResp handler.SuccessResponse
+		resp, err := common.MakeRequestAndParse(http.MethodPut, common.EncodeFilesystemPath(testPath), createFileRequest, &successResp)
+		require.NoError(t, err)
+		resp.Body.Close()
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+		// Make a request with Accept: application/json header
+		req, err := http.NewRequest(http.MethodGet, common.BaseURL+common.EncodeFilesystemPath(testPath), nil)
+		require.NoError(t, err)
+		req.Header.Set("Accept", "application/json")
+
+		resp, err = common.Client.Do(req)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+
+		// Verify status code
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+		// Parse JSON response
+		var fileResponse filesystem.FileWithContent
+		err = common.ParseResponse(resp, &fileResponse)
+		require.NoError(t, err)
+
+		assert.Equal(t, testContent, string(fileResponse.Content))
+		assert.Equal(t, testPath, fileResponse.Path)
+
+		// Clean up
+		resp2, err := common.MakeRequestAndParse(http.MethodDelete, common.EncodeFilesystemPath(testPath), nil, &successResp)
+		require.NoError(t, err)
+		resp2.Body.Close()
+	})
+
+	t.Run("download with various file types", func(t *testing.T) {
+		fileTypes := []struct {
+			extension string
+			mimeType  string
+		}{
+			{".pdf", "application/pdf"},
+			{".zip", "application/zip"},
+			{".tar", "application/x-tar"},
+			{".gz", "application/gzip"},
+			{".jpg", "image/jpeg"},
+			{".jpeg", "image/jpeg"},
+			{".png", "image/png"},
+			{".gif", "image/gif"},
+			{".svg", "image/svg+xml"},
+			{".xml", "application/xml"},
+		}
+
+		for _, ft := range fileTypes {
+			t.Run(ft.extension, func(t *testing.T) {
+				testContent := "test content for " + ft.extension
+				testPath := fmt.Sprintf("/tmp/test-mime-%d%s", time.Now().UnixNano(), ft.extension)
+
+				createFileRequest := map[string]interface{}{
+					"content": testContent,
+				}
+				var successResp handler.SuccessResponse
+				resp, err := common.MakeRequestAndParse(http.MethodPut, common.EncodeFilesystemPath(testPath), createFileRequest, &successResp)
+				require.NoError(t, err)
+				resp.Body.Close()
+
+				// Request with Accept: application/octet-stream
+				req, err := http.NewRequest(http.MethodGet, common.BaseURL+common.EncodeFilesystemPath(testPath), nil)
+				require.NoError(t, err)
+				req.Header.Set("Accept", "application/octet-stream")
+
+				resp, err = common.Client.Do(req)
+				require.NoError(t, err)
+				defer resp.Body.Close()
+
+				// Verify Content-Type
+				contentType := resp.Header.Get("Content-Type")
+				assert.Equal(t, ft.mimeType, contentType)
+
+				// Clean up
+				resp2, err := common.MakeRequestAndParse(http.MethodDelete, common.EncodeFilesystemPath(testPath), nil, &successResp)
+				require.NoError(t, err)
+				resp2.Body.Close()
+			})
+		}
 	})
 }

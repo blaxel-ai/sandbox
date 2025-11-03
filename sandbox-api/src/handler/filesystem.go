@@ -136,14 +136,20 @@ func (h *FileSystemHandler) DeleteFile(path string) error {
 
 // HandleFileSystemRequest handles GET requests to /filesystem/:path
 // It returns either file content or directory listing depending on the path
+// For files, the response format depends on the Accept header:
+// - Accept: application/json returns JSON with file metadata and content
+// - Accept: application/octet-stream returns raw file content for download
+// - download=true query parameter forces download mode
 // @Summary Get file or directory information
-// @Description Get content of a file or listing of a directory
+// @Description Get content of a file or listing of a directory. Use Accept header to control response format for files.
 // @Tags filesystem
 // @Accept json
-// @Produce json
+// @Produce json,octet-stream
 // @Param path path string true "File or directory path"
-// @Success 200 {object} filesystem.FileWithContent "File content"
+// @Param download query boolean false "Force download mode for files"
+// @Success 200 {object} filesystem.FileWithContent "File content (JSON mode)"
 // @Success 200 {object} filesystem.Directory "Directory listing"
+// @Success 200 {file} file "File content (download mode)"
 // @Failure 404 {object} ErrorResponse "File or directory not found"
 // @Failure 422 {object} ErrorResponse "Unprocessable entity"
 // @Failure 500 {object} ErrorResponse "Internal server error"
@@ -192,6 +198,75 @@ func (h *FileSystemHandler) handleReadFile(c *gin.Context, path string) {
 		return
 	}
 
+	// Check if client wants to download the file content directly
+	// This is determined by the Accept header
+	acceptHeader := c.GetHeader("Accept")
+	wantsDownload := false
+
+	// Check if client explicitly requests non-JSON response
+	if acceptHeader != "" {
+		// If Accept header contains application/octet-stream or doesn't contain application/json, treat as download
+		if strings.Contains(acceptHeader, "application/octet-stream") ||
+			(!strings.Contains(acceptHeader, "application/json") && !strings.Contains(acceptHeader, "*/*")) {
+			wantsDownload = true
+		}
+		// If Accept is */* but also contains application/json, prefer JSON
+		if strings.Contains(acceptHeader, "*/*") && !strings.Contains(acceptHeader, "application/json") {
+			wantsDownload = true
+		}
+	}
+
+	// Also support explicit query parameter for download
+	if c.Query("download") == "true" {
+		wantsDownload = true
+	}
+
+	if wantsDownload {
+		// Return raw file content with appropriate headers for download
+		filename := filepath.Base(file.Path)
+
+		// Set appropriate Content-Type based on file extension
+		contentType := "application/octet-stream"
+		ext := filepath.Ext(filename)
+		switch ext {
+		case ".txt", ".log":
+			contentType = "text/plain"
+		case ".html", ".htm":
+			contentType = "text/html"
+		case ".css":
+			contentType = "text/css"
+		case ".js":
+			contentType = "application/javascript"
+		case ".json":
+			contentType = "application/json"
+		case ".xml":
+			contentType = "application/xml"
+		case ".pdf":
+			contentType = "application/pdf"
+		case ".zip":
+			contentType = "application/zip"
+		case ".tar":
+			contentType = "application/x-tar"
+		case ".gz":
+			contentType = "application/gzip"
+		case ".jpg", ".jpeg":
+			contentType = "image/jpeg"
+		case ".png":
+			contentType = "image/png"
+		case ".gif":
+			contentType = "image/gif"
+		case ".svg":
+			contentType = "image/svg+xml"
+		}
+
+		c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", filename))
+		c.Header("Content-Type", contentType)
+		c.Header("Content-Length", strconv.FormatInt(file.Size, 10))
+		c.Data(http.StatusOK, contentType, file.Content)
+		return
+	}
+
+	// Default behavior: return JSON response
 	h.SendJSON(c, http.StatusOK, file)
 }
 

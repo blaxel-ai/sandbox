@@ -15,14 +15,125 @@ const docTemplate = `{
     "host": "{{.Host}}",
     "basePath": "{{.BasePath}}",
     "paths": {
+        "/": {
+            "get": {
+                "description": "Returns a welcome message with links to documentation",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "root"
+                ],
+                "summary": "Welcome message",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/WelcomeResponse"
+                        }
+                    }
+                }
+            },
+            "put": {
+                "description": "Returns a welcome message with links to documentation",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "root"
+                ],
+                "summary": "Welcome message",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/WelcomeResponse"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "description": "Returns a welcome message with links to documentation",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "root"
+                ],
+                "summary": "Welcome message",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/WelcomeResponse"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "description": "Returns a welcome message with links to documentation",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "root"
+                ],
+                "summary": "Welcome message",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/WelcomeResponse"
+                        }
+                    }
+                }
+            },
+            "options": {
+                "description": "Returns a welcome message with links to documentation",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "root"
+                ],
+                "summary": "Welcome message",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/WelcomeResponse"
+                        }
+                    }
+                }
+            },
+            "patch": {
+                "description": "Returns a welcome message with links to documentation",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "root"
+                ],
+                "summary": "Welcome message",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/WelcomeResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/filesystem/{path}": {
             "get": {
-                "description": "Get content of a file or listing of a directory",
+                "description": "Get content of a file or listing of a directory. Use Accept header to control response format for files.",
                 "consumes": [
                     "application/json"
                 ],
                 "produces": [
-                    "application/json"
+                    "application/json",
+                    "application/octet-stream"
                 ],
                 "tags": [
                     "filesystem"
@@ -35,13 +146,19 @@ const docTemplate = `{
                         "name": "path",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "Force download mode for files",
+                        "name": "download",
+                        "in": "query"
                     }
                 ],
                 "responses": {
                     "200": {
-                        "description": "Directory listing",
+                        "description": "File content (download mode)",
                         "schema": {
-                            "$ref": "#/definitions/Directory"
+                            "type": "file"
                         }
                     },
                     "404": {
@@ -993,6 +1110,23 @@ const docTemplate = `{
                 "path": {
                     "type": "string",
                     "example": "/path/to/file"
+                }
+            }
+        },
+        "WelcomeResponse": {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "type": "string",
+                    "example": "This sandbox provides a full-featured environment for running code securely"
+                },
+                "documentation": {
+                    "type": "string",
+                    "example": "https://docs.blaxel.ai/Sandboxes/Overview"
+                },
+                "message": {
+                    "type": "string",
+                    "example": "Welcome to your Blaxel Sandbox"
                 }
             }
         }
