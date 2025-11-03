@@ -205,10 +205,10 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 			n, err := stdoutPipe.Read(buf)
 			if n > 0 {
 				data := buf[:n]
+				process.logLock.Lock()
 				process.stdout.Write(data)
 				process.logs.Write(data)
 				// Send to any attached log writers, prefix with stdout:
-				process.logLock.RLock()
 				for _, w := range process.logWriters {
 					fullMsg := append([]byte("stdout:"), data...)
 					_, _ = w.Write(fullMsg)
@@ -216,7 +216,7 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 						f.Flush()
 					}
 				}
-				process.logLock.RUnlock()
+				process.logLock.Unlock()
 			}
 			if err != nil {
 				break
@@ -231,10 +231,10 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 			n, err := stderrPipe.Read(buf)
 			if n > 0 {
 				data := buf[:n]
+				process.logLock.Lock()
 				process.stderr.Write(data)
 				process.logs.Write(data)
 				// Send to any attached log writers, prefix with stderr:
-				process.logLock.RLock()
 				for _, w := range process.logWriters {
 					fullMsg := append([]byte("stderr:"), data...)
 					_, _ = w.Write(fullMsg)
@@ -242,7 +242,7 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 						f.Flush()
 					}
 				}
-				process.logLock.RUnlock()
+				process.logLock.Unlock()
 			}
 			if err != nil {
 				break
@@ -308,7 +308,8 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 			time.Sleep(1 * time.Second)
 
 			// Restart the process with updated restart count
-			newPID, restartErr := pm.restartProcess(process, callback)
+			// The PID remains the same across restarts for user transparency
+			_, restartErr := pm.restartProcess(process, callback)
 			if restartErr != nil {
 				// If restart fails, log the error and call the callback
 				errorMsg := fmt.Sprintf("\n[Failed to restart process: %v]\n", restartErr)
@@ -321,11 +322,8 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 				process.logLock.Unlock()
 
 				callback(process)
-			} else {
-				// Update the PID to the new process
-				process.PID = newPID
-				// Don't call callback yet - it will be called when the restarted process completes
 			}
+			// If restart succeeds, the callback will be called when that process completes
 		} else {
 			// Clean up resources
 			process.logLock.Lock()
@@ -400,15 +398,14 @@ func (pm *ProcessManager) restartProcess(oldProcess *ProcessInfo, callback func(
 	if err := cmd.Start(); err != nil {
 		return "", err
 	}
-	newPID := fmt.Sprintf("%d", cmd.Process.Pid)
+
+	// Update only the OS process PID for kill/stop operations
+	// Keep the user-facing PID (oldProcess.PID) unchanged for transparency
 	oldProcess.ProcessPid = cmd.Process.Pid
 
-	// Update process in memory with new PID
+	// Update the process in memory (same map key, just updating the entry)
 	pm.mu.Lock()
-	oldPID := oldProcess.PID
-	delete(pm.processes, oldPID) // Remove old PID entry
-	oldProcess.PID = newPID      // Update the PID field to the new PID
-	pm.processes[newPID] = oldProcess
+	pm.processes[oldProcess.PID] = oldProcess
 	pm.mu.Unlock()
 
 	// Handle stdout
@@ -418,10 +415,10 @@ func (pm *ProcessManager) restartProcess(oldProcess *ProcessInfo, callback func(
 			n, err := stdoutPipe.Read(buf)
 			if n > 0 {
 				data := buf[:n]
+				oldProcess.logLock.Lock()
 				oldProcess.stdout.Write(data)
 				oldProcess.logs.Write(data)
 				// Send to any attached log writers, prefix with stdout:
-				oldProcess.logLock.RLock()
 				for _, w := range oldProcess.logWriters {
 					fullMsg := append([]byte("stdout:"), data...)
 					_, _ = w.Write(fullMsg)
@@ -429,7 +426,7 @@ func (pm *ProcessManager) restartProcess(oldProcess *ProcessInfo, callback func(
 						f.Flush()
 					}
 				}
-				oldProcess.logLock.RUnlock()
+				oldProcess.logLock.Unlock()
 			}
 			if err != nil {
 				break
@@ -444,10 +441,10 @@ func (pm *ProcessManager) restartProcess(oldProcess *ProcessInfo, callback func(
 			n, err := stderrPipe.Read(buf)
 			if n > 0 {
 				data := buf[:n]
+				oldProcess.logLock.Lock()
 				oldProcess.stderr.Write(data)
 				oldProcess.logs.Write(data)
 				// Send to any attached log writers, prefix with stderr:
-				oldProcess.logLock.RLock()
 				for _, w := range oldProcess.logWriters {
 					fullMsg := append([]byte("stderr:"), data...)
 					_, _ = w.Write(fullMsg)
@@ -455,7 +452,7 @@ func (pm *ProcessManager) restartProcess(oldProcess *ProcessInfo, callback func(
 						f.Flush()
 					}
 				}
-				oldProcess.logLock.RUnlock()
+				oldProcess.logLock.Unlock()
 			}
 			if err != nil {
 				break
@@ -491,9 +488,9 @@ func (pm *ProcessManager) restartProcess(oldProcess *ProcessInfo, callback func(
 			oldProcess.ExitCode = 0
 		}
 
-		// Update process in memory
+		// Update process in memory (PID stays the same, just updating the entry)
 		pm.mu.Lock()
-		pm.processes[newPID] = oldProcess
+		pm.processes[oldProcess.PID] = oldProcess
 		pm.mu.Unlock()
 
 		// Check if we should restart again on failure
@@ -522,7 +519,8 @@ func (pm *ProcessManager) restartProcess(oldProcess *ProcessInfo, callback func(
 			time.Sleep(1 * time.Second)
 
 			// Restart the process recursively
-			newerPID, restartErr := pm.restartProcess(oldProcess, callback)
+			// The PID remains the same across restarts for user transparency
+			_, restartErr := pm.restartProcess(oldProcess, callback)
 			if restartErr != nil {
 				// If restart fails, log the error and call the callback
 				errorMsg := fmt.Sprintf("\n[Failed to restart process: %v]\n", restartErr)
@@ -535,10 +533,8 @@ func (pm *ProcessManager) restartProcess(oldProcess *ProcessInfo, callback func(
 				oldProcess.logLock.Unlock()
 
 				callback(oldProcess)
-			} else {
-				// Update the PID to the new process
-				oldProcess.PID = newerPID
 			}
+			// If restart succeeds, the callback will be called when that process completes
 		} else {
 			// Clean up resources
 			oldProcess.logLock.Lock()
@@ -549,49 +545,7 @@ func (pm *ProcessManager) restartProcess(oldProcess *ProcessInfo, callback func(
 		}
 	}()
 
-	return newPID, nil
-}
-
-// parseCommand splits a command string into arguments while respecting quotes
-func parseCommand(command string) []string {
-	var args []string
-	var currentArg strings.Builder
-	inQuotes := false
-	quoteChar := rune(0)
-
-	for _, char := range command {
-		switch {
-		case char == '"' || char == '\'':
-			if inQuotes && char == quoteChar {
-				// End of quoted section
-				inQuotes = false
-				quoteChar = rune(0)
-			} else if !inQuotes {
-				// Start of quoted section
-				inQuotes = true
-				quoteChar = char
-			} else {
-				// Quote character inside another type of quotes, treat as literal
-				currentArg.WriteRune(char)
-			}
-		case char == ' ' && !inQuotes:
-			// Space outside quotes ends the current argument
-			if currentArg.Len() > 0 {
-				args = append(args, currentArg.String())
-				currentArg.Reset()
-			}
-		default:
-			// Add character to current argument
-			currentArg.WriteRune(char)
-		}
-	}
-
-	// Add the last argument if any
-	if currentArg.Len() > 0 {
-		args = append(args, currentArg.String())
-	}
-
-	return args
+	return oldProcess.PID, nil
 }
 
 // GetProcessByIdentifier returns a process by either PID or name

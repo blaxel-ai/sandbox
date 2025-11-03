@@ -3,6 +3,7 @@ package tests
 import (
 	"bufio"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"sync"
@@ -261,8 +262,9 @@ func TestProcessKillByName(t *testing.T) {
 func TestProcessOutputByName(t *testing.T) {
 	// Create a process with output
 	processRequest := map[string]interface{}{
-		"command": "echo 'test output' && echo 'test error' >&2",
-		"cwd":     "/",
+		"command":           "echo 'test output' && echo 'test error' >&2",
+		"waitForCompletion": true,
+		"cwd":               "/",
 	}
 
 	resp, err := common.MakeRequest(http.MethodPost, "/process", processRequest)
@@ -278,31 +280,6 @@ func TestProcessOutputByName(t *testing.T) {
 	require.Contains(t, processResponse, "name")
 	processName := processResponse["name"].(string)
 	require.Contains(t, processResponse, "pid")
-	pid := processResponse["pid"].(string)
-
-	// Wait for the process to actually complete (poll status)
-	maxWait := 5 * time.Second
-	pollInterval := 50 * time.Millisecond
-	deadline := time.Now().Add(maxWait)
-
-	for time.Now().Before(deadline) {
-		statusResp, err := common.MakeRequest(http.MethodGet, "/process/"+pid, nil)
-		require.NoError(t, err)
-
-		var statusResponse map[string]interface{}
-		err = json.NewDecoder(statusResp.Body).Decode(&statusResponse)
-		statusResp.Body.Close()
-		require.NoError(t, err)
-
-		if status, ok := statusResponse["status"].(string); ok {
-			if status == "completed" || status == "failed" {
-				// Process has finished, wait a bit more for output buffers to flush
-				time.Sleep(100 * time.Millisecond)
-				break
-			}
-		}
-		time.Sleep(pollInterval)
-	}
 
 	// Test getting process output by name
 	resp, err = common.MakeRequest(http.MethodGet, "/process/"+processName+"/logs", nil)
@@ -692,4 +669,84 @@ func TestProcessRestartOnFailureEventualSuccess(t *testing.T) {
 		assert.Contains(t, logs, "Attempt 3", "Logs should contain third attempt")
 		assert.Contains(t, logs, "Attempting restart", "Logs should contain restart messages")
 	}
+}
+
+// TestProcessRestartPIDStaysTheSame tests that PIDs remain constant across restarts
+func TestProcessRestartPIDStaysTheSame(t *testing.T) {
+	t.Log("=== Testing PID stability across restarts ===")
+
+	// Use a unique name to avoid conflicts with previous test runs
+	processName := fmt.Sprintf("test-pid-stability-%d", time.Now().UnixNano())
+
+	// Start a process without waiting for completion to get the PID
+	processRequest := map[string]interface{}{
+		"name":              processName,
+		"command":           "exit 1", // Will fail immediately
+		"cwd":               "/",
+		"waitForCompletion": false,
+		"restartOnFailure":  true,
+		"maxRestarts":       2,
+	}
+
+	t.Log("Starting process without waiting for completion...")
+	resp, err := common.MakeRequest(http.MethodPost, "/process", processRequest)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var processResponse map[string]interface{}
+	err = json.NewDecoder(resp.Body).Decode(&processResponse)
+	require.NoError(t, err)
+
+	originalPID := processResponse["pid"].(string)
+	t.Logf("Got PID: %s for process: %s", originalPID, processName)
+
+	// Wait for the process to fail and restart multiple times
+	time.Sleep(4 * time.Second)
+
+	// Query the process - it should still have the same PID
+	t.Logf("Querying process using PID: %s", originalPID)
+	resp, err = common.MakeRequest(http.MethodGet, "/process/"+originalPID, nil)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode, "PID should still be accessible")
+
+	var processDetails map[string]interface{}
+	err = json.NewDecoder(resp.Body).Decode(&processDetails)
+	require.NoError(t, err)
+
+	t.Logf("Process details: %+v", processDetails)
+
+	// The process should have completed all restarts
+	assert.Equal(t, "failed", processDetails["status"], "Process should be failed after all restarts")
+	assert.Equal(t, float64(2), processDetails["restartCount"], "Process should have restarted 2 times")
+
+	// CRITICAL: The PID should remain the same across all restarts
+	currentPID := processDetails["pid"].(string)
+	assert.Equal(t, originalPID, currentPID, "PID should remain constant across restarts for user transparency")
+	t.Logf("✓ PID remained constant: %s", currentPID)
+
+	// List processes and verify it appears once with the same PID
+	t.Log("Listing all processes to verify single entry with stable PID...")
+	resp, err = common.MakeRequest(http.MethodGet, "/process", nil)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	var processList []map[string]interface{}
+	err = json.NewDecoder(resp.Body).Decode(&processList)
+	require.NoError(t, err)
+
+	// Count how many times our process appears in the list
+	count := 0
+	for _, p := range processList {
+		if p["name"].(string) == processName {
+			count++
+			assert.Equal(t, originalPID, p["pid"].(string), "Listed process should have the same PID")
+		}
+	}
+	assert.Equal(t, 1, count, "Process should appear exactly once in the list")
+
+	t.Log("✓ PID remains stable across restarts, completely transparent to users")
 }
