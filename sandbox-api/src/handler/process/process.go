@@ -193,7 +193,6 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 	}
 	process.PID = fmt.Sprintf("%d", cmd.Process.Pid)
 	process.ProcessPid = cmd.Process.Pid
-
 	// Store process in memory
 	pm.mu.Lock()
 	pm.processes[process.PID] = process
@@ -342,24 +341,29 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 
 // restartProcess restarts a failed process with the same configuration
 func (pm *ProcessManager) restartProcess(oldProcess *ProcessInfo, callback func(process *ProcessInfo)) (string, error) {
-	var cmd *exec.Cmd
 	command := oldProcess.Command
 	workingDir := oldProcess.WorkingDir
 
-	// Check if the command needs a shell by looking for shell special chars
-	if strings.Contains(command, "&&") || strings.Contains(command, "|") ||
-		strings.Contains(command, ">") || strings.Contains(command, "<") ||
-		strings.Contains(command, ";") || strings.Contains(command, "$") {
-		// Use shell to execute the command
-		cmd = exec.Command("sh", "-c", command)
-	} else {
-		// Parse command string into command and arguments while respecting quotes
-		args := parseCommand(command)
-		if len(args) == 0 {
-			return "", fmt.Errorf("empty command")
-		}
-		cmd = exec.Command(args[0], args[1:]...)
+	// Always use shell to execute commands (same as StartProcessWithName)
+	// This ensures shell built-ins (cd, export, exit, alias) work properly
+	shell := os.Getenv("SHELL")
+	if shell == "" {
+		shell = "sh"
 	}
+
+	shellArgs := os.Getenv("SHELL_ARGS")
+	if shellArgs == "" {
+		shellArgs = "-c"
+	}
+
+	// Build command arguments
+	cmdArgs := []string{}
+	if shellArgs != "" {
+		cmdArgs = append(cmdArgs, strings.Fields(shellArgs)...)
+	}
+	cmdArgs = append(cmdArgs, command)
+
+	cmd := exec.Command(shell, cmdArgs...)
 
 	if workingDir != "" {
 		cmd.Dir = workingDir
@@ -401,7 +405,9 @@ func (pm *ProcessManager) restartProcess(oldProcess *ProcessInfo, callback func(
 
 	// Update process in memory with new PID
 	pm.mu.Lock()
-	delete(pm.processes, oldProcess.PID) // Remove old PID entry
+	oldPID := oldProcess.PID
+	delete(pm.processes, oldPID) // Remove old PID entry
+	oldProcess.PID = newPID      // Update the PID field to the new PID
 	pm.processes[newPID] = oldProcess
 	pm.mu.Unlock()
 

@@ -56,15 +56,18 @@ type ProcessRequest struct {
 
 // ProcessResponse is the response body for a process
 type ProcessResponse struct {
-	PID         string  `json:"pid" example:"1234" binding:"required"`
-	Name        string  `json:"name" example:"my-process" binding:"required"`
-	Command     string  `json:"command" example:"ls -la" binding:"required"`
-	Status      string  `json:"status" example:"running" enums:"failed,killed,stopped,running,completed" binding:"required"`
-	StartedAt   string  `json:"startedAt" example:"Wed, 01 Jan 2023 12:00:00 GMT" binding:"required"`
-	CompletedAt *string `json:"completedAt" example:"Wed, 01 Jan 2023 12:01:00 GMT" binding:"required"`
-	ExitCode    int     `json:"exitCode" example:"0" binding:"required"`
-	WorkingDir  string  `json:"workingDir" example:"/home/user" binding:"required"`
-	Logs        *string `json:"logs" example:"logs output" binding:"required"`
+	PID              string  `json:"pid" example:"1234" binding:"required"`
+	Name             string  `json:"name" example:"my-process" binding:"required"`
+	Command          string  `json:"command" example:"ls -la" binding:"required"`
+	Status           string  `json:"status" example:"running" enums:"failed,killed,stopped,running,completed" binding:"required"`
+	StartedAt        string  `json:"startedAt" example:"Wed, 01 Jan 2023 12:00:00 GMT" binding:"required"`
+	CompletedAt      *string `json:"completedAt" example:"Wed, 01 Jan 2023 12:01:00 GMT" binding:"required"`
+	ExitCode         int     `json:"exitCode" example:"0" binding:"required"`
+	WorkingDir       string  `json:"workingDir" example:"/home/user" binding:"required"`
+	Logs             *string `json:"logs" example:"logs output" binding:"required"`
+	RestartOnFailure bool    `json:"restartOnFailure" example:"true" binding:"required"`
+	MaxRestarts      int     `json:"maxRestarts" example:"3" binding:"required"`
+	RestartCount     int     `json:"restartCount" example:"2" binding:"required"`
 } // @name ProcessResponse
 
 type ProcessResponseWithLogs struct {
@@ -90,15 +93,18 @@ func (h *ProcessHandler) ExecuteProcess(command string, workingDir string, name 
 	}
 
 	return ProcessResponse{
-		PID:         processInfo.PID,
-		Name:        processInfo.Name,
-		Command:     processInfo.Command,
-		Status:      string(processInfo.Status),
-		StartedAt:   processInfo.StartedAt.Format("Mon, 02 Jan 2006 15:04:05 GMT"),
-		CompletedAt: &completedAt,
-		ExitCode:    processInfo.ExitCode,
-		WorkingDir:  processInfo.WorkingDir,
-		Logs:        processInfo.Logs,
+		PID:              processInfo.PID,
+		Name:             processInfo.Name,
+		Command:          processInfo.Command,
+		Status:           string(processInfo.Status),
+		StartedAt:        processInfo.StartedAt.Format("Mon, 02 Jan 2006 15:04:05 GMT"),
+		CompletedAt:      &completedAt,
+		ExitCode:         processInfo.ExitCode,
+		WorkingDir:       processInfo.WorkingDir,
+		Logs:             processInfo.Logs,
+		RestartOnFailure: processInfo.RestartOnFailure,
+		MaxRestarts:      processInfo.MaxRestarts,
+		RestartCount:     processInfo.RestartCount,
 	}, nil
 }
 
@@ -113,15 +119,18 @@ func (h *ProcessHandler) ListProcesses() []ProcessResponse {
 			completedAtPtr = &completedAt
 		}
 		result = append(result, ProcessResponse{
-			PID:         p.PID,
-			Name:        p.Name,
-			Command:     p.Command,
-			Status:      string(p.Status),
-			StartedAt:   p.StartedAt.Format("Mon, 02 Jan 2006 15:04:05 GMT"),
-			CompletedAt: completedAtPtr,
-			ExitCode:    p.ExitCode,
-			WorkingDir:  p.WorkingDir,
-			Logs:        p.Logs,
+			PID:              p.PID,
+			Name:             p.Name,
+			Command:          p.Command,
+			Status:           string(p.Status),
+			StartedAt:        p.StartedAt.Format("Mon, 02 Jan 2006 15:04:05 GMT"),
+			CompletedAt:      completedAtPtr,
+			ExitCode:         p.ExitCode,
+			WorkingDir:       p.WorkingDir,
+			Logs:             p.Logs,
+			RestartOnFailure: p.RestartOnFailure,
+			MaxRestarts:      p.MaxRestarts,
+			RestartCount:     p.RestartCount,
 		})
 	}
 	return result
@@ -139,15 +148,18 @@ func (h *ProcessHandler) GetProcess(identifier string) (ProcessResponse, error) 
 		completedAt = processInfo.CompletedAt.Format("Mon, 02 Jan 2006 15:04:05 GMT")
 	}
 	return ProcessResponse{
-		PID:         processInfo.PID,
-		Name:        processInfo.Name,
-		Command:     processInfo.Command,
-		Status:      string(processInfo.Status),
-		StartedAt:   processInfo.StartedAt.Format("Mon, 02 Jan 2006 15:04:05 GMT"),
-		CompletedAt: &completedAt,
-		ExitCode:    processInfo.ExitCode,
-		WorkingDir:  processInfo.WorkingDir,
-		Logs:        processInfo.Logs,
+		PID:              processInfo.PID,
+		Name:             processInfo.Name,
+		Command:          processInfo.Command,
+		Status:           string(processInfo.Status),
+		StartedAt:        processInfo.StartedAt.Format("Mon, 02 Jan 2006 15:04:05 GMT"),
+		CompletedAt:      &completedAt,
+		ExitCode:         processInfo.ExitCode,
+		WorkingDir:       processInfo.WorkingDir,
+		Logs:             processInfo.Logs,
+		RestartOnFailure: processInfo.RestartOnFailure,
+		MaxRestarts:      processInfo.MaxRestarts,
+		RestartCount:     processInfo.RestartCount,
 	}, nil
 }
 

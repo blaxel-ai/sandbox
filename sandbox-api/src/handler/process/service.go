@@ -136,11 +136,12 @@ func (pm *ProcessManager) ExecuteProcess(
 	// Wait for completion if requested
 	if waitForCompletion {
 		select {
-		case pid := <-completionCh:
-			_, exists := pm.GetProcessByIdentifier(pid)
+		case receivedPID := <-completionCh:
+			_, exists := pm.GetProcessByIdentifier(receivedPID)
 			if !exists {
-				return nil, fmt.Errorf("process creation failed")
+				return nil, fmt.Errorf("process creation failed because process does not exist")
 			}
+			pid = receivedPID // Update pid to the received PID
 			break
 		case <-ctx.Done():
 			return nil, fmt.Errorf("process timed out after %d seconds", timeout)
@@ -150,7 +151,7 @@ func (pm *ProcessManager) ExecuteProcess(
 	// Get the process info
 	processInfo, exists := pm.GetProcessByIdentifier(pid)
 	if !exists {
-		return nil, fmt.Errorf("process creation failed")
+		return nil, fmt.Errorf("process creation failed because process does not exist")
 	}
 	if waitForCompletion {
 		logs := processInfo.logs.String()

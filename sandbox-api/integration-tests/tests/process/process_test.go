@@ -587,3 +587,109 @@ func runNextJsAndKill(t *testing.T, processName string) bool {
 
 	return foundLocalhost3000
 }
+
+// TestProcessRestartOnFailure tests the restart on failure functionality
+func TestProcessRestartOnFailure(t *testing.T) {
+	t.Log("=== Testing process restart on failure ===")
+
+	// Test a process that fails immediately and should restart
+	processRequest := map[string]interface{}{
+		"name":              "test-restart-on-failure",
+		"command":           "exit 1", // This will fail immediately
+		"cwd":               "/",
+		"waitForCompletion": true,
+		"restartOnFailure":  true,
+		"maxRestarts":       3,
+		"timeout":           10,
+	}
+
+	t.Log("Starting process that will fail and restart...")
+	resp, err := common.MakeRequest(http.MethodPost, "/process", processRequest)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	t.Logf("Response status code: %d", resp.StatusCode)
+	assert.Equal(t, http.StatusOK, resp.StatusCode, "Process creation should succeed even if it restarts")
+
+	var processResponse map[string]interface{}
+	err = json.NewDecoder(resp.Body).Decode(&processResponse)
+	require.NoError(t, err)
+
+	t.Logf("Process response: %+v", processResponse)
+
+	// Verify process ID is returned
+	require.Contains(t, processResponse, "pid", "Response should contain pid")
+	require.Contains(t, processResponse, "name", "Response should contain name")
+	require.Contains(t, processResponse, "status", "Response should contain status")
+	require.Contains(t, processResponse, "restartCount", "Response should contain restartCount")
+
+	// The process should have restarted maxRestarts times and then failed
+	assert.Equal(t, "failed", processResponse["status"], "Process should be in failed state after all restarts")
+	assert.Equal(t, float64(3), processResponse["restartCount"], "Process should have restarted 3 times")
+	assert.Equal(t, float64(1), processResponse["exitCode"], "Exit code should be 1")
+
+	// Check the logs to verify restart messages
+	if logs, ok := processResponse["logs"].(string); ok {
+		t.Logf("Process logs:\n%s", logs)
+		assert.Contains(t, logs, "Attempting restart 1/3", "Logs should contain first restart message")
+		assert.Contains(t, logs, "Attempting restart 2/3", "Logs should contain second restart message")
+		assert.Contains(t, logs, "Attempting restart 3/3", "Logs should contain third restart message")
+	} else {
+		t.Log("No logs in response")
+	}
+}
+
+// TestProcessRestartOnFailureEventualSuccess tests a process that fails a few times then succeeds
+func TestProcessRestartOnFailureEventualSuccess(t *testing.T) {
+	t.Log("=== Testing process restart on failure with eventual success ===")
+
+	// Create a script that fails twice, then succeeds
+	// We'll use a file to track attempts
+	setupCmd := "rm -f /tmp/test_restart_counter.txt && echo 0 > /tmp/test_restart_counter.txt"
+	resp, err := common.MakeRequest(http.MethodPost, "/process", map[string]interface{}{
+		"command":           setupCmd,
+		"waitForCompletion": true,
+	})
+	require.NoError(t, err)
+	resp.Body.Close()
+
+	// Command that fails the first 2 times, then succeeds
+	processRequest := map[string]interface{}{
+		"name":              "test-restart-eventual-success",
+		"command":           "COUNT=$(cat /tmp/test_restart_counter.txt); NEW_COUNT=$((COUNT + 1)); echo $NEW_COUNT > /tmp/test_restart_counter.txt; echo \"Attempt $NEW_COUNT\"; if [ $NEW_COUNT -lt 3 ]; then exit 1; else exit 0; fi",
+		"cwd":               "/",
+		"waitForCompletion": true,
+		"restartOnFailure":  true,
+		"maxRestarts":       5,
+		"timeout":           15,
+	}
+
+	t.Log("Starting process that will fail twice then succeed...")
+	resp, err = common.MakeRequest(http.MethodPost, "/process", processRequest)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	t.Logf("Response status code: %d", resp.StatusCode)
+	assert.Equal(t, http.StatusOK, resp.StatusCode, "Process creation should succeed")
+
+	var processResponse map[string]interface{}
+	err = json.NewDecoder(resp.Body).Decode(&processResponse)
+	require.NoError(t, err)
+
+	// Verify the process eventually succeeded
+	require.Contains(t, processResponse, "status", "Response should contain status")
+	require.Contains(t, processResponse, "restartCount", "Response should contain restartCount")
+
+	assert.Equal(t, "completed", processResponse["status"], "Process should eventually complete successfully")
+	assert.Equal(t, float64(2), processResponse["restartCount"], "Process should have restarted 2 times before succeeding")
+	assert.Equal(t, float64(0), processResponse["exitCode"], "Exit code should be 0 for success")
+
+	// Check the logs
+	if logs, ok := processResponse["logs"].(string); ok {
+		t.Logf("Process logs:\n%s", logs)
+		assert.Contains(t, logs, "Attempt 1", "Logs should contain first attempt")
+		assert.Contains(t, logs, "Attempt 2", "Logs should contain second attempt")
+		assert.Contains(t, logs, "Attempt 3", "Logs should contain third attempt")
+		assert.Contains(t, logs, "Attempting restart", "Logs should contain restart messages")
+	}
+}

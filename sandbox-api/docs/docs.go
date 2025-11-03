@@ -1164,9 +1164,17 @@ const docTemplate = `{
                         "{\"PORT\"": " \"3000\"}"
                     }
                 },
+                "maxRestarts": {
+                    "type": "integer",
+                    "example": 3
+                },
                 "name": {
                     "type": "string",
                     "example": "my-process"
+                },
+                "restartOnFailure": {
+                    "type": "boolean",
+                    "example": true
                 },
                 "timeout": {
                     "type": "integer",
@@ -1199,8 +1207,11 @@ const docTemplate = `{
                 "completedAt",
                 "exitCode",
                 "logs",
+                "maxRestarts",
                 "name",
                 "pid",
+                "restartCount",
+                "restartOnFailure",
                 "startedAt",
                 "status",
                 "workingDir"
@@ -1222,6 +1233,10 @@ const docTemplate = `{
                     "type": "string",
                     "example": "logs output"
                 },
+                "maxRestarts": {
+                    "type": "integer",
+                    "example": 3
+                },
                 "name": {
                     "type": "string",
                     "example": "my-process"
@@ -1229,6 +1244,14 @@ const docTemplate = `{
                 "pid": {
                     "type": "string",
                     "example": "1234"
+                },
+                "restartCount": {
+                    "type": "integer",
+                    "example": 2
+                },
+                "restartOnFailure": {
+                    "type": "boolean",
+                    "example": true
                 },
                 "startedAt": {
                     "type": "string",
