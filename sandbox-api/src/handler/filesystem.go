@@ -205,16 +205,19 @@ func (h *FileSystemHandler) handleReadFile(c *gin.Context, path string) {
 
 	// Check if client explicitly requests non-JSON response
 	if acceptHeader != "" {
-		// If Accept header contains application/octet-stream or doesn't contain application/json, treat as download
-		if strings.Contains(acceptHeader, "application/octet-stream") ||
-			(!strings.Contains(acceptHeader, "application/json") && !strings.Contains(acceptHeader, "*/*")) {
+		// If Accept header explicitly contains application/octet-stream, treat as download
+		if strings.Contains(acceptHeader, "application/octet-stream") {
 			wantsDownload = true
 		}
-		// If Accept is */* but also contains application/json, prefer JSON
-		if strings.Contains(acceptHeader, "*/*") && !strings.Contains(acceptHeader, "application/json") {
+		// If Accept header doesn't contain application/json AND doesn't contain */* (accept all), treat as download
+		// This handles specific content types like text/plain, text/html, etc.
+		if !strings.Contains(acceptHeader, "application/json") &&
+			!strings.Contains(acceptHeader, "*/*") &&
+			!strings.Contains(acceptHeader, "application/octet-stream") {
 			wantsDownload = true
 		}
 	}
+	// Default behavior: If no Accept header or Accept: */*, default to JSON
 
 	// Also support explicit query parameter for download
 	if c.Query("download") == "true" {
