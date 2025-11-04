@@ -192,12 +192,6 @@ func (h *FileSystemHandler) HandleGetFile(c *gin.Context) {
 
 // handleReadFile handles requests to read a file
 func (h *FileSystemHandler) handleReadFile(c *gin.Context, path string) {
-	file, err := h.ReadFile(path)
-	if err != nil {
-		h.SendError(c, http.StatusUnprocessableEntity, fmt.Errorf("error reading file: %w", err))
-		return
-	}
-
 	// Check if client wants to download the file content directly
 	// This is determined by the Accept header
 	acceptHeader := c.GetHeader("Accept")
@@ -225,8 +219,26 @@ func (h *FileSystemHandler) handleReadFile(c *gin.Context, path string) {
 	}
 
 	if wantsDownload {
-		// Return raw file content with appropriate headers for download
-		filename := filepath.Base(file.Path)
+		// Stream binary content directly from disk (no memory buffering)
+		absPath, err := h.fs.GetAbsolutePath(path)
+		if err != nil {
+			h.SendError(c, http.StatusBadRequest, err)
+			return
+		}
+
+		// Get file info for headers
+		info, err := os.Stat(absPath)
+		if err != nil {
+			h.SendError(c, http.StatusUnprocessableEntity, fmt.Errorf("error reading file: %w", err))
+			return
+		}
+
+		if info.IsDir() {
+			h.SendError(c, http.StatusBadRequest, fmt.Errorf("path is a directory, not a file"))
+			return
+		}
+
+		filename := filepath.Base(path)
 
 		// Set appropriate Content-Type based on file extension
 		contentType := "application/octet-stream"
@@ -264,8 +276,29 @@ func (h *FileSystemHandler) handleReadFile(c *gin.Context, path string) {
 
 		c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", filename))
 		c.Header("Content-Type", contentType)
-		c.Header("Content-Length", strconv.FormatInt(file.Size, 10))
-		c.Data(http.StatusOK, contentType, file.Content)
+		c.Header("Content-Length", strconv.FormatInt(info.Size(), 10))
+
+		// Open file and stream directly to response
+		file, err := os.Open(absPath)
+		if err != nil {
+			h.SendError(c, http.StatusUnprocessableEntity, fmt.Errorf("error opening file: %w", err))
+			return
+		}
+		defer file.Close()
+
+		// Stream file content directly to HTTP response (no memory buffering)
+		c.Status(http.StatusOK)
+		if _, err := io.Copy(c.Writer, file); err != nil {
+			logrus.Errorf("Error streaming file: %v", err)
+			return
+		}
+		return
+	}
+
+	// JSON mode: read entire file into memory for serialization
+	file, err := h.ReadFile(path)
+	if err != nil {
+		h.SendError(c, http.StatusUnprocessableEntity, fmt.Errorf("error reading file: %w", err))
 		return
 	}
 

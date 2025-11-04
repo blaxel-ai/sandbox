@@ -219,6 +219,15 @@ func TestFileSystemWatch(t *testing.T) {
 	t.Parallel()
 
 	dir := fmt.Sprintf("/tmp/test-watch-%d", time.Now().UnixNano())
+
+	// Ensure cleanup happens even if test fails
+	defer func() {
+		var successResp handler.SuccessResponse
+		if resp, err := common.MakeRequestAndParse(http.MethodDelete, common.EncodeFilesystemPath(dir)+"?recursive=true", nil, &successResp); err == nil {
+			resp.Body.Close()
+		}
+	}()
+
 	createDirRequest := map[string]interface{}{
 		"isDirectory": true,
 	}
@@ -288,6 +297,15 @@ func TestFileSystemWatch(t *testing.T) {
 // TestFileSystemWatchRecursive tests recursive streaming watch endpoint for file modifications in subdirectories
 func TestFileSystemWatchRecursive(t *testing.T) {
 	dir := fmt.Sprintf("/tmp/test-watch-recursive-%d", time.Now().UnixNano())
+
+	// Ensure cleanup happens even if test fails
+	defer func() {
+		var successResp handler.SuccessResponse
+		if resp, err := common.MakeRequestAndParse(http.MethodDelete, common.EncodeFilesystemPath(dir)+"?recursive=true", nil, &successResp); err == nil {
+			resp.Body.Close()
+		}
+	}()
+
 	subdir := dir + "/subdir"
 	fileName := "watched.txt"
 	filePath := subdir + "/" + fileName
@@ -397,6 +415,15 @@ func TestFileSystemWatchRecursive(t *testing.T) {
 	t.Run("ignore pattern", func(t *testing.T) {
 		// Setup for ignore test
 		dir := fmt.Sprintf("/tmp/test-watch-ignore-%d", time.Now().UnixNano())
+
+		// Ensure cleanup happens even if test fails
+		defer func() {
+			var successResp handler.SuccessResponse
+			if resp, err := common.MakeRequestAndParse(http.MethodDelete, common.EncodeFilesystemPath(dir)+"?recursive=true", nil, &successResp); err == nil {
+				resp.Body.Close()
+			}
+		}()
+
 		subdir := dir + "/subdir"
 		fileName := "watched.txt"
 		filePath := subdir + "/" + fileName
@@ -490,6 +517,15 @@ func TestFileSystemWatchRecursive(t *testing.T) {
 	// --- Ignore folder pattern test ---
 	t.Run("ignore folder pattern", func(t *testing.T) {
 		dir := fmt.Sprintf("/tmp/test-watch-ignore-folder-%d", time.Now().UnixNano())
+
+		// Ensure cleanup happens even if test fails
+		defer func() {
+			var successResp handler.SuccessResponse
+			if resp, err := common.MakeRequestAndParse(http.MethodDelete, common.EncodeFilesystemPath(dir)+"?recursive=true", nil, &successResp); err == nil {
+				resp.Body.Close()
+			}
+		}()
+
 		ignoredSubdir := dir + "/ignored-folder"
 		fileName := "file.txt"
 		filePath := ignoredSubdir + "/" + fileName
