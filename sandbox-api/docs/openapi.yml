@@ -293,16 +293,22 @@ paths:
             type: boolean
       responses:
         "200":
-          description: File content (download mode)
+          description: Directory listing
           content:
             application/json:
               schema:
-                type: string
-                format: binary
+                oneOf:
+                    - $ref: "#/components/schemas/Directory"
+                    - $ref: "#/components/schemas/FileWithContent"
+                    - type: string
+                      format: binary
             application/octet-stream:
               schema:
-                type: string
-                format: binary
+                oneOf:
+                    - $ref: "#/components/schemas/Directory"
+                    - $ref: "#/components/schemas/FileWithContent"
+                    - type: string
+                      format: binary
         "404":
           description: File or directory not found
           content:

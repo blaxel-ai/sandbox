@@ -147,9 +147,9 @@ func (h *FileSystemHandler) DeleteFile(path string) error {
 // @Produce json,octet-stream
 // @Param path path string true "File or directory path"
 // @Param download query boolean false "Force download mode for files"
+// @Success 200 {file} file "File content (download mode)"
 // @Success 200 {object} filesystem.FileWithContent "File content (JSON mode)"
 // @Success 200 {object} filesystem.Directory "Directory listing"
-// @Success 200 {file} file "File content (download mode)"
 // @Failure 404 {object} ErrorResponse "File or directory not found"
 // @Failure 422 {object} ErrorResponse "Unprocessable entity"
 // @Failure 500 {object} ErrorResponse "Internal server error"

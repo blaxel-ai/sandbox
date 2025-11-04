@@ -287,9 +287,9 @@ const docTemplate = `{
                 ],
                 "responses": {
                     "200": {
-                        "description": "File content (download mode)",
+                        "description": "Directory listing",
                         "schema": {
-                            "type": "file"
+                            "$ref": "#/definitions/Directory"
                         }
                     },
                     "404": {
