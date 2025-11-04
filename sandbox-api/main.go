@@ -32,9 +32,7 @@ func main() {
 	logrus.SetLevel(logrus.DebugLevel)
 
 	// Load .env file
-	if err := godotenv.Load(); err != nil {
-		logrus.Debugf(".env file not found, this is expected in production environment")
-	}
+	_ = godotenv.Load()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

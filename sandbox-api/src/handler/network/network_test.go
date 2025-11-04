@@ -115,7 +115,7 @@ time.sleep(10)
 		t.Logf("Failed to kill test server: %v", err)
 	}
 
-	testServerCmd.Wait()
+	_ = testServerCmd.Wait()
 	network.UnregisterPortOpenCallback(0)
 }
 

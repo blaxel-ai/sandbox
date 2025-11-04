@@ -21,7 +21,7 @@ func setupTestEnvironment(t *testing.T) (string, *Filesystem, func()) {
 
 	// Return a cleanup function
 	cleanup := func() {
-		os.RemoveAll(tempDir)
+		_ = os.RemoveAll(tempDir)
 	}
 
 	return tempDir, fs, cleanup

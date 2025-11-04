@@ -14,7 +14,7 @@ func TestProcessManagerIntegrationWithPID(t *testing.T) {
 
 	// Test starting a long-running process
 	t.Run("StartLongRunningProcess", func(t *testing.T) {
-		sleepPID, err := pm.StartProcess("sleep 5", "", nil, func(process *ProcessInfo) {
+		sleepPID, err := pm.StartProcess("sleep 5", "", nil, false, 0, func(process *ProcessInfo) {
 			t.Logf("Process: %+v", process.stderr)
 		})
 		if err != nil {
@@ -62,7 +62,7 @@ func TestProcessManagerIntegrationWithPID(t *testing.T) {
 	// Test process with output
 	t.Run("ProcessWithOutput", func(t *testing.T) {
 		expectedOutput := "Hello, Process Manager!"
-		echoPID, err := pm.StartProcess("echo '"+expectedOutput+"'", "", nil, func(process *ProcessInfo) {
+		echoPID, err := pm.StartProcess("echo '"+expectedOutput+"'", "", nil, false, 0, func(process *ProcessInfo) {
 			t.Logf("Process: %+v", process.stderr)
 		})
 		if err != nil {
@@ -102,7 +102,7 @@ func TestProcessManagerIntegrationWithPID(t *testing.T) {
 
 	// Test process with working directory
 	t.Run("ProcessWithWorkingDirectory", func(t *testing.T) {
-		lsPID, err := pm.StartProcess("ls -la", "/tmp", nil, func(process *ProcessInfo) {
+		lsPID, err := pm.StartProcess("ls -la", "/tmp", nil, false, 0, func(process *ProcessInfo) {
 			t.Logf("Process: %+v", process.stderr)
 		})
 		if err != nil {
@@ -149,7 +149,7 @@ func TestProcessManagerIntegrationWithPID(t *testing.T) {
 	// Test list processes functionality
 	t.Run("ListProcesses", func(t *testing.T) {
 		// Start a new process for this test
-		testPID, err := pm.StartProcess("sleep 1", "", nil, func(process *ProcessInfo) {
+		testPID, err := pm.StartProcess("sleep 1", "", nil, false, 0, func(process *ProcessInfo) {
 			t.Logf("Process: %+v", process.stderr)
 		})
 		if err != nil {
@@ -186,7 +186,7 @@ func TestProcessManagerIntegrationWithName(t *testing.T) {
 	// Test starting a long-running process
 	t.Run("StartLongRunningProcess", func(t *testing.T) {
 		name := "sleep-process"
-		_, err := pm.StartProcessWithName("sleep 5", "", name, nil, func(process *ProcessInfo) {
+		_, err := pm.StartProcessWithName("sleep 5", "", name, nil, false, 0, func(process *ProcessInfo) {
 			t.Logf("Process: %+v", process.stderr)
 		})
 		if err != nil {
@@ -235,7 +235,7 @@ func TestProcessManagerIntegrationWithName(t *testing.T) {
 	t.Run("ProcessWithOutput", func(t *testing.T) {
 		expectedOutput := "Hello, Process Manager!"
 		name := "echo-process"
-		_, err := pm.StartProcessWithName("echo '"+expectedOutput+"'", "", name, nil, func(process *ProcessInfo) {
+		_, err := pm.StartProcessWithName("echo '"+expectedOutput+"'", "", name, nil, false, 0, func(process *ProcessInfo) {
 			t.Logf("Process: %+v", process.stderr)
 		})
 		if err != nil {
@@ -276,7 +276,7 @@ func TestProcessManagerIntegrationWithName(t *testing.T) {
 	// Test process with working directory
 	t.Run("ProcessWithWorkingDirectory", func(t *testing.T) {
 		name := "ls-process"
-		_, err := pm.StartProcessWithName("ls -la", "", name, nil, func(process *ProcessInfo) {
+		_, err := pm.StartProcessWithName("ls -la", "", name, nil, false, 0, func(process *ProcessInfo) {
 			t.Logf("Process: %+v", process.stderr)
 		})
 		if err != nil {
@@ -324,7 +324,7 @@ func TestProcessManagerIntegrationWithName(t *testing.T) {
 	t.Run("ListProcesses", func(t *testing.T) {
 		// Start a new process for this test
 		name := "test-process"
-		_, err := pm.StartProcessWithName("sleep 1", "", name, nil, func(process *ProcessInfo) {
+		_, err := pm.StartProcessWithName("sleep 1", "", name, nil, false, 0, func(process *ProcessInfo) {
 			t.Logf("Process: %+v", process.stderr)
 		})
 		if err != nil {
@@ -373,7 +373,7 @@ func TestEnvironmentVariableHandling(t *testing.T) {
 			t.Logf("Test iteration %d", i+1)
 
 			// Use printenv to check all environment variables
-			pid, err := pm.StartProcess("printenv", "", env, func(process *ProcessInfo) {
+			pid, err := pm.StartProcess("printenv", "", env, false, 0, func(process *ProcessInfo) {
 				t.Logf("Process completed: %s", process.PID)
 			})
 			if err != nil {
@@ -434,7 +434,7 @@ func TestEnvironmentVariableHandling(t *testing.T) {
 		// Test with empty environment map - should inherit system environment
 		env := map[string]string{}
 
-		pid, err := pm.StartProcess("printenv PATH", "", env, func(process *ProcessInfo) {
+		pid, err := pm.StartProcess("printenv PATH", "", env, false, 0, func(process *ProcessInfo) {
 			t.Logf("Process completed: %s", process.PID)
 		})
 		if err != nil {
@@ -460,7 +460,7 @@ func TestEnvironmentVariableHandling(t *testing.T) {
 		// Test with nil environment map - should inherit system environment
 		var env map[string]string = nil
 
-		pid, err := pm.StartProcess("printenv PATH", "", env, func(process *ProcessInfo) {
+		pid, err := pm.StartProcess("printenv PATH", "", env, false, 0, func(process *ProcessInfo) {
 			t.Logf("Process completed: %s", process.PID)
 		})
 		if err != nil {
@@ -479,6 +479,192 @@ func TestEnvironmentVariableHandling(t *testing.T) {
 		// Should have inherited system PATH
 		if strings.TrimSpace(logs.Stdout) == "" {
 			t.Error("Expected to inherit system PATH, but got empty output")
+		}
+	})
+}
+
+// TestProcessRestartOnFailure tests the automatic restart functionality
+func TestProcessRestartOnFailure(t *testing.T) {
+	pm := GetProcessManager()
+
+	t.Run("RestartOnFailure", func(t *testing.T) {
+		// Create a command that will fail initially
+		// This command exits with code 1 on the first two attempts, then exits with code 0
+		command := `if [ ! -f /tmp/restart_test_counter ]; then echo 1 > /tmp/restart_test_counter; else count=$(cat /tmp/restart_test_counter); echo $((count + 1)) > /tmp/restart_test_counter; fi; count=$(cat /tmp/restart_test_counter); echo "Attempt $count"; if [ $count -lt 3 ]; then exit 1; else rm /tmp/restart_test_counter; exit 0; fi`
+
+		completionChan := make(chan *ProcessInfo, 1)
+
+		pid, err := pm.StartProcess(command, "", nil, true, 3, func(process *ProcessInfo) {
+			completionChan <- process
+		})
+		if err != nil {
+			t.Fatalf("Error starting process: %v", err)
+		}
+		t.Logf("Started process with PID: %s", pid)
+
+		// Wait for process to complete (with restarts)
+		select {
+		case process := <-completionChan:
+			// Process should have completed successfully after retries
+			if process.Status != StatusCompleted {
+				t.Errorf("Expected process to complete successfully, got status: %s", process.Status)
+			}
+			if process.ExitCode != 0 {
+				t.Errorf("Expected exit code 0, got: %d", process.ExitCode)
+			}
+			if process.RestartCount != 2 {
+				t.Errorf("Expected 2 restarts, got: %d", process.RestartCount)
+			}
+
+			// Check logs for restart messages
+			logs, err := pm.GetProcessOutput(process.PID)
+			if err != nil {
+				t.Fatalf("Error getting process output: %v", err)
+			}
+
+			if !strings.Contains(logs.Stdout, "Attempt 1") {
+				t.Error("Expected to see 'Attempt 1' in logs")
+			}
+			if !strings.Contains(logs.Stdout, "Attempt 2") {
+				t.Error("Expected to see 'Attempt 2' in logs")
+			}
+			if !strings.Contains(logs.Stdout, "Attempt 3") {
+				t.Error("Expected to see 'Attempt 3' in logs")
+			}
+			if !strings.Contains(logs.Stdout, "Process failed with exit code 1. Attempting restart 1/3") {
+				t.Error("Expected to see restart message for attempt 1")
+			}
+			if !strings.Contains(logs.Stdout, "Process failed with exit code 1. Attempting restart 2/3") {
+				t.Error("Expected to see restart message for attempt 2")
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatal("Timeout waiting for process to complete with restarts")
+		}
+	})
+
+	t.Run("RestartOnFailureMaxAttemptsReached", func(t *testing.T) {
+		// Create a command that will always fail
+		command := `echo "Failing process"; exit 1`
+
+		completionChan := make(chan *ProcessInfo, 1)
+
+		pid, err := pm.StartProcess(command, "", nil, true, 2, func(process *ProcessInfo) {
+			completionChan <- process
+		})
+		if err != nil {
+			t.Fatalf("Error starting process: %v", err)
+		}
+		t.Logf("Started process with PID: %s", pid)
+
+		// Wait for process to complete (with restarts)
+		select {
+		case process := <-completionChan:
+			// Process should have failed after max restarts
+			if process.Status != StatusFailed {
+				t.Errorf("Expected process to fail, got status: %s", process.Status)
+			}
+			if process.ExitCode != 1 {
+				t.Errorf("Expected exit code 1, got: %d", process.ExitCode)
+			}
+			if process.RestartCount != 2 {
+				t.Errorf("Expected 2 restarts (max), got: %d", process.RestartCount)
+			}
+
+			// Check logs for restart messages
+			logs, err := pm.GetProcessOutput(process.PID)
+			if err != nil {
+				t.Fatalf("Error getting process output: %v", err)
+			}
+
+			if !strings.Contains(logs.Stdout, "Process failed with exit code 1. Attempting restart 1/2") {
+				t.Error("Expected to see restart message for attempt 1")
+			}
+			if !strings.Contains(logs.Stdout, "Process failed with exit code 1. Attempting restart 2/2") {
+				t.Error("Expected to see restart message for attempt 2")
+			}
+
+			// Count occurrences of "Failing process" - should be 3 (initial + 2 restarts)
+			failingCount := strings.Count(logs.Stdout, "Failing process")
+			if failingCount != 3 {
+				t.Errorf("Expected 3 occurrences of 'Failing process', got: %d", failingCount)
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatal("Timeout waiting for process to complete with restarts")
+		}
+	})
+
+	t.Run("NoRestartOnSuccess", func(t *testing.T) {
+		// Create a command that succeeds immediately
+		command := `echo "Success"; exit 0`
+
+		completionChan := make(chan *ProcessInfo, 1)
+
+		pid, err := pm.StartProcess(command, "", nil, true, 3, func(process *ProcessInfo) {
+			completionChan <- process
+		})
+		if err != nil {
+			t.Fatalf("Error starting process: %v", err)
+		}
+		t.Logf("Started process with PID: %s", pid)
+
+		// Wait for process to complete
+		select {
+		case process := <-completionChan:
+			// Process should have completed successfully without restarts
+			if process.Status != StatusCompleted {
+				t.Errorf("Expected process to complete successfully, got status: %s", process.Status)
+			}
+			if process.ExitCode != 0 {
+				t.Errorf("Expected exit code 0, got: %d", process.ExitCode)
+			}
+			if process.RestartCount != 0 {
+				t.Errorf("Expected 0 restarts, got: %d", process.RestartCount)
+			}
+
+			// Check logs - should not contain restart messages
+			logs, err := pm.GetProcessOutput(process.PID)
+			if err != nil {
+				t.Fatalf("Error getting process output: %v", err)
+			}
+
+			if strings.Contains(logs.Stdout, "Attempting restart") {
+				t.Error("Should not see restart messages for successful process")
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("Timeout waiting for process to complete")
+		}
+	})
+
+	t.Run("MaxRestartsLimit", func(t *testing.T) {
+		// Test that max restarts is capped at 25
+		command := `echo "Test"; exit 1`
+
+		completionChan := make(chan *ProcessInfo, 1)
+
+		// Try to set max restarts to 30 (should be capped at 25)
+		pid, err := pm.StartProcess(command, "", nil, true, 30, func(process *ProcessInfo) {
+			completionChan <- process
+		})
+		if err != nil {
+			t.Fatalf("Error starting process: %v", err)
+		}
+		t.Logf("Started process with PID: %s", pid)
+
+		// Wait for process to complete (with restarts)
+		select {
+		case process := <-completionChan:
+			// Process should have failed after 25 restarts
+			if process.Status != StatusFailed {
+				t.Errorf("Expected process to fail, got status: %s", process.Status)
+			}
+			if process.MaxRestarts != 25 {
+				t.Errorf("Expected max restarts to be capped at 25, got: %d", process.MaxRestarts)
+			}
+			if process.RestartCount != 25 {
+				t.Errorf("Expected 25 restarts, got: %d", process.RestartCount)
+			}
+		case <-time.After(30 * time.Second):
+			t.Fatal("Timeout waiting for process to complete with restarts")
 		}
 	})
 }

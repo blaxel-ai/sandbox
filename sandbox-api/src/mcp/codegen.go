@@ -4,12 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/blaxel-ai/sandbox-api/src/lib"
+	"github.com/blaxel-ai/sandbox-api/src/lib/codegen"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/sirupsen/logrus"
 )
@@ -30,6 +33,14 @@ type FileSearchInput struct {
 type CodebaseSearchInput struct {
 	Query             string   `json:"query" jsonschema:"The search query to find relevant code"`
 	TargetDirectories []string `json:"targetDirectories,omitempty" jsonschema:"Glob patterns for directories to search over"`
+}
+
+type RerankInput struct {
+	Path           string   `json:"path" jsonschema:"Path to search in (relative to workspace root, default: current directory)"`
+	Query          string   `json:"query" jsonschema:"Natural language query to search for"`
+	ScoreThreshold *float64 `json:"scoreThreshold,omitempty" jsonschema:"Minimum relevance score (default: 0.5)"`
+	TokenLimit     *int     `json:"tokenLimit,omitempty" jsonschema:"Maximum tokens to return (default: 30000)"`
+	FilePattern    *string  `json:"filePattern,omitempty" jsonschema:"Regex pattern to filter files (e.g., .*\\.ts$ for TypeScript files)"`
 }
 
 type GrepSearchInput struct {
@@ -74,7 +85,8 @@ type CodegenOutput struct {
 // registerCodegenTools registers all codegen-related tools
 func (s *Server) registerCodegenTools() error {
 	// Edit file tool - the most critical tool for coding agents
-	if os.Getenv("MORPH_API_KEY") != "" {
+	// Register if any fastapply provider is enabled
+	if codegen.IsEnabled() {
 		mcp.AddTool(s.mcpServer, &mcp.Tool{
 			Name:        "codegenEditFile",
 			Description: "Use this tool to propose an edit to an existing file or create a new file. This will be read by a less intelligent model, which will quickly apply the edit. You should make it clear what the edit is, while also minimizing the unchanged code you write.",
@@ -123,14 +135,23 @@ func (s *Server) registerCodegenTools() error {
 		Description: "When there are multiple locations that can be edited in parallel, with a similar type of edit, use this tool to sketch out a plan for the edits.",
 	}, LogToolCall("codegenParallelApply", s.handleParallelApply))
 
+	// Rerank tool - available when a reranking provider is enabled
+	if codegen.IsEnabled() {
+		mcp.AddTool(s.mcpServer, &mcp.Tool{
+			Name:        "codegenRerank",
+			Description: "Performs semantic search/reranking on code files in a directory. Finds the most relevant files for a given query using AI-powered code understanding. Returns files sorted by relevance score, filtered by optional score threshold. Useful as a first pass in agentic exploration to narrow down the search space. Supports file pattern filtering via regex.",
+		}, LogToolCall("codegenRerank", s.handleRerank))
+	}
+
 	return nil
 }
 
 // handleEditFile implements the edit_file tool functionality
 func (s *Server) handleEditFile(ctx context.Context, req *mcp.CallToolRequest, args EditFileInput) (*mcp.CallToolResult, CodegenOutput, error) {
-	morphAPIKey := os.Getenv("MORPH_API_KEY")
-	if morphAPIKey == "" {
-		return nil, CodegenOutput{}, fmt.Errorf("MORPH_API_KEY not set")
+	// Create a FastApply client using the factory
+	client, err := codegen.NewClient()
+	if err != nil {
+		return nil, CodegenOutput{}, fmt.Errorf("failed to create FastApply client: %w", err)
 	}
 
 	// Check if file exists
@@ -148,14 +169,10 @@ func (s *Server) handleEditFile(ctx context.Context, req *mcp.CallToolRequest, a
 		originalContent = string(file.Content)
 	}
 
-	model := os.Getenv("MORPH_MODEL")
-	if model == "" {
-		model = "morph-v2"
-	}
-
-	logrus.Infof("Using MorphAPI to apply code using model: %s", model)
-	morphClient := lib.NewMorphClient(model, morphAPIKey)
-	updatedContent, err := morphClient.ApplyCodeEdit(originalContent, args.CodeEdit)
+	// Use "auto" model by default
+	model := "auto"
+	logrus.Infof("Using %s API to apply code edit with model %s", client.ProviderName(), model)
+	updatedContent, err := client.ApplyCodeEdit(originalContent, args.CodeEdit, model)
 	if err != nil {
 		return nil, CodegenOutput{}, fmt.Errorf("failed to apply edit: %w", err)
 	}
@@ -330,6 +347,184 @@ func (s *Server) handleParallelApply(ctx context.Context, req *mcp.CallToolReque
 		Success: false,
 		Message: "Parallel apply functionality not yet implemented",
 	}, nil
+}
+
+// handleRerank implements semantic reranking of documents
+func (s *Server) handleRerank(ctx context.Context, req *mcp.CallToolRequest, args RerankInput) (*mcp.CallToolResult, CodegenOutput, error) {
+	// Set defaults
+	directory := args.Path
+	if directory == "" {
+		directory = "."
+	}
+
+	// Format the path
+	directory, err := lib.FormatPath(directory)
+	if err != nil {
+		return nil, CodegenOutput{}, fmt.Errorf("invalid path: %w", err)
+	}
+
+	scoreThreshold := 0.5
+	if args.ScoreThreshold != nil {
+		scoreThreshold = *args.ScoreThreshold
+	}
+
+	tokenLimit := 30000
+	if args.TokenLimit != nil {
+		tokenLimit = *args.TokenLimit
+	}
+
+	var filePattern string
+	if args.FilePattern != nil {
+		filePattern = *args.FilePattern
+	}
+
+	// Check if directory exists
+	isDir, err := s.handlers.FileSystem.DirectoryExists(directory)
+	if err != nil {
+		return nil, CodegenOutput{}, fmt.Errorf("failed to check directory: %w", err)
+	}
+	if !isDir {
+		return nil, CodegenOutput{}, fmt.Errorf("path is not a directory: %s", directory)
+	}
+
+	// Create a client that supports reranking
+	client, err := codegen.NewClient()
+	if err != nil {
+		return nil, CodegenOutput{}, fmt.Errorf("failed to create codegen client: %w", err)
+	}
+
+	// Check if the client supports reranking
+	reranker, ok := client.(codegen.CodeReranker)
+	if !ok {
+		return nil, CodegenOutput{}, fmt.Errorf("current provider (%s) does not support reranking", client.ProviderName())
+	}
+
+	// Collect documents from the directory
+	documents, err := s.collectDocumentsFromDirectory(directory, filePattern)
+	if err != nil {
+		return nil, CodegenOutput{}, fmt.Errorf("failed to collect documents: %w", err)
+	}
+
+	if len(documents) == 0 {
+		return nil, CodegenOutput{
+			Success: true,
+			Message: "No files found matching criteria",
+			Data: map[string]interface{}{
+				"files": []codegen.RankedFile{},
+			},
+		}, nil
+	}
+
+	// Perform reranking
+	logrus.Infof("Performing code reranking on %d files using %s", len(documents), client.ProviderName())
+	rankedFiles, err := reranker.RerankCode(documents, args.Query, tokenLimit)
+	if err != nil {
+		return nil, CodegenOutput{}, fmt.Errorf("failed to rerank documents: %w", err)
+	}
+
+	// Filter by score threshold
+	filteredFiles := make([]codegen.RankedFile, 0)
+	for _, file := range rankedFiles {
+		if file.Score >= scoreThreshold {
+			filteredFiles = append(filteredFiles, file)
+		}
+	}
+
+	return nil, CodegenOutput{
+		Success: true,
+		Message: fmt.Sprintf("Found %d relevant files", len(filteredFiles)),
+		Data: map[string]interface{}{
+			"files": filteredFiles,
+		},
+	}, nil
+}
+
+// collectDocumentsFromDirectory walks a directory and collects all eligible code files
+func (s *Server) collectDocumentsFromDirectory(directory, filePattern string) ([]codegen.CodebaseDocument, error) {
+	// Compile regex pattern if provided
+	var fileRegex *regexp.Regexp
+	if filePattern != "" {
+		var err error
+		fileRegex, err = regexp.Compile(filePattern)
+		if err != nil {
+			return nil, fmt.Errorf("invalid file pattern regex: %w", err)
+		}
+	}
+
+	documents := []codegen.CodebaseDocument{}
+
+	err := filepath.WalkDir(directory, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+
+		// Skip directories
+		if d.IsDir() {
+			return nil
+		}
+
+		fileSplittered := strings.Split(path, "/")
+		filename := fileSplittered[len(fileSplittered)-1]
+		// Skip hidden files and common directories to ignore
+		if shouldSkipFile(path) {
+			return nil
+		}
+
+		// Apply file pattern filter if provided
+		if fileRegex != nil && !fileRegex.MatchString(path) && !fileRegex.MatchString(filename) {
+			return nil
+		}
+
+		// Read file content
+		content, err := os.ReadFile(path)
+		if err != nil {
+			// Skip files we can't read
+			return nil
+		}
+
+		// Skip binary files
+		if isBinaryFile(content) {
+			return nil
+		}
+
+		// Add to documents
+		documents = append(documents, codegen.CodebaseDocument{
+			Path:    path,
+			Content: string(content),
+		})
+
+		return nil
+	})
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to read directory: %w", err)
+	}
+
+	return documents, nil
+}
+
+// shouldSkipFile determines if a file should be skipped during directory traversal
+func shouldSkipFile(path string) bool {
+	// Skip hidden files and directories
+	base := filepath.Base(path)
+	if len(base) > 0 && base[0] == '.' {
+		return true
+	}
+
+	// Skip common directories to ignore
+	skipDirs := []string{"node_modules", "vendor", ".git", "dist", "build", "target", "__pycache__", ".venv"}
+	for _, dir := range skipDirs {
+		if filepath.Base(filepath.Dir(path)) == dir {
+			return true
+		}
+	}
+
+	return false
+}
+
+// isBinaryFile checks if a file is binary by looking for null bytes
+func isBinaryFile(content []byte) bool {
+	return false
 }
 
 // fuzzyMatch checks if query characters appear in order in the text

@@ -50,19 +50,24 @@ type ProcessRequest struct {
 	WaitForCompletion bool              `json:"waitForCompletion" example:"false"`
 	Timeout           int               `json:"timeout" example:"30"`
 	WaitForPorts      []int             `json:"waitForPorts" example:"3000,8080"`
+	RestartOnFailure  bool              `json:"restartOnFailure" example:"true"`
+	MaxRestarts       int               `json:"maxRestarts" example:"3"`
 } // @name ProcessRequest
 
 // ProcessResponse is the response body for a process
 type ProcessResponse struct {
-	PID         string  `json:"pid" example:"1234" binding:"required"`
-	Name        string  `json:"name" example:"my-process" binding:"required"`
-	Command     string  `json:"command" example:"ls -la" binding:"required"`
-	Status      string  `json:"status" example:"running" enums:"failed,killed,stopped,running,completed" binding:"required"`
-	StartedAt   string  `json:"startedAt" example:"Wed, 01 Jan 2023 12:00:00 GMT" binding:"required"`
-	CompletedAt *string `json:"completedAt" example:"Wed, 01 Jan 2023 12:01:00 GMT" binding:"required"`
-	ExitCode    int     `json:"exitCode" example:"0" binding:"required"`
-	WorkingDir  string  `json:"workingDir" example:"/home/user" binding:"required"`
-	Logs        *string `json:"logs" example:"logs output" binding:"required"`
+	PID              string  `json:"pid" example:"1234" binding:"required"`
+	Name             string  `json:"name" example:"my-process" binding:"required"`
+	Command          string  `json:"command" example:"ls -la" binding:"required"`
+	Status           string  `json:"status" example:"running" enums:"failed,killed,stopped,running,completed" binding:"required"`
+	StartedAt        string  `json:"startedAt" example:"Wed, 01 Jan 2023 12:00:00 GMT" binding:"required"`
+	CompletedAt      *string `json:"completedAt" example:"Wed, 01 Jan 2023 12:01:00 GMT" binding:"required"`
+	ExitCode         int     `json:"exitCode" example:"0" binding:"required"`
+	WorkingDir       string  `json:"workingDir" example:"/home/user" binding:"required"`
+	Logs             *string `json:"logs" example:"logs output" binding:"required"`
+	RestartOnFailure bool    `json:"restartOnFailure" example:"true" binding:"required"`
+	MaxRestarts      int     `json:"maxRestarts" example:"3" binding:"required"`
+	RestartCount     int     `json:"restartCount" example:"2" binding:"required"`
 } // @name ProcessResponse
 
 type ProcessResponseWithLogs struct {
@@ -76,8 +81,8 @@ type ProcessKillRequest struct {
 } // @name ProcessKillRequest
 
 // ExecuteProcess executes a process
-func (h *ProcessHandler) ExecuteProcess(command string, workingDir string, name string, env map[string]string, waitForCompletion bool, timeout int, waitForPorts []int) (ProcessResponse, error) {
-	processInfo, err := h.processManager.ExecuteProcess(command, workingDir, name, env, waitForCompletion, timeout, waitForPorts)
+func (h *ProcessHandler) ExecuteProcess(command string, workingDir string, name string, env map[string]string, waitForCompletion bool, timeout int, waitForPorts []int, restartOnFailure bool, maxRestarts int) (ProcessResponse, error) {
+	processInfo, err := h.processManager.ExecuteProcess(command, workingDir, name, env, waitForCompletion, timeout, waitForPorts, restartOnFailure, maxRestarts)
 	if err != nil {
 		return ProcessResponse{}, err
 	}
@@ -88,15 +93,18 @@ func (h *ProcessHandler) ExecuteProcess(command string, workingDir string, name 
 	}
 
 	return ProcessResponse{
-		PID:         processInfo.PID,
-		Name:        processInfo.Name,
-		Command:     processInfo.Command,
-		Status:      string(processInfo.Status),
-		StartedAt:   processInfo.StartedAt.Format("Mon, 02 Jan 2006 15:04:05 GMT"),
-		CompletedAt: &completedAt,
-		ExitCode:    processInfo.ExitCode,
-		WorkingDir:  processInfo.WorkingDir,
-		Logs:        processInfo.Logs,
+		PID:              processInfo.PID,
+		Name:             processInfo.Name,
+		Command:          processInfo.Command,
+		Status:           string(processInfo.Status),
+		StartedAt:        processInfo.StartedAt.Format("Mon, 02 Jan 2006 15:04:05 GMT"),
+		CompletedAt:      &completedAt,
+		ExitCode:         processInfo.ExitCode,
+		WorkingDir:       processInfo.WorkingDir,
+		Logs:             processInfo.Logs,
+		RestartOnFailure: processInfo.RestartOnFailure,
+		MaxRestarts:      processInfo.MaxRestarts,
+		RestartCount:     processInfo.RestartCount,
 	}, nil
 }
 
@@ -111,15 +119,18 @@ func (h *ProcessHandler) ListProcesses() []ProcessResponse {
 			completedAtPtr = &completedAt
 		}
 		result = append(result, ProcessResponse{
-			PID:         p.PID,
-			Name:        p.Name,
-			Command:     p.Command,
-			Status:      string(p.Status),
-			StartedAt:   p.StartedAt.Format("Mon, 02 Jan 2006 15:04:05 GMT"),
-			CompletedAt: completedAtPtr,
-			ExitCode:    p.ExitCode,
-			WorkingDir:  p.WorkingDir,
-			Logs:        p.Logs,
+			PID:              p.PID,
+			Name:             p.Name,
+			Command:          p.Command,
+			Status:           string(p.Status),
+			StartedAt:        p.StartedAt.Format("Mon, 02 Jan 2006 15:04:05 GMT"),
+			CompletedAt:      completedAtPtr,
+			ExitCode:         p.ExitCode,
+			WorkingDir:       p.WorkingDir,
+			Logs:             p.Logs,
+			RestartOnFailure: p.RestartOnFailure,
+			MaxRestarts:      p.MaxRestarts,
+			RestartCount:     p.RestartCount,
 		})
 	}
 	return result
@@ -137,15 +148,18 @@ func (h *ProcessHandler) GetProcess(identifier string) (ProcessResponse, error) 
 		completedAt = processInfo.CompletedAt.Format("Mon, 02 Jan 2006 15:04:05 GMT")
 	}
 	return ProcessResponse{
-		PID:         processInfo.PID,
-		Name:        processInfo.Name,
-		Command:     processInfo.Command,
-		Status:      string(processInfo.Status),
-		StartedAt:   processInfo.StartedAt.Format("Mon, 02 Jan 2006 15:04:05 GMT"),
-		CompletedAt: &completedAt,
-		ExitCode:    processInfo.ExitCode,
-		WorkingDir:  processInfo.WorkingDir,
-		Logs:        processInfo.Logs,
+		PID:              processInfo.PID,
+		Name:             processInfo.Name,
+		Command:          processInfo.Command,
+		Status:           string(processInfo.Status),
+		StartedAt:        processInfo.StartedAt.Format("Mon, 02 Jan 2006 15:04:05 GMT"),
+		CompletedAt:      &completedAt,
+		ExitCode:         processInfo.ExitCode,
+		WorkingDir:       processInfo.WorkingDir,
+		Logs:             processInfo.Logs,
+		RestartOnFailure: processInfo.RestartOnFailure,
+		MaxRestarts:      processInfo.MaxRestarts,
+		RestartCount:     processInfo.RestartCount,
 	}, nil
 }
 
@@ -171,7 +185,7 @@ func (h *ProcessHandler) StreamProcessOutput(identifier string, writer io.Writer
 
 // RemoveLogWriter removes a log writer from a process
 func (h *ProcessHandler) RemoveLogWriter(identifier string, writer io.Writer) {
-	h.processManager.RemoveLogWriter(identifier, writer)
+	_ = h.processManager.RemoveLogWriter(identifier, writer)
 }
 
 // HandleListProcesses handles GET requests to /process/
@@ -217,7 +231,7 @@ func (h *ProcessHandler) HandleExecuteCommand(c *gin.Context) {
 
 	// If a name is provided, check if a process with that name already exists
 	if req.Name != "" {
-		alreadyExists, err := GetProcessHandler().GetProcess(req.Name)
+		alreadyExists, err := h.GetProcess(req.Name)
 		if err == nil && alreadyExists.Status == string(constants.ProcessStatusRunning) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("process with name '%s' already exists and is running", req.Name)})
 			return
@@ -225,7 +239,7 @@ func (h *ProcessHandler) HandleExecuteCommand(c *gin.Context) {
 	}
 
 	// Execute the process
-	processInfo, err := h.ExecuteProcess(req.Command, req.WorkingDir, req.Name, req.Env, req.WaitForCompletion, req.Timeout, req.WaitForPorts)
+	processInfo, err := h.ExecuteProcess(req.Command, req.WorkingDir, req.Name, req.Env, req.WaitForCompletion, req.Timeout, req.WaitForPorts, req.RestartOnFailure, req.MaxRestarts)
 	if err != nil {
 		h.SendError(c, http.StatusUnprocessableEntity, err)
 		return
