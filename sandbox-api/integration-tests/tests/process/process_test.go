@@ -3,6 +3,7 @@ package tests
 import (
 	"bufio"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"sync"
@@ -261,8 +262,9 @@ func TestProcessKillByName(t *testing.T) {
 func TestProcessOutputByName(t *testing.T) {
 	// Create a process with output
 	processRequest := map[string]interface{}{
-		"command": "echo 'test output' && echo 'test error' >&2",
-		"cwd":     "/",
+		"command":           "echo 'test output' && echo 'test error' >&2",
+		"waitForCompletion": true,
+		"cwd":               "/",
 	}
 
 	resp, err := common.MakeRequest(http.MethodPost, "/process", processRequest)
@@ -277,9 +279,7 @@ func TestProcessOutputByName(t *testing.T) {
 
 	require.Contains(t, processResponse, "name")
 	processName := processResponse["name"].(string)
-
-	// Wait a bit for the process to complete
-	time.Sleep(100 * time.Millisecond)
+	require.Contains(t, processResponse, "pid")
 
 	// Test getting process output by name
 	resp, err = common.MakeRequest(http.MethodGet, "/process/"+processName+"/logs", nil)
@@ -375,6 +375,11 @@ func TestProcessKillWithChildProcesses(t *testing.T) {
 	// Test similar to the TypeScript example: start a dev-like process, stream logs, then kill
 	// This test runs twice to verify that ports are properly freed after killing
 
+	// Check if prerequisites exist (Next.js app, npm, etc.)
+	if !checkNextJsPrerequisites(t) {
+		t.Skip("Skipping Next.js test: prerequisites not available (requires /blaxel/app with npm)")
+	}
+
 	// First run: Start Next.js, verify it binds to port 3000, then kill it
 	t.Log("=== First run: Starting Next.js dev server ===")
 	firstRunSuccess := runNextJsAndKill(t, "dev")
@@ -393,6 +398,43 @@ func TestProcessKillWithChildProcesses(t *testing.T) {
 	assert.True(t, secondRunSuccess, "Second run should also successfully start Next.js, proving port 3000 was freed")
 
 	t.Log("=== Test passed: Process group killing properly frees ports ===")
+}
+
+// checkNextJsPrerequisites checks if the Next.js app and npm are available
+func checkNextJsPrerequisites(t *testing.T) bool {
+	// Try to execute a simple command to check if the working directory exists
+	checkRequest := map[string]interface{}{
+		"name":              "check-nextjs",
+		"command":           "test -d /blaxel/app && test -f /blaxel/app/package.json",
+		"workingDir":        "/",
+		"waitForCompletion": true,
+		"timeout":           5,
+	}
+
+	resp, err := common.MakeRequest(http.MethodPost, "/process", checkRequest)
+	if err != nil {
+		t.Logf("Failed to check prerequisites: %v", err)
+		return false
+	}
+	defer resp.Body.Close()
+
+	// If the command failed (non-zero exit), prerequisites don't exist
+	if resp.StatusCode != http.StatusOK {
+		return false
+	}
+
+	var processResponse map[string]interface{}
+	err = json.NewDecoder(resp.Body).Decode(&processResponse)
+	if err != nil {
+		return false
+	}
+
+	// Check if the process completed successfully (exit code 0)
+	if status, ok := processResponse["status"].(string); ok {
+		return status == "completed" || status == "running"
+	}
+
+	return false
 }
 
 // runNextJsAndKill starts a Next.js dev process, waits for it to show localhost:3000, then kills it
@@ -521,4 +563,190 @@ func runNextJsAndKill(t *testing.T, processName string) bool {
 	t.Logf("[%s] Verified process status is 'killed'", processName)
 
 	return foundLocalhost3000
+}
+
+// TestProcessRestartOnFailure tests the restart on failure functionality
+func TestProcessRestartOnFailure(t *testing.T) {
+	t.Log("=== Testing process restart on failure ===")
+
+	// Test a process that fails immediately and should restart
+	processRequest := map[string]interface{}{
+		"name":              "test-restart-on-failure",
+		"command":           "exit 1", // This will fail immediately
+		"cwd":               "/",
+		"waitForCompletion": true,
+		"restartOnFailure":  true,
+		"maxRestarts":       3,
+		"timeout":           10,
+	}
+
+	t.Log("Starting process that will fail and restart...")
+	resp, err := common.MakeRequest(http.MethodPost, "/process", processRequest)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	t.Logf("Response status code: %d", resp.StatusCode)
+	assert.Equal(t, http.StatusOK, resp.StatusCode, "Process creation should succeed even if it restarts")
+
+	var processResponse map[string]interface{}
+	err = json.NewDecoder(resp.Body).Decode(&processResponse)
+	require.NoError(t, err)
+
+	t.Logf("Process response: %+v", processResponse)
+
+	// Verify process ID is returned
+	require.Contains(t, processResponse, "pid", "Response should contain pid")
+	require.Contains(t, processResponse, "name", "Response should contain name")
+	require.Contains(t, processResponse, "status", "Response should contain status")
+	require.Contains(t, processResponse, "restartCount", "Response should contain restartCount")
+
+	// The process should have restarted maxRestarts times and then failed
+	assert.Equal(t, "failed", processResponse["status"], "Process should be in failed state after all restarts")
+	assert.Equal(t, float64(3), processResponse["restartCount"], "Process should have restarted 3 times")
+	assert.Equal(t, float64(1), processResponse["exitCode"], "Exit code should be 1")
+
+	// Check the logs to verify restart messages
+	if logs, ok := processResponse["logs"].(string); ok {
+		t.Logf("Process logs:\n%s", logs)
+		assert.Contains(t, logs, "Attempting restart 1/3", "Logs should contain first restart message")
+		assert.Contains(t, logs, "Attempting restart 2/3", "Logs should contain second restart message")
+		assert.Contains(t, logs, "Attempting restart 3/3", "Logs should contain third restart message")
+	} else {
+		t.Log("No logs in response")
+	}
+}
+
+// TestProcessRestartOnFailureEventualSuccess tests a process that fails a few times then succeeds
+func TestProcessRestartOnFailureEventualSuccess(t *testing.T) {
+	t.Log("=== Testing process restart on failure with eventual success ===")
+
+	// Create a script that fails twice, then succeeds
+	// We'll use a file to track attempts
+	setupCmd := "rm -f /tmp/test_restart_counter.txt && echo 0 > /tmp/test_restart_counter.txt"
+	resp, err := common.MakeRequest(http.MethodPost, "/process", map[string]interface{}{
+		"command":           setupCmd,
+		"waitForCompletion": true,
+	})
+	require.NoError(t, err)
+	resp.Body.Close()
+
+	// Command that fails the first 2 times, then succeeds
+	processRequest := map[string]interface{}{
+		"name":              "test-restart-eventual-success",
+		"command":           "COUNT=$(cat /tmp/test_restart_counter.txt); NEW_COUNT=$((COUNT + 1)); echo $NEW_COUNT > /tmp/test_restart_counter.txt; echo \"Attempt $NEW_COUNT\"; if [ $NEW_COUNT -lt 3 ]; then exit 1; else exit 0; fi",
+		"cwd":               "/",
+		"waitForCompletion": true,
+		"restartOnFailure":  true,
+		"maxRestarts":       5,
+		"timeout":           15,
+	}
+
+	t.Log("Starting process that will fail twice then succeed...")
+	resp, err = common.MakeRequest(http.MethodPost, "/process", processRequest)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	t.Logf("Response status code: %d", resp.StatusCode)
+	assert.Equal(t, http.StatusOK, resp.StatusCode, "Process creation should succeed")
+
+	var processResponse map[string]interface{}
+	err = json.NewDecoder(resp.Body).Decode(&processResponse)
+	require.NoError(t, err)
+
+	// Verify the process eventually succeeded
+	require.Contains(t, processResponse, "status", "Response should contain status")
+	require.Contains(t, processResponse, "restartCount", "Response should contain restartCount")
+
+	assert.Equal(t, "completed", processResponse["status"], "Process should eventually complete successfully")
+	assert.Equal(t, float64(2), processResponse["restartCount"], "Process should have restarted 2 times before succeeding")
+	assert.Equal(t, float64(0), processResponse["exitCode"], "Exit code should be 0 for success")
+
+	// Check the logs
+	if logs, ok := processResponse["logs"].(string); ok {
+		t.Logf("Process logs:\n%s", logs)
+		assert.Contains(t, logs, "Attempt 1", "Logs should contain first attempt")
+		assert.Contains(t, logs, "Attempt 2", "Logs should contain second attempt")
+		assert.Contains(t, logs, "Attempt 3", "Logs should contain third attempt")
+		assert.Contains(t, logs, "Attempting restart", "Logs should contain restart messages")
+	}
+}
+
+// TestProcessRestartPIDStaysTheSame tests that PIDs remain constant across restarts
+func TestProcessRestartPIDStaysTheSame(t *testing.T) {
+	t.Log("=== Testing PID stability across restarts ===")
+
+	// Use a unique name to avoid conflicts with previous test runs
+	processName := fmt.Sprintf("test-pid-stability-%d", time.Now().UnixNano())
+
+	// Start a process without waiting for completion to get the PID
+	processRequest := map[string]interface{}{
+		"name":              processName,
+		"command":           "exit 1", // Will fail immediately
+		"cwd":               "/",
+		"waitForCompletion": false,
+		"restartOnFailure":  true,
+		"maxRestarts":       2,
+	}
+
+	t.Log("Starting process without waiting for completion...")
+	resp, err := common.MakeRequest(http.MethodPost, "/process", processRequest)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var processResponse map[string]interface{}
+	err = json.NewDecoder(resp.Body).Decode(&processResponse)
+	require.NoError(t, err)
+
+	originalPID := processResponse["pid"].(string)
+	t.Logf("Got PID: %s for process: %s", originalPID, processName)
+
+	// Wait for the process to fail and restart multiple times
+	time.Sleep(4 * time.Second)
+
+	// Query the process - it should still have the same PID
+	t.Logf("Querying process using PID: %s", originalPID)
+	resp, err = common.MakeRequest(http.MethodGet, "/process/"+originalPID, nil)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode, "PID should still be accessible")
+
+	var processDetails map[string]interface{}
+	err = json.NewDecoder(resp.Body).Decode(&processDetails)
+	require.NoError(t, err)
+
+	t.Logf("Process details: %+v", processDetails)
+
+	// The process should have completed all restarts
+	assert.Equal(t, "failed", processDetails["status"], "Process should be failed after all restarts")
+	assert.Equal(t, float64(2), processDetails["restartCount"], "Process should have restarted 2 times")
+
+	// CRITICAL: The PID should remain the same across all restarts
+	currentPID := processDetails["pid"].(string)
+	assert.Equal(t, originalPID, currentPID, "PID should remain constant across restarts for user transparency")
+	t.Logf("✓ PID remained constant: %s", currentPID)
+
+	// List processes and verify it appears once with the same PID
+	t.Log("Listing all processes to verify single entry with stable PID...")
+	resp, err = common.MakeRequest(http.MethodGet, "/process", nil)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	var processList []map[string]interface{}
+	err = json.NewDecoder(resp.Body).Decode(&processList)
+	require.NoError(t, err)
+
+	// Count how many times our process appears in the list
+	count := 0
+	for _, p := range processList {
+		if p["name"].(string) == processName {
+			count++
+			assert.Equal(t, originalPID, p["pid"].(string), "Listed process should have the same PID")
+		}
+	}
+	assert.Equal(t, 1, count, "Process should appear exactly once in the list")
+
+	t.Log("✓ PID remains stable across restarts, completely transparent to users")
 }

@@ -155,7 +155,7 @@ func TestFileSystemOperations(t *testing.T) {
 // TestFileSystemTree tests the tree view functionality
 func TestFileSystemTree(t *testing.T) {
 	// Create a directory path with timestamp to avoid conflicts
-	testDir := "/test-dir-" + fmt.Sprintf("%d", time.Now().Unix())
+	testDir := "/tmp/test-dir-" + fmt.Sprintf("%d", time.Now().Unix())
 
 	// Create the directory
 	var successResp handler.SuccessResponse

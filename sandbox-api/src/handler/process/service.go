@@ -21,6 +21,8 @@ func (pm *ProcessManager) ExecuteProcess(
 	waitForCompletion bool,
 	timeout int,
 	waitForPorts []int,
+	restartOnFailure bool,
+	maxRestarts int,
 ) (*ProcessInfo, error) {
 	portCh := make(chan int)
 	completionCh := make(chan string)
@@ -65,9 +67,7 @@ func (pm *ProcessManager) ExecuteProcess(
 			if !closed {
 				// Use a recover block in case of a race condition
 				defer func() {
-					if r := recover(); r != nil {
-						// Optionally log the panic
-					}
+					_ = recover()
 				}()
 				completionCh <- p.PID
 			}
@@ -78,9 +78,9 @@ func (pm *ProcessManager) ExecuteProcess(
 	var pid string
 	var err error
 	if name != "" {
-		pid, err = pm.StartProcessWithName(command, workingDir, name, env, callback)
+		pid, err = pm.StartProcessWithName(command, workingDir, name, env, restartOnFailure, maxRestarts, callback)
 	} else {
-		pid, err = pm.StartProcess(command, workingDir, env, callback)
+		pid, err = pm.StartProcess(command, workingDir, env, restartOnFailure, maxRestarts, callback)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to start process: %w", err)
@@ -93,9 +93,7 @@ func (pm *ProcessManager) ExecuteProcess(
 			// Just close the channel without trying to monitor ports
 			func() {
 				defer func() {
-					if r := recover(); r != nil {
-						// Log the panic but continue
-					}
+					_ = recover()
 				}()
 
 				mu.Lock()
@@ -117,9 +115,7 @@ func (pm *ProcessManager) ExecuteProcess(
 					// Safely close the channel with defer-recover to prevent panics
 					func() {
 						defer func() {
-							if r := recover(); r != nil {
-								// Log the panic but continue
-							}
+							_ = recover()
 						}()
 
 						mu.Lock()
@@ -140,11 +136,12 @@ func (pm *ProcessManager) ExecuteProcess(
 	// Wait for completion if requested
 	if waitForCompletion {
 		select {
-		case pid := <-completionCh:
-			_, exists := pm.GetProcessByIdentifier(pid)
+		case receivedPID := <-completionCh:
+			_, exists := pm.GetProcessByIdentifier(receivedPID)
 			if !exists {
-				return nil, fmt.Errorf("process creation failed")
+				return nil, fmt.Errorf("process creation failed because process does not exist")
 			}
+			pid = receivedPID // Update pid to the received PID
 			break
 		case <-ctx.Done():
 			return nil, fmt.Errorf("process timed out after %d seconds", timeout)
@@ -154,7 +151,7 @@ func (pm *ProcessManager) ExecuteProcess(
 	// Get the process info
 	processInfo, exists := pm.GetProcessByIdentifier(pid)
 	if !exists {
-		return nil, fmt.Errorf("process creation failed")
+		return nil, fmt.Errorf("process creation failed because process does not exist")
 	}
 	if waitForCompletion {
 		logs := processInfo.logs.String()

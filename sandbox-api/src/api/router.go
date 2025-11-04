@@ -44,6 +44,7 @@ func SetupRouter() *gin.Engine {
 	fsHandler := handler.NewFileSystemHandler()
 	processHandler := handler.NewProcessHandler()
 	networkHandler := handler.NewNetworkHandler()
+	codegenHandler := handler.NewCodegenHandler(fsHandler)
 
 	// Custom filesystem tree router middleware to handle tree-specific routes
 	r.Use(func(c *gin.Context) {
@@ -79,15 +80,16 @@ func SetupRouter() *gin.Engine {
 			c.Set("rootPath", trimmedPath)
 
 			// Handle based on method
-			if method == "GET" {
+			switch method {
+			case "GET":
 				fsHandler.HandleGetTree(c)
 				c.Abort()
 				return
-			} else if method == "PUT" {
+			case "PUT":
 				fsHandler.HandleCreateOrUpdateTree(c)
 				c.Abort()
 				return
-			} else if method == "DELETE" {
+			case "DELETE":
 				fsHandler.HandleDeleteTree(c)
 				c.Abort()
 				return
@@ -115,6 +117,10 @@ func SetupRouter() *gin.Engine {
 	r.GET("/network/process/:pid/ports", networkHandler.HandleGetPorts)
 	r.POST("/network/process/:pid/monitor", networkHandler.HandleMonitorPorts)
 	r.DELETE("/network/process/:pid/monitor", networkHandler.HandleStopMonitoringPorts)
+
+	// Codegen routes
+	r.PUT("/codegen/fastapply/*path", codegenHandler.HandleFastApply)
+	r.GET("/codegen/reranking/*path", codegenHandler.HandleReranking)
 
 	// Health check route
 	r.GET("/health", func(c *gin.Context) {

@@ -105,6 +105,12 @@ func TestMCPClientListTools(t *testing.T) {
 		"codegenParallelApply",
 	}
 
+	// These tools are only available when codegen is enabled
+	conditionalTools := []string{
+		"codegenEditFile",
+		"codegenRerank",
+	}
+
 	toolNames := make(map[string]bool)
 	for _, tool := range result.Tools {
 		toolNames[tool.Name] = true
@@ -118,6 +124,16 @@ func TestMCPClientListTools(t *testing.T) {
 	// Check that expected tools are present
 	for _, expected := range expectedTools {
 		assert.True(t, toolNames[expected], "Expected tool %s to be present", expected)
+	}
+
+	// Check conditional tools - they may or may not be present depending on configuration
+	codegenEnabled := os.Getenv("RELACE_API_KEY") != "" || os.Getenv("MORPH_API_KEY") != ""
+	for _, conditional := range conditionalTools {
+		if codegenEnabled {
+			assert.True(t, toolNames[conditional], "Expected tool %s to be present when codegen is enabled", conditional)
+		} else {
+			t.Logf("Tool %s not expected when codegen is disabled", conditional)
+		}
 	}
 }
 

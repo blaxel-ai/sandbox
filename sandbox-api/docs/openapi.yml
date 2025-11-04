@@ -5,6 +5,235 @@ info:
   title: Sandbox API
   version: 0.0.1
 paths:
+  /:
+    delete:
+      description: Returns a welcome message with links to documentation
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WelcomeResponse"
+      summary: Welcome message
+      tags:
+        - root
+    get:
+      description: Returns a welcome message with links to documentation
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WelcomeResponse"
+      summary: Welcome message
+      tags:
+        - root
+    options:
+      description: Returns a welcome message with links to documentation
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WelcomeResponse"
+      summary: Welcome message
+      tags:
+        - root
+    patch:
+      description: Returns a welcome message with links to documentation
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WelcomeResponse"
+      summary: Welcome message
+      tags:
+        - root
+    post:
+      description: Returns a welcome message with links to documentation
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WelcomeResponse"
+      summary: Welcome message
+      tags:
+        - root
+    put:
+      description: Returns a welcome message with links to documentation
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WelcomeResponse"
+      summary: Welcome message
+      tags:
+        - root
+  "/codegen/fastapply/{path}":
+    put:
+      description: >-
+        Uses the configured LLM provider (Relace or Morph) to apply a code edit to the original content.
+
+
+        To use this endpoint as an agent tool, follow these guidelines:
+
+
+        Use this tool to make an edit to an existing file. This will be read by a less intelligent model, which will quickly apply the edit. You should make it clear what the edit is, while also minimizing the unchanged code you write.
+
+
+        When writing the edit, you should specify each edit in sequence, with the special comment "// ... existing code ..." to represent unchanged code in between edited lines.
+
+
+        Example format:
+
+        // ... existing code ...
+
+        FIRST_EDIT
+
+        // ... existing code ...
+
+        SECOND_EDIT
+
+        // ... existing code ...
+
+        THIRD_EDIT
+
+        // ... existing code ...
+
+
+        You should still bias towards repeating as few lines of the original file as possible to convey the change. But, each edit should contain minimally sufficient context of unchanged lines around the code you're editing to resolve ambiguity.
+
+
+        DO NOT omit spans of pre-existing code (or comments) without using the "// ... existing code ..." comment to indicate its absence. If you omit the existing code comment, the model may inadvertently delete these lines.
+
+
+        If you plan on deleting a section, you must provide context before and after to delete it. If the initial code is "Block 1\nBlock 2\nBlock 3", and you want to remove Block 2, you would output "// ... existing code ...\nBlock 1\nBlock 3\n// ... existing code ...".
+
+
+        Make sure it is clear what the edit should be, and where it should be applied. Make edits to a file in a single edit_file call instead of multiple edit_file calls to the same file. The apply model can handle many distinct edits at once.
+      parameters:
+        - description: Path to the file to edit (relative to workspace)
+          in: path
+          name: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApplyEditRequest"
+        description: Code edit request
+        required: true
+      responses:
+        "200":
+          description: Code edit applied successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApplyEditResponse"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Unprocessable entity - failed to process the request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: Service unavailable - no provider configured
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+      summary: Apply code edit
+      tags:
+        - fastapply
+  "/codegen/reranking/{path}":
+    get:
+      description: >-
+        Uses Relace's code reranking model to find the most relevant files for a given query. This is useful as a first pass in agentic exploration to narrow down the search space.
+
+
+        Based on: https://docs.relace.ai/docs/code-reranker/agent
+
+
+        Query Construction: The query can be a short question or a more detailed conversation with the user request included. For a first pass, use the full conversation; for subsequent calls, use more targeted questions.
+
+
+        Token Limit and Score Threshold: For 200k token context models like Claude 4 Sonnet, recommended defaults are scoreThreshold=0.5 and tokenLimit=30000.
+
+
+        The response will be a list of file paths and contents ordered from most relevant to least relevant.
+      parameters:
+        - description: Path to search in (relative to workspace)
+          in: path
+          name: path
+          required: true
+          schema:
+            type: string
+        - description: Natural language query to search for
+          in: query
+          name: query
+          required: true
+          schema:
+            type: string
+        - description: "Minimum relevance score (default: 0.5)"
+          in: query
+          name: scoreThreshold
+          schema:
+            type: number
+        - description: "Maximum tokens to return (default: 30000)"
+          in: query
+          name: tokenLimit
+          schema:
+            type: integer
+        - description: Regex pattern to filter files (e.g., .*\\.ts$ for TypeScript files)
+          in: query
+          name: filePattern
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Relevant files found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RerankingResponse"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Unprocessable entity - failed to process the request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: Service unavailable - Relace not configured
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+      summary: Code reranking/semantic search
+      tags:
+        - codegen
   "/filesystem/{path}":
     delete:
       description: Delete a file or directory
@@ -534,6 +763,48 @@ components:
       scheme: bearer
       bearerFormat: JWT
   schemas:
+    ApplyEditRequest:
+      properties:
+        codeEdit:
+          example: |-
+            // Add world parameter
+            function hello(world) {
+              console.log('Hello', world);
+            }
+          type: string
+        model:
+          example: auto
+          type: string
+      required:
+        - codeEdit
+      type: object
+    ApplyEditResponse:
+      properties:
+        message:
+          example: Code edit applied successfully
+          type: string
+        originalContent:
+          example: |-
+            function hello() {
+              console.log('Hello');
+            }
+          type: string
+        path:
+          example: src/main.js
+          type: string
+        provider:
+          example: Relace
+          type: string
+        success:
+          example: true
+          type: boolean
+        updatedContent:
+          example: |-
+            function hello(world) {
+              console.log('Hello', world);
+            }
+          type: string
+      type: object
     Directory:
       properties:
         files:
@@ -662,9 +933,15 @@ components:
           example:
             "{\"PORT\"": ' "3000"}'
           type: object
+        maxRestarts:
+          example: 3
+          type: integer
         name:
           example: my-process
           type: string
+        restartOnFailure:
+          example: true
+          type: boolean
         timeout:
           example: 30
           type: integer
@@ -698,12 +975,21 @@ components:
         logs:
           example: logs output
           type: string
+        maxRestarts:
+          example: 3
+          type: integer
         name:
           example: my-process
           type: string
         pid:
           example: "1234"
           type: string
+        restartCount:
+          example: 2
+          type: integer
+        restartOnFailure:
+          example: true
+          type: boolean
         startedAt:
           example: Wed, 01 Jan 2023 12:00:00 GMT
           type: string
@@ -724,11 +1010,36 @@ components:
         - completedAt
         - exitCode
         - logs
+        - maxRestarts
         - name
         - pid
+        - restartCount
+        - restartOnFailure
         - startedAt
         - status
         - workingDir
+      type: object
+    RankedFile:
+      properties:
+        content:
+          type: string
+        path:
+          type: string
+        score:
+          type: number
+      type: object
+    RerankingResponse:
+      properties:
+        files:
+          items:
+            $ref: "#/components/schemas/RankedFile"
+          type: array
+        message:
+          example: Found 5 relevant files
+          type: string
+        success:
+          example: true
+          type: boolean
       type: object
     Subdirectory:
       properties:
@@ -750,6 +1061,18 @@ components:
           type: string
       required:
         - message
+      type: object
+    WelcomeResponse:
+      properties:
+        description:
+          example: This sandbox provides a full-featured environment for running code securely
+          type: string
+        documentation:
+          example: https://docs.blaxel.ai/Sandboxes/Overview
+          type: string
+        message:
+          example: Welcome to your Blaxel Sandbox
+          type: string
       type: object
 security:
   - BearerAuth: []

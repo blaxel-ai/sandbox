@@ -15,6 +15,247 @@ const docTemplate = `{
     "host": "{{.Host}}",
     "basePath": "{{.BasePath}}",
     "paths": {
+        "/": {
+            "get": {
+                "description": "Returns a welcome message with links to documentation",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "root"
+                ],
+                "summary": "Welcome message",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/WelcomeResponse"
+                        }
+                    }
+                }
+            },
+            "put": {
+                "description": "Returns a welcome message with links to documentation",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "root"
+                ],
+                "summary": "Welcome message",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/WelcomeResponse"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "description": "Returns a welcome message with links to documentation",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "root"
+                ],
+                "summary": "Welcome message",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/WelcomeResponse"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "description": "Returns a welcome message with links to documentation",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "root"
+                ],
+                "summary": "Welcome message",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/WelcomeResponse"
+                        }
+                    }
+                }
+            },
+            "options": {
+                "description": "Returns a welcome message with links to documentation",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "root"
+                ],
+                "summary": "Welcome message",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/WelcomeResponse"
+                        }
+                    }
+                }
+            },
+            "patch": {
+                "description": "Returns a welcome message with links to documentation",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "root"
+                ],
+                "summary": "Welcome message",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/WelcomeResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/codegen/fastapply/{path}": {
+            "put": {
+                "description": "Uses the configured LLM provider (Relace or Morph) to apply a code edit to the original content.\n\nTo use this endpoint as an agent tool, follow these guidelines:\n\nUse this tool to make an edit to an existing file. This will be read by a less intelligent model, which will quickly apply the edit. You should make it clear what the edit is, while also minimizing the unchanged code you write.\n\nWhen writing the edit, you should specify each edit in sequence, with the special comment \"// ... existing code ...\" to represent unchanged code in between edited lines.\n\nExample format:\n// ... existing code ...\nFIRST_EDIT\n// ... existing code ...\nSECOND_EDIT\n// ... existing code ...\nTHIRD_EDIT\n// ... existing code ...\n\nYou should still bias towards repeating as few lines of the original file as possible to convey the change. But, each edit should contain minimally sufficient context of unchanged lines around the code you're editing to resolve ambiguity.\n\nDO NOT omit spans of pre-existing code (or comments) without using the \"// ... existing code ...\" comment to indicate its absence. If you omit the existing code comment, the model may inadvertently delete these lines.\n\nIf you plan on deleting a section, you must provide context before and after to delete it. If the initial code is \"Block 1\\nBlock 2\\nBlock 3\", and you want to remove Block 2, you would output \"// ... existing code ...\\nBlock 1\\nBlock 3\\n// ... existing code ...\".\n\nMake sure it is clear what the edit should be, and where it should be applied. Make edits to a file in a single edit_file call instead of multiple edit_file calls to the same file. The apply model can handle many distinct edits at once.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "fastapply"
+                ],
+                "summary": "Apply code edit",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Path to the file to edit (relative to workspace)",
+                        "name": "path",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Code edit request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/ApplyEditRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Code edit applied successfully",
+                        "schema": {
+                            "$ref": "#/definitions/ApplyEditResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable entity - failed to process the request",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "Service unavailable - no provider configured",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/codegen/reranking/{path}": {
+            "get": {
+                "description": "Uses Relace's code reranking model to find the most relevant files for a given query. This is useful as a first pass in agentic exploration to narrow down the search space.\n\nBased on: https://docs.relace.ai/docs/code-reranker/agent\n\nQuery Construction: The query can be a short question or a more detailed conversation with the user request included. For a first pass, use the full conversation; for subsequent calls, use more targeted questions.\n\nToken Limit and Score Threshold: For 200k token context models like Claude 4 Sonnet, recommended defaults are scoreThreshold=0.5 and tokenLimit=30000.\n\nThe response will be a list of file paths and contents ordered from most relevant to least relevant.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "codegen"
+                ],
+                "summary": "Code reranking/semantic search",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Path to search in (relative to workspace)",
+                        "name": "path",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Natural language query to search for",
+                        "name": "query",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "number",
+                        "description": "Minimum relevance score (default: 0.5)",
+                        "name": "scoreThreshold",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Maximum tokens to return (default: 30000)",
+                        "name": "tokenLimit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Regex pattern to filter files (e.g., .*\\\\.ts$ for TypeScript files)",
+                        "name": "filePattern",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Relevant files found",
+                        "schema": {
+                            "$ref": "#/definitions/RerankingResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable entity - failed to process the request",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "Service unavailable - Relace not configured",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/filesystem/{path}": {
             "get": {
                 "description": "Get content of a file or listing of a directory",
@@ -694,6 +935,51 @@ const docTemplate = `{
         }
     },
     "definitions": {
+        "ApplyEditRequest": {
+            "type": "object",
+            "required": [
+                "codeEdit"
+            ],
+            "properties": {
+                "codeEdit": {
+                    "type": "string",
+                    "example": "// Add world parameter\nfunction hello(world) {\n  console.log('Hello', world);\n}"
+                },
+                "model": {
+                    "type": "string",
+                    "example": "auto"
+                }
+            }
+        },
+        "ApplyEditResponse": {
+            "type": "object",
+            "properties": {
+                "message": {
+                    "type": "string",
+                    "example": "Code edit applied successfully"
+                },
+                "originalContent": {
+                    "type": "string",
+                    "example": "function hello() {\n  console.log('Hello');\n}"
+                },
+                "path": {
+                    "type": "string",
+                    "example": "src/main.js"
+                },
+                "provider": {
+                    "type": "string",
+                    "example": "Relace"
+                },
+                "success": {
+                    "type": "boolean",
+                    "example": true
+                },
+                "updatedContent": {
+                    "type": "string",
+                    "example": "function hello(world) {\n  console.log('Hello', world);\n}"
+                }
+            }
+        },
         "Directory": {
             "type": "object",
             "required": [
@@ -878,9 +1164,17 @@ const docTemplate = `{
                         "{\"PORT\"": " \"3000\"}"
                     }
                 },
+                "maxRestarts": {
+                    "type": "integer",
+                    "example": 3
+                },
                 "name": {
                     "type": "string",
                     "example": "my-process"
+                },
+                "restartOnFailure": {
+                    "type": "boolean",
+                    "example": true
                 },
                 "timeout": {
                     "type": "integer",
@@ -913,8 +1207,11 @@ const docTemplate = `{
                 "completedAt",
                 "exitCode",
                 "logs",
+                "maxRestarts",
                 "name",
                 "pid",
+                "restartCount",
+                "restartOnFailure",
                 "startedAt",
                 "status",
                 "workingDir"
@@ -936,6 +1233,10 @@ const docTemplate = `{
                     "type": "string",
                     "example": "logs output"
                 },
+                "maxRestarts": {
+                    "type": "integer",
+                    "example": 3
+                },
                 "name": {
                     "type": "string",
                     "example": "my-process"
@@ -943,6 +1244,14 @@ const docTemplate = `{
                 "pid": {
                     "type": "string",
                     "example": "1234"
+                },
+                "restartCount": {
+                    "type": "integer",
+                    "example": 2
+                },
+                "restartOnFailure": {
+                    "type": "boolean",
+                    "example": true
                 },
                 "startedAt": {
                     "type": "string",
@@ -962,6 +1271,39 @@ const docTemplate = `{
                 "workingDir": {
                     "type": "string",
                     "example": "/home/user"
+                }
+            }
+        },
+        "RankedFile": {
+            "type": "object",
+            "properties": {
+                "content": {
+                    "type": "string"
+                },
+                "path": {
+                    "type": "string"
+                },
+                "score": {
+                    "type": "number"
+                }
+            }
+        },
+        "RerankingResponse": {
+            "type": "object",
+            "properties": {
+                "files": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/RankedFile"
+                    }
+                },
+                "message": {
+                    "type": "string",
+                    "example": "Found 5 relevant files"
+                },
+                "success": {
+                    "type": "boolean",
+                    "example": true
                 }
             }
         },
@@ -993,6 +1335,23 @@ const docTemplate = `{
                 "path": {
                     "type": "string",
                     "example": "/path/to/file"
+                }
+            }
+        },
+        "WelcomeResponse": {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "type": "string",
+                    "example": "This sandbox provides a full-featured environment for running code securely"
+                },
+                "documentation": {
+                    "type": "string",
+                    "example": "https://docs.blaxel.ai/Sandboxes/Overview"
+                },
+                "message": {
+                    "type": "string",
+                    "example": "Welcome to your Blaxel Sandbox"
                 }
             }
         }
