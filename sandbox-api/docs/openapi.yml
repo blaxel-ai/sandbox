@@ -278,7 +278,7 @@ paths:
       tags:
         - filesystem
     get:
-      description: Get content of a file or listing of a directory
+      description: Get content of a file or listing of a directory. Use Accept header to control response format for files.
       parameters:
         - description: File or directory path
           in: path
@@ -286,6 +286,11 @@ paths:
           required: true
           schema:
             type: string
+        - description: Force download mode for files
+          in: query
+          name: download
+          schema:
+            type: boolean
       responses:
         "200":
           description: Directory listing
@@ -295,10 +300,22 @@ paths:
                 oneOf:
                     - $ref: "#/components/schemas/Directory"
                     - $ref: "#/components/schemas/FileWithContent"
+                    - type: string
+                      format: binary
+            application/octet-stream:
+              schema:
+                oneOf:
+                    - $ref: "#/components/schemas/Directory"
+                    - $ref: "#/components/schemas/FileWithContent"
+                    - type: string
+                      format: binary
         "404":
           description: File or directory not found
           content:
             application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+            application/octet-stream:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "422":
@@ -307,10 +324,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+            application/octet-stream:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "500":
           description: Internal server error
           content:
             application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+            application/octet-stream:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
       summary: Get file or directory information

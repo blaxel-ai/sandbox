@@ -4,9 +4,11 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/blaxel-ai/sandbox-api/docs" // swagger generated docs
 	"github.com/blaxel-ai/sandbox-api/src/api"
@@ -147,10 +149,21 @@ func main() {
 		logrus.Fatalf("Failed to start MCP server: %v", err)
 	}
 
-	// Start the server
+	// Start the server with custom timeout configuration for large file uploads
 	serverAddr := fmt.Sprintf(":%d", portValue)
 	logrus.Infof("Starting Sandbox API server on %s", serverAddr)
-	if err := router.Run(serverAddr); err != nil {
+
+	server := &http.Server{
+		Addr:              serverAddr,
+		Handler:           router,
+		ReadTimeout:       10 * time.Minute, // Allow up to 10 minutes for reading large uploads
+		WriteTimeout:      10 * time.Minute, // Allow up to 10 minutes for writing large downloads
+		ReadHeaderTimeout: 30 * time.Second, // Headers should be quick
+		IdleTimeout:       2 * time.Minute,  // Keep-alive connections timeout
+		MaxHeaderBytes:    1 << 20,          // 1 MB max header size
+	}
+
+	if err := server.ListenAndServe(); err != nil {
 		logrus.Fatalf("Failed to start server: %v", err)
 	}
 }

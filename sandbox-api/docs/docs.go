@@ -258,12 +258,13 @@ const docTemplate = `{
         },
         "/filesystem/{path}": {
             "get": {
-                "description": "Get content of a file or listing of a directory",
+                "description": "Get content of a file or listing of a directory. Use Accept header to control response format for files.",
                 "consumes": [
                     "application/json"
                 ],
                 "produces": [
-                    "application/json"
+                    "application/json",
+                    "application/octet-stream"
                 ],
                 "tags": [
                     "filesystem"
@@ -276,6 +277,12 @@ const docTemplate = `{
                         "name": "path",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "Force download mode for files",
+                        "name": "download",
+                        "in": "query"
                     }
                 ],
                 "responses": {
