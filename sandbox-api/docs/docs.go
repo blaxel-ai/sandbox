@@ -270,15 +270,7 @@ const docTemplate = `{
                     "200": {
                         "description": "List of active uploads",
                         "schema": {
-                            "type": "object",
-                            "properties": {
-                                "uploads": {
-                                    "type": "array",
-                                    "items": {
-                                        "type": "object"
-                                    }
-                                }
-                            }
+                            "$ref": "#/definitions/MultipartListUploadsResponse"
                         }
                     },
                     "500": {
@@ -316,7 +308,7 @@ const docTemplate = `{
                         "name": "request",
                         "in": "body",
                         "schema": {
-                            "type": "object"
+                            "$ref": "#/definitions/MultipartInitiateRequest"
                         }
                     }
                 ],
@@ -324,15 +316,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Upload session created",
                         "schema": {
-                            "type": "object",
-                            "properties": {
-                                "path": {
-                                    "type": "string"
-                                },
-                                "uploadId": {
-                                    "type": "string"
-                                }
-                            }
+                            "$ref": "#/definitions/MultipartInitiateResponse"
                         }
                     },
                     "400": {
@@ -424,23 +408,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "type": "object",
-                            "properties": {
-                                "parts": {
-                                    "type": "array",
-                                    "items": {
-                                        "type": "object",
-                                        "properties": {
-                                            "etag": {
-                                                "type": "string"
-                                            },
-                                            "partNumber": {
-                                                "type": "integer"
-                                            }
-                                        }
-                                    }
-                                }
-                            }
+                            "$ref": "#/definitions/MultipartCompleteRequest"
                         }
                     }
                 ],
@@ -512,19 +480,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Part uploaded",
                         "schema": {
-                            "type": "object",
-                            "properties": {
-                                "etag": {
-                                    "type": "string"
-                                },
-                                "partNumber": {
-                                    "type": "integer"
-                                },
-                                "size": {
-                                    "type": "integer",
-                                    "format": "int64"
-                                }
-                            }
+                            "$ref": "#/definitions/MultipartUploadPartResponse"
                         }
                     },
                     "400": {
@@ -571,18 +527,7 @@ const docTemplate = `{
                     "200": {
                         "description": "List of parts",
                         "schema": {
-                            "type": "object",
-                            "properties": {
-                                "parts": {
-                                    "type": "array",
-                                    "items": {
-                                        "type": "object"
-                                    }
-                                },
-                                "uploadId": {
-                                    "type": "string"
-                                }
-                            }
+                            "$ref": "#/definitions/MultipartListPartsResponse"
                         }
                     },
                     "400": {
@@ -1470,6 +1415,95 @@ const docTemplate = `{
                 }
             }
         },
+        "MultipartCompleteRequest": {
+            "type": "object",
+            "properties": {
+                "parts": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/MultipartPartInfo"
+                    }
+                }
+            }
+        },
+        "MultipartInitiateRequest": {
+            "type": "object",
+            "properties": {
+                "permissions": {
+                    "type": "string",
+                    "example": "0644"
+                }
+            }
+        },
+        "MultipartInitiateResponse": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "example": "/tmp/largefile.dat"
+                },
+                "uploadId": {
+                    "type": "string",
+                    "example": "550e8400-e29b-41d4-a716-446655440000"
+                }
+            }
+        },
+        "MultipartListPartsResponse": {
+            "type": "object",
+            "properties": {
+                "parts": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/filesystem.UploadedPart"
+                    }
+                },
+                "uploadId": {
+                    "type": "string",
+                    "example": "550e8400-e29b-41d4-a716-446655440000"
+                }
+            }
+        },
+        "MultipartListUploadsResponse": {
+            "type": "object",
+            "properties": {
+                "uploads": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/filesystem.MultipartUpload"
+                    }
+                }
+            }
+        },
+        "MultipartPartInfo": {
+            "type": "object",
+            "properties": {
+                "etag": {
+                    "type": "string",
+                    "example": "5d41402abc4b2a76b9719d911017c592"
+                },
+                "partNumber": {
+                    "type": "integer",
+                    "example": 1
+                }
+            }
+        },
+        "MultipartUploadPartResponse": {
+            "type": "object",
+            "properties": {
+                "etag": {
+                    "type": "string",
+                    "example": "5d41402abc4b2a76b9719d911017c592"
+                },
+                "partNumber": {
+                    "type": "integer",
+                    "example": 1
+                },
+                "size": {
+                    "type": "integer",
+                    "example": 5242880
+                }
+            }
+        },
         "PortMonitorRequest": {
             "type": "object",
             "properties": {
@@ -1709,6 +1743,52 @@ const docTemplate = `{
                 "message": {
                     "type": "string",
                     "example": "Welcome to your Blaxel Sandbox"
+                }
+            }
+        },
+        "filesystem.MultipartUpload": {
+            "type": "object",
+            "properties": {
+                "initiatedAt": {
+                    "type": "string"
+                },
+                "parts": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "$ref": "#/definitions/filesystem.UploadedPart"
+                    }
+                },
+                "path": {
+                    "type": "string",
+                    "example": "/tmp/largefile.dat"
+                },
+                "permissions": {
+                    "type": "integer",
+                    "example": 420
+                },
+                "uploadId": {
+                    "type": "string",
+                    "example": "550e8400-e29b-41d4-a716-446655440000"
+                }
+            }
+        },
+        "filesystem.UploadedPart": {
+            "type": "object",
+            "properties": {
+                "etag": {
+                    "type": "string",
+                    "example": "5d41402abc4b2a76b9719d911017c592"
+                },
+                "partNumber": {
+                    "type": "integer",
+                    "example": 1
+                },
+                "size": {
+                    "type": "integer",
+                    "example": 5242880
+                },
+                "uploadedAt": {
+                    "type": "string"
                 }
             }
         }

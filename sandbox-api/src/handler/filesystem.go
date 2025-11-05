@@ -41,6 +41,46 @@ type FileRequest struct {
 	Permissions string `json:"permissions" example:"0644"`
 } // @name FileRequest
 
+// MultipartInitiateRequest represents the request body for initiating a multipart upload
+type MultipartInitiateRequest struct {
+	Permissions string `json:"permissions" example:"0644"`
+} // @name MultipartInitiateRequest
+
+// MultipartInitiateResponse represents the response after initiating a multipart upload
+type MultipartInitiateResponse struct {
+	UploadID string `json:"uploadId" example:"550e8400-e29b-41d4-a716-446655440000"`
+	Path     string `json:"path" example:"/tmp/largefile.dat"`
+} // @name MultipartInitiateResponse
+
+// MultipartUploadPartResponse represents the response after uploading a part
+type MultipartUploadPartResponse struct {
+	PartNumber int    `json:"partNumber" example:"1"`
+	ETag       string `json:"etag" example:"5d41402abc4b2a76b9719d911017c592"`
+	Size       int64  `json:"size" example:"5242880"`
+} // @name MultipartUploadPartResponse
+
+// MultipartPartInfo represents a single part in the complete request
+type MultipartPartInfo struct {
+	PartNumber int    `json:"partNumber" example:"1"`
+	ETag       string `json:"etag" example:"5d41402abc4b2a76b9719d911017c592"`
+} // @name MultipartPartInfo
+
+// MultipartCompleteRequest represents the request body for completing a multipart upload
+type MultipartCompleteRequest struct {
+	Parts []MultipartPartInfo `json:"parts"`
+} // @name MultipartCompleteRequest
+
+// MultipartListPartsResponse represents the response when listing parts
+type MultipartListPartsResponse struct {
+	UploadID string                    `json:"uploadId" example:"550e8400-e29b-41d4-a716-446655440000"`
+	Parts    []filesystem.UploadedPart `json:"parts"`
+} // @name MultipartListPartsResponse
+
+// MultipartListUploadsResponse represents the response when listing all uploads
+type MultipartListUploadsResponse struct {
+	Uploads []*filesystem.MultipartUpload `json:"uploads"`
+} // @name MultipartListUploadsResponse
+
 // NewFileSystemHandler creates a new filesystem handler
 func NewFileSystemHandler() *FileSystemHandler {
 	// Get working directory from environment or use default
@@ -702,8 +742,8 @@ func (h *FileSystemHandler) HandleDeleteTree(c *gin.Context) {
 // @Accept json
 // @Produce json
 // @Param path path string true "File path"
-// @Param request body object false "Optional permissions"
-// @Success 200 {object} object{uploadId=string,path=string} "Upload session created"
+// @Param request body MultipartInitiateRequest false "Optional permissions"
+// @Success 200 {object} MultipartInitiateResponse "Upload session created"
 // @Failure 400 {object} ErrorResponse "Bad request"
 // @Failure 500 {object} ErrorResponse "Internal server error"
 // @Router /filesystem-multipart/initiate/{path} [post]
@@ -728,9 +768,7 @@ func (h *FileSystemHandler) HandleInitiateMultipartUpload(c *gin.Context) {
 	}
 
 	// Parse optional permissions
-	var request struct {
-		Permissions string `json:"permissions"`
-	}
+	var request MultipartInitiateRequest
 	_ = h.BindJSON(c, &request)
 
 	var permissions os.FileMode = 0644
@@ -749,10 +787,11 @@ func (h *FileSystemHandler) HandleInitiateMultipartUpload(c *gin.Context) {
 		return
 	}
 
-	h.SendJSON(c, http.StatusOK, map[string]interface{}{
-		"uploadId": upload.UploadID,
-		"path":     absPath,
-	})
+	response := MultipartInitiateResponse{
+		UploadID: upload.UploadID,
+		Path:     absPath,
+	}
+	h.SendJSON(c, http.StatusOK, response)
 }
 
 // HandleUploadPart uploads a single part of a multipart upload
@@ -764,7 +803,7 @@ func (h *FileSystemHandler) HandleInitiateMultipartUpload(c *gin.Context) {
 // @Param uploadId path string true "Upload ID"
 // @Param partNumber query int true "Part number (1-10000)"
 // @Param file formData file true "Part data"
-// @Success 200 {object} object{partNumber=int,etag=string,size=int64} "Part uploaded"
+// @Success 200 {object} MultipartUploadPartResponse "Part uploaded"
 // @Failure 400 {object} ErrorResponse "Bad request"
 // @Failure 404 {object} ErrorResponse "Upload not found"
 // @Failure 500 {object} ErrorResponse "Internal server error"
@@ -828,11 +867,12 @@ func (h *FileSystemHandler) HandleUploadPart(c *gin.Context) {
 		return
 	}
 
-	h.SendJSON(c, http.StatusOK, map[string]interface{}{
-		"partNumber": uploadedPart.PartNumber,
-		"etag":       uploadedPart.ETag,
-		"size":       uploadedPart.Size,
-	})
+	response := MultipartUploadPartResponse{
+		PartNumber: uploadedPart.PartNumber,
+		ETag:       uploadedPart.ETag,
+		Size:       uploadedPart.Size,
+	}
+	h.SendJSON(c, http.StatusOK, response)
 }
 
 // HandleCompleteMultipartUpload completes a multipart upload
@@ -842,7 +882,7 @@ func (h *FileSystemHandler) HandleUploadPart(c *gin.Context) {
 // @Accept json
 // @Produce json
 // @Param uploadId path string true "Upload ID"
-// @Param request body object{parts=[]object{partNumber=int,etag=string}} true "List of parts"
+// @Param request body MultipartCompleteRequest true "List of parts"
 // @Success 200 {object} SuccessResponse "Upload completed"
 // @Failure 400 {object} ErrorResponse "Bad request"
 // @Failure 404 {object} ErrorResponse "Upload not found"
@@ -860,10 +900,7 @@ func (h *FileSystemHandler) HandleCompleteMultipartUpload(c *gin.Context) {
 		return
 	}
 
-	var request struct {
-		Parts []filesystem.UploadedPart `json:"parts"`
-	}
-
+	var request MultipartCompleteRequest
 	if err := h.BindJSON(c, &request); err != nil {
 		h.SendError(c, http.StatusBadRequest, err)
 		return
@@ -881,7 +918,16 @@ func (h *FileSystemHandler) HandleCompleteMultipartUpload(c *gin.Context) {
 		return
 	}
 
-	if err := h.multipartManager.CompleteUpload(uploadID, request.Parts); err != nil {
+	// Convert MultipartPartInfo to UploadedPart for the manager
+	parts := make([]filesystem.UploadedPart, len(request.Parts))
+	for i, p := range request.Parts {
+		parts[i] = filesystem.UploadedPart{
+			PartNumber: p.PartNumber,
+			ETag:       p.ETag,
+		}
+	}
+
+	if err := h.multipartManager.CompleteUpload(uploadID, parts); err != nil {
 		h.SendError(c, http.StatusInternalServerError, fmt.Errorf("failed to complete upload: %w", err))
 		return
 	}
@@ -926,7 +972,7 @@ func (h *FileSystemHandler) HandleAbortMultipartUpload(c *gin.Context) {
 // @Tags filesystem
 // @Produce json
 // @Param uploadId path string true "Upload ID"
-// @Success 200 {object} object{uploadId=string,parts=[]object} "List of parts"
+// @Success 200 {object} MultipartListPartsResponse "List of parts"
 // @Failure 400 {object} ErrorResponse "Bad request"
 // @Failure 404 {object} ErrorResponse "Upload not found"
 // @Failure 500 {object} ErrorResponse "Internal server error"
@@ -949,10 +995,17 @@ func (h *FileSystemHandler) HandleListParts(c *gin.Context) {
 		return
 	}
 
-	h.SendJSON(c, http.StatusOK, map[string]interface{}{
-		"uploadId": uploadID,
-		"parts":    parts,
-	})
+	// Convert pointers to values for the response
+	partsList := make([]filesystem.UploadedPart, len(parts))
+	for i, p := range parts {
+		partsList[i] = *p
+	}
+
+	response := MultipartListPartsResponse{
+		UploadID: uploadID,
+		Parts:    partsList,
+	}
+	h.SendJSON(c, http.StatusOK, response)
 }
 
 // HandleListMultipartUploads lists all active multipart uploads
@@ -960,7 +1013,7 @@ func (h *FileSystemHandler) HandleListParts(c *gin.Context) {
 // @Description List all active multipart uploads
 // @Tags filesystem
 // @Produce json
-// @Success 200 {object} object{uploads=[]object} "List of active uploads"
+// @Success 200 {object} MultipartListUploadsResponse "List of active uploads"
 // @Failure 500 {object} ErrorResponse "Internal server error"
 // @Router /filesystem-multipart [get]
 func (h *FileSystemHandler) HandleListMultipartUploads(c *gin.Context) {
@@ -971,9 +1024,10 @@ func (h *FileSystemHandler) HandleListMultipartUploads(c *gin.Context) {
 
 	uploads := h.multipartManager.ListUploads()
 
-	h.SendJSON(c, http.StatusOK, map[string]interface{}{
-		"uploads": uploads,
-	})
+	response := MultipartListUploadsResponse{
+		Uploads: uploads,
+	}
+	h.SendJSON(c, http.StatusOK, response)
 }
 
 // HandleWatchDirectory streams file modification events for a directory

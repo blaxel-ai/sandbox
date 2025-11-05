@@ -17,19 +17,19 @@ import (
 
 // MultipartUpload represents an in-progress multipart upload
 type MultipartUpload struct {
-	UploadID    string                `json:"uploadId"`
-	Path        string                `json:"path"`
-	Permissions os.FileMode           `json:"permissions"`
+	UploadID    string                `json:"uploadId" example:"550e8400-e29b-41d4-a716-446655440000"`
+	Path        string                `json:"path" example:"/tmp/largefile.dat"`
+	Permissions os.FileMode           `json:"permissions" swaggertype:"integer" example:"420"`
 	InitiatedAt time.Time             `json:"initiatedAt"`
 	Parts       map[int]*UploadedPart `json:"parts"`
-	mu          sync.RWMutex
+	mu          sync.RWMutex          `json:"-" swaggerignore:"true"`
 }
 
 // UploadedPart represents a single uploaded part
 type UploadedPart struct {
-	PartNumber int       `json:"partNumber"`
-	ETag       string    `json:"etag"`
-	Size       int64     `json:"size"`
+	PartNumber int       `json:"partNumber" example:"1"`
+	ETag       string    `json:"etag" example:"5d41402abc4b2a76b9719d911017c592"`
+	Size       int64     `json:"size" example:"5242880"`
 	UploadedAt time.Time `json:"uploadedAt"`
 }
 

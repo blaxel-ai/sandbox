@@ -243,12 +243,7 @@ paths:
           content:
             application/json:
               schema:
-                properties:
-                  uploads:
-                    items:
-                      type: object
-                    type: array
-                type: object
+                $ref: "#/components/schemas/MultipartListUploadsResponse"
         "500":
           description: Internal server error
           content:
@@ -310,17 +305,7 @@ paths:
         content:
           application/json:
             schema:
-              properties:
-                parts:
-                  items:
-                    properties:
-                      etag:
-                        type: string
-                      partNumber:
-                        type: integer
-                    type: object
-                  type: array
-              type: object
+              $ref: "#/components/schemas/MultipartCompleteRequest"
         description: List of parts
         required: true
       responses:
@@ -386,15 +371,7 @@ paths:
           content:
             application/json:
               schema:
-                properties:
-                  etag:
-                    type: string
-                  partNumber:
-                    type: integer
-                  size:
-                    format: int64
-                    type: integer
-                type: object
+                $ref: "#/components/schemas/MultipartUploadPartResponse"
         "400":
           description: Bad request
           content:
@@ -432,14 +409,7 @@ paths:
           content:
             application/json:
               schema:
-                properties:
-                  parts:
-                    items:
-                      type: object
-                    type: array
-                  uploadId:
-                    type: string
-                type: object
+                $ref: "#/components/schemas/MultipartListPartsResponse"
         "400":
           description: Bad request
           content:
@@ -475,7 +445,7 @@ paths:
         content:
           application/json:
             schema:
-              type: object
+              $ref: "#/components/schemas/MultipartInitiateRequest"
         description: Optional permissions
       responses:
         "200":
@@ -483,12 +453,7 @@ paths:
           content:
             application/json:
               schema:
-                properties:
-                  path:
-                    type: string
-                  uploadId:
-                    type: string
-                type: object
+                $ref: "#/components/schemas/MultipartInitiateResponse"
         "400":
           description: Bad request
           content:
@@ -1192,6 +1157,66 @@ components:
         - permissions
         - size
       type: object
+    MultipartCompleteRequest:
+      properties:
+        parts:
+          items:
+            $ref: "#/components/schemas/MultipartPartInfo"
+          type: array
+      type: object
+    MultipartInitiateRequest:
+      properties:
+        permissions:
+          example: "0644"
+          type: string
+      type: object
+    MultipartInitiateResponse:
+      properties:
+        path:
+          example: /tmp/largefile.dat
+          type: string
+        uploadId:
+          example: 550e8400-e29b-41d4-a716-446655440000
+          type: string
+      type: object
+    MultipartListPartsResponse:
+      properties:
+        parts:
+          items:
+            $ref: "#/components/schemas/filesystem.UploadedPart"
+          type: array
+        uploadId:
+          example: 550e8400-e29b-41d4-a716-446655440000
+          type: string
+      type: object
+    MultipartListUploadsResponse:
+      properties:
+        uploads:
+          items:
+            $ref: "#/components/schemas/filesystem.MultipartUpload"
+          type: array
+      type: object
+    MultipartPartInfo:
+      properties:
+        etag:
+          example: 5d41402abc4b2a76b9719d911017c592
+          type: string
+        partNumber:
+          example: 1
+          type: integer
+      type: object
+    MultipartUploadPartResponse:
+      properties:
+        etag:
+          example: 5d41402abc4b2a76b9719d911017c592
+          type: string
+        partNumber:
+          example: 1
+          type: integer
+        size:
+          example: 5242880
+          type: integer
+      type: object
     PortMonitorRequest:
       properties:
         callback:
@@ -1365,6 +1390,38 @@ components:
           type: string
         message:
           example: Welcome to your Blaxel Sandbox
+          type: string
+      type: object
+    filesystem.MultipartUpload:
+      properties:
+        initiatedAt:
+          type: string
+        parts:
+          additionalProperties:
+            $ref: "#/components/schemas/filesystem.UploadedPart"
+          type: object
+        path:
+          example: /tmp/largefile.dat
+          type: string
+        permissions:
+          example: 420
+          type: integer
+        uploadId:
+          example: 550e8400-e29b-41d4-a716-446655440000
+          type: string
+      type: object
+    filesystem.UploadedPart:
+      properties:
+        etag:
+          example: 5d41402abc4b2a76b9719d911017c592
+          type: string
+        partNumber:
+          example: 1
+          type: integer
+        size:
+          example: 5242880
+          type: integer
+        uploadedAt:
           type: string
       type: object
 security:
