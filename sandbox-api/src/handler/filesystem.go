@@ -22,7 +22,8 @@ import (
 // FileSystemHandler handles filesystem operations
 type FileSystemHandler struct {
 	*BaseHandler
-	fs *filesystem.Filesystem
+	fs               *filesystem.Filesystem
+	multipartManager *filesystem.MultipartManager
 }
 
 // FileEvent represents a file event
@@ -54,9 +55,19 @@ func NewFileSystemHandler() *FileSystemHandler {
 		}
 	}
 
+	// Setup multipart uploads directory
+	uploadsDir := filepath.Join(os.TempDir(), "multipart-uploads")
+	multipartManager := filesystem.NewMultipartManager(uploadsDir)
+
+	// Load existing uploads from disk
+	if multipartManager != nil {
+		_ = multipartManager.LoadUploads()
+	}
+
 	return &FileSystemHandler{
-		BaseHandler: NewBaseHandler(),
-		fs:          filesystem.NewFilesystemWithWorkingDir("/", workingDir),
+		BaseHandler:      NewBaseHandler(),
+		fs:               filesystem.NewFilesystemWithWorkingDir("/", workingDir),
+		multipartManager: multipartManager,
 	}
 }
 
@@ -682,6 +693,287 @@ func (h *FileSystemHandler) HandleDeleteTree(c *gin.Context) {
 	}
 
 	h.SendSuccessWithPath(c, rootPathStr, "Directory deleted successfully")
+}
+
+// HandleInitiateMultipartUpload initiates a multipart upload
+// @Summary Initiate multipart upload
+// @Description Initiate a multipart upload session for a file
+// @Tags filesystem
+// @Accept json
+// @Produce json
+// @Param path path string true "File path"
+// @Param request body object false "Optional permissions"
+// @Success 200 {object} object{uploadId=string,path=string} "Upload session created"
+// @Failure 400 {object} ErrorResponse "Bad request"
+// @Failure 500 {object} ErrorResponse "Internal server error"
+// @Router /filesystem-multipart/initiate/{path} [post]
+func (h *FileSystemHandler) HandleInitiateMultipartUpload(c *gin.Context) {
+	if h.multipartManager == nil {
+		h.SendError(c, http.StatusInternalServerError, fmt.Errorf("multipart upload not available"))
+		return
+	}
+
+	path := h.extractPathFromRequest(c)
+	path, err := lib.FormatPath(path)
+	if err != nil {
+		h.SendError(c, http.StatusBadRequest, err)
+		return
+	}
+
+	// Get absolute path for final destination
+	absPath, err := h.fs.GetAbsolutePath(path)
+	if err != nil {
+		h.SendError(c, http.StatusBadRequest, err)
+		return
+	}
+
+	// Parse optional permissions
+	var request struct {
+		Permissions string `json:"permissions"`
+	}
+	_ = h.BindJSON(c, &request)
+
+	var permissions os.FileMode = 0644
+	if request.Permissions != "" {
+		permInt, err := strconv.ParseUint(request.Permissions, 8, 32)
+		if err != nil {
+			h.SendError(c, http.StatusBadRequest, fmt.Errorf("invalid permissions format: %w", err))
+			return
+		}
+		permissions = os.FileMode(permInt)
+	}
+
+	upload, err := h.multipartManager.InitiateUpload(absPath, permissions)
+	if err != nil {
+		h.SendError(c, http.StatusInternalServerError, fmt.Errorf("failed to initiate upload: %w", err))
+		return
+	}
+
+	h.SendJSON(c, http.StatusOK, map[string]interface{}{
+		"uploadId": upload.UploadID,
+		"path":     absPath,
+	})
+}
+
+// HandleUploadPart uploads a single part of a multipart upload
+// @Summary Upload part
+// @Description Upload a single part of a multipart upload
+// @Tags filesystem
+// @Accept multipart/form-data
+// @Produce json
+// @Param uploadId path string true "Upload ID"
+// @Param partNumber query int true "Part number (1-10000)"
+// @Param file formData file true "Part data"
+// @Success 200 {object} object{partNumber=int,etag=string,size=int64} "Part uploaded"
+// @Failure 400 {object} ErrorResponse "Bad request"
+// @Failure 404 {object} ErrorResponse "Upload not found"
+// @Failure 500 {object} ErrorResponse "Internal server error"
+// @Router /filesystem-multipart/{uploadId}/part [put]
+func (h *FileSystemHandler) HandleUploadPart(c *gin.Context) {
+	if h.multipartManager == nil {
+		h.SendError(c, http.StatusInternalServerError, fmt.Errorf("multipart upload not available"))
+		return
+	}
+
+	uploadID := c.Param("uploadId")
+	if uploadID == "" {
+		h.SendError(c, http.StatusBadRequest, fmt.Errorf("uploadId is required"))
+		return
+	}
+
+	partNumberStr := c.Query("partNumber")
+	if partNumberStr == "" {
+		h.SendError(c, http.StatusBadRequest, fmt.Errorf("partNumber is required"))
+		return
+	}
+
+	partNumber, err := strconv.Atoi(partNumberStr)
+	if err != nil {
+		h.SendError(c, http.StatusBadRequest, fmt.Errorf("invalid partNumber: %w", err))
+		return
+	}
+
+	// Use streaming multipart reader
+	mr, err := c.Request.MultipartReader()
+	if err != nil {
+		h.SendError(c, http.StatusBadRequest, fmt.Errorf("error reading multipart data: %w", err))
+		return
+	}
+
+	var uploadedPart *filesystem.UploadedPart
+	for {
+		part, err := mr.NextPart()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			h.SendError(c, http.StatusBadRequest, fmt.Errorf("error reading multipart part: %w", err))
+			return
+		}
+
+		if part.FormName() == "file" {
+			uploadedPart, err = h.multipartManager.UploadPart(uploadID, partNumber, part)
+			_ = part.Close()
+			if err != nil {
+				h.SendError(c, http.StatusInternalServerError, fmt.Errorf("failed to upload part: %w", err))
+				return
+			}
+			break
+		}
+		_ = part.Close()
+	}
+
+	if uploadedPart == nil {
+		h.SendError(c, http.StatusBadRequest, fmt.Errorf("missing 'file' field in multipart form"))
+		return
+	}
+
+	h.SendJSON(c, http.StatusOK, map[string]interface{}{
+		"partNumber": uploadedPart.PartNumber,
+		"etag":       uploadedPart.ETag,
+		"size":       uploadedPart.Size,
+	})
+}
+
+// HandleCompleteMultipartUpload completes a multipart upload
+// @Summary Complete multipart upload
+// @Description Complete a multipart upload by assembling all parts
+// @Tags filesystem
+// @Accept json
+// @Produce json
+// @Param uploadId path string true "Upload ID"
+// @Param request body object{parts=[]object{partNumber=int,etag=string}} true "List of parts"
+// @Success 200 {object} SuccessResponse "Upload completed"
+// @Failure 400 {object} ErrorResponse "Bad request"
+// @Failure 404 {object} ErrorResponse "Upload not found"
+// @Failure 500 {object} ErrorResponse "Internal server error"
+// @Router /filesystem-multipart/{uploadId}/complete [post]
+func (h *FileSystemHandler) HandleCompleteMultipartUpload(c *gin.Context) {
+	if h.multipartManager == nil {
+		h.SendError(c, http.StatusInternalServerError, fmt.Errorf("multipart upload not available"))
+		return
+	}
+
+	uploadID := c.Param("uploadId")
+	if uploadID == "" {
+		h.SendError(c, http.StatusBadRequest, fmt.Errorf("uploadId is required"))
+		return
+	}
+
+	var request struct {
+		Parts []filesystem.UploadedPart `json:"parts"`
+	}
+
+	if err := h.BindJSON(c, &request); err != nil {
+		h.SendError(c, http.StatusBadRequest, err)
+		return
+	}
+
+	if len(request.Parts) == 0 {
+		h.SendError(c, http.StatusBadRequest, fmt.Errorf("at least one part is required"))
+		return
+	}
+
+	// Get upload metadata to get the path
+	upload, err := h.multipartManager.GetUpload(uploadID)
+	if err != nil {
+		h.SendError(c, http.StatusNotFound, err)
+		return
+	}
+
+	if err := h.multipartManager.CompleteUpload(uploadID, request.Parts); err != nil {
+		h.SendError(c, http.StatusInternalServerError, fmt.Errorf("failed to complete upload: %w", err))
+		return
+	}
+
+	h.SendSuccessWithPath(c, upload.Path, "Multipart upload completed successfully")
+}
+
+// HandleAbortMultipartUpload aborts a multipart upload
+// @Summary Abort multipart upload
+// @Description Abort a multipart upload and clean up all parts
+// @Tags filesystem
+// @Produce json
+// @Param uploadId path string true "Upload ID"
+// @Success 200 {object} SuccessResponse "Upload aborted"
+// @Failure 400 {object} ErrorResponse "Bad request"
+// @Failure 404 {object} ErrorResponse "Upload not found"
+// @Failure 500 {object} ErrorResponse "Internal server error"
+// @Router /filesystem-multipart/{uploadId}/abort [delete]
+func (h *FileSystemHandler) HandleAbortMultipartUpload(c *gin.Context) {
+	if h.multipartManager == nil {
+		h.SendError(c, http.StatusInternalServerError, fmt.Errorf("multipart upload not available"))
+		return
+	}
+
+	uploadID := c.Param("uploadId")
+	if uploadID == "" {
+		h.SendError(c, http.StatusBadRequest, fmt.Errorf("uploadId is required"))
+		return
+	}
+
+	if err := h.multipartManager.AbortUpload(uploadID); err != nil {
+		h.SendError(c, http.StatusNotFound, err)
+		return
+	}
+
+	h.SendSuccess(c, "Multipart upload aborted successfully")
+}
+
+// HandleListParts lists all uploaded parts for a multipart upload
+// @Summary List parts
+// @Description List all uploaded parts for a multipart upload
+// @Tags filesystem
+// @Produce json
+// @Param uploadId path string true "Upload ID"
+// @Success 200 {object} object{uploadId=string,parts=[]object} "List of parts"
+// @Failure 400 {object} ErrorResponse "Bad request"
+// @Failure 404 {object} ErrorResponse "Upload not found"
+// @Failure 500 {object} ErrorResponse "Internal server error"
+// @Router /filesystem-multipart/{uploadId}/parts [get]
+func (h *FileSystemHandler) HandleListParts(c *gin.Context) {
+	if h.multipartManager == nil {
+		h.SendError(c, http.StatusInternalServerError, fmt.Errorf("multipart upload not available"))
+		return
+	}
+
+	uploadID := c.Param("uploadId")
+	if uploadID == "" {
+		h.SendError(c, http.StatusBadRequest, fmt.Errorf("uploadId is required"))
+		return
+	}
+
+	parts, err := h.multipartManager.ListParts(uploadID)
+	if err != nil {
+		h.SendError(c, http.StatusNotFound, err)
+		return
+	}
+
+	h.SendJSON(c, http.StatusOK, map[string]interface{}{
+		"uploadId": uploadID,
+		"parts":    parts,
+	})
+}
+
+// HandleListMultipartUploads lists all active multipart uploads
+// @Summary List multipart uploads
+// @Description List all active multipart uploads
+// @Tags filesystem
+// @Produce json
+// @Success 200 {object} object{uploads=[]object} "List of active uploads"
+// @Failure 500 {object} ErrorResponse "Internal server error"
+// @Router /filesystem-multipart [get]
+func (h *FileSystemHandler) HandleListMultipartUploads(c *gin.Context) {
+	if h.multipartManager == nil {
+		h.SendError(c, http.StatusInternalServerError, fmt.Errorf("multipart upload not available"))
+		return
+	}
+
+	uploads := h.multipartManager.ListUploads()
+
+	h.SendJSON(c, http.StatusOK, map[string]interface{}{
+		"uploads": uploads,
+	})
 }
 
 // HandleWatchDirectory streams file modification events for a directory
