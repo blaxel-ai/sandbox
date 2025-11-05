@@ -256,6 +256,301 @@ const docTemplate = `{
                 }
             }
         },
+        "/filesystem-multipart": {
+            "get": {
+                "description": "List all active multipart uploads",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "filesystem"
+                ],
+                "summary": "List multipart uploads",
+                "responses": {
+                    "200": {
+                        "description": "List of active uploads",
+                        "schema": {
+                            "$ref": "#/definitions/MultipartListUploadsResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/filesystem-multipart/initiate/{path}": {
+            "post": {
+                "description": "Initiate a multipart upload session for a file",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "filesystem"
+                ],
+                "summary": "Initiate multipart upload",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "File path",
+                        "name": "path",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Optional permissions",
+                        "name": "request",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/MultipartInitiateRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Upload session created",
+                        "schema": {
+                            "$ref": "#/definitions/MultipartInitiateResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/filesystem-multipart/{uploadId}/abort": {
+            "delete": {
+                "description": "Abort a multipart upload and clean up all parts",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "filesystem"
+                ],
+                "summary": "Abort multipart upload",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Upload ID",
+                        "name": "uploadId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Upload aborted",
+                        "schema": {
+                            "$ref": "#/definitions/SuccessResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Upload not found",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/filesystem-multipart/{uploadId}/complete": {
+            "post": {
+                "description": "Complete a multipart upload by assembling all parts",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "filesystem"
+                ],
+                "summary": "Complete multipart upload",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Upload ID",
+                        "name": "uploadId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "List of parts",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/MultipartCompleteRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Upload completed",
+                        "schema": {
+                            "$ref": "#/definitions/SuccessResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Upload not found",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/filesystem-multipart/{uploadId}/part": {
+            "put": {
+                "description": "Upload a single part of a multipart upload",
+                "consumes": [
+                    "multipart/form-data"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "filesystem"
+                ],
+                "summary": "Upload part",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Upload ID",
+                        "name": "uploadId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Part number (1-10000)",
+                        "name": "partNumber",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "file",
+                        "description": "Part data",
+                        "name": "file",
+                        "in": "formData",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Part uploaded",
+                        "schema": {
+                            "$ref": "#/definitions/MultipartUploadPartResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Upload not found",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/filesystem-multipart/{uploadId}/parts": {
+            "get": {
+                "description": "List all uploaded parts for a multipart upload",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "filesystem"
+                ],
+                "summary": "List parts",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Upload ID",
+                        "name": "uploadId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "List of parts",
+                        "schema": {
+                            "$ref": "#/definitions/MultipartListPartsResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Upload not found",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/filesystem/{path}": {
             "get": {
                 "description": "Get content of a file or listing of a directory. Use Accept header to control response format for files.",
@@ -1120,6 +1415,95 @@ const docTemplate = `{
                 }
             }
         },
+        "MultipartCompleteRequest": {
+            "type": "object",
+            "properties": {
+                "parts": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/MultipartPartInfo"
+                    }
+                }
+            }
+        },
+        "MultipartInitiateRequest": {
+            "type": "object",
+            "properties": {
+                "permissions": {
+                    "type": "string",
+                    "example": "0644"
+                }
+            }
+        },
+        "MultipartInitiateResponse": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "example": "/tmp/largefile.dat"
+                },
+                "uploadId": {
+                    "type": "string",
+                    "example": "550e8400-e29b-41d4-a716-446655440000"
+                }
+            }
+        },
+        "MultipartListPartsResponse": {
+            "type": "object",
+            "properties": {
+                "parts": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/filesystem.UploadedPart"
+                    }
+                },
+                "uploadId": {
+                    "type": "string",
+                    "example": "550e8400-e29b-41d4-a716-446655440000"
+                }
+            }
+        },
+        "MultipartListUploadsResponse": {
+            "type": "object",
+            "properties": {
+                "uploads": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/filesystem.MultipartUpload"
+                    }
+                }
+            }
+        },
+        "MultipartPartInfo": {
+            "type": "object",
+            "properties": {
+                "etag": {
+                    "type": "string",
+                    "example": "5d41402abc4b2a76b9719d911017c592"
+                },
+                "partNumber": {
+                    "type": "integer",
+                    "example": 1
+                }
+            }
+        },
+        "MultipartUploadPartResponse": {
+            "type": "object",
+            "properties": {
+                "etag": {
+                    "type": "string",
+                    "example": "5d41402abc4b2a76b9719d911017c592"
+                },
+                "partNumber": {
+                    "type": "integer",
+                    "example": 1
+                },
+                "size": {
+                    "type": "integer",
+                    "example": 5242880
+                }
+            }
+        },
         "PortMonitorRequest": {
             "type": "object",
             "properties": {
@@ -1359,6 +1743,52 @@ const docTemplate = `{
                 "message": {
                     "type": "string",
                     "example": "Welcome to your Blaxel Sandbox"
+                }
+            }
+        },
+        "filesystem.MultipartUpload": {
+            "type": "object",
+            "properties": {
+                "initiatedAt": {
+                    "type": "string"
+                },
+                "parts": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "$ref": "#/definitions/filesystem.UploadedPart"
+                    }
+                },
+                "path": {
+                    "type": "string",
+                    "example": "/tmp/largefile.dat"
+                },
+                "permissions": {
+                    "type": "integer",
+                    "example": 420
+                },
+                "uploadId": {
+                    "type": "string",
+                    "example": "550e8400-e29b-41d4-a716-446655440000"
+                }
+            }
+        },
+        "filesystem.UploadedPart": {
+            "type": "object",
+            "properties": {
+                "etag": {
+                    "type": "string",
+                    "example": "5d41402abc4b2a76b9719d911017c592"
+                },
+                "partNumber": {
+                    "type": "integer",
+                    "example": 1
+                },
+                "size": {
+                    "type": "integer",
+                    "example": 5242880
+                },
+                "uploadedAt": {
+                    "type": "string"
                 }
             }
         }

@@ -98,6 +98,14 @@ func SetupRouter() *gin.Engine {
 		c.Next()
 	})
 
+	// Multipart upload routes (separate endpoint to avoid wildcard conflicts)
+	r.GET("/filesystem-multipart", fsHandler.HandleListMultipartUploads)
+	r.POST("/filesystem-multipart/initiate/*path", fsHandler.HandleInitiateMultipartUpload)
+	r.PUT("/filesystem-multipart/:uploadId/part", fsHandler.HandleUploadPart)
+	r.POST("/filesystem-multipart/:uploadId/complete", fsHandler.HandleCompleteMultipartUpload)
+	r.DELETE("/filesystem-multipart/:uploadId/abort", fsHandler.HandleAbortMultipartUpload)
+	r.GET("/filesystem-multipart/:uploadId/parts", fsHandler.HandleListParts)
+
 	// Filesystem routes
 	r.GET("/watch/filesystem/*path", fsHandler.HandleWatchDirectory)
 	r.GET("/filesystem/*path", fsHandler.HandleGetFile)

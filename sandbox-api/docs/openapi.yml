@@ -234,6 +234,241 @@ paths:
       summary: Code reranking/semantic search
       tags:
         - codegen
+  /filesystem-multipart:
+    get:
+      description: List all active multipart uploads
+      responses:
+        "200":
+          description: List of active uploads
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MultipartListUploadsResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+      summary: List multipart uploads
+      tags:
+        - filesystem
+  "/filesystem-multipart/{uploadId}/abort":
+    delete:
+      description: Abort a multipart upload and clean up all parts
+      parameters:
+        - description: Upload ID
+          in: path
+          name: uploadId
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Upload aborted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Upload not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+      summary: Abort multipart upload
+      tags:
+        - filesystem
+  "/filesystem-multipart/{uploadId}/complete":
+    post:
+      description: Complete a multipart upload by assembling all parts
+      parameters:
+        - description: Upload ID
+          in: path
+          name: uploadId
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MultipartCompleteRequest"
+        description: List of parts
+        required: true
+      responses:
+        "200":
+          description: Upload completed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Upload not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+      summary: Complete multipart upload
+      tags:
+        - filesystem
+  "/filesystem-multipart/{uploadId}/part":
+    put:
+      description: Upload a single part of a multipart upload
+      parameters:
+        - description: Upload ID
+          in: path
+          name: uploadId
+          required: true
+          schema:
+            type: string
+        - description: Part number (1-10000)
+          in: query
+          name: partNumber
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  description: Part data
+                  type: string
+                  format: binary
+              required:
+                - file
+        required: true
+      responses:
+        "200":
+          description: Part uploaded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MultipartUploadPartResponse"
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Upload not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+      summary: Upload part
+      tags:
+        - filesystem
+  "/filesystem-multipart/{uploadId}/parts":
+    get:
+      description: List all uploaded parts for a multipart upload
+      parameters:
+        - description: Upload ID
+          in: path
+          name: uploadId
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List of parts
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MultipartListPartsResponse"
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Upload not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+      summary: List parts
+      tags:
+        - filesystem
+  "/filesystem-multipart/initiate/{path}":
+    post:
+      description: Initiate a multipart upload session for a file
+      parameters:
+        - description: File path
+          in: path
+          name: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MultipartInitiateRequest"
+        description: Optional permissions
+      responses:
+        "200":
+          description: Upload session created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MultipartInitiateResponse"
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+      summary: Initiate multipart upload
+      tags:
+        - filesystem
   "/filesystem/{path}":
     delete:
       description: Delete a file or directory
@@ -922,6 +1157,66 @@ components:
         - permissions
         - size
       type: object
+    MultipartCompleteRequest:
+      properties:
+        parts:
+          items:
+            $ref: "#/components/schemas/MultipartPartInfo"
+          type: array
+      type: object
+    MultipartInitiateRequest:
+      properties:
+        permissions:
+          example: "0644"
+          type: string
+      type: object
+    MultipartInitiateResponse:
+      properties:
+        path:
+          example: /tmp/largefile.dat
+          type: string
+        uploadId:
+          example: 550e8400-e29b-41d4-a716-446655440000
+          type: string
+      type: object
+    MultipartListPartsResponse:
+      properties:
+        parts:
+          items:
+            $ref: "#/components/schemas/filesystem.UploadedPart"
+          type: array
+        uploadId:
+          example: 550e8400-e29b-41d4-a716-446655440000
+          type: string
+      type: object
+    MultipartListUploadsResponse:
+      properties:
+        uploads:
+          items:
+            $ref: "#/components/schemas/filesystem.MultipartUpload"
+          type: array
+      type: object
+    MultipartPartInfo:
+      properties:
+        etag:
+          example: 5d41402abc4b2a76b9719d911017c592
+          type: string
+        partNumber:
+          example: 1
+          type: integer
+      type: object
+    MultipartUploadPartResponse:
+      properties:
+        etag:
+          example: 5d41402abc4b2a76b9719d911017c592
+          type: string
+        partNumber:
+          example: 1
+          type: integer
+        size:
+          example: 5242880
+          type: integer
+      type: object
     PortMonitorRequest:
       properties:
         callback:
@@ -1095,6 +1390,38 @@ components:
           type: string
         message:
           example: Welcome to your Blaxel Sandbox
+          type: string
+      type: object
+    filesystem.MultipartUpload:
+      properties:
+        initiatedAt:
+          type: string
+        parts:
+          additionalProperties:
+            $ref: "#/components/schemas/filesystem.UploadedPart"
+          type: object
+        path:
+          example: /tmp/largefile.dat
+          type: string
+        permissions:
+          example: 420
+          type: integer
+        uploadId:
+          example: 550e8400-e29b-41d4-a716-446655440000
+          type: string
+      type: object
+    filesystem.UploadedPart:
+      properties:
+        etag:
+          example: 5d41402abc4b2a76b9719d911017c592
+          type: string
+        partNumber:
+          example: 1
+          type: integer
+        size:
+          example: 5242880
+          type: integer
+        uploadedAt:
           type: string
       type: object
 security:
