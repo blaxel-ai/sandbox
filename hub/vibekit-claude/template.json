@@ -1,0 +1,26 @@
+{
+  "name": "vibekit-claude",
+  "displayName": "VibeKit Claude",
+  "categories": [
+    "ai",
+    "claude"
+  ],
+  "description": "A development environment for building AI-powered applications with Claude integration using VibeKit SDK.",
+  "longDescription": "VibeKit provides a complete SDK and UI components for building conversational AI applications powered by Claude. This sandbox includes the VibeKit Claude runtime environment with pre-configured development tools, hot reloading, and all necessary dependencies for creating interactive AI chat interfaces and agent-based applications. Perfect for developing Claude-powered chatbots, AI assistants, and intelligent conversational interfaces with modern React components.",
+  "url": "https://docs.vibekit.sh/sdk",
+  "icon": "https://avatars.githubusercontent.com/u/152537519?s=200&v=4",
+  "memory": 4096,
+  "ports": [
+    {
+      "name": "sandbox-api",
+      "target": 8080,
+      "protocol": "HTTP"
+    },
+    {
+      "name": "preview",
+      "target": 5173,
+      "protocol": "tls"
+    }
+  ],
+  "hidden": true
+}
