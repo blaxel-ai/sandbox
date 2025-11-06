@@ -110,6 +110,12 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 	cmd := exec.Command(shell, cmdArgs...)
 
 	if workingDir != "" {
+		// Check if the working directory exists
+		if _, err := os.Stat(workingDir); os.IsNotExist(err) {
+			return "", fmt.Errorf("could not execute command '%s' because folder '%s' does not exist", command, workingDir)
+		} else if err != nil {
+			return "", fmt.Errorf("could not access working directory '%s': %w", workingDir, err)
+		}
 		cmd.Dir = workingDir
 	}
 
@@ -364,6 +370,12 @@ func (pm *ProcessManager) restartProcess(oldProcess *ProcessInfo, callback func(
 	cmd := exec.Command(shell, cmdArgs...)
 
 	if workingDir != "" {
+		// Check if the working directory exists
+		if _, err := os.Stat(workingDir); os.IsNotExist(err) {
+			return "", fmt.Errorf("could not execute command '%s' because folder '%s' does not exist", command, workingDir)
+		} else if err != nil {
+			return "", fmt.Errorf("could not access working directory '%s': %w", workingDir, err)
+		}
 		cmd.Dir = workingDir
 	}
 

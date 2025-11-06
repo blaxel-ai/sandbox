@@ -750,3 +750,87 @@ func TestProcessRestartPIDStaysTheSame(t *testing.T) {
 
 	t.Log("✓ PID remains stable across restarts, completely transparent to users")
 }
+
+// TestProcessNonExistentWorkingDirectory tests error handling when working directory doesn't exist
+func TestProcessNonExistentWorkingDirectory(t *testing.T) {
+	t.Run("absolute path non-existent", func(t *testing.T) {
+		processRequest := map[string]interface{}{
+			"command":           "echo test",
+			"workingDir":        "/this/folder/does/not/exist",
+			"waitForCompletion": true,
+		}
+
+		resp, err := common.MakeRequest(http.MethodPost, "/process", processRequest)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+
+		// Should return an error
+		assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode)
+
+		var errorResponse map[string]interface{}
+		err = json.NewDecoder(resp.Body).Decode(&errorResponse)
+		require.NoError(t, err)
+
+		// Verify error message contains the command and folder path
+		require.Contains(t, errorResponse, "error")
+		errorMsg := errorResponse["error"].(string)
+		assert.Contains(t, errorMsg, "could not execute command")
+		assert.Contains(t, errorMsg, "echo test")
+		assert.Contains(t, errorMsg, "/this/folder/does/not/exist")
+		assert.Contains(t, errorMsg, "does not exist")
+	})
+
+	t.Run("relative path non-existent", func(t *testing.T) {
+		processRequest := map[string]interface{}{
+			"command":           "ls -la",
+			"workingDir":        "nonexistent/relative/folder",
+			"waitForCompletion": true,
+		}
+
+		resp, err := common.MakeRequest(http.MethodPost, "/process", processRequest)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+
+		// Should return an error
+		assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode)
+
+		var errorResponse map[string]interface{}
+		err = json.NewDecoder(resp.Body).Decode(&errorResponse)
+		require.NoError(t, err)
+
+		// Verify error message
+		require.Contains(t, errorResponse, "error")
+		errorMsg := errorResponse["error"].(string)
+		assert.Contains(t, errorMsg, "could not execute command")
+		assert.Contains(t, errorMsg, "ls -la")
+		assert.Contains(t, errorMsg, "nonexistent/relative/folder")
+		assert.Contains(t, errorMsg, "does not exist")
+	})
+
+	t.Run("valid working directory still works", func(t *testing.T) {
+		processRequest := map[string]interface{}{
+			"command":           "pwd",
+			"workingDir":        "/tmp",
+			"waitForCompletion": true,
+		}
+
+		resp, err := common.MakeRequest(http.MethodPost, "/process", processRequest)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+
+		// Should succeed
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+		var processResponse map[string]interface{}
+		err = json.NewDecoder(resp.Body).Decode(&processResponse)
+		require.NoError(t, err)
+
+		// Verify process executed successfully
+		assert.Equal(t, "completed", processResponse["status"])
+		assert.Equal(t, float64(0), processResponse["exitCode"])
+
+		// Verify logs contain /tmp (on Mac it might be /private/tmp)
+		logs := processResponse["logs"].(string)
+		assert.True(t, strings.Contains(logs, "/tmp"), "Logs should contain /tmp path")
+	})
+}
