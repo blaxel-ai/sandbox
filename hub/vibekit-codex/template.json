@@ -1,0 +1,26 @@
+{
+  "name": "vibekit-codex",
+  "displayName": "VibeKit Codex",
+  "categories": [
+    "ai",
+    "openai"
+  ],
+  "description": "A development environment for building AI-powered applications with OpenAI Codex integration using VibeKit SDK.",
+  "longDescription": "VibeKit provides a complete SDK and UI components for building conversational AI applications powered by OpenAI Codex. This sandbox includes the VibeKit Codex runtime environment with pre-configured development tools, hot reloading, and all necessary dependencies for creating interactive AI chat interfaces and code generation applications. Perfect for developing Codex-powered code assistants, intelligent development tools, and AI-enhanced coding interfaces with modern React components.",
+  "url": "https://docs.vibekit.sh/sdk",
+  "icon": "https://avatars.githubusercontent.com/u/152537519?s=200&v=4",
+  "memory": 4096,
+  "ports": [
+    {
+      "name": "sandbox-api",
+      "target": 8080,
+      "protocol": "HTTP"
+    },
+    {
+      "name": "nextjs",
+      "target": 3000,
+      "protocol": "tls"
+    }
+  ],
+  "hidden": true
+}

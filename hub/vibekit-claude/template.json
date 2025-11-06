@@ -17,8 +17,8 @@
       "protocol": "HTTP"
     },
     {
-      "name": "preview",
-      "target": 5173,
+      "name": "nextjs",
+      "target": 3000,
       "protocol": "tls"
     }
   ],
