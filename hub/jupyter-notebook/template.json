@@ -1,0 +1,22 @@
+{
+  "name": "jupyter-notebook",
+  "displayName": "Jupyter Notebook",
+  "categories": ["data-science", "python"],
+  "description": "Interactive Python development environment with Jupyter Kernel Gateway for notebook execution",
+  "longDescription": "Jupyter Notebook provides an interactive computing environment where you can create and share documents containing live code, equations, visualizations, and narrative text. This sandbox includes Jupyter Kernel Gateway, enabling remote kernel execution and RESTful access to Jupyter kernels.",
+  "url": "https://jupyter.org",
+  "icon": "https://avatars.githubusercontent.com/u/7388996?s=200&v=4",
+  "memory": 4096,
+  "ports": [
+    {
+      "name": "sandbox-api",
+      "target": 8080,
+      "protocol": "HTTP"
+    },
+    {
+      "name": "jupyter",
+      "target": 8888,
+      "protocol": "HTTP"
+    }
+  ]
+}
