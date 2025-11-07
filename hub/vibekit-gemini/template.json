@@ -1,0 +1,26 @@
+{
+  "name": "vibekit-gemini",
+  "displayName": "VibeKit Gemini",
+  "categories": [
+    "ai",
+    "google"
+  ],
+  "description": "A development environment for building AI-powered applications with Google Gemini integration using VibeKit SDK.",
+  "longDescription": "VibeKit provides a complete SDK and UI components for building conversational AI applications powered by Google Gemini. This sandbox includes the VibeKit Gemini runtime environment with pre-configured development tools, hot reloading, and all necessary dependencies for creating interactive AI chat interfaces and multimodal applications. Perfect for developing Gemini-powered chatbots, AI assistants with vision capabilities, and intelligent conversational interfaces with modern React components.",
+  "url": "https://docs.vibekit.sh/sdk",
+  "icon": "https://avatars.githubusercontent.com/u/152537519?s=200&v=4",
+  "memory": 4096,
+  "ports": [
+    {
+      "name": "sandbox-api",
+      "target": 8080,
+      "protocol": "HTTP"
+    },
+    {
+      "name": "nextjs",
+      "target": 3000,
+      "protocol": "tls"
+    }
+  ],
+  "hidden": true
+}
