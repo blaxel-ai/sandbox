@@ -13,6 +13,9 @@ WORKDIR /blaxel
 
 RUN npm create vite@latest app -- --template react-ts
 
+# Install patch-package globally first to avoid postinstall script errors
+RUN npm install -g patch-package
+
 RUN cd app && npm install
 
 COPY /hub/vite/src/vite.config.ts /blaxel/app/vite.config.ts
