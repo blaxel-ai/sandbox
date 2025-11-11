@@ -45,6 +45,7 @@ func SetupRouter() *gin.Engine {
 	processHandler := handler.NewProcessHandler()
 	networkHandler := handler.NewNetworkHandler()
 	codegenHandler := handler.NewCodegenHandler(fsHandler)
+	gitHandler := handler.NewGitHandler(fsHandler)
 
 	// Custom filesystem tree router middleware to handle tree-specific routes
 	r.Use(func(c *gin.Context) {
@@ -129,6 +130,21 @@ func SetupRouter() *gin.Engine {
 	// Codegen routes
 	r.PUT("/codegen/fastapply/*path", codegenHandler.HandleFastApply)
 	r.GET("/codegen/reranking/*path", codegenHandler.HandleReranking)
+
+	// Git routes
+	gitRoutes := r.Group("/git")
+	{
+		gitRoutes.POST("/clone", gitHandler.HandleClone)
+		gitRoutes.GET("/status/*path", gitHandler.HandleStatus)
+		gitRoutes.GET("/branches/*path", gitHandler.HandleBranches)
+		gitRoutes.POST("/branches/*path", gitHandler.HandleCreateBranch)
+		gitRoutes.PUT("/branch/:name/*path", gitHandler.HandleCheckoutBranch)
+		gitRoutes.DELETE("/branch/:name/*path", gitHandler.HandleDeleteBranch)
+		gitRoutes.POST("/add/*path", gitHandler.HandleAdd)
+		gitRoutes.POST("/commit/*path", gitHandler.HandleCommit)
+		gitRoutes.POST("/push/*path", gitHandler.HandlePush)
+		gitRoutes.POST("/pull/*path", gitHandler.HandlePull)
+	}
 
 	// Health check route
 	r.GET("/health", func(c *gin.Context) {

@@ -241,3 +241,33 @@ func EncodeTreePath(path string) string {
 	// For relative paths, just append to /filesystem/tree/
 	return "/filesystem/tree/" + path
 }
+
+// EncodeGitPath encodes a path for the git API
+// Routes are /git/{operation}/{path} where operation is status, branches, add, commit, etc.
+func EncodeGitPath(path string, operation string) string {
+	if path == "" {
+		return "/git/" + operation + "/"
+	}
+
+	if path[0] == '/' {
+		// For absolute paths, encode only the leading slash to indicate absolute path
+		return "/git/" + operation + "%2F" + path[1:]
+	}
+	// For relative paths, just append to /git/{operation}/
+	return "/git/" + operation + "/" + path
+}
+
+// EncodeGitBranchPath encodes a path for git branch operations
+// Routes are /git/branch/{name}/{path}
+func EncodeGitBranchPath(path string, branchName string, operation string) string {
+	if path == "" {
+		return "/git/" + operation + "/" + branchName + "/"
+	}
+
+	if path[0] == '/' {
+		// For absolute paths, encode only the leading slash to indicate absolute path
+		return "/git/" + operation + "/" + branchName + "%2F" + path[1:]
+	}
+	// For relative paths, just append
+	return "/git/" + operation + "/" + branchName + "/" + path
+}
