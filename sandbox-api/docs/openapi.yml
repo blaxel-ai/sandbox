@@ -618,6 +618,154 @@ paths:
       summary: Create or update a file or directory
       tags:
         - filesystem
+  /lsp:
+    get:
+      description: Get a list of all active LSP servers
+      responses:
+        "200":
+          description: List of LSP servers
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: "#/components/schemas/LSPServerResponse"
+                type: array
+      summary: List all LSP servers
+      tags:
+        - lsp
+    post:
+      description: "Create a new LSP server for a specific language and project. Supported languages: python, typescript, javascript"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateLSPServerRequest"
+        description: LSP server creation request
+        required: true
+      responses:
+        "200":
+          description: LSP server information
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LSPServerResponse"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Unprocessable entity
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+      summary: Create an LSP server
+      tags:
+        - lsp
+  "/lsp/{id}":
+    delete:
+      description: Shutdown and remove an LSP server
+      parameters:
+        - description: LSP server ID
+          in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: LSP server deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "404":
+          description: LSP server not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+      summary: Delete an LSP server
+      tags:
+        - lsp
+    get:
+      description: Get information about a specific LSP server
+      parameters:
+        - description: LSP server ID
+          in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: LSP server information
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LSPServerResponse"
+        "404":
+          description: LSP server not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+      summary: Get LSP server information
+      tags:
+        - lsp
+  "/lsp/{id}/completions":
+    post:
+      description: Get code completion suggestions from an LSP server
+      parameters:
+        - description: LSP server ID
+          in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CompletionRequest"
+        description: Completion request
+        required: true
+      responses:
+        "200":
+          description: Completion items
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CompletionResponse"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: LSP server not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Unprocessable entity
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+      summary: Get code completions
+      tags:
+        - lsp
   "/network/process/{pid}/monitor":
     delete:
       description: Stop monitoring for new ports opened by a process
@@ -1063,6 +1211,75 @@ components:
             }
           type: string
       type: object
+    CompletionItemResponse:
+      properties:
+        detail:
+          example: function
+          type: string
+        documentation:
+          example: Print to stdout
+          type: string
+        filterText:
+          type: string
+        insertText:
+          example: print()
+          type: string
+        kind:
+          example: 3
+          type: integer
+        label:
+          example: print
+          type: string
+        sortText:
+          type: string
+      required:
+        - label
+      type: object
+    CompletionRequest:
+      properties:
+        character:
+          example: 15
+          type: integer
+        filePath:
+          example: main.py
+          type: string
+        line:
+          example: 10
+          type: integer
+      required:
+        - character
+        - filePath
+        - line
+      type: object
+    CompletionResponse:
+      properties:
+        isIncomplete:
+          example: false
+          type: boolean
+        items:
+          items:
+            $ref: "#/components/schemas/CompletionItemResponse"
+          type: array
+      required:
+        - isIncomplete
+        - items
+      type: object
+    CreateLSPServerRequest:
+      properties:
+        languageId:
+          enum:
+            - python
+            - typescript
+            - javascript
+          example: python
+          type: string
+        projectPath:
+          example: /workspace/project
+          type: string
+      required:
+        - languageId
+        - projectPath
+      type: object
     Directory:
       properties:
         files:
@@ -1156,6 +1373,37 @@ components:
         - path
         - permissions
         - size
+      type: object
+    LSPServerResponse:
+      properties:
+        createdAt:
+          example: Wed, 01 Jan 2023 12:00:00 GMT
+          type: string
+        errorMsg:
+          example: ""
+          type: string
+        id:
+          example: 550e8400-e29b-41d4-a716-446655440000
+          type: string
+        languageId:
+          example: python
+          type: string
+        processPid:
+          example: 12345
+          type: integer
+        projectPath:
+          example: /workspace/project
+          type: string
+        status:
+          example: ready
+          type: string
+      required:
+        - createdAt
+        - id
+        - languageId
+        - processPid
+        - projectPath
+        - status
       type: object
     MultipartCompleteRequest:
       properties:

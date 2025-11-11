@@ -719,6 +719,215 @@ const docTemplate = `{
                 }
             }
         },
+        "/lsp": {
+            "get": {
+                "description": "Get a list of all active LSP servers",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "lsp"
+                ],
+                "summary": "List all LSP servers",
+                "responses": {
+                    "200": {
+                        "description": "List of LSP servers",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/LSPServerResponse"
+                            }
+                        }
+                    }
+                }
+            },
+            "post": {
+                "description": "Create a new LSP server for a specific language and project. Supported languages: python, typescript, javascript",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "lsp"
+                ],
+                "summary": "Create an LSP server",
+                "parameters": [
+                    {
+                        "description": "LSP server creation request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/CreateLSPServerRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "LSP server information",
+                        "schema": {
+                            "$ref": "#/definitions/LSPServerResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable entity",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/lsp/{id}": {
+            "get": {
+                "description": "Get information about a specific LSP server",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "lsp"
+                ],
+                "summary": "Get LSP server information",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "LSP server ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "LSP server information",
+                        "schema": {
+                            "$ref": "#/definitions/LSPServerResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "LSP server not found",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "description": "Shutdown and remove an LSP server",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "lsp"
+                ],
+                "summary": "Delete an LSP server",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "LSP server ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "LSP server deleted",
+                        "schema": {
+                            "$ref": "#/definitions/SuccessResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "LSP server not found",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/lsp/{id}/completions": {
+            "post": {
+                "description": "Get code completion suggestions from an LSP server",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "lsp"
+                ],
+                "summary": "Get code completions",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "LSP server ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Completion request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/CompletionRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Completion items",
+                        "schema": {
+                            "$ref": "#/definitions/CompletionResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "LSP server not found",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable entity",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/network/process/{pid}/monitor": {
             "post": {
                 "description": "Start monitoring for new ports opened by a process",
@@ -1282,6 +1491,103 @@ const docTemplate = `{
                 }
             }
         },
+        "CompletionItemResponse": {
+            "type": "object",
+            "required": [
+                "label"
+            ],
+            "properties": {
+                "detail": {
+                    "type": "string",
+                    "example": "function"
+                },
+                "documentation": {
+                    "type": "string",
+                    "example": "Print to stdout"
+                },
+                "filterText": {
+                    "type": "string"
+                },
+                "insertText": {
+                    "type": "string",
+                    "example": "print()"
+                },
+                "kind": {
+                    "type": "integer",
+                    "example": 3
+                },
+                "label": {
+                    "type": "string",
+                    "example": "print"
+                },
+                "sortText": {
+                    "type": "string"
+                }
+            }
+        },
+        "CompletionRequest": {
+            "type": "object",
+            "required": [
+                "character",
+                "filePath",
+                "line"
+            ],
+            "properties": {
+                "character": {
+                    "type": "integer",
+                    "example": 15
+                },
+                "filePath": {
+                    "type": "string",
+                    "example": "main.py"
+                },
+                "line": {
+                    "type": "integer",
+                    "example": 10
+                }
+            }
+        },
+        "CompletionResponse": {
+            "type": "object",
+            "required": [
+                "isIncomplete",
+                "items"
+            ],
+            "properties": {
+                "isIncomplete": {
+                    "type": "boolean",
+                    "example": false
+                },
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/CompletionItemResponse"
+                    }
+                }
+            }
+        },
+        "CreateLSPServerRequest": {
+            "type": "object",
+            "required": [
+                "languageId",
+                "projectPath"
+            ],
+            "properties": {
+                "languageId": {
+                    "type": "string",
+                    "enum": [
+                        "python",
+                        "typescript",
+                        "javascript"
+                    ],
+                    "example": "python"
+                },
+                "projectPath": {
+                    "type": "string",
+                    "example": "/workspace/project"
+                }
+            }
+        },
         "Directory": {
             "type": "object",
             "required": [
@@ -1412,6 +1718,47 @@ const docTemplate = `{
                 },
                 "size": {
                     "type": "integer"
+                }
+            }
+        },
+        "LSPServerResponse": {
+            "type": "object",
+            "required": [
+                "createdAt",
+                "id",
+                "languageId",
+                "processPid",
+                "projectPath",
+                "status"
+            ],
+            "properties": {
+                "createdAt": {
+                    "type": "string",
+                    "example": "Wed, 01 Jan 2023 12:00:00 GMT"
+                },
+                "errorMsg": {
+                    "type": "string",
+                    "example": ""
+                },
+                "id": {
+                    "type": "string",
+                    "example": "550e8400-e29b-41d4-a716-446655440000"
+                },
+                "languageId": {
+                    "type": "string",
+                    "example": "python"
+                },
+                "processPid": {
+                    "type": "integer",
+                    "example": 12345
+                },
+                "projectPath": {
+                    "type": "string",
+                    "example": "/workspace/project"
+                },
+                "status": {
+                    "type": "string",
+                    "example": "ready"
                 }
             }
         },

@@ -45,6 +45,7 @@ func SetupRouter() *gin.Engine {
 	processHandler := handler.NewProcessHandler()
 	networkHandler := handler.NewNetworkHandler()
 	codegenHandler := handler.NewCodegenHandler(fsHandler)
+	lspHandler := handler.NewLSPHandler()
 
 	// Custom filesystem tree router middleware to handle tree-specific routes
 	r.Use(func(c *gin.Context) {
@@ -129,6 +130,13 @@ func SetupRouter() *gin.Engine {
 	// Codegen routes
 	r.PUT("/codegen/fastapply/*path", codegenHandler.HandleFastApply)
 	r.GET("/codegen/reranking/*path", codegenHandler.HandleReranking)
+
+	// LSP routes
+	r.POST("/lsp", lspHandler.HandleCreateLSPServer)
+	r.GET("/lsp", lspHandler.HandleListLSPServers)
+	r.GET("/lsp/:id", lspHandler.HandleGetLSPServer)
+	r.DELETE("/lsp/:id", lspHandler.HandleDeleteLSPServer)
+	r.POST("/lsp/:id/completions", lspHandler.HandleCompletions)
 
 	// Health check route
 	r.GET("/health", func(c *gin.Context) {
