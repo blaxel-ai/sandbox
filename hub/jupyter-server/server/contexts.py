@@ -66,7 +66,7 @@ async def create_context(client, websockets: dict, language: str, cwd: str) -> C
     except ExecutionError:
         return PlainTextResponse(
             "Failed to set working directory",
-            status_code=500,
+            status_code=422,
         )
 
     return Context(language=language, id=context_id, cwd=cwd)

@@ -2,12 +2,15 @@ import logging
 import sys
 import httpx
 import asyncio
+import time
 
 from typing import Dict, Union, Literal, Set
 
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.responses import PlainTextResponse
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.exceptions import HTTPException
 
 from api.models.context import Context
 from api.models.create_context import CreateContext
@@ -22,6 +25,15 @@ logging.basicConfig(level=logging.DEBUG, stream=sys.stdout)
 logger = logging.Logger(__name__)
 http_logger = logging.getLogger("httpcore.http11")
 http_logger.setLevel(logging.WARNING)
+
+
+class RequestLoggingMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        start_time = time.time()
+        response = await call_next(request)
+        process_time = time.time() - start_time
+        logger.info(f"{request.method} {request.url.path} {process_time:.3f}s")
+        return response
 
 
 websockets: Dict[Union[str, Literal["default"]], ContextWebSocket] = {}
@@ -100,6 +112,33 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+app.add_middleware(RequestLoggingMiddleware)
+
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    """Catch all unhandled exceptions and return 400 instead of 500."""
+    logger.error(f"Unhandled exception in {request.method} {request.url.path}: {exc}", exc_info=True)
+    return PlainTextResponse(
+        f"Error: {str(exc)}",
+        status_code=400,
+    )
+
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    """Handle HTTP exceptions - convert 500 to 400."""
+    if exc.status_code == 500:
+        logger.error(f"HTTP 500 in {request.method} {request.url.path}: {exc.detail}")
+        return PlainTextResponse(
+            exc.detail or "Error",
+            status_code=400,
+        )
+    return PlainTextResponse(
+        exc.detail,
+        status_code=exc.status_code,
+    )
+
 
 logger.info("Starting Code Interpreter server")
 
@@ -132,7 +171,11 @@ async def post_execute(request: Request, exec_request: ExecutionRequest):
                         client, websockets, language, "/app"
                     )
                 except Exception as e:
-                    return PlainTextResponse(str(e), status_code=500)
+                    logger.error(f"Failed to create context for language {language}: {e}")
+                    return PlainTextResponse(
+                        f"Failed to create context: {str(e)}",
+                        status_code=400,
+                    )
 
                 context_id = context.id
                 default_websockets[language] = context_id
@@ -152,7 +195,7 @@ async def post_execute(request: Request, exec_request: ExecutionRequest):
             if not await wait_for_jupyter_ready(client):
                 return PlainTextResponse(
                     "Jupyter Server is not ready. Please try again later.",
-                    status_code=400,
+                    status_code=503,
                 )
             try:
                 python_context = await create_context(
@@ -162,9 +205,10 @@ async def post_execute(request: Request, exec_request: ExecutionRequest):
                 websockets["default"] = websockets[python_context.id]
                 ws = websockets["default"]
             except Exception as e:
+                logger.error(f"Failed to create default context: {e}")
                 return PlainTextResponse(
                     f"Failed to create default context: {str(e)}",
-                    status_code=503,
+                    status_code=400,
                 )
 
         if not ws:
@@ -173,12 +217,20 @@ async def post_execute(request: Request, exec_request: ExecutionRequest):
                 status_code=404,
             )
 
-    return StreamingListJsonResponse(
-        ws.execute(
-            exec_request.code,
-            env_vars=exec_request.env_vars or {},
+    try:
+        return StreamingListJsonResponse(
+            ws.execute(
+                exec_request.code,
+                env_vars=exec_request.env_vars or {},
+            )
         )
-    )
+    except Exception as e:
+        logger.error(f"Error executing code: {e}")
+        # Execution errors are typically client errors (bad code, etc.)
+        return PlainTextResponse(
+            f"Error executing code: {str(e)}",
+            status_code=400,
+        )
 
 
 @app.post("/contexts")
@@ -191,7 +243,12 @@ async def post_contexts(request: CreateContext) -> Context:
     try:
         return await create_context(client, websockets, language, cwd)
     except Exception as e:
-        return PlainTextResponse(str(e), status_code=500)
+        logger.error(f"Failed to create context: {e}")
+        # Context creation failures are usually client errors (invalid language, etc.)
+        return PlainTextResponse(
+            f"Failed to create context: {str(e)}",
+            status_code=400,
+        )
 
 
 @app.get("/contexts")
@@ -225,13 +282,21 @@ async def restart_context(context_id: str) -> None:
 
     await ws.close()
 
-    response = await client.post(
-        f"{JUPYTER_BASE_URL}/api/kernels/{ws.context_id}/restart"
-    )
-    if not response.is_success:
+    try:
+        response = await client.post(
+            f"{JUPYTER_BASE_URL}/api/kernels/{ws.context_id}/restart"
+        )
+        if not response.is_success:
+            logger.error(f"Failed to restart context {context_id}: {response.status_code}")
+            return PlainTextResponse(
+                f"Failed to restart context {context_id}",
+                status_code=400,
+            )
+    except Exception as e:
+        logger.error(f"Error restarting context {context_id}: {e}")
         return PlainTextResponse(
-            f"Failed to restart context {context_id}",
-            status_code=500,
+            f"Failed to restart context {context_id}: {str(e)}",
+            status_code=400,
         )
 
     ws = ContextWebSocket(
@@ -262,11 +327,19 @@ async def remove_context(context_id: str) -> None:
     except:  # noqa: E722
         pass
 
-    response = await client.delete(f"{JUPYTER_BASE_URL}/api/kernels/{ws.context_id}")
-    if not response.is_success:
+    try:
+        response = await client.delete(f"{JUPYTER_BASE_URL}/api/kernels/{ws.context_id}")
+        if not response.is_success:
+            logger.error(f"Failed to remove context {context_id}: {response.status_code}")
+            return PlainTextResponse(
+                f"Failed to remove context {context_id}",
+                status_code=400,
+            )
+    except Exception as e:
+        logger.error(f"Error removing context {context_id}: {e}")
         return PlainTextResponse(
-            f"Failed to remove context {context_id}",
-            status_code=500,
+            f"Failed to remove context {context_id}: {str(e)}",
+            status_code=400,
         )
 
     del websockets[context_id]
