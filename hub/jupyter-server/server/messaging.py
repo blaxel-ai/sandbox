@@ -27,6 +27,7 @@ from api.models.output import (
     UnexpectedEndOfExecution,
 )
 from errors import ExecutionError
+from consts import JUPYTER_BASE_URL
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +62,7 @@ class ContextWebSocket:
         self.language = language
         self.cwd = cwd
         self.context_id = context_id
-        self.url = f"ws://localhost:12345/api/kernels/{context_id}/channels"
+        self.url = f"{JUPYTER_BASE_URL.replace("http://", "ws://")}/api/kernels/{context_id}/channels"
         self.session_id = session_id
         self._executions: Dict[str, Execution] = {}
         self._lock = asyncio.Lock()
