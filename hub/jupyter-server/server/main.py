@@ -39,70 +39,78 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
 websockets: Dict[Union[str, Literal["default"]], ContextWebSocket] = {}
 default_websockets = LockedMap()
 global client
-jupyter_init_task: asyncio.Task = None
 
-MAX_RETRIES = 60  # Maximum number of retry attempts
-RETRY_DELAY = 1.0  # Delay between retries in seconds
+MAX_TIMEOUT = 10.0  # Maximum timeout in seconds for retries
+RETRY_DELAY = 0.5  # Delay between retries in seconds
 
 
-async def wait_for_jupyter_ready(client: httpx.AsyncClient) -> bool:
-    """Wait for Jupyter Server to be ready by checking the /api/status endpoint."""
-    for attempt in range(MAX_RETRIES):
+async def wait_for_jupyter_ready_with_timeout(client: httpx.AsyncClient, timeout: float = MAX_TIMEOUT) -> bool:
+    """Wait for Jupyter Server to be ready with a timeout."""
+    start_time = time.time()
+    attempt = 0
+
+    while (time.time() - start_time) < timeout:
         try:
             response = await client.get(f"{JUPYTER_BASE_URL}/api/status", timeout=2.0)
             if response.status_code == 200:
                 logger.info("Jupyter Server is ready")
                 return True
-        except Exception as e:
-            if attempt % 10 == 0:  # Log every 10 attempts
-                logger.info(f"Waiting for Jupyter Server to be ready (attempt {attempt + 1}/{MAX_RETRIES})...")
-            await asyncio.sleep(RETRY_DELAY)
+        except Exception:
+            pass
 
+        attempt += 1
+        if attempt % 4 == 0:  # Log every 2 seconds (4 attempts * 0.5s)
+            elapsed = time.time() - start_time
+            logger.info(f"Waiting for Jupyter Server to be ready ({elapsed:.1f}s/{timeout}s)...")
+
+        await asyncio.sleep(RETRY_DELAY)
+
+    logger.warning(f"Jupyter Server did not become ready within {timeout}s")
     return False
 
 
-async def initialize_jupyter_contexts():
-    """Initialize Jupyter contexts in the background after server starts."""
+async def ensure_default_context(language: str = "python") -> ContextWebSocket:
+    """Ensure default context exists, creating it with retry if needed. Returns singleton websocket."""
     global client
-    logger.info("Starting background task to initialize Jupyter contexts...")
 
-    if not await wait_for_jupyter_ready(client):
-        logger.error(f"Jupyter Server did not become ready after {MAX_RETRIES} attempts")
-        logger.info("Server will retry on first request")
-        return
+    # Check if default context already exists
+    if language in default_websockets:
+        context_id = default_websockets.get(language)
+        if context_id and context_id in websockets:
+            return websockets[context_id]
 
-    try:
-        python_context = await create_context(
-            client, websockets, "python", "/app"
-        )
-        default_websockets["python"] = python_context.id
-        websockets["default"] = websockets[python_context.id]
+    # Wait for Jupyter to be ready with timeout
+    if not await wait_for_jupyter_ready_with_timeout(client):
+        raise Exception("Jupyter Server is not ready")
 
-        logger.info("Connected to default runtime")
-    except Exception as e:
-        logger.warning(f"Failed to initialize default context: {e}. Will retry on first request.")
+    # Create context with retry logic
+    async with await default_websockets.get_lock(language):
+        # Double-check after acquiring lock
+        if language in default_websockets:
+            context_id = default_websockets.get(language)
+            if context_id and context_id in websockets:
+                return websockets[context_id]
+
+        # Create new context
+        try:
+            context = await create_context(client, websockets, language, "/app")
+            default_websockets[language] = context.id
+            websockets["default"] = websockets[context.id]
+            logger.info(f"Created default {language} context: {context.id}")
+            return websockets[context.id]
+        except Exception as e:
+            logger.error(f"Failed to create default {language} context: {e}")
+            raise
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global client, jupyter_init_task
+    global client
     client = httpx.AsyncClient()
 
-    # Start the server immediately by yielding
-    # Then initialize Jupyter contexts in a background task
     logger.info("Starting Code Interpreter server...")
-    jupyter_init_task = asyncio.create_task(initialize_jupyter_contexts())
 
     yield
-
-    # Cleanup: cancel the background task if it's still running
-    if jupyter_init_task and not jupyter_init_task.done():
-        logger.info("Cancelling Jupyter initialization task...")
-        jupyter_init_task.cancel()
-        try:
-            await jupyter_init_task
-        except asyncio.CancelledError:
-            pass
 
     # Will cleanup after application shuts down
     for ws in websockets.values():
@@ -158,63 +166,36 @@ async def post_execute(request: Request, exec_request: ExecutionRequest):
             status_code=400,
         )
 
-    context_id = None
-    if exec_request.language:
-        language = normalize_language(exec_request.language)
+    ws = None
 
-        async with await default_websockets.get_lock(language):
-            context_id = default_websockets.get(language)
-
-            if not context_id:
-                try:
-                    context = await create_context(
-                        client, websockets, language, "/app"
-                    )
-                except Exception as e:
-                    logger.error(f"Failed to create context for language {language}: {e}")
-                    return PlainTextResponse(
-                        f"Failed to create context: {str(e)}",
-                        status_code=400,
-                    )
-
-                context_id = context.id
-                default_websockets[language] = context_id
-
-    elif exec_request.context_id:
-        context_id = exec_request.context_id
-
-    if context_id:
-        ws = websockets.get(context_id, None)
-    else:
-        ws = websockets["default"]
-
-    if not ws:
-        # Try to initialize default context if it doesn't exist
-        if not websockets.get("default"):
-            logger.info("Default context not found, attempting to create it...")
-            if not await wait_for_jupyter_ready(client):
-                return PlainTextResponse(
-                    "Jupyter Server is not ready. Please try again later.",
-                    status_code=503,
-                )
-            try:
-                python_context = await create_context(
-                    client, websockets, "python", "/app"
-                )
-                default_websockets["python"] = python_context.id
-                websockets["default"] = websockets[python_context.id]
-                ws = websockets["default"]
-            except Exception as e:
-                logger.error(f"Failed to create default context: {e}")
-                return PlainTextResponse(
-                    f"Failed to create default context: {str(e)}",
-                    status_code=400,
-                )
-
+    if exec_request.context_id:
+        # Use specific context
+        ws = websockets.get(exec_request.context_id, None)
         if not ws:
             return PlainTextResponse(
                 f"Context {exec_request.context_id} not found",
                 status_code=404,
+            )
+    elif exec_request.language:
+        # Use language-specific default context
+        language = normalize_language(exec_request.language)
+        try:
+            ws = await ensure_default_context(language)
+        except Exception as e:
+            logger.error(f"Failed to ensure default context for {language}: {e}")
+            return PlainTextResponse(
+                f"Failed to create context: {str(e)}",
+                status_code=400,
+            )
+    else:
+        # Use default python context
+        try:
+            ws = await ensure_default_context("python")
+        except Exception as e:
+            logger.error(f"Failed to ensure default python context: {e}")
+            return PlainTextResponse(
+                f"Failed to create default context: {str(e)}",
+                status_code=400,
             )
 
     try:
@@ -239,6 +220,13 @@ async def post_contexts(request: CreateContext) -> Context:
 
     language = normalize_language(request.language)
     cwd = request.cwd or "/app"
+
+    # Ensure Jupyter is ready before creating context
+    if not await wait_for_jupyter_ready_with_timeout(client):
+        return PlainTextResponse(
+            "Jupyter Server is not ready",
+            status_code=503,
+        )
 
     try:
         return await create_context(client, websockets, language, cwd)
