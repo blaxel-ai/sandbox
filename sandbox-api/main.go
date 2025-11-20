@@ -21,7 +21,7 @@ import (
 // @title           Sandbox API
 // @version         0.0.1
 // @description     API for manipulating filesystem, processes and network.
-// @host            run.blaxel.ai/{workspace_id}/sandboxes/{sandbox_id}
+// @host            sbx-{sandbox_id}-{workspace_id}.{region}.bl.run
 // @schemes         https
 // @securityDefinitions.apikey BearerAuth
 // @in header

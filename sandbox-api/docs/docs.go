@@ -1805,7 +1805,7 @@ const docTemplate = `{
 // SwaggerInfo holds exported Swagger Info so clients can modify it
 var SwaggerInfo = &swag.Spec{
 	Version:          "0.0.1",
-	Host:             "run.blaxel.ai/{workspace_id}/sandboxes/{sandbox_id}",
+	Host:             "sbx-{sandbox_id}-{workspace_id}.{region}.bl.run",
 	BasePath:         "",
 	Schemes:          []string{"https"},
 	Title:            "Sandbox API",
