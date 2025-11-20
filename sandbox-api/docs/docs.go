@@ -1598,11 +1598,8 @@ const docTemplate = `{
                 "completedAt",
                 "exitCode",
                 "logs",
-                "maxRestarts",
                 "name",
                 "pid",
-                "restartCount",
-                "restartOnFailure",
                 "startedAt",
                 "status",
                 "workingDir"

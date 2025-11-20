@@ -65,9 +65,9 @@ type ProcessResponse struct {
 	ExitCode         int     `json:"exitCode" example:"0" binding:"required"`
 	WorkingDir       string  `json:"workingDir" example:"/home/user" binding:"required"`
 	Logs             *string `json:"logs" example:"logs output" binding:"required"`
-	RestartOnFailure bool    `json:"restartOnFailure" example:"true" binding:"required"`
-	MaxRestarts      int     `json:"maxRestarts" example:"3" binding:"required"`
-	RestartCount     int     `json:"restartCount" example:"2" binding:"required"`
+	RestartOnFailure bool    `json:"restartOnFailure" example:"true"`
+	MaxRestarts      int     `json:"maxRestarts" example:"3"`
+	RestartCount     int     `json:"restartCount" example:"2"`
 } // @name ProcessResponse
 
 type ProcessResponseWithLogs struct {
