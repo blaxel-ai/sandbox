@@ -1008,11 +1008,13 @@ paths:
       tags:
         - filesystem
 servers:
-  - url: https://run.blaxel.ai/{workspace_id}/sandboxes/{sandbox_id}
+  - url: https://sbx-{sandbox_id}-{workspace_id}.{region}.bl.run
     variables:
+      sandbox_id:
+        default: unknown
       workspace_id:
         default: unknown
-      sandbox_id:
+      region:
         default: unknown
 components:
   securitySchemes:
