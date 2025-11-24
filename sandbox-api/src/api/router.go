@@ -111,7 +111,9 @@ func SetupRouter(disableRequestLogging ...bool) *gin.Engine {
 	r.GET("/filesystem-multipart/:uploadId/parts", fsHandler.HandleListParts)
 
 	// Filesystem routes
-	r.GET("/filesystem-search", fsHandler.HandleFuzzySearch)
+	r.GET("/filesystem-find/*path", fsHandler.HandleFind)
+	r.GET("/filesystem-search/*path", fsHandler.HandleFuzzySearch)
+	//r.GET("/filesystem-content-search/*path", fsHandler.HandleContentSearch)
 	r.GET("/watch/filesystem/*path", fsHandler.HandleWatchDirectory)
 	r.GET("/filesystem/*path", fsHandler.HandleGetFile)
 	r.PUT("/filesystem/*path", fsHandler.HandleCreateOrUpdateFile)

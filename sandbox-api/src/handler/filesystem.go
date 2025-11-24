@@ -86,7 +86,6 @@ type MultipartListUploadsResponse struct {
 
 // FuzzySearchRequest represents the request body for fuzzy search
 type FuzzySearchRequest struct {
-	Query        string   `json:"query" example:"main.go"`
 	IncludeFiles bool     `json:"includeFiles" example:"true"`
 	IncludeDirs  bool     `json:"includeDirs" example:"false"`
 	MaxResults   int      `json:"maxResults" example:"20"`
@@ -103,10 +102,37 @@ type FuzzySearchMatch struct {
 
 // FuzzySearchResponse represents the response from fuzzy search
 type FuzzySearchResponse struct {
-	Query   string             `json:"query" example:"main.go"`
 	Matches []FuzzySearchMatch `json:"matches"`
 	Total   int                `json:"total" example:"5"`
 } // @name FuzzySearchResponse
+
+// ContentSearchMatch represents a single content search match
+type ContentSearchMatch struct {
+	Path    string `json:"path" example:"src/main.go"`
+	Line    int    `json:"line" example:"42"`
+	Column  int    `json:"column" example:"10"`
+	Text    string `json:"text" example:"const searchText = 'example'"`
+	Context string `json:"context,omitempty" example:"previous line\ncurrent line\nnext line"`
+} // @name ContentSearchMatch
+
+// ContentSearchResponse represents the response from content search
+type ContentSearchResponse struct {
+	Query   string               `json:"query" example:"searchText"`
+	Matches []ContentSearchMatch `json:"matches"`
+	Total   int                  `json:"total" example:"5"`
+} // @name ContentSearchResponse
+
+// FindMatch represents a single find result
+type FindMatch struct {
+	Path string `json:"path" example:"src/main.go"`
+	Type string `json:"type" example:"file"` // "file" or "directory"
+} // @name FindMatch
+
+// FindResponse represents the response from find
+type FindResponse struct {
+	Matches []FindMatch `json:"matches"`
+	Total   int         `json:"total" example:"5"`
+} // @name FindResponse
 
 // NewFileSystemHandler creates a new filesystem handler
 func NewFileSystemHandler() *FileSystemHandler {
@@ -1203,45 +1229,24 @@ func (h *FileSystemHandler) HandleWatchDirectory(c *gin.Context) {
 	<-done
 }
 
-// HandleFuzzySearch performs fuzzy search on filesystem paths
-// @Summary Fuzzy search for files and directories
-// @Description Performs fuzzy search on filesystem paths using fuzzy matching algorithm. Optimized alternative to find and grep commands.
+// HandleFind
+// @Summary Find files and directories
+// @Description Finds files and directories using the find command.
 // @Tags filesystem
 // @Accept json
 // @Produce json
-// @Param query query string true "Search query"
-// @Param includeFiles query boolean false "Include files in results (default: true)"
-// @Param includeDirs query boolean false "Include directories in results (default: false)"
-// @Param maxResults query int false "Maximum number of results to return (default: 20)"
-// @Param directory query string false "Root directory to search in (relative path, default: current working directory)"
+// @Param path path string true "Path to search in (e.g., /home/user/projects)"
+// @Param type query string false "Type of search (file or directory)"
 // @Param patterns query string false "Comma-separated file patterns to include (e.g., *.go,*.js)"
+// @Param maxResults query int false "Maximum number of results to return (default: 20). If set to 0, all results will be returned."
 // @Param excludeDirs query string false "Comma-separated directory names to skip (default: node_modules,vendor,.git,dist,build,target,__pycache__,.venv,.next,coverage). Use empty string to skip no directories."
 // @Param excludeHidden query boolean false "Exclude hidden files and directories (default: true)"
-// @Success 200 {object} FuzzySearchResponse "Fuzzy search results"
+// @Success 200 {object} FindResponse "Find results"
 // @Failure 400 {object} ErrorResponse "Bad request"
 // @Failure 422 {object} ErrorResponse "Unprocessable entity"
 // @Failure 500 {object} ErrorResponse "Internal server error"
-// @Router /filesystem-search [get]
-func (h *FileSystemHandler) HandleFuzzySearch(c *gin.Context) {
-	// Parse query parameters
-	query := c.Query("query")
-	if query == "" {
-		h.SendError(c, http.StatusBadRequest, fmt.Errorf("query parameter is required"))
-		return
-	}
-
-	// Parse includeFiles (default: true)
-	includeFiles := true
-	if c.Query("includeFiles") != "" {
-		includeFiles = c.Query("includeFiles") == "true"
-	}
-
-	// Parse includeDirs (default: false)
-	includeDirs := false
-	if c.Query("includeDirs") != "" {
-		includeDirs = c.Query("includeDirs") == "true"
-	}
-
+// @Router /filesystem-find/{path} [get]
+func (h *FileSystemHandler) HandleFind(c *gin.Context) {
 	// Parse maxResults (default: 20)
 	maxResults := 20
 	if c.Query("maxResults") != "" {
@@ -1254,27 +1259,18 @@ func (h *FileSystemHandler) HandleFuzzySearch(c *gin.Context) {
 		}
 	}
 
-	// Parse directory parameter
-	searchDir := c.Query("directory")
-	if searchDir != "" {
-		searchDir, err := lib.FormatPath(searchDir)
-		if err != nil {
-			h.SendError(c, http.StatusBadRequest, err)
+	// Parse type (default: file)
+	searchType := "file"
+	if c.Query("type") != "" {
+		searchType = c.Query("type")
+		if searchType != "file" && searchType != "directory" {
+			h.SendError(c, http.StatusBadRequest, fmt.Errorf("invalid search type: %s", searchType))
 			return
 		}
-		// Verify directory exists
-		isDir, err := h.DirectoryExists(searchDir)
-		if err != nil {
-			h.SendError(c, http.StatusUnprocessableEntity, err)
-			return
-		}
-		if !isDir {
-			h.SendError(c, http.StatusBadRequest, fmt.Errorf("specified directory does not exist: %s", searchDir))
-			return
-		}
-	} else {
-		searchDir = "."
 	}
+
+	// Parse directory parameter
+	searchDir := h.extractPathFromRequest(c)
 
 	// Parse patterns
 	var patterns []string
@@ -1317,10 +1313,6 @@ func (h *FileSystemHandler) HandleFuzzySearch(c *gin.Context) {
 		excludeHidden = c.Query("excludeHidden") == "true"
 	}
 
-	// Collect all candidate paths
-	candidates := []string{}
-	candidateTypes := make(map[string]string)
-
 	// Get absolute path for searching
 	absSearchDir, err := h.fs.GetAbsolutePath(searchDir)
 	if err != nil {
@@ -1328,10 +1320,12 @@ func (h *FileSystemHandler) HandleFuzzySearch(c *gin.Context) {
 		return
 	}
 
-	// Walk the directory tree
+	// Collect all candidate paths by walking directory
+	candidates := []string{}
+	candidateTypes := make(map[string]string)
+
 	err = filepath.Walk(absSearchDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
-			// Skip paths we can't access
 			return nil
 		}
 
@@ -1355,14 +1349,6 @@ func (h *FileSystemHandler) HandleFuzzySearch(c *gin.Context) {
 			return nil
 		}
 
-		// Check if we should include this entry
-		if info.IsDir() && !includeDirs {
-			return nil
-		}
-		if !info.IsDir() && !includeFiles {
-			return nil
-		}
-
 		// Check file patterns for files
 		if !info.IsDir() && len(patterns) > 0 {
 			matched := false
@@ -1377,13 +1363,164 @@ func (h *FileSystemHandler) HandleFuzzySearch(c *gin.Context) {
 			}
 		}
 
-		// Make path relative to search directory for cleaner output
-		relPath, err := filepath.Rel(absSearchDir, path)
-		if err != nil {
-			relPath = path
+		candidates = append(candidates, path)
+		if info.IsDir() {
+			candidateTypes[path] = "directory"
+		} else {
+			candidateTypes[path] = "file"
 		}
 
+		return nil
+	})
+
+	if err != nil {
+		h.SendError(c, http.StatusInternalServerError, fmt.Errorf("error walking directory: %w", err))
+		return
+	}
+
+	// Convert to response format
+	results := make([]FindMatch, 0, len(candidates))
+	for i, absPath := range candidates {
+		if maxResults > 0 && i >= maxResults {
+			break
+		}
+
+		// Make path relative to search directory
+		relPath, err := filepath.Rel(absSearchDir, absPath)
+		if err != nil {
+			relPath = absPath
+		}
+
+		results = append(results, FindMatch{
+			Path: relPath,
+			Type: candidateTypes[absPath],
+		})
+	}
+
+	// Return results
+	response := FindResponse{
+		Matches: results,
+		Total:   len(results),
+	}
+	h.SendJSON(c, http.StatusOK, response)
+}
+
+// HandleFuzzySearch performs fuzzy search on filesystem paths
+// @Summary Fuzzy search for files and directories
+// @Description Performs fuzzy search on filesystem paths using fuzzy matching algorithm. Optimized alternative to find and grep commands.
+// @Tags filesystem
+// @Accept json
+// @Produce json
+// @Param path path string true "Path to search in (e.g., /home/user/projects)"
+// @Param maxResults query int false "Maximum number of results to return (default: 20)"
+// @Param patterns query string false "Comma-separated file patterns to include (e.g., *.go,*.js)"
+// @Param excludeDirs query string false "Comma-separated directory names to skip (default: node_modules,vendor,.git,dist,build,target,__pycache__,.venv,.next,coverage). Use empty string to skip no directories."
+// @Param excludeHidden query boolean false "Exclude hidden files and directories (default: true)"
+// @Success 200 {object} FuzzySearchResponse "Fuzzy search results"
+// @Failure 400 {object} ErrorResponse "Bad request"
+// @Failure 422 {object} ErrorResponse "Unprocessable entity"
+// @Failure 500 {object} ErrorResponse "Internal server error"
+// @Router /filesystem-search/{path} [get]
+func (h *FileSystemHandler) HandleFuzzySearch(c *gin.Context) {
+	// Parse maxResults (default: 20)
+	maxResults := 20
+	if c.Query("maxResults") != "" {
+		if parsed, err := strconv.Atoi(c.Query("maxResults")); err == nil && parsed > 0 {
+			maxResults = parsed
+			// Cap at 1000 to prevent excessive resource usage
+			if maxResults > 1000 {
+				maxResults = 1000
+			}
+		}
+	}
+
+	// Parse directory parameter
+	searchDir := h.extractPathFromRequest(c)
+
+	// Parse patterns
+	var patterns []string
+	if c.Query("patterns") != "" {
+		patterns = strings.Split(c.Query("patterns"), ",")
+		// Trim spaces from patterns
+		for i, p := range patterns {
+			patterns[i] = strings.TrimSpace(p)
+		}
+	}
+
+	// Parse directories to exclude
+	var excludeDirs []string
+	excludeDirsParam := c.Query("excludeDirs")
+	if excludeDirsParam != "" {
+		// User explicitly provided directories to exclude
+		excludeDirs = strings.Split(excludeDirsParam, ",")
+		// Trim spaces from directory names
+		for i, d := range excludeDirs {
+			excludeDirs[i] = strings.TrimSpace(d)
+		}
+	} else {
+		// Default directories to exclude
+		excludeDirs = []string{
+			"node_modules", "vendor", ".git", "dist", "build",
+			"target", "__pycache__", ".venv", ".next", "coverage",
+		}
+	}
+	// Create a map for O(1) lookup
+	excludeDirsMap := make(map[string]bool)
+	for _, dir := range excludeDirs {
+		if dir != "" {
+			excludeDirsMap[dir] = true
+		}
+	}
+
+	// Parse excludeHidden (default: true)
+	excludeHidden := true
+	if c.Query("excludeHidden") != "" {
+		excludeHidden = c.Query("excludeHidden") == "true"
+	}
+
+	// Get absolute path for searching
+	absSearchDir, err := h.fs.GetAbsolutePath(searchDir)
+	if err != nil {
+		h.SendError(c, http.StatusBadRequest, err)
+		return
+	}
+
+	// Get query from path parameter
+	query := h.extractPathFromRequest(c)
+	if query == "" || query == "/" || query == "." {
+		h.SendError(c, http.StatusBadRequest, fmt.Errorf("query parameter is required in path"))
+		return
+	}
+
+	// Collect candidates
+	candidates := []string{}
+	candidateTypes := make(map[string]string)
+
+	err = filepath.Walk(absSearchDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil
+		}
+
+		base := filepath.Base(path)
+
+		if excludeHidden && len(base) > 0 && base[0] == '.' {
+			if info.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+
+		if info.IsDir() && excludeDirsMap[base] {
+			return filepath.SkipDir
+		}
+
+		if path == absSearchDir {
+			return nil
+		}
+
+		relPath, _ := filepath.Rel(absSearchDir, path)
 		candidates = append(candidates, relPath)
+
 		if info.IsDir() {
 			candidateTypes[relPath] = "directory"
 		} else {
@@ -1398,54 +1535,35 @@ func (h *FileSystemHandler) HandleFuzzySearch(c *gin.Context) {
 		return
 	}
 
-	// Perform fuzzy matching using fzf's algorithm
-	caseSensitive := false
-	normalize := true
+	// Use fzf Go library for matching
+	patternRunes := []rune(query)
 
-	// Match candidates and collect results with scores
 	type matchResult struct {
 		path  string
 		score int
-		index int
 	}
 	matchResults := []matchResult{}
 
-	patternRunes := []rune(query)
-
-	for idx, candidate := range candidates {
-		// Convert to chars format
+	for _, candidate := range candidates {
 		candidateChars := util.RunesToChars([]rune(candidate))
+		result, _ := algo.FuzzyMatchV2(false, true, true, &candidateChars, patternRunes, true, nil)
 
-		// Use fzf's FuzzyMatchV2 algorithm directly
-		result, _ := algo.FuzzyMatchV2(
-			caseSensitive,
-			normalize,
-			true, // forward search
-			&candidateChars,
-			patternRunes,
-			true, // withPos
-			nil,  // slab
-		)
-
-		// If there's a match, add it to results
 		if result.Start >= 0 {
 			matchResults = append(matchResults, matchResult{
 				path:  candidate,
 				score: result.Score,
-				index: idx,
 			})
 		}
 	}
 
-	// Sort by score (higher is better in fzf)
+	// Sort by score
 	sort.Slice(matchResults, func(i, j int) bool {
 		return matchResults[i].score > matchResults[j].score
 	})
 
-	// Convert to response format
 	results := make([]FuzzySearchMatch, 0, len(matchResults))
 	for i, match := range matchResults {
-		if i >= maxResults {
+		if maxResults > 0 && i >= maxResults {
 			break
 		}
 		results = append(results, FuzzySearchMatch{
@@ -1456,10 +1574,239 @@ func (h *FileSystemHandler) HandleFuzzySearch(c *gin.Context) {
 	}
 
 	response := FuzzySearchResponse{
-		Query:   query,
 		Matches: results,
 		Total:   len(results),
 	}
 
 	h.SendJSON(c, http.StatusOK, response)
 }
+
+// HandleContentSearch performs content search using ripgrep
+// @Summary Search for text content in files
+// @Description Searches for text content inside files using ripgrep. Returns matching lines with context.
+// @Tags filesystem
+// @Accept json
+// @Produce json
+// @Param path path string false "Directory path to search in (default: current working directory)"
+// @Param query query string true "Text to search for"
+// @Param caseSensitive query boolean false "Case sensitive search (default: false)"
+// @Param contextLines query int false "Number of context lines to include (default: 0)"
+// @Param maxResults query int false "Maximum number of results to return (default: 100)"
+// @Param filePattern query string false "File pattern to include (e.g., *.go)"
+// @Param excludeDirs query string false "Comma-separated directory names to skip (default: node_modules,vendor,.git,dist,build,target,__pycache__,.venv,.next,coverage)"
+// @Success 200 {object} ContentSearchResponse "Content search results"
+// @Failure 400 {object} ErrorResponse "Bad request"
+// @Failure 422 {object} ErrorResponse "Unprocessable entity"
+// @Failure 500 {object} ErrorResponse "Internal server error"
+// @Router /filesystem-content-search/{path} [get]
+// func (h *FileSystemHandler) HandleContentSearch(c *gin.Context) {
+// 	// Get search query
+// 	query := c.Query("query")
+// 	if query == "" {
+// 		h.SendError(c, http.StatusBadRequest, fmt.Errorf("query parameter is required"))
+// 		return
+// 	}
+
+// 	// Parse directory parameter from path
+// 	searchDir := h.extractPathFromRequest(c)
+
+// 	if searchDir != "" && searchDir != "/" && searchDir != "." {
+// 		searchDir, err := lib.FormatPath(searchDir)
+// 		if err != nil {
+// 			h.SendError(c, http.StatusBadRequest, err)
+// 			return
+// 		}
+// 		// Verify directory exists
+// 		isDir, err := h.DirectoryExists(searchDir)
+// 		if err != nil {
+// 			h.SendError(c, http.StatusUnprocessableEntity, err)
+// 			return
+// 		}
+// 		if !isDir {
+// 			h.SendError(c, http.StatusBadRequest, fmt.Errorf("specified directory does not exist: %s", searchDir))
+// 			return
+// 		}
+// 	} else {
+// 		searchDir = "."
+// 	}
+
+// 	// Parse caseSensitive (default: false)
+// 	caseSensitive := false
+// 	if c.Query("caseSensitive") != "" {
+// 		caseSensitive = c.Query("caseSensitive") == "true"
+// 	}
+
+// 	// Parse contextLines (default: 0)
+// 	contextLines := 0
+// 	if c.Query("contextLines") != "" {
+// 		if parsed, err := strconv.Atoi(c.Query("contextLines")); err == nil && parsed >= 0 {
+// 			contextLines = parsed
+// 			// Cap at 10 to prevent excessive output
+// 			if contextLines > 10 {
+// 				contextLines = 10
+// 			}
+// 		}
+// 	}
+
+// 	// Parse maxResults (default: 100)
+// 	maxResults := 100
+// 	if c.Query("maxResults") != "" {
+// 		if parsed, err := strconv.Atoi(c.Query("maxResults")); err == nil && parsed > 0 {
+// 			maxResults = parsed
+// 			// Cap at 1000 to prevent excessive resource usage
+// 			if maxResults > 1000 {
+// 				maxResults = 1000
+// 			}
+// 		}
+// 	}
+
+// 	// Parse file pattern
+// 	filePattern := c.Query("filePattern")
+
+// 	// Parse directories to exclude
+// 	var excludeDirs []string
+// 	excludeDirsParam := c.Query("excludeDirs")
+// 	if excludeDirsParam != "" {
+// 		excludeDirs = strings.Split(excludeDirsParam, ",")
+// 		for i, d := range excludeDirs {
+// 			excludeDirs[i] = strings.TrimSpace(d)
+// 		}
+// 	} else {
+// 		// Default directories to exclude
+// 		excludeDirs = []string{
+// 			"node_modules", "vendor", ".git", "dist", "build",
+// 			"target", "__pycache__", ".venv", ".next", "coverage",
+// 		}
+// 	}
+
+// 	// Get absolute path for searching
+// 	absSearchDir, err := h.fs.GetAbsolutePath(searchDir)
+// 	if err != nil {
+// 		h.SendError(c, http.StatusBadRequest, err)
+// 		return
+// 	}
+
+// 	// Build ripgrep command
+// 	args := []string{
+// 		"--json",          // JSON output
+// 		"--line-number",   // Include line numbers
+// 		"--column",        // Include column numbers
+// 		"--no-heading",    // Don't group by file
+// 		"--with-filename", // Include filename
+// 	}
+
+// 	if !caseSensitive {
+// 		args = append(args, "--smart-case")
+// 	}
+
+// 	if contextLines > 0 {
+// 		args = append(args, fmt.Sprintf("--context=%d", contextLines))
+// 	}
+
+// 	if filePattern != "" {
+// 		args = append(args, "--glob", filePattern)
+// 	}
+
+// 	for _, dir := range excludeDirs {
+// 		if dir != "" {
+// 			args = append(args, "--glob", fmt.Sprintf("!%s", dir))
+// 		}
+// 	}
+
+// 	args = append(args, "--", query, absSearchDir)
+
+// 	// Execute ripgrep
+// 	cmd := exec.Command("rg", args...)
+// 	output, err := cmd.CombinedOutput()
+
+// 	// ripgrep returns exit code 1 when no matches found, which is not an error for us
+// 	if err != nil {
+// 		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
+// 			// No matches found - return empty results
+// 			response := ContentSearchResponse{
+// 				Query:   query,
+// 				Matches: []ContentSearchMatch{},
+// 				Total:   0,
+// 			}
+// 			h.SendJSON(c, http.StatusOK, response)
+// 			return
+// 		}
+// 		// Actual error
+// 		h.SendError(c, http.StatusInternalServerError, fmt.Errorf("ripgrep error: %w", err))
+// 		return
+// 	}
+
+// 	// Parse ripgrep JSON output
+// 	matches := []ContentSearchMatch{}
+// 	lines := strings.Split(string(output), "\n")
+
+// 	for _, line := range lines {
+// 		if line == "" {
+// 			continue
+// 		}
+
+// 		var rgResult map[string]interface{}
+// 		if err := json.Unmarshal([]byte(line), &rgResult); err != nil {
+// 			continue
+// 		}
+
+// 		// Only process "match" type results
+// 		if rgResult["type"] != "match" {
+// 			continue
+// 		}
+
+// 		data, ok := rgResult["data"].(map[string]interface{})
+// 		if !ok {
+// 			continue
+// 		}
+
+// 		path, _ := data["path"].(map[string]interface{})
+// 		pathText, _ := path["text"].(string)
+
+// 		lineNum := 0
+// 		if ln, ok := data["line_number"].(float64); ok {
+// 			lineNum = int(ln)
+// 		}
+
+// 		// Get the matching line text
+// 		lines, _ := data["lines"].(map[string]interface{})
+// 		lineText, _ := lines["text"].(string)
+// 		lineText = strings.TrimRight(lineText, "\n")
+
+// 		// Get submatches for column info
+// 		submatches, _ := data["submatches"].([]interface{})
+// 		column := 0
+// 		if len(submatches) > 0 {
+// 			if submatch, ok := submatches[0].(map[string]interface{}); ok {
+// 				if col, ok := submatch["start"].(float64); ok {
+// 					column = int(col) + 1 // Make it 1-indexed
+// 				}
+// 			}
+// 		}
+
+// 		// Make path relative to search directory
+// 		relPath, err := filepath.Rel(absSearchDir, pathText)
+// 		if err != nil {
+// 			relPath = pathText
+// 		}
+
+// 		matches = append(matches, ContentSearchMatch{
+// 			Path:   relPath,
+// 			Line:   lineNum,
+// 			Column: column,
+// 			Text:   lineText,
+// 		})
+
+// 		if len(matches) >= maxResults {
+// 			break
+// 		}
+// 	}
+
+// 	response := ContentSearchResponse{
+// 		Query:   query,
+// 		Matches: matches,
+// 		Total:   len(matches),
+// 	}
+
+// 	h.SendJSON(c, http.StatusOK, response)
+// }

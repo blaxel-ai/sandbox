@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """
-Fuzzy Search Performance Benchmark
+Fuzzy Search & Content Search Performance Benchmark
 
 Compares the performance of:
-1. find command via process API
-2. grep command via process API  
-3. Fuzzy search API (fzf-powered)
+1. find command via process API (filename search)
+2. grep command via process API (content search)
+3. Fuzzy search API (fzf-powered filename search)
+4. Content search API (ripgrep-powered content search)
 """
 
 import json
@@ -101,13 +102,14 @@ def run_fuzzy_search_api(query: str) -> Tuple[int, int]:
     
     params = {
         "query": query,
-        "directory": TEST_DIR,
         "includeFiles": "true",
         "excludeDirs": "node_modules,.git",
         "maxResults": "100"
     }
     
-    response = requests.get(f"{API_URL}/filesystem-search", params=params)
+    # Use path-based endpoint
+    encoded_path = TEST_DIR.replace("/", "%2F")
+    response = requests.get(f"{API_URL}/filesystem-search/{encoded_path}", params=params)
     
     if response.status_code != 200:
         print(f"{Colors.RED}Fuzzy search failed: {response.text}{Colors.NC}")
@@ -146,7 +148,8 @@ def main():
     results = {
         "find": {"times": [], "counts": []},
         "grep": {"times": [], "counts": []},
-        "fuzzy": {"times": [], "counts": []}
+        "fuzzy": {"times": [], "counts": []},
+        "content": {"times": [], "counts": []}
     }
     
     # Run benchmarks for each query
@@ -169,27 +172,37 @@ def main():
         print(f"{Colors.GREEN}✓{Colors.NC} {format_time(grep_time)} ({grep_count} results)")
         
         # 3. Fuzzy search API
-        print(f"  [3/3] Running fuzzy search API... ", end="", flush=True)
+        print(f"  [3/4] Running fuzzy search API... ", end="", flush=True)
         fuzzy_time, fuzzy_count = run_fuzzy_search_api(query)
         results["fuzzy"]["times"].append(fuzzy_time)
         results["fuzzy"]["counts"].append(fuzzy_count)
         print(f"{Colors.GREEN}✓{Colors.NC} {format_time(fuzzy_time)} ({fuzzy_count} results)")
         
+        # 4. Content search API
+        print(f"  [4/4] Running content search API... ", end="", flush=True)
+        content_time, content_count = run_content_search_api(query)
+        results["content"]["times"].append(content_time)
+        results["content"]["counts"].append(content_count)
+        print(f"{Colors.GREEN}✓{Colors.NC} {format_time(content_time)} ({content_count} results)")
+        
         # Calculate speedups
         if fuzzy_time > 0:
             find_speedup = find_time / fuzzy_time
-            grep_speedup = grep_time / fuzzy_time
-            print(f"  {Colors.BLUE}→{Colors.NC} Fuzzy API is {find_speedup:.2f}x vs find, {grep_speedup:.2f}x vs grep")
+            print(f"  {Colors.BLUE}→{Colors.NC} Fuzzy API (fzf) is {find_speedup:.2f}x faster than find (process)")
+        
+        if content_time > 0:
+            grep_speedup = grep_time / content_time
+            print(f"  {Colors.BLUE}→{Colors.NC} Content API (rg) is {grep_speedup:.2f}x faster than grep (process)")
         
         # Show top fuzzy results
         params = {
             "query": query,
-            "directory": TEST_DIR,
             "includeFiles": "true",
             "excludeDirs": "node_modules,.git",
             "maxResults": "3"
         }
-        response = requests.get(f"{API_URL}/filesystem-search", params=params)
+        encoded_path = TEST_DIR.replace("/", "%2F")
+        response = requests.get(f"{API_URL}/filesystem-search/{encoded_path}", params=params)
         if response.status_code == 200:
             data = response.json()
             matches = data.get("matches", [])
@@ -204,14 +217,15 @@ def main():
     # Print summary table
     print_header("Performance Summary")
     
-    print(f"{'Query':<10} | {'find':<15} | {'grep':<15} | {'fuzzy API':<15}")
-    print(f"{'-'*10}-+-{'-'*15}-+-{'-'*15}-+-{'-'*15}")
+    print(f"{'Query':<10} | {'find':<12} | {'grep':<12} | {'fzf API':<12} | {'rg API':<12}")
+    print(f"{'-'*10}-+-{'-'*12}-+-{'-'*12}-+-{'-'*12}-+-{'-'*12}")
     
     for i, query in enumerate(QUERIES):
         find_time = format_time(results["find"]["times"][i])
         grep_time = format_time(results["grep"]["times"][i])
         fuzzy_time = format_time(results["fuzzy"]["times"][i])
-        print(f"{query:<10} | {find_time:<15} | {grep_time:<15} | {fuzzy_time:<15}")
+        content_time = format_time(results["content"]["times"][i])
+        print(f"{query:<10} | {find_time:<12} | {grep_time:<12} | {fuzzy_time:<12} | {content_time:<12}")
     
     print()
     
@@ -219,36 +233,49 @@ def main():
     avg_find = sum(results["find"]["times"]) / len(results["find"]["times"])
     avg_grep = sum(results["grep"]["times"]) / len(results["grep"]["times"])
     avg_fuzzy = sum(results["fuzzy"]["times"]) / len(results["fuzzy"]["times"])
+    avg_content = sum(results["content"]["times"]) / len(results["content"]["times"])
     
     print(f"{Colors.YELLOW}Average Times:{Colors.NC}")
-    print(f"  find:      {format_time(int(avg_find))}")
-    print(f"  grep:      {format_time(int(avg_grep))}")
-    print(f"  fuzzy API: {format_time(int(avg_fuzzy))}\n")
+    print(f"  find (process):     {format_time(int(avg_find))}")
+    print(f"  grep (process):     {format_time(int(avg_grep))}")
+    print(f"  fzf API:            {format_time(int(avg_fuzzy))}")
+    print(f"  ripgrep API:        {format_time(int(avg_content))}\n")
     
+    print(f"{Colors.GREEN}Average Speedup:{Colors.NC}")
     if avg_fuzzy > 0:
         find_speedup = avg_find / avg_fuzzy
-        grep_speedup = avg_grep / avg_fuzzy
-        print(f"{Colors.GREEN}Average Speedup:{Colors.NC}")
-        print(f"  Fuzzy API is {find_speedup:.2f}x faster than find")
-        print(f"  Fuzzy API is {grep_speedup:.2f}x faster than grep")
+        print(f"  fzf API is {find_speedup:.2f}x faster than find (filename search)")
+    
+    if avg_content > 0:
+        grep_speedup = avg_grep / avg_content
+        print(f"  ripgrep API is {grep_speedup:.2f}x faster than grep (content search)")
     
     # Print advantages
-    print_header("Key Advantages of Fuzzy Search API")
-    advantages = [
-        "Single HTTP request (no process spawning)",
-        "No waiting for process completion/polling",
-        "Built-in fzf algorithm for intelligent matching",
-        "Scored results (best matches first)",
-        "Configurable directory exclusions",
-        "No shell escaping issues",
-        "JSON response for easy parsing",
-        "No need to parse stdout/stderr"
-    ]
+    print_header("Key Advantages of New Search APIs")
     
-    for advantage in advantages:
+    print(f"{Colors.YELLOW}fzf API (filename search):{Colors.NC}")
+    fzf_advantages = [
+        "Single HTTP request (no process spawning overhead)",
+        "Uses find | fzf pipeline internally",
+        "Intelligent fuzzy matching algorithm",
+        "Scored results (best matches first)",
+        "Configurable directory exclusions"
+    ]
+    for advantage in fzf_advantages:
         print(f"  {Colors.GREEN}✓{Colors.NC} {advantage}")
     
-    print(f"\n{Colors.YELLOW}Note:{Colors.NC} find and grep times include process spawning + polling + log retrieval overhead\n")
+    print(f"\n{Colors.YELLOW}ripgrep API (content search):{Colors.NC}")
+    rg_advantages = [
+        "Single HTTP request (no process spawning overhead)",
+        "10-100x faster than regular grep",
+        "Returns line and column numbers",
+        "JSON response with structured data",
+        "Respects .gitignore patterns"
+    ]
+    for advantage in rg_advantages:
+        print(f"  {Colors.GREEN}✓{Colors.NC} {advantage}")
+    
+    print(f"\n{Colors.YELLOW}Note:{Colors.NC} Process API times include spawning + waitForCompletion + log retrieval overhead\n")
     print(f"{Colors.GREEN}Benchmark completed!{Colors.NC}")
 
 

@@ -256,6 +256,86 @@ const docTemplate = `{
                 }
             }
         },
+        "/filesystem-find/{path}": {
+            "get": {
+                "description": "Finds files and directories using the find command.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "filesystem"
+                ],
+                "summary": "Find files and directories",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Path to search in (e.g., /home/user/projects)",
+                        "name": "path",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Type of search (file or directory)",
+                        "name": "type",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Comma-separated file patterns to include (e.g., *.go,*.js)",
+                        "name": "patterns",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Maximum number of results to return (default: 20). If set to 0, all results will be returned.",
+                        "name": "maxResults",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Comma-separated directory names to skip (default: node_modules,vendor,.git,dist,build,target,__pycache__,.venv,.next,coverage). Use empty string to skip no directories.",
+                        "name": "excludeDirs",
+                        "in": "query"
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "Exclude hidden files and directories (default: true)",
+                        "name": "excludeHidden",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Find results",
+                        "schema": {
+                            "$ref": "#/definitions/FindResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable entity",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/filesystem-multipart": {
             "get": {
                 "description": "List all active multipart uploads",
@@ -551,7 +631,7 @@ const docTemplate = `{
                 }
             }
         },
-        "/filesystem-search": {
+        "/filesystem-search/{path}": {
             "get": {
                 "description": "Performs fuzzy search on filesystem paths using fuzzy matching algorithm. Optimized alternative to find and grep commands.",
                 "consumes": [
@@ -567,33 +647,15 @@ const docTemplate = `{
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Search query",
-                        "name": "query",
-                        "in": "query",
+                        "description": "Path to search in (e.g., /home/user/projects)",
+                        "name": "path",
+                        "in": "path",
                         "required": true
-                    },
-                    {
-                        "type": "boolean",
-                        "description": "Include files in results (default: true)",
-                        "name": "includeFiles",
-                        "in": "query"
-                    },
-                    {
-                        "type": "boolean",
-                        "description": "Include directories in results (default: false)",
-                        "name": "includeDirs",
-                        "in": "query"
                     },
                     {
                         "type": "integer",
                         "description": "Maximum number of results to return (default: 20)",
                         "name": "maxResults",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "description": "Root directory to search in (relative path, default: current working directory)",
-                        "name": "directory",
                         "in": "query"
                     },
                     {
@@ -1507,6 +1569,35 @@ const docTemplate = `{
                 }
             }
         },
+        "FindMatch": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "example": "src/main.go"
+                },
+                "type": {
+                    "description": "\"file\" or \"directory\"",
+                    "type": "string",
+                    "example": "file"
+                }
+            }
+        },
+        "FindResponse": {
+            "type": "object",
+            "properties": {
+                "matches": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/FindMatch"
+                    }
+                },
+                "total": {
+                    "type": "integer",
+                    "example": 5
+                }
+            }
+        },
         "FuzzySearchMatch": {
             "type": "object",
             "properties": {
@@ -1533,10 +1624,6 @@ const docTemplate = `{
                     "items": {
                         "$ref": "#/definitions/FuzzySearchMatch"
                     }
-                },
-                "query": {
-                    "type": "string",
-                    "example": "main.go"
                 },
                 "total": {
                     "type": "integer",

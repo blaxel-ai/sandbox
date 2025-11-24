@@ -234,6 +234,69 @@ paths:
       summary: Code reranking/semantic search
       tags:
         - codegen
+  "/filesystem-find/{path}":
+    get:
+      description: Finds files and directories using the find command.
+      parameters:
+        - description: Path to search in (e.g., /home/user/projects)
+          in: path
+          name: path
+          required: true
+          schema:
+            type: string
+        - description: Type of search (file or directory)
+          in: query
+          name: type
+          schema:
+            type: string
+        - description: Comma-separated file patterns to include (e.g., *.go,*.js)
+          in: query
+          name: patterns
+          schema:
+            type: string
+        - description: "Maximum number of results to return (default: 20). If set to 0, all results will be returned."
+          in: query
+          name: maxResults
+          schema:
+            type: integer
+        - description: "Comma-separated directory names to skip (default: node_modules,vendor,.git,dist,build,target,__pycache__,.venv,.next,coverage). Use empty string to skip no directories."
+          in: query
+          name: excludeDirs
+          schema:
+            type: string
+        - description: "Exclude hidden files and directories (default: true)"
+          in: query
+          name: excludeHidden
+          schema:
+            type: boolean
+      responses:
+        "200":
+          description: Find results
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FindResponse"
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Unprocessable entity
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+      summary: Find files and directories
+      tags:
+        - filesystem
   /filesystem-multipart:
     get:
       description: List all active multipart uploads
@@ -469,36 +532,21 @@ paths:
       summary: Initiate multipart upload
       tags:
         - filesystem
-  /filesystem-search:
+  "/filesystem-search/{path}":
     get:
       description: Performs fuzzy search on filesystem paths using fuzzy matching algorithm. Optimized alternative to find and grep commands.
       parameters:
-        - description: Search query
-          in: query
-          name: query
+        - description: Path to search in (e.g., /home/user/projects)
+          in: path
+          name: path
           required: true
           schema:
             type: string
-        - description: "Include files in results (default: true)"
-          in: query
-          name: includeFiles
-          schema:
-            type: boolean
-        - description: "Include directories in results (default: false)"
-          in: query
-          name: includeDirs
-          schema:
-            type: boolean
         - description: "Maximum number of results to return (default: 20)"
           in: query
           name: maxResults
           schema:
             type: integer
-        - description: "Root directory to search in (relative path, default: current working directory)"
-          in: query
-          name: directory
-          schema:
-            type: string
         - description: Comma-separated file patterns to include (e.g., *.go,*.js)
           in: query
           name: patterns
@@ -1232,6 +1280,26 @@ components:
         - permissions
         - size
       type: object
+    FindMatch:
+      properties:
+        path:
+          example: src/main.go
+          type: string
+        type:
+          description: '"file" or "directory"'
+          example: file
+          type: string
+      type: object
+    FindResponse:
+      properties:
+        matches:
+          items:
+            $ref: "#/components/schemas/FindMatch"
+          type: array
+        total:
+          example: 5
+          type: integer
+      type: object
     FuzzySearchMatch:
       properties:
         path:
@@ -1251,9 +1319,6 @@ components:
           items:
             $ref: "#/components/schemas/FuzzySearchMatch"
           type: array
-        query:
-          example: main.go
-          type: string
         total:
           example: 5
           type: integer
