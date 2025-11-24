@@ -587,6 +587,17 @@ func (h *FileSystemHandler) HandleDeleteFile(c *gin.Context) {
 }
 
 // HandleGetTree handles GET requests for directory trees
+// @Summary Get directory tree
+// @Description Get a recursive directory tree structure starting from the specified path
+// @Tags filesystem
+// @Accept json
+// @Produce json
+// @Param path path string true "Root directory path"
+// @Success 200 {object} filesystem.Directory "Directory tree"
+// @Failure 400 {object} ErrorResponse "Bad request"
+// @Failure 422 {object} ErrorResponse "Unprocessable entity"
+// @Failure 500 {object} ErrorResponse "Internal server error"
+// @Router /filesystem/tree/{path} [get]
 func (h *FileSystemHandler) HandleGetTree(c *gin.Context) {
 	rootPath, exists := c.Get("rootPath")
 	if !exists {
@@ -629,7 +640,24 @@ func (h *FileSystemHandler) HandleGetTree(c *gin.Context) {
 	h.SendJSON(c, http.StatusOK, dir)
 }
 
+// TreeRequest represents the request body for creating or updating a directory tree
+type TreeRequest struct {
+	Files map[string]string `json:"files" example:"{\"file1.txt\":\"content1\",\"dir/file2.txt\":\"content2\"}"`
+} // @name TreeRequest
+
 // HandleCreateOrUpdateTree handles PUT requests for directory trees
+// @Summary Create or update directory tree
+// @Description Create or update multiple files within a directory tree structure
+// @Tags filesystem
+// @Accept json
+// @Produce json
+// @Param path path string true "Root directory path"
+// @Param request body TreeRequest true "Map of file paths to content"
+// @Success 200 {object} filesystem.Directory "Updated directory tree"
+// @Failure 400 {object} ErrorResponse "Bad request"
+// @Failure 422 {object} ErrorResponse "Unprocessable entity"
+// @Failure 500 {object} ErrorResponse "Internal server error"
+// @Router /filesystem/tree/{path} [put]
 func (h *FileSystemHandler) HandleCreateOrUpdateTree(c *gin.Context) {
 	rootPath, exists := c.Get("rootPath")
 	if !exists {
@@ -710,6 +738,18 @@ func (h *FileSystemHandler) HandleCreateOrUpdateTree(c *gin.Context) {
 }
 
 // HandleDeleteTree handles DELETE requests for directory trees
+// @Summary Delete directory tree
+// @Description Delete a directory tree recursively
+// @Tags filesystem
+// @Accept json
+// @Produce json
+// @Param path path string true "Root directory path"
+// @Param recursive query boolean false "Delete directory recursively"
+// @Success 200 {object} SuccessResponse "Directory deleted successfully"
+// @Failure 400 {object} ErrorResponse "Bad request"
+// @Failure 422 {object} ErrorResponse "Unprocessable entity"
+// @Failure 500 {object} ErrorResponse "Internal server error"
+// @Router /filesystem/tree/{path} [delete]
 func (h *FileSystemHandler) HandleDeleteTree(c *gin.Context) {
 	rootPath, exists := c.Get("rootPath")
 	if !exists {
