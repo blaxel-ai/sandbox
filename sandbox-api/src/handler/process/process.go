@@ -193,7 +193,19 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 		logWriters:       make([]io.Writer, 0),
 	}
 
-	// Start the process
+	// Start the process FIRST, before launching reader goroutines.
+	// This is the standard Go pattern for exec.Cmd with pipes.
+	//
+	// Why this order matters:
+	// - StdoutPipe()/StderrPipe() create pipes whose write-ends are only
+	//   connected to the child process during cmd.Start().
+	// - If reader goroutines start BEFORE cmd.Start(), the pipes have no
+	//   writer yet, so Read() immediately returns EOF and exits.
+	// - When workingDir is a FUSE mount (/agent), os.Stat() adds latency
+	//   before Start(), giving the scheduler time to run readers early,
+	//   causing the EOF race on fast commands.
+	// - Starting readers AFTER cmd.Start() ensures the pipes are connected
+	//   and output is buffered by the kernel until we read it.
 	if err := cmd.Start(); err != nil {
 		return "", err
 	}
@@ -204,8 +216,13 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 	pm.processes[process.PID] = process
 	pm.mu.Unlock()
 
+	// WaitGroup to ensure stdout/stderr goroutines finish before marking process complete
+	var outputWg sync.WaitGroup
+	outputWg.Add(2) // For stdout and stderr goroutines
+
 	// Handle stdout
 	go func() {
+		defer outputWg.Done()
 		buf := make([]byte, 4096)
 		for {
 			n, err := stdoutPipe.Read(buf)
@@ -232,6 +249,7 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 
 	// Handle stderr
 	go func() {
+		defer outputWg.Done()
 		buf := make([]byte, 4096)
 		for {
 			n, err := stderrPipe.Read(buf)
@@ -257,6 +275,11 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 	}()
 
 	go func() {
+		// Wait for stdout/stderr goroutines to finish reading all output before
+		// reaping the process. cmd.Wait() closes our pipe file descriptors when it
+		// returns, so calling it too early can drop buffered output for very fast
+		// commands. Deferring Wait until after the readers complete removes that race.
+		outputWg.Wait()
 		err := cmd.Wait()
 		now := time.Now()
 
@@ -420,8 +443,13 @@ func (pm *ProcessManager) restartProcess(oldProcess *ProcessInfo, callback func(
 	pm.processes[oldProcess.PID] = oldProcess
 	pm.mu.Unlock()
 
+	// WaitGroup to ensure stdout/stderr goroutines finish before marking process complete
+	var outputWg sync.WaitGroup
+	outputWg.Add(2) // For stdout and stderr goroutines
+
 	// Handle stdout
 	go func() {
+		defer outputWg.Done()
 		buf := make([]byte, 4096)
 		for {
 			n, err := stdoutPipe.Read(buf)
@@ -448,6 +476,7 @@ func (pm *ProcessManager) restartProcess(oldProcess *ProcessInfo, callback func(
 
 	// Handle stderr
 	go func() {
+		defer outputWg.Done()
 		buf := make([]byte, 4096)
 		for {
 			n, err := stderrPipe.Read(buf)
@@ -474,6 +503,9 @@ func (pm *ProcessManager) restartProcess(oldProcess *ProcessInfo, callback func(
 
 	// Monitor the restarted process
 	go func() {
+		// Drain stdout/stderr fully before reaping the process to avoid losing
+		// buffered output on very fast exits.
+		outputWg.Wait()
 		err := cmd.Wait()
 		now := time.Now()
 
@@ -581,10 +613,13 @@ func (pm *ProcessManager) GetProcessByIdentifier(identifier string) (*ProcessInf
 				process.ProcessPid = pidInt
 			}
 		}
+		// Acquire logLock to safely read logs (they're written under this lock)
+		process.logLock.RLock()
 		if process.logs != nil && process.logs.Len() > 0 {
 			logs := process.logs.String()
 			process.Logs = &logs
 		}
+		process.logLock.RUnlock()
 		return process, true
 	}
 	// Search by name - find the most recent process with this name
@@ -598,10 +633,13 @@ func (pm *ProcessManager) GetProcessByIdentifier(identifier string) (*ProcessInf
 	}
 
 	if latestProcess != nil {
+		// Acquire logLock to safely read logs (they're written under this lock)
+		latestProcess.logLock.RLock()
 		if latestProcess.logs != nil {
 			logs := latestProcess.logs.String()
 			latestProcess.Logs = &logs
 		}
+		latestProcess.logLock.RUnlock()
 		return latestProcess, true
 	}
 
