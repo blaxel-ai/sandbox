@@ -551,6 +551,98 @@ const docTemplate = `{
                 }
             }
         },
+        "/filesystem-search": {
+            "get": {
+                "description": "Performs fuzzy search on filesystem paths using fuzzy matching algorithm. Optimized alternative to find and grep commands.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "filesystem"
+                ],
+                "summary": "Fuzzy search for files and directories",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Search query",
+                        "name": "query",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "Include files in results (default: true)",
+                        "name": "includeFiles",
+                        "in": "query"
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "Include directories in results (default: false)",
+                        "name": "includeDirs",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Maximum number of results to return (default: 20)",
+                        "name": "maxResults",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Root directory to search in (relative path, default: current working directory)",
+                        "name": "directory",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Comma-separated file patterns to include (e.g., *.go,*.js)",
+                        "name": "patterns",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Comma-separated directory names to skip (default: node_modules,vendor,.git,dist,build,target,__pycache__,.venv,.next,coverage). Use empty string to skip no directories.",
+                        "name": "excludeDirs",
+                        "in": "query"
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "Exclude hidden files and directories (default: true)",
+                        "name": "excludeHidden",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Fuzzy search results",
+                        "schema": {
+                            "$ref": "#/definitions/FuzzySearchResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable entity",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/filesystem/{path}": {
             "get": {
                 "description": "Get content of a file or listing of a directory. Use Accept header to control response format for files.",
@@ -1412,6 +1504,43 @@ const docTemplate = `{
                 },
                 "size": {
                     "type": "integer"
+                }
+            }
+        },
+        "FuzzySearchMatch": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "example": "src/main.go"
+                },
+                "score": {
+                    "type": "integer",
+                    "example": 100
+                },
+                "type": {
+                    "description": "\"file\" or \"directory\"",
+                    "type": "string",
+                    "example": "file"
+                }
+            }
+        },
+        "FuzzySearchResponse": {
+            "type": "object",
+            "properties": {
+                "matches": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/FuzzySearchMatch"
+                    }
+                },
+                "query": {
+                    "type": "string",
+                    "example": "main.go"
+                },
+                "total": {
+                    "type": "integer",
+                    "example": 5
                 }
             }
         },
