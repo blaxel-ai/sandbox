@@ -85,7 +85,7 @@ func BenchmarkProcessExecutionHTTP(b *testing.B) {
 	}
 
 	for _, cmd := range commands {
-		b.Run(cmd.name, func(b *testing.B) {
+		b.Run(fmt.Sprintf("BenchmarkProcessExecutionHTTP-%s", cmd.name), func(b *testing.B) {
 			requestBody := map[string]interface{}{
 				"command":           cmd.command,
 				"workingDir":        "/",
