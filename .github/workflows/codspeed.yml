@@ -20,11 +20,12 @@ jobs:
 
       - uses: actions/setup-go@v6
         with:
-          go-version: '1.23'
+          go-version: '1.25'
 
       - name: Run benchmarks
         uses: CodSpeedHQ/action@v2
         with:
+          mode: walltime
           run: |
             cd sandbox-api && go test -bench=. ./src/handler/process
 
