@@ -23,7 +23,7 @@ jobs:
           go-version: '1.25'
 
       - name: Run benchmarks
-        uses: CodSpeedHQ/action@v2
+        uses: CodSpeedHQ/action@v4
         with:
           mode: walltime
           run: |
