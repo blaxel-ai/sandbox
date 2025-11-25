@@ -27,4 +27,4 @@ jobs:
         with:
           mode: walltime
           run: |
-            cd sandbox-api && make benchmark
+            make benchmark
