@@ -8,6 +8,10 @@ on:
     branches:
       - main
 
+permissions: # optional for public repositories
+  contents: read # required for actions/checkout
+  id-token: write # required for OIDC authentication with CodSpeed
+
 jobs:
   benchmarks:
     runs-on: codspeed-macro
@@ -23,5 +27,4 @@ jobs:
         with:
           run: |
             cd sandbox-api && go test -bench=. ./src/handler/process
-          token: ${{ secrets.CODSPEED_TOKEN }}
 
