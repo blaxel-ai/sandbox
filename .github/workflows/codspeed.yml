@@ -16,7 +16,7 @@ jobs:
   benchmarks:
     runs-on: codspeed-macro
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: actions/setup-go@v6
         with:
@@ -27,6 +27,4 @@ jobs:
         with:
           mode: walltime
           run: |
-            cd sandbox-api && go test -bench=. ./src/handler/process
-
-
+            cd sandbox-api && make benchmark

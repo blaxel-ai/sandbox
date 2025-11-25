@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"fmt"
 	"math"
 	"net/http"
@@ -17,7 +18,8 @@ import (
 )
 
 // SetupRouter configures all the routes for the Sandbox API
-func SetupRouter() *gin.Engine {
+// If disableRequestLogging is true, the logrus middleware will be skipped
+func SetupRouter(disableRequestLogging ...bool) *gin.Engine {
 	// Initialize the router
 	r := gin.New()
 
@@ -30,8 +32,11 @@ func SetupRouter() *gin.Engine {
 	// Add middleware to prevent caching
 	r.Use(noCacheMiddleware())
 
-	// Add logrus middleware
-	r.Use(logrusMiddleware())
+	// Add logrus middleware unless disabled
+	skipLogging := len(disableRequestLogging) > 0 && disableRequestLogging[0]
+	if !skipLogging {
+		r.Use(logrusMiddleware())
+	}
 
 	// Swagger documentation route
 	r.GET("/swagger", func(c *gin.Context) {
@@ -174,10 +179,33 @@ func noCacheMiddleware() gin.HandlerFunc {
 	}
 }
 
+// responseBodyWriter wraps gin.ResponseWriter to capture the response body
+type responseBodyWriter struct {
+	gin.ResponseWriter
+	body *bytes.Buffer
+}
+
+func (w *responseBodyWriter) Write(b []byte) (int, error) {
+	w.body.Write(b)
+	return w.ResponseWriter.Write(b)
+}
+
+func (w *responseBodyWriter) WriteString(s string) (int, error) {
+	w.body.WriteString(s)
+	return w.ResponseWriter.WriteString(s)
+}
+
 func logrusMiddleware() gin.HandlerFunc {
 	var skip map[string]struct{}
 
 	return func(c *gin.Context) {
+		// Wrap the response writer to capture the response body
+		wrappedWriter := &responseBodyWriter{
+			ResponseWriter: c.Writer,
+			body:           &bytes.Buffer{},
+		}
+		c.Writer = wrappedWriter
+
 		// other handler can change c.Path so:
 		path := c.Request.URL.Path
 		if c.Request.URL.RawQuery != "" {
@@ -204,7 +232,12 @@ func logrusMiddleware() gin.HandlerFunc {
 			if statusCode >= http.StatusInternalServerError {
 				logrus.Error(msg)
 			} else if statusCode >= http.StatusBadRequest {
-				logrus.Error(msg)
+				responseBody := wrappedWriter.body.String()
+				// Truncate long responses for readability
+				if len(responseBody) > 500 {
+					responseBody = responseBody[:500] + "... (truncated)"
+				}
+				logrus.Errorf("%s -> %s", msg, responseBody)
 			} else {
 				logrus.Info(msg)
 			}
