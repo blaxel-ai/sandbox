@@ -1,4 +1,4 @@
-FROM --platform=linux/amd64 golang:1.23.3-bookworm as build
+FROM --platform=linux/amd64 golang:1.25.0-bookworm as build
 
 WORKDIR /blaxel/sandbox-api
 
