@@ -65,7 +65,10 @@ func checkCodegenConfigured(t *testing.T) bool {
 	defer resp.Body.Close()
 	body, err := io.ReadAll(resp.Body)
 	require.NoError(t, err, "Should read response body")
-	return strings.Contains(string(body), "codegen tools are not configured")
+	if resp.StatusCode == http.StatusNotFound {
+		return false
+	}
+	return !strings.Contains(string(body), "codegen tools are not configured")
 }
 
 // setupHTTP initializes HTTP test client
