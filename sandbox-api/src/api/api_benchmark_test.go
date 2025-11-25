@@ -108,18 +108,23 @@ func BenchmarkListDirectory(b *testing.B) {
 func BenchmarkWriteFile(b *testing.B) {
 	router := setupBenchmarkRouter()
 	testContent := "Hello world"
+	// Prepare JSON data outside the loop since content is constant
+	requestBody := map[string]interface{}{
+		"content": testContent,
+	}
+	jsonData, _ := json.Marshal(requestBody)
+	w := new(DummyResponseWriter)
 
 	b.ResetTimer()
 	for b.Loop() {
+		// Pause timer during setup operations
+		b.StopTimer()
 		testPath := fmt.Sprintf("/tmp/test-write-%d", time.Now().UnixNano())
-		requestBody := map[string]interface{}{
-			"content": testContent,
-		}
-		jsonData, _ := json.Marshal(requestBody)
 		req, _ := http.NewRequest(http.MethodPut, encodeFilesystemPath(testPath), bytes.NewBuffer(jsonData))
 		req.Header.Set("Content-Type", "application/json")
+		b.StartTimer()
 
-		w := new(DummyResponseWriter)
+		// Only measure the actual HTTP request handling
 		router.ServeHTTP(w, req)
 	}
 }
@@ -148,23 +153,28 @@ func BenchmarkReadFile(b *testing.B) {
 // BenchmarkDeleteFile benchmarks deleting a file
 func BenchmarkDeleteFile(b *testing.B) {
 	router := setupBenchmarkRouter()
+	testContent := "Hello world"
+	// Prepare JSON data outside the loop since content is constant
+	requestBody := map[string]interface{}{
+		"content": testContent,
+	}
+	jsonData, _ := json.Marshal(requestBody)
+	w := new(DummyResponseWriter)
 
 	b.ResetTimer()
 	for b.Loop() {
-		// Setup: create a test file first
+		// Pause timer during file creation setup
+		b.StopTimer()
 		testPath := fmt.Sprintf("/tmp/test-delete-%d", time.Now().UnixNano())
-		testContent := "Hello world"
-		requestBody := map[string]interface{}{
-			"content": testContent,
-		}
-		jsonData, _ := json.Marshal(requestBody)
 		createReq, _ := http.NewRequest(http.MethodPut, encodeFilesystemPath(testPath), bytes.NewBuffer(jsonData))
 		createReq.Header.Set("Content-Type", "application/json")
-		w := new(DummyResponseWriter)
 		router.ServeHTTP(w, createReq)
 
-		// Benchmark deleting
+		// Prepare delete request
 		deleteReq, _ := http.NewRequest(http.MethodDelete, encodeFilesystemPath(testPath), nil)
+		b.StartTimer()
+
+		// Only measure the actual delete operation
 		router.ServeHTTP(w, deleteReq)
 	}
 }
