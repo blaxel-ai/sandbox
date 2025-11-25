@@ -58,6 +58,7 @@ func main() {
 		docs.SwaggerInfo.Schemes = []string{"http"}
 	}
 	gin.SetMode(gin.ReleaseMode)
+	disableRequestLogging := os.Getenv("DISABLE_REQUEST_LOGGING") == "true"
 	// Define command-line flags
 	port := flag.Int("port", 8080, "Port to listen on")
 	shortPort := flag.Int("p", 8080, "Port to listen on (shorthand)")
@@ -139,7 +140,7 @@ func main() {
 	}
 
 	// Set up the router with all our API routes
-	router := api.SetupRouter()
+	router := api.SetupRouter(disableRequestLogging)
 	mcpServer, err := mcp.NewServer(router)
 	if err != nil {
 		logrus.Fatalf("Failed to create MCP server: %v", err)

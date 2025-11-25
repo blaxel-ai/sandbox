@@ -35,15 +35,20 @@ def format_time(ms: float) -> str:
         return f"{ms/1000:.2f}s"
 
 
-def run_filesystem_list() -> float:
+def run_process() -> float:
     """Run filesystem list API call and return elapsed time in ms"""
     start = time.time()
     
     # Encode path: /Users/... -> %2FUsers%2F...
     encoded_path = TEST_DIR.replace("/", "%2F")
     
-    response = requests.get(
-        f"{API_URL}/filesystem/{encoded_path}",
+    response = requests.post(
+        f"{API_URL}/process",
+        json={
+            "command": "ls -la",
+            "workingDir": TEST_DIR,
+            "waitForCompletion": True,
+        },
         timeout=30
     )
     elapsed_ms = (time.time() - start) * 1000
@@ -84,7 +89,7 @@ def main():
     # Warmup
     print(f"{Colors.YELLOW}Warming up...{Colors.NC}")
     try:
-        warmup_time = run_filesystem_list()
+        warmup_time = run_process()
         print(f"  {Colors.GREEN}✓{Colors.NC} Warmup completed: {format_time(warmup_time)}\n")
     except Exception as e:
         print(f"{Colors.RED}✗ Warmup failed: {e}{Colors.NC}")
@@ -104,7 +109,7 @@ def main():
             print(f"  Progress: {i + 1}/{NUM_CALLS} ({progress:.1f}%) - {rate:.1f} req/s", end='\r', flush=True)
         
         try:
-            elapsed_ms = run_filesystem_list()
+            elapsed_ms = run_process()
             times.append(elapsed_ms)
         except Exception as e:
             errors += 1

@@ -7,11 +7,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gin-contrib/pprof"
+	//"github.com/gin-contrib/pprof"
 	"github.com/gin-gonic/gin"
 	"github.com/sirupsen/logrus"
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
+
+	jsoniter "github.com/json-iterator/go"
 
 	_ "github.com/blaxel-ai/sandbox-api/docs" // Import generated docs
 	"github.com/blaxel-ai/sandbox-api/src/handler"
@@ -20,6 +22,7 @@ import (
 // SetupRouter configures all the routes for the Sandbox API
 // If disableRequestLogging is true, the logrus middleware will be skipped
 func SetupRouter(disableRequestLogging ...bool) *gin.Engine {
+	var _ = jsoniter.ConfigCompatibleWithStandardLibrary
 	// Initialize the router
 	r := gin.New()
 
@@ -49,7 +52,7 @@ func SetupRouter(disableRequestLogging ...bool) *gin.Engine {
 	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 
 	// Register pprof profiling routes at /debug/pprof
-	pprof.Register(r)
+	//pprof.Register(r)
 
 	// Initialize handlers
 	baseHandler := handler.NewBaseHandler()
