@@ -17,7 +17,8 @@ import (
 )
 
 // SetupRouter configures all the routes for the Sandbox API
-func SetupRouter() *gin.Engine {
+// If disableRequestLogging is true, the logrus middleware will be skipped
+func SetupRouter(disableRequestLogging ...bool) *gin.Engine {
 	// Initialize the router
 	r := gin.New()
 
@@ -30,8 +31,11 @@ func SetupRouter() *gin.Engine {
 	// Add middleware to prevent caching
 	r.Use(noCacheMiddleware())
 
-	// Add logrus middleware
-	r.Use(logrusMiddleware())
+	// Add logrus middleware unless disabled
+	skipLogging := len(disableRequestLogging) > 0 && disableRequestLogging[0]
+	if !skipLogging {
+		r.Use(logrusMiddleware())
+	}
 
 	// Swagger documentation route
 	r.GET("/swagger", func(c *gin.Context) {
@@ -178,6 +182,7 @@ func logrusMiddleware() gin.HandlerFunc {
 	var skip map[string]struct{}
 
 	return func(c *gin.Context) {
+
 		// other handler can change c.Path so:
 		path := c.Request.URL.Path
 		if c.Request.URL.RawQuery != "" {
