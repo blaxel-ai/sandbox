@@ -255,6 +255,16 @@ func (fs *Filesystem) DirectoryExists(path string) (bool, error) {
 	return info.IsDir(), nil
 }
 
+// Infos returns the information about a file or directory
+func (fs *Filesystem) Infos(path string) (os.FileInfo, error) {
+	absPath, err := fs.GetAbsolutePath(path)
+	if err != nil {
+		return nil, err
+	}
+
+	return os.Lstat(absPath)
+}
+
 // ReadFile reads a file and returns its contents
 func (fs *Filesystem) ReadFile(path string) (*FileWithContentByte, error) {
 	absPath, err := fs.GetAbsolutePath(path)

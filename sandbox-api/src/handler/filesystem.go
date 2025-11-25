@@ -270,25 +270,22 @@ func (h *FileSystemHandler) HandleGetFile(c *gin.Context) {
 	}
 
 	// Check if path is a directory
-	isDir, err := h.DirectoryExists(path)
+	info, err := h.fs.Infos(path)
 	if err != nil {
-		h.SendError(c, http.StatusUnprocessableEntity, err)
+		if os.IsNotExist(err) {
+			h.SendError(c, http.StatusNotFound, err)
+			return
+		}
+		h.SendError(c, http.StatusInternalServerError, err)
 		return
 	}
 
-	if isDir {
+	if info.IsDir() {
 		h.handleListDirectory(c, path)
 		return
 	}
 
-	// Check if path is a file
-	isFile, err := h.FileExists(path)
-	if err != nil {
-		h.SendError(c, http.StatusUnprocessableEntity, err)
-		return
-	}
-
-	if isFile {
+	if !info.IsDir() {
 		h.handleReadFile(c, path)
 		return
 	}
@@ -380,11 +377,7 @@ func (h *FileSystemHandler) handleReadFile(c *gin.Context, path string) {
 			contentType = "image/svg+xml"
 		}
 
-		c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", filename))
-		c.Header("Content-Type", contentType)
-		c.Header("Content-Length", strconv.FormatInt(info.Size(), 10))
-
-		// Open file and stream directly to response
+		// Open file for zero-copy transfer
 		file, err := os.Open(absPath)
 		if err != nil {
 			h.SendError(c, http.StatusUnprocessableEntity, fmt.Errorf("error opening file: %w", err))
@@ -392,12 +385,13 @@ func (h *FileSystemHandler) handleReadFile(c *gin.Context, path string) {
 		}
 		defer file.Close()
 
-		// Stream file content directly to HTTP response (no memory buffering)
-		c.Status(http.StatusOK)
-		if _, err := io.Copy(c.Writer, file); err != nil {
-			logrus.Errorf("Error streaming file: %v", err)
-			return
-		}
+		// Set headers before ServeContent
+		c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", filename))
+		c.Header("Content-Type", contentType)
+
+		// Use http.ServeContent for zero-copy transfer via sendfile() syscall
+		// This transfers data directly from file descriptor to socket without user-space copying
+		http.ServeContent(c.Writer, c.Request, filename, info.ModTime(), file)
 		return
 	}
 

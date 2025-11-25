@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gin-contrib/pprof"
 	"github.com/gin-gonic/gin"
 	"github.com/sirupsen/logrus"
 	swaggerFiles "github.com/swaggo/files"
@@ -25,6 +26,8 @@ func SetupRouter(disableRequestLogging ...bool) *gin.Engine {
 	// Add recovery middleware
 	r.Use(gin.Recovery())
 
+	// r.Use(brotli.Brotli(brotli.DefaultCompression))
+
 	// Add middleware for CORS
 	r.Use(corsMiddleware())
 
@@ -36,12 +39,17 @@ func SetupRouter(disableRequestLogging ...bool) *gin.Engine {
 	if !skipLogging {
 		r.Use(logrusMiddleware())
 	}
+	// Add logrus middleware
+	// r.Use(logrusMiddleware())
 
 	// Swagger documentation route
 	r.GET("/swagger", func(c *gin.Context) {
 		c.Redirect(301, "/swagger/index.html")
 	})
 	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
+
+	// Register pprof profiling routes at /debug/pprof
+	pprof.Register(r)
 
 	// Initialize handlers
 	baseHandler := handler.NewBaseHandler()
