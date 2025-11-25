@@ -1,8 +1,6 @@
 module github.com/blaxel-ai/sandbox-api/integration_tests
 
-go 1.23.3
-
-toolchain go1.23.8
+go 1.25.0
 
 require (
 	github.com/blaxel-ai/sandbox-api v0.0.0

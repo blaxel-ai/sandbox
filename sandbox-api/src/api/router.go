@@ -1,7 +1,6 @@
 package api
 
 import (
-	"bytes"
 	"fmt"
 	"math"
 	"net/http"
@@ -179,32 +178,10 @@ func noCacheMiddleware() gin.HandlerFunc {
 	}
 }
 
-// responseBodyWriter wraps gin.ResponseWriter to capture the response body
-type responseBodyWriter struct {
-	gin.ResponseWriter
-	body *bytes.Buffer
-}
-
-func (w *responseBodyWriter) Write(b []byte) (int, error) {
-	w.body.Write(b)
-	return w.ResponseWriter.Write(b)
-}
-
-func (w *responseBodyWriter) WriteString(s string) (int, error) {
-	w.body.WriteString(s)
-	return w.ResponseWriter.WriteString(s)
-}
-
 func logrusMiddleware() gin.HandlerFunc {
 	var skip map[string]struct{}
 
 	return func(c *gin.Context) {
-		// Wrap the response writer to capture the response body
-		wrappedWriter := &responseBodyWriter{
-			ResponseWriter: c.Writer,
-			body:           &bytes.Buffer{},
-		}
-		c.Writer = wrappedWriter
 
 		// other handler can change c.Path so:
 		path := c.Request.URL.Path
@@ -232,12 +209,7 @@ func logrusMiddleware() gin.HandlerFunc {
 			if statusCode >= http.StatusInternalServerError {
 				logrus.Error(msg)
 			} else if statusCode >= http.StatusBadRequest {
-				responseBody := wrappedWriter.body.String()
-				// Truncate long responses for readability
-				if len(responseBody) > 500 {
-					responseBody = responseBody[:500] + "... (truncated)"
-				}
-				logrus.Errorf("%s -> %s", msg, responseBody)
+				logrus.Error(msg)
 			} else {
 				logrus.Info(msg)
 			}
