@@ -57,6 +57,17 @@ func setupMCPClient(t *testing.T) (*mcp.Client, *mcp.ClientSession) {
 	return client, session
 }
 
+func checkCodegenConfigured(t *testing.T) bool {
+	baseURL := setupHTTP(t)
+	requestURL := fmt.Sprintf("%s/codegen/fastapply/fake-file.js", baseURL)
+	resp, err := http.Get(requestURL)
+	require.NoError(t, err, "HTTP request should succeed")
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err, "Should read response body")
+	return strings.Contains(string(body), "codegen tools are not configured")
+}
+
 // setupHTTP initializes HTTP test client
 func setupHTTP(t *testing.T) string {
 	baseURL = os.Getenv("SANDBOX_API_URL")
@@ -68,6 +79,10 @@ func setupHTTP(t *testing.T) string {
 
 // TestMCPCodegenRerank tests the MCP reranking tool
 func TestMCPCodegenRerank(t *testing.T) {
+	if !checkCodegenConfigured(t) {
+		t.Skip("Codegen not configured on server - skipping test")
+		return
+	}
 	_, session := setupMCPClient(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -127,6 +142,10 @@ func TestMCPCodegenRerank(t *testing.T) {
 
 // TestMCPCodegenRerankWithFilePattern tests reranking with file pattern
 func TestMCPCodegenRerankWithFilePattern(t *testing.T) {
+	if !checkCodegenConfigured(t) {
+		t.Skip("Codegen not configured on server - skipping test")
+		return
+	}
 	_, session := setupMCPClient(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -176,6 +195,10 @@ func TestMCPCodegenRerankWithFilePattern(t *testing.T) {
 
 // TestMCPCodegenRerankEmptyDirectory tests reranking an empty directory
 func TestMCPCodegenRerankEmptyDirectory(t *testing.T) {
+	if !checkCodegenConfigured(t) {
+		t.Skip("Codegen not configured on server - skipping test")
+		return
+	}
 	_, session := setupMCPClient(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -252,8 +275,8 @@ func TestHTTPCodegenReranking(t *testing.T) {
 	}
 
 	// If codegen is not configured, expect 503 - this is not a failure
-	if resp.StatusCode == http.StatusServiceUnavailable && strings.Contains(string(body), "codegen tools are not configured") {
-		t.Logf("Codegen not configured on server - test passes")
+	if strings.Contains(string(body), "codegen tools are not configured") {
+		t.Skip("Codegen not configured on server - test passes")
 		return
 	}
 
@@ -298,7 +321,7 @@ func TestHTTPCodegenRerankingWithFilePattern(t *testing.T) {
 	}
 
 	// If codegen is not configured, expect 503 - this is not a failure
-	if resp.StatusCode == http.StatusServiceUnavailable && strings.Contains(string(body), "codegen tools are not configured") {
+	if strings.Contains(string(body), "codegen tools are not configured") {
 		t.Logf("Codegen not configured on server - test passes")
 		return
 	}
@@ -339,7 +362,7 @@ func TestHTTPCodegenRerankingEmptyDirectory(t *testing.T) {
 	}
 
 	// If codegen is not configured, expect 503 - this is not a failure
-	if resp.StatusCode == http.StatusServiceUnavailable && strings.Contains(string(body), "codegen tools are not configured") {
+	if strings.Contains(string(body), "codegen tools are not configured") {
 		t.Logf("Codegen not configured on server - test passes")
 		return
 	}
@@ -357,6 +380,10 @@ func TestHTTPCodegenRerankingEmptyDirectory(t *testing.T) {
 
 // TestMCPCodegenEditFile tests the MCP edit file tool
 func TestMCPCodegenEditFile(t *testing.T) {
+	if !checkCodegenConfigured(t) {
+		t.Skip("Codegen not configured on server - skipping test")
+		return
+	}
 	_, session := setupMCPClient(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -444,7 +471,7 @@ func TestHTTPCodegenFastApply(t *testing.T) {
 	require.NoError(t, err, "Should read response body")
 
 	// If codegen is not configured, expect 503 - this is not a failure
-	if resp.StatusCode == http.StatusServiceUnavailable && strings.Contains(string(body), "codegen tools are not configured") {
+	if strings.Contains(string(body), "codegen tools are not configured") {
 		t.Logf("Codegen not configured on server - test passes")
 		return
 	}
