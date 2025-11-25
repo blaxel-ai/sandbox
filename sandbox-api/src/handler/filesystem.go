@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -1293,11 +1294,11 @@ func (h *FileSystemHandler) HandleFind(c *gin.Context) {
 			excludeDirs[i] = strings.TrimSpace(d)
 		}
 	} else {
-		// Default directories to exclude
-		excludeDirs = []string{
-			"node_modules", "vendor", ".git", "dist", "build",
-			"target", "__pycache__", ".venv", ".next", "coverage",
-		}
+		// // Default directories to exclude
+		// excludeDirs = []string{
+		// 	"node_modules", "vendor", ".git", "dist", "build",
+		// 	"target", "__pycache__", ".venv", ".next", "coverage",
+		// }
 	}
 	// Create a map for O(1) lookup
 	excludeDirsMap := make(map[string]bool)
@@ -1310,7 +1311,7 @@ func (h *FileSystemHandler) HandleFind(c *gin.Context) {
 	// Parse excludeHidden (default: true)
 	excludeHidden := true
 	if c.Query("excludeHidden") != "" {
-		excludeHidden = c.Query("excludeHidden") == "true"
+		excludeHidden = c.Query("excludeHidden") == "true" // .test or .example
 	}
 
 	// Get absolute path for searching
@@ -1324,33 +1325,30 @@ func (h *FileSystemHandler) HandleFind(c *gin.Context) {
 	candidates := []string{}
 	candidateTypes := make(map[string]string)
 
-	err = filepath.Walk(absSearchDir, func(path string, info os.FileInfo, err error) error {
+	err = filepath.WalkDir(absSearchDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
-			return nil
+			return err
 		}
 
 		base := filepath.Base(path)
 
 		// Skip hidden files and directories if excludeHidden is true
 		if excludeHidden && len(base) > 0 && base[0] == '.' {
-			if info.IsDir() {
+			if d.IsDir() {
 				return filepath.SkipDir
 			}
 			return nil
 		}
 
-		// Skip directories that are in the exclude list
-		if info.IsDir() && excludeDirsMap[base] {
-			return filepath.SkipDir
+		// Check file patterns for files
+		if searchType == "file" && d.IsDir() {
+			return nil
 		}
-
-		// Skip the root directory itself
-		if path == absSearchDir {
+		if searchType == "directory" && !d.IsDir() {
 			return nil
 		}
 
-		// Check file patterns for files
-		if !info.IsDir() && len(patterns) > 0 {
+		if !d.IsDir() && len(patterns) > 0 {
 			matched := false
 			for _, pattern := range patterns {
 				if match, _ := filepath.Match(pattern, base); match {
@@ -1364,7 +1362,7 @@ func (h *FileSystemHandler) HandleFind(c *gin.Context) {
 		}
 
 		candidates = append(candidates, path)
-		if info.IsDir() {
+		if d.IsDir() {
 			candidateTypes[path] = "directory"
 		} else {
 			candidateTypes[path] = "file"
