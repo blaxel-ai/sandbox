@@ -234,6 +234,75 @@ paths:
       summary: Code reranking/semantic search
       tags:
         - codegen
+  "/filesystem-content-search/{path}":
+    get:
+      description: Searches for text content inside files using ripgrep. Returns matching lines with context.
+      parameters:
+        - description: Directory path to search in
+          in: path
+          name: path
+          required: true
+          schema:
+            type: string
+        - description: Text to search for
+          in: query
+          name: query
+          required: true
+          schema:
+            type: string
+        - description: "Case sensitive search (default: false)"
+          in: query
+          name: caseSensitive
+          schema:
+            type: boolean
+        - description: "Number of context lines to include (default: 0)"
+          in: query
+          name: contextLines
+          schema:
+            type: integer
+        - description: "Maximum number of results to return (default: 100)"
+          in: query
+          name: maxResults
+          schema:
+            type: integer
+        - description: File pattern to include (e.g., *.go)
+          in: query
+          name: filePattern
+          schema:
+            type: string
+        - description: "Comma-separated directory names to skip (default: node_modules,vendor,.git,dist,build,target,__pycache__,.venv,.next,coverage)"
+          in: query
+          name: excludeDirs
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Content search results
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContentSearchResponse"
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Unprocessable entity
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+      summary: Search for text content in files
+      tags:
+        - filesystem
   "/filesystem-find/{path}":
     get:
       description: Finds files and directories using the find command.
@@ -1185,6 +1254,40 @@ components:
               console.log('Hello', world);
             }
           type: string
+      type: object
+    ContentSearchMatch:
+      properties:
+        column:
+          example: 10
+          type: integer
+        context:
+          example: |-
+            previous line
+            current line
+            next line
+          type: string
+        line:
+          example: 42
+          type: integer
+        path:
+          example: src/main.go
+          type: string
+        text:
+          example: const searchText = 'example'
+          type: string
+      type: object
+    ContentSearchResponse:
+      properties:
+        matches:
+          items:
+            $ref: "#/components/schemas/ContentSearchMatch"
+          type: array
+        query:
+          example: searchText
+          type: string
+        total:
+          example: 5
+          type: integer
       type: object
     Directory:
       properties:

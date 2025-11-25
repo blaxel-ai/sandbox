@@ -256,6 +256,93 @@ const docTemplate = `{
                 }
             }
         },
+        "/filesystem-content-search/{path}": {
+            "get": {
+                "description": "Searches for text content inside files using ripgrep. Returns matching lines with context.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "filesystem"
+                ],
+                "summary": "Search for text content in files",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Directory path to search in",
+                        "name": "path",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Text to search for",
+                        "name": "query",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "Case sensitive search (default: false)",
+                        "name": "caseSensitive",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Number of context lines to include (default: 0)",
+                        "name": "contextLines",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Maximum number of results to return (default: 100)",
+                        "name": "maxResults",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "File pattern to include (e.g., *.go)",
+                        "name": "filePattern",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Comma-separated directory names to skip (default: node_modules,vendor,.git,dist,build,target,__pycache__,.venv,.next,coverage)",
+                        "name": "excludeDirs",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Content search results",
+                        "schema": {
+                            "$ref": "#/definitions/ContentSearchResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable entity",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/filesystem-find/{path}": {
             "get": {
                 "description": "Finds files and directories using the find command.",
@@ -1433,6 +1520,50 @@ const docTemplate = `{
                 "updatedContent": {
                     "type": "string",
                     "example": "function hello(world) {\n  console.log('Hello', world);\n}"
+                }
+            }
+        },
+        "ContentSearchMatch": {
+            "type": "object",
+            "properties": {
+                "column": {
+                    "type": "integer",
+                    "example": 10
+                },
+                "context": {
+                    "type": "string",
+                    "example": "previous line\ncurrent line\nnext line"
+                },
+                "line": {
+                    "type": "integer",
+                    "example": 42
+                },
+                "path": {
+                    "type": "string",
+                    "example": "src/main.go"
+                },
+                "text": {
+                    "type": "string",
+                    "example": "const searchText = 'example'"
+                }
+            }
+        },
+        "ContentSearchResponse": {
+            "type": "object",
+            "properties": {
+                "matches": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/ContentSearchMatch"
+                    }
+                },
+                "query": {
+                    "type": "string",
+                    "example": "searchText"
+                },
+                "total": {
+                    "type": "integer",
+                    "example": 5
                 }
             }
         },

@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
@@ -1585,7 +1586,7 @@ func (h *FileSystemHandler) HandleFuzzySearch(c *gin.Context) {
 // @Tags filesystem
 // @Accept json
 // @Produce json
-// @Param path path string false "Directory path to search in (default: current working directory)"
+// @Param path path string true "Directory path to search in"
 // @Param query query string true "Text to search for"
 // @Param caseSensitive query boolean false "Case sensitive search (default: false)"
 // @Param contextLines query int false "Number of context lines to include (default: 0)"
@@ -1597,214 +1598,221 @@ func (h *FileSystemHandler) HandleFuzzySearch(c *gin.Context) {
 // @Failure 422 {object} ErrorResponse "Unprocessable entity"
 // @Failure 500 {object} ErrorResponse "Internal server error"
 // @Router /filesystem-content-search/{path} [get]
-// func (h *FileSystemHandler) HandleContentSearch(c *gin.Context) {
-// 	// Get search query
-// 	query := c.Query("query")
-// 	if query == "" {
-// 		h.SendError(c, http.StatusBadRequest, fmt.Errorf("query parameter is required"))
-// 		return
-// 	}
+func (h *FileSystemHandler) HandleContentSearch(c *gin.Context) {
+	// Get search query
+	query := c.Query("query")
+	if query == "" {
+		h.SendError(c, http.StatusBadRequest, fmt.Errorf("query parameter is required"))
+		return
+	}
 
-// 	// Parse directory parameter from path
-// 	searchDir := h.extractPathFromRequest(c)
+	// Parse directory parameter from path
+	searchDir := h.extractPathFromRequest(c)
 
-// 	if searchDir != "" && searchDir != "/" && searchDir != "." {
-// 		searchDir, err := lib.FormatPath(searchDir)
-// 		if err != nil {
-// 			h.SendError(c, http.StatusBadRequest, err)
-// 			return
-// 		}
-// 		// Verify directory exists
-// 		isDir, err := h.DirectoryExists(searchDir)
-// 		if err != nil {
-// 			h.SendError(c, http.StatusUnprocessableEntity, err)
-// 			return
-// 		}
-// 		if !isDir {
-// 			h.SendError(c, http.StatusBadRequest, fmt.Errorf("specified directory does not exist: %s", searchDir))
-// 			return
-// 		}
-// 	} else {
-// 		searchDir = "."
-// 	}
+	if searchDir != "" && searchDir != "/" && searchDir != "." {
+		searchDir, err := lib.FormatPath(searchDir)
+		if err != nil {
+			h.SendError(c, http.StatusBadRequest, err)
+			return
+		}
+		// Verify directory exists
+		isDir, err := h.DirectoryExists(searchDir)
+		if err != nil {
+			h.SendError(c, http.StatusUnprocessableEntity, err)
+			return
+		}
+		if !isDir {
+			h.SendError(c, http.StatusBadRequest, fmt.Errorf("specified directory does not exist: %s", searchDir))
+			return
+		}
+	} else {
+		searchDir = "."
+	}
 
-// 	// Parse caseSensitive (default: false)
-// 	caseSensitive := false
-// 	if c.Query("caseSensitive") != "" {
-// 		caseSensitive = c.Query("caseSensitive") == "true"
-// 	}
+	// Parse caseSensitive (default: false)
+	caseSensitive := false
+	if c.Query("caseSensitive") != "" {
+		caseSensitive = c.Query("caseSensitive") == "true"
+	}
 
-// 	// Parse contextLines (default: 0)
-// 	contextLines := 0
-// 	if c.Query("contextLines") != "" {
-// 		if parsed, err := strconv.Atoi(c.Query("contextLines")); err == nil && parsed >= 0 {
-// 			contextLines = parsed
-// 			// Cap at 10 to prevent excessive output
-// 			if contextLines > 10 {
-// 				contextLines = 10
-// 			}
-// 		}
-// 	}
+	// Parse contextLines (default: 0)
+	contextLines := 0
+	if c.Query("contextLines") != "" {
+		if parsed, err := strconv.Atoi(c.Query("contextLines")); err == nil && parsed >= 0 {
+			contextLines = parsed
+			// Cap at 10 to prevent excessive output
+			if contextLines > 10 {
+				contextLines = 10
+			}
+		}
+	}
 
-// 	// Parse maxResults (default: 100)
-// 	maxResults := 100
-// 	if c.Query("maxResults") != "" {
-// 		if parsed, err := strconv.Atoi(c.Query("maxResults")); err == nil && parsed > 0 {
-// 			maxResults = parsed
-// 			// Cap at 1000 to prevent excessive resource usage
-// 			if maxResults > 1000 {
-// 				maxResults = 1000
-// 			}
-// 		}
-// 	}
+	// Parse maxResults (default: 100)
+	maxResults := 100
+	if c.Query("maxResults") != "" {
+		if parsed, err := strconv.Atoi(c.Query("maxResults")); err == nil && parsed > 0 {
+			maxResults = parsed
+			// Cap at 1000 to prevent excessive resource usage
+			if maxResults > 1000 {
+				maxResults = 1000
+			}
+		}
+	}
 
-// 	// Parse file pattern
-// 	filePattern := c.Query("filePattern")
+	// Parse file pattern
+	filePattern := c.Query("filePattern")
 
-// 	// Parse directories to exclude
-// 	var excludeDirs []string
-// 	excludeDirsParam := c.Query("excludeDirs")
-// 	if excludeDirsParam != "" {
-// 		excludeDirs = strings.Split(excludeDirsParam, ",")
-// 		for i, d := range excludeDirs {
-// 			excludeDirs[i] = strings.TrimSpace(d)
-// 		}
-// 	} else {
-// 		// Default directories to exclude
-// 		excludeDirs = []string{
-// 			"node_modules", "vendor", ".git", "dist", "build",
-// 			"target", "__pycache__", ".venv", ".next", "coverage",
-// 		}
-// 	}
+	// Parse directories to exclude
+	var excludeDirs []string
+	excludeDirsParam := c.Query("excludeDirs")
+	if excludeDirsParam != "" {
+		excludeDirs = strings.Split(excludeDirsParam, ",")
+		for i, d := range excludeDirs {
+			excludeDirs[i] = strings.TrimSpace(d)
+		}
+	} else {
+		// Default directories to exclude
+		excludeDirs = []string{
+			"node_modules", "vendor", ".git", "dist", "build",
+			"target", "__pycache__", ".venv", ".next", "coverage",
+		}
+	}
 
-// 	// Get absolute path for searching
-// 	absSearchDir, err := h.fs.GetAbsolutePath(searchDir)
-// 	if err != nil {
-// 		h.SendError(c, http.StatusBadRequest, err)
-// 		return
-// 	}
+	// Get absolute path for searching
+	absSearchDir, err := h.fs.GetAbsolutePath(searchDir)
+	if err != nil {
+		h.SendError(c, http.StatusBadRequest, err)
+		return
+	}
 
-// 	// Build ripgrep command
-// 	args := []string{
-// 		"--json",          // JSON output
-// 		"--line-number",   // Include line numbers
-// 		"--column",        // Include column numbers
-// 		"--no-heading",    // Don't group by file
-// 		"--with-filename", // Include filename
-// 	}
+	// Prepare exclude map
+	excludeDirsMap := make(map[string]bool)
+	for _, dir := range excludeDirs {
+		if dir != "" {
+			excludeDirsMap[dir] = true
+		}
+	}
 
-// 	if !caseSensitive {
-// 		args = append(args, "--smart-case")
-// 	}
+	// Search query (case sensitivity)
+	searchQuery := query
+	if !caseSensitive {
+		searchQuery = strings.ToLower(query)
+	}
 
-// 	if contextLines > 0 {
-// 		args = append(args, fmt.Sprintf("--context=%d", contextLines))
-// 	}
+	// Collect files to search
+	var filesToSearch []string
+	err = filepath.WalkDir(absSearchDir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
 
-// 	if filePattern != "" {
-// 		args = append(args, "--glob", filePattern)
-// 	}
+		if d.IsDir() {
+			if excludeDirsMap[filepath.Base(path)] {
+				return filepath.SkipDir
+			}
+			return nil
+		}
 
-// 	for _, dir := range excludeDirs {
-// 		if dir != "" {
-// 			args = append(args, "--glob", fmt.Sprintf("!%s", dir))
-// 		}
-// 	}
+		// Skip non-regular files
+		if !d.Type().IsRegular() {
+			return nil
+		}
 
-// 	args = append(args, "--", query, absSearchDir)
+		// Check file pattern
+		if filePattern != "" {
+			matched, _ := filepath.Match(filePattern, filepath.Base(path))
+			if !matched {
+				return nil
+			}
+		}
 
-// 	// Execute ripgrep
-// 	cmd := exec.Command("rg", args...)
-// 	output, err := cmd.CombinedOutput()
+		filesToSearch = append(filesToSearch, path)
+		return nil
+	})
 
-// 	// ripgrep returns exit code 1 when no matches found, which is not an error for us
-// 	if err != nil {
-// 		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
-// 			// No matches found - return empty results
-// 			response := ContentSearchResponse{
-// 				Query:   query,
-// 				Matches: []ContentSearchMatch{},
-// 				Total:   0,
-// 			}
-// 			h.SendJSON(c, http.StatusOK, response)
-// 			return
-// 		}
-// 		// Actual error
-// 		h.SendError(c, http.StatusInternalServerError, fmt.Errorf("ripgrep error: %w", err))
-// 		return
-// 	}
+	if err != nil {
+		h.SendError(c, http.StatusInternalServerError, fmt.Errorf("error walking directory: %w", err))
+		return
+	}
 
-// 	// Parse ripgrep JSON output
-// 	matches := []ContentSearchMatch{}
-// 	lines := strings.Split(string(output), "\n")
+	// Search files in parallel
+	type searchResult struct {
+		path   string
+		line   int
+		column int
+		text   string
+	}
 
-// 	for _, line := range lines {
-// 		if line == "" {
-// 			continue
-// 		}
+	resultsChan := make(chan searchResult, 100)
+	done := make(chan bool)
 
-// 		var rgResult map[string]interface{}
-// 		if err := json.Unmarshal([]byte(line), &rgResult); err != nil {
-// 			continue
-// 		}
+	var matches []ContentSearchMatch
+	go func() {
+		for result := range resultsChan {
+			relPath, _ := filepath.Rel(absSearchDir, result.path)
+			matches = append(matches, ContentSearchMatch{
+				Path:   relPath,
+				Line:   result.line,
+				Column: result.column,
+				Text:   result.text,
+			})
+			if len(matches) >= maxResults {
+				break
+			}
+		}
+		done <- true
+	}()
 
-// 		// Only process "match" type results
-// 		if rgResult["type"] != "match" {
-// 			continue
-// 		}
+	// Process files with worker pool
+	numWorkers := 8
+	filesChan := make(chan string, len(filesToSearch))
+	for _, file := range filesToSearch {
+		filesChan <- file
+	}
+	close(filesChan)
 
-// 		data, ok := rgResult["data"].(map[string]interface{})
-// 		if !ok {
-// 			continue
-// 		}
+	var wg sync.WaitGroup
+	for i := 0; i < numWorkers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for filePath := range filesChan {
+				// Read file
+				content, err := os.ReadFile(filePath)
+				if err != nil {
+					continue
+				}
 
-// 		path, _ := data["path"].(map[string]interface{})
-// 		pathText, _ := path["text"].(string)
+				// Search line by line
+				lines := strings.Split(string(content), "\n")
+				for lineNum, line := range lines {
+					searchLine := line
+					if !caseSensitive {
+						searchLine = strings.ToLower(line)
+					}
 
-// 		lineNum := 0
-// 		if ln, ok := data["line_number"].(float64); ok {
-// 			lineNum = int(ln)
-// 		}
+					if col := strings.Index(searchLine, searchQuery); col >= 0 {
+						resultsChan <- searchResult{
+							path:   filePath,
+							line:   lineNum + 1,
+							column: col + 1,
+							text:   line,
+						}
+					}
+				}
+			}
+		}()
+	}
 
-// 		// Get the matching line text
-// 		lines, _ := data["lines"].(map[string]interface{})
-// 		lineText, _ := lines["text"].(string)
-// 		lineText = strings.TrimRight(lineText, "\n")
+	wg.Wait()
+	close(resultsChan)
+	<-done
 
-// 		// Get submatches for column info
-// 		submatches, _ := data["submatches"].([]interface{})
-// 		column := 0
-// 		if len(submatches) > 0 {
-// 			if submatch, ok := submatches[0].(map[string]interface{}); ok {
-// 				if col, ok := submatch["start"].(float64); ok {
-// 					column = int(col) + 1 // Make it 1-indexed
-// 				}
-// 			}
-// 		}
+	response := ContentSearchResponse{
+		Query:   query,
+		Matches: matches,
+		Total:   len(matches),
+	}
 
-// 		// Make path relative to search directory
-// 		relPath, err := filepath.Rel(absSearchDir, pathText)
-// 		if err != nil {
-// 			relPath = pathText
-// 		}
-
-// 		matches = append(matches, ContentSearchMatch{
-// 			Path:   relPath,
-// 			Line:   lineNum,
-// 			Column: column,
-// 			Text:   lineText,
-// 		})
-
-// 		if len(matches) >= maxResults {
-// 			break
-// 		}
-// 	}
-
-// 	response := ContentSearchResponse{
-// 		Query:   query,
-// 		Matches: matches,
-// 		Total:   len(matches),
-// 	}
-
-// 	h.SendJSON(c, http.StatusOK, response)
-// }
+	h.SendJSON(c, http.StatusOK, response)
+}
