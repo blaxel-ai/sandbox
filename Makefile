@@ -17,6 +17,16 @@ docker-run:
 test:
 	cd sandbox-api && go test -v ./...
 
+benchmark:
+	cd sandbox-api && go test -bench=. -benchmem ./src/handler/process
+
+codspeed:
+	@if ! command -v codspeed > /dev/null 2>&1; then \
+		echo "Installing CodSpeed runner..."; \
+		curl -fsSL https://github.com/CodSpeedHQ/runner/releases/latest/download/codspeed-runner-installer.sh | bash; \
+	fi
+	cd sandbox-api && codspeed run --skip-upload -- go test -bench=. ./src/handler/process
+
 integration-test:
 	cd sandbox-api/integration-tests && ./run_tests.sh
 

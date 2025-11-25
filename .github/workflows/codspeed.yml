@@ -1,0 +1,27 @@
+name: CodSpeed Benchmarks
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  benchmarks:
+    runs-on: codspeed-macro
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.23'
+
+      - name: Run benchmarks
+        uses: CodSpeedHQ/action@v2
+        with:
+          run: |
+            cd sandbox-api && go test -bench=. ./src/handler/process
+          token: ${{ secrets.CODSPEED_TOKEN }}
+
