@@ -58,6 +58,8 @@ type ProcessInfo struct {
 	stderrPipe       io.ReadCloser
 	logWriters       []io.Writer
 	logLock          sync.RWMutex
+	stdoutInLine     bool // tracks if stdout is mid-line (for prefix handling)
+	stderrInLine     bool // tracks if stderr is mid-line (for prefix handling)
 }
 
 // NewProcessManager creates a new process manager
@@ -231,14 +233,23 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 				process.logLock.Lock()
 				process.stdout.Write(data)
 				process.logs.Write(data)
-				// Send to any attached log writers, prefix with stdout:
+				// Send to any attached log writers, prefix with stdout: only at line start
 				for _, w := range process.logWriters {
-					fullMsg := append([]byte("stdout:"), data...)
+					var fullMsg []byte
+					if !process.stdoutInLine {
+						// Start of a new line, add prefix
+						fullMsg = append([]byte("stdout:"), data...)
+					} else {
+						// Continuation of existing line, no prefix
+						fullMsg = data
+					}
 					_, _ = w.Write(fullMsg)
 					if f, ok := w.(interface{ Flush() }); ok {
 						f.Flush()
 					}
 				}
+				// Update line state: if data ends with newline, next chunk starts a new line
+				process.stdoutInLine = len(data) > 0 && data[len(data)-1] != '\n'
 				process.logLock.Unlock()
 			}
 			if err != nil {
@@ -258,14 +269,23 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 				process.logLock.Lock()
 				process.stderr.Write(data)
 				process.logs.Write(data)
-				// Send to any attached log writers, prefix with stderr:
+				// Send to any attached log writers, prefix with stderr: only at line start
 				for _, w := range process.logWriters {
-					fullMsg := append([]byte("stderr:"), data...)
+					var fullMsg []byte
+					if !process.stderrInLine {
+						// Start of a new line, add prefix
+						fullMsg = append([]byte("stderr:"), data...)
+					} else {
+						// Continuation of existing line, no prefix
+						fullMsg = data
+					}
 					_, _ = w.Write(fullMsg)
 					if f, ok := w.(interface{ Flush() }); ok {
 						f.Flush()
 					}
 				}
+				// Update line state: if data ends with newline, next chunk starts a new line
+				process.stderrInLine = len(data) > 0 && data[len(data)-1] != '\n'
 				process.logLock.Unlock()
 			}
 			if err != nil {
@@ -447,6 +467,10 @@ func (pm *ProcessManager) restartProcess(oldProcess *ProcessInfo, callback func(
 	var outputWg sync.WaitGroup
 	outputWg.Add(2) // For stdout and stderr goroutines
 
+	// Reset line state for new process run
+	oldProcess.stdoutInLine = false
+	oldProcess.stderrInLine = false
+
 	// Handle stdout
 	go func() {
 		defer outputWg.Done()
@@ -458,14 +482,23 @@ func (pm *ProcessManager) restartProcess(oldProcess *ProcessInfo, callback func(
 				oldProcess.logLock.Lock()
 				oldProcess.stdout.Write(data)
 				oldProcess.logs.Write(data)
-				// Send to any attached log writers, prefix with stdout:
+				// Send to any attached log writers, prefix with stdout: only at line start
 				for _, w := range oldProcess.logWriters {
-					fullMsg := append([]byte("stdout:"), data...)
+					var fullMsg []byte
+					if !oldProcess.stdoutInLine {
+						// Start of a new line, add prefix
+						fullMsg = append([]byte("stdout:"), data...)
+					} else {
+						// Continuation of existing line, no prefix
+						fullMsg = data
+					}
 					_, _ = w.Write(fullMsg)
 					if f, ok := w.(interface{ Flush() }); ok {
 						f.Flush()
 					}
 				}
+				// Update line state: if data ends with newline, next chunk starts a new line
+				oldProcess.stdoutInLine = len(data) > 0 && data[len(data)-1] != '\n'
 				oldProcess.logLock.Unlock()
 			}
 			if err != nil {
@@ -485,14 +518,23 @@ func (pm *ProcessManager) restartProcess(oldProcess *ProcessInfo, callback func(
 				oldProcess.logLock.Lock()
 				oldProcess.stderr.Write(data)
 				oldProcess.logs.Write(data)
-				// Send to any attached log writers, prefix with stderr:
+				// Send to any attached log writers, prefix with stderr: only at line start
 				for _, w := range oldProcess.logWriters {
-					fullMsg := append([]byte("stderr:"), data...)
+					var fullMsg []byte
+					if !oldProcess.stderrInLine {
+						// Start of a new line, add prefix
+						fullMsg = append([]byte("stderr:"), data...)
+					} else {
+						// Continuation of existing line, no prefix
+						fullMsg = data
+					}
 					_, _ = w.Write(fullMsg)
 					if f, ok := w.(interface{ Flush() }); ok {
 						f.Flush()
 					}
 				}
+				// Update line state: if data ends with newline, next chunk starts a new line
+				oldProcess.stderrInLine = len(data) > 0 && data[len(data)-1] != '\n'
 				oldProcess.logLock.Unlock()
 			}
 			if err != nil {
