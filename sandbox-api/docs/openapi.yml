@@ -803,6 +803,138 @@ paths:
       summary: Create or update a file or directory
       tags:
         - filesystem
+  "/filesystem/tree/{path}":
+    delete:
+      description: Delete a directory tree recursively
+      parameters:
+        - description: Root directory path
+          in: path
+          name: path
+          required: true
+          schema:
+            type: string
+        - description: Delete directory recursively
+          in: query
+          name: recursive
+          schema:
+            type: boolean
+      responses:
+        "200":
+          description: Directory deleted successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Unprocessable entity
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+      summary: Delete directory tree
+      tags:
+        - filesystem
+    get:
+      description: Get a recursive directory tree structure starting from the specified path
+      parameters:
+        - description: Root directory path
+          in: path
+          name: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Directory tree
+          content:
+            application/json:
+              schema:
+                oneOf:
+                    - $ref: "#/components/schemas/Directory"
+                    - $ref: "#/components/schemas/FileWithContent"
+                    - type: string
+                      format: binary
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Unprocessable entity
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+      summary: Get directory tree
+      tags:
+        - filesystem
+    put:
+      description: Create or update multiple files within a directory tree structure
+      parameters:
+        - description: Root directory path
+          in: path
+          name: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TreeRequest"
+        description: Map of file paths to content
+        required: true
+      responses:
+        "200":
+          description: Updated directory tree
+          content:
+            application/json:
+              schema:
+                oneOf:
+                    - $ref: "#/components/schemas/Directory"
+                    - $ref: "#/components/schemas/FileWithContent"
+                    - type: string
+                      format: binary
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Unprocessable entity
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+      summary: Create or update directory tree
+      tags:
+        - filesystem
   "/network/process/{pid}/monitor":
     delete:
       description: Stop monitoring for new ports opened by a process
@@ -1640,6 +1772,16 @@ components:
           type: string
       required:
         - message
+      type: object
+    TreeRequest:
+      properties:
+        files:
+          additionalProperties:
+            type: string
+          example:
+            '"dir/file2.txt"': '"content2"}'
+            "{\"file1.txt\"": '"content1"'
+          type: object
       type: object
     WelcomeResponse:
       properties:
