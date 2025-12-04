@@ -380,8 +380,23 @@ func TestEnvironmentVariableHandling(t *testing.T) {
 				t.Fatalf("Error starting process: %v", err)
 			}
 
-			// Wait for process to complete
-			time.Sleep(10 * time.Millisecond)
+			// Wait for process to complete by polling status
+			var process *ProcessInfo
+			var exists bool
+			for j := 0; j < 100; j++ { // Poll up to 1 second (100 * 10ms)
+				process, exists = pm.GetProcessByIdentifier(pid)
+				if exists && (process.Status == "completed" || process.Status == "failed") {
+					break
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
+
+			if !exists {
+				t.Fatalf("Iteration %d: Process not found", i+1)
+			}
+			if process.Status != "completed" {
+				t.Fatalf("Iteration %d: Process did not complete, status: %s", i+1, process.Status)
+			}
 
 			// Get output
 			logs, err := pm.GetProcessOutput(pid)
@@ -394,12 +409,7 @@ func TestEnvironmentVariableHandling(t *testing.T) {
 			if output == "" {
 				t.Errorf("Iteration %d: Got empty output from printenv", i+1)
 				t.Logf("Stdout: '%s', Stderr: '%s', Logs: '%s'", logs.Stdout, logs.Stderr, logs.Logs)
-
-				// Check process status
-				process, exists := pm.GetProcessByIdentifier(pid)
-				if exists {
-					t.Logf("Process status: %s, exit code: %d", process.Status, process.ExitCode)
-				}
+				t.Logf("Process status: %s, exit code: %d", process.Status, process.ExitCode)
 			}
 			for key, expectedValue := range env {
 				// Check if the key exists with the expected value

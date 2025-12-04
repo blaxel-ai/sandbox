@@ -255,11 +255,6 @@ paths:
           name: caseSensitive
           schema:
             type: boolean
-        - description: "Number of context lines to include (default: 0)"
-          in: query
-          name: contextLines
-          schema:
-            type: integer
         - description: "Maximum number of results to return (default: 100)"
           in: query
           name: maxResults

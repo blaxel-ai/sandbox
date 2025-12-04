@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
 	"io/fs"
@@ -16,6 +15,7 @@ import (
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/gin-gonic/gin"
+	jsoniter "github.com/json-iterator/go"
 	"github.com/junegunn/fzf/src/algo"
 	"github.com/junegunn/fzf/src/util"
 	"github.com/sirupsen/logrus"
@@ -23,6 +23,8 @@ import (
 	"github.com/blaxel-ai/sandbox-api/src/handler/filesystem"
 	"github.com/blaxel-ai/sandbox-api/src/lib"
 )
+
+var json = jsoniter.ConfigCompatibleWithStandardLibrary
 
 // FileSystemHandler handles filesystem operations
 type FileSystemHandler struct {
@@ -1288,13 +1290,8 @@ func (h *FileSystemHandler) HandleFind(c *gin.Context) {
 		for i, d := range excludeDirs {
 			excludeDirs[i] = strings.TrimSpace(d)
 		}
-	} else {
-		// // Default directories to exclude
-		// excludeDirs = []string{
-		// 	"node_modules", "vendor", ".git", "dist", "build",
-		// 	"target", "__pycache__", ".venv", ".next", "coverage",
-		// }
 	}
+
 	// Create a map for O(1) lookup
 	excludeDirsMap := make(map[string]bool)
 	for _, dir := range excludeDirs {
@@ -1583,7 +1580,6 @@ func (h *FileSystemHandler) HandleFuzzySearch(c *gin.Context) {
 // @Param path path string true "Directory path to search in"
 // @Param query query string true "Text to search for"
 // @Param caseSensitive query boolean false "Case sensitive search (default: false)"
-// @Param contextLines query int false "Number of context lines to include (default: 0)"
 // @Param maxResults query int false "Maximum number of results to return (default: 100)"
 // @Param filePattern query string false "File pattern to include (e.g., *.go)"
 // @Param excludeDirs query string false "Comma-separated directory names to skip (default: node_modules,vendor,.git,dist,build,target,__pycache__,.venv,.next,coverage)"
@@ -1627,18 +1623,6 @@ func (h *FileSystemHandler) HandleContentSearch(c *gin.Context) {
 	caseSensitive := false
 	if c.Query("caseSensitive") != "" {
 		caseSensitive = c.Query("caseSensitive") == "true"
-	}
-
-	// Parse contextLines (default: 0)
-	contextLines := 0
-	if c.Query("contextLines") != "" {
-		if parsed, err := strconv.Atoi(c.Query("contextLines")); err == nil && parsed >= 0 {
-			contextLines = parsed
-			// Cap at 10 to prevent excessive output
-			if contextLines > 10 {
-				contextLines = 10
-			}
-		}
 	}
 
 	// Parse maxResults (default: 100)

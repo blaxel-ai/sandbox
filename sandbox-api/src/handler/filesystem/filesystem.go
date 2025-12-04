@@ -1,7 +1,6 @@
 package filesystem
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -12,7 +11,11 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	jsoniter "github.com/json-iterator/go"
 )
+
+var json = jsoniter.ConfigCompatibleWithStandardLibrary
 
 // Filesystem represents the root directory of the filesystem
 type Filesystem struct {
@@ -256,13 +259,14 @@ func (fs *Filesystem) DirectoryExists(path string) (bool, error) {
 }
 
 // Infos returns the information about a file or directory
+// Uses os.Stat to follow symlinks, so symlinks to directories are treated as directories
 func (fs *Filesystem) Infos(path string) (os.FileInfo, error) {
 	absPath, err := fs.GetAbsolutePath(path)
 	if err != nil {
 		return nil, err
 	}
 
-	return os.Lstat(absPath)
+	return os.Stat(absPath)
 }
 
 // ReadFile reads a file and returns its contents

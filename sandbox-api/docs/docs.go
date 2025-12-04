@@ -292,12 +292,6 @@ const docTemplate = `{
                     },
                     {
                         "type": "integer",
-                        "description": "Number of context lines to include (default: 0)",
-                        "name": "contextLines",
-                        "in": "query"
-                    },
-                    {
-                        "type": "integer",
                         "description": "Maximum number of results to return (default: 100)",
                         "name": "maxResults",
                         "in": "query"
