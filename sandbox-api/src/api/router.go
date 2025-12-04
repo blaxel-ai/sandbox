@@ -18,7 +18,7 @@ import (
 
 // SetupRouter configures all the routes for the Sandbox API
 // If disableRequestLogging is true, the logrus middleware will be skipped
-func SetupRouter(disableRequestLogging ...bool) *gin.Engine {
+func SetupRouter(disableRequestLogging bool) *gin.Engine {
 	// Initialize the router
 	r := gin.New()
 
@@ -32,8 +32,7 @@ func SetupRouter(disableRequestLogging ...bool) *gin.Engine {
 	r.Use(noCacheMiddleware())
 
 	// Add logrus middleware unless disabled
-	skipLogging := len(disableRequestLogging) > 0 && disableRequestLogging[0]
-	if !skipLogging {
+	if !disableRequestLogging {
 		r.Use(logrusMiddleware())
 	}
 
@@ -111,6 +110,9 @@ func SetupRouter(disableRequestLogging ...bool) *gin.Engine {
 	r.GET("/filesystem-multipart/:uploadId/parts", fsHandler.HandleListParts)
 
 	// Filesystem routes
+	r.GET("/filesystem-find/*path", fsHandler.HandleFind)
+	r.GET("/filesystem-search/*path", fsHandler.HandleFuzzySearch)
+	r.GET("/filesystem-content-search/*path", fsHandler.HandleContentSearch)
 	r.GET("/watch/filesystem/*path", fsHandler.HandleWatchDirectory)
 	r.GET("/filesystem/*path", fsHandler.HandleGetFile)
 	r.PUT("/filesystem/*path", fsHandler.HandleCreateOrUpdateFile)

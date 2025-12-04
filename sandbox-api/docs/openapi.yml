@@ -234,6 +234,133 @@ paths:
       summary: Code reranking/semantic search
       tags:
         - codegen
+  "/filesystem-content-search/{path}":
+    get:
+      description: Searches for text content inside files using ripgrep. Returns matching lines with context.
+      parameters:
+        - description: Directory path to search in
+          in: path
+          name: path
+          required: true
+          schema:
+            type: string
+        - description: Text to search for
+          in: query
+          name: query
+          required: true
+          schema:
+            type: string
+        - description: "Case sensitive search (default: false)"
+          in: query
+          name: caseSensitive
+          schema:
+            type: boolean
+        - description: "Maximum number of results to return (default: 100)"
+          in: query
+          name: maxResults
+          schema:
+            type: integer
+        - description: File pattern to include (e.g., *.go)
+          in: query
+          name: filePattern
+          schema:
+            type: string
+        - description: "Comma-separated directory names to skip (default: node_modules,vendor,.git,dist,build,target,__pycache__,.venv,.next,coverage)"
+          in: query
+          name: excludeDirs
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Content search results
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContentSearchResponse"
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Unprocessable entity
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+      summary: Search for text content in files
+      tags:
+        - filesystem
+  "/filesystem-find/{path}":
+    get:
+      description: Finds files and directories using the find command.
+      parameters:
+        - description: Path to search in (e.g., /home/user/projects)
+          in: path
+          name: path
+          required: true
+          schema:
+            type: string
+        - description: Type of search (file or directory)
+          in: query
+          name: type
+          schema:
+            type: string
+        - description: Comma-separated file patterns to include (e.g., *.go,*.js)
+          in: query
+          name: patterns
+          schema:
+            type: string
+        - description: "Maximum number of results to return (default: 20). If set to 0, all results will be returned."
+          in: query
+          name: maxResults
+          schema:
+            type: integer
+        - description: "Comma-separated directory names to skip (default: node_modules,vendor,.git,dist,build,target,__pycache__,.venv,.next,coverage). Use empty string to skip no directories."
+          in: query
+          name: excludeDirs
+          schema:
+            type: string
+        - description: "Exclude hidden files and directories (default: true)"
+          in: query
+          name: excludeHidden
+          schema:
+            type: boolean
+      responses:
+        "200":
+          description: Find results
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FindResponse"
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Unprocessable entity
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+      summary: Find files and directories
+      tags:
+        - filesystem
   /filesystem-multipart:
     get:
       description: List all active multipart uploads
@@ -469,6 +596,64 @@ paths:
       summary: Initiate multipart upload
       tags:
         - filesystem
+  "/filesystem-search/{path}":
+    get:
+      description: Performs fuzzy search on filesystem paths using fuzzy matching algorithm. Optimized alternative to find and grep commands.
+      parameters:
+        - description: Path to search in (e.g., /home/user/projects)
+          in: path
+          name: path
+          required: true
+          schema:
+            type: string
+        - description: "Maximum number of results to return (default: 20)"
+          in: query
+          name: maxResults
+          schema:
+            type: integer
+        - description: Comma-separated file patterns to include (e.g., *.go,*.js)
+          in: query
+          name: patterns
+          schema:
+            type: string
+        - description: "Comma-separated directory names to skip (default: node_modules,vendor,.git,dist,build,target,__pycache__,.venv,.next,coverage). Use empty string to skip no directories."
+          in: query
+          name: excludeDirs
+          schema:
+            type: string
+        - description: "Exclude hidden files and directories (default: true)"
+          in: query
+          name: excludeHidden
+          schema:
+            type: boolean
+      responses:
+        "200":
+          description: Fuzzy search results
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FuzzySearchResponse"
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Unprocessable entity
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+      summary: Fuzzy search for files and directories
+      tags:
+        - filesystem
   "/filesystem/{path}":
     delete:
       description: Delete a file or directory
@@ -616,6 +801,138 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
       summary: Create or update a file or directory
+      tags:
+        - filesystem
+  "/filesystem/tree/{path}":
+    delete:
+      description: Delete a directory tree recursively
+      parameters:
+        - description: Root directory path
+          in: path
+          name: path
+          required: true
+          schema:
+            type: string
+        - description: Delete directory recursively
+          in: query
+          name: recursive
+          schema:
+            type: boolean
+      responses:
+        "200":
+          description: Directory deleted successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Unprocessable entity
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+      summary: Delete directory tree
+      tags:
+        - filesystem
+    get:
+      description: Get a recursive directory tree structure starting from the specified path
+      parameters:
+        - description: Root directory path
+          in: path
+          name: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Directory tree
+          content:
+            application/json:
+              schema:
+                oneOf:
+                    - $ref: "#/components/schemas/Directory"
+                    - $ref: "#/components/schemas/FileWithContent"
+                    - type: string
+                      format: binary
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Unprocessable entity
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+      summary: Get directory tree
+      tags:
+        - filesystem
+    put:
+      description: Create or update multiple files within a directory tree structure
+      parameters:
+        - description: Root directory path
+          in: path
+          name: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TreeRequest"
+        description: Map of file paths to content
+        required: true
+      responses:
+        "200":
+          description: Updated directory tree
+          content:
+            application/json:
+              schema:
+                oneOf:
+                    - $ref: "#/components/schemas/Directory"
+                    - $ref: "#/components/schemas/FileWithContent"
+                    - type: string
+                      format: binary
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Unprocessable entity
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+      summary: Create or update directory tree
       tags:
         - filesystem
   "/network/process/{pid}/monitor":
@@ -1065,6 +1382,40 @@ components:
             }
           type: string
       type: object
+    ContentSearchMatch:
+      properties:
+        column:
+          example: 10
+          type: integer
+        context:
+          example: |-
+            previous line
+            current line
+            next line
+          type: string
+        line:
+          example: 42
+          type: integer
+        path:
+          example: src/main.go
+          type: string
+        text:
+          example: const searchText = 'example'
+          type: string
+      type: object
+    ContentSearchResponse:
+      properties:
+        matches:
+          items:
+            $ref: "#/components/schemas/ContentSearchMatch"
+          type: array
+        query:
+          example: searchText
+          type: string
+        total:
+          example: 5
+          type: integer
+      type: object
     Directory:
       properties:
         files:
@@ -1158,6 +1509,49 @@ components:
         - path
         - permissions
         - size
+      type: object
+    FindMatch:
+      properties:
+        path:
+          example: src/main.go
+          type: string
+        type:
+          description: '"file" or "directory"'
+          example: file
+          type: string
+      type: object
+    FindResponse:
+      properties:
+        matches:
+          items:
+            $ref: "#/components/schemas/FindMatch"
+          type: array
+        total:
+          example: 5
+          type: integer
+      type: object
+    FuzzySearchMatch:
+      properties:
+        path:
+          example: src/main.go
+          type: string
+        score:
+          example: 100
+          type: integer
+        type:
+          description: '"file" or "directory"'
+          example: file
+          type: string
+      type: object
+    FuzzySearchResponse:
+      properties:
+        matches:
+          items:
+            $ref: "#/components/schemas/FuzzySearchMatch"
+          type: array
+        total:
+          example: 5
+          type: integer
       type: object
     MultipartCompleteRequest:
       properties:
@@ -1378,6 +1772,16 @@ components:
           type: string
       required:
         - message
+      type: object
+    TreeRequest:
+      properties:
+        files:
+          additionalProperties:
+            type: string
+          example:
+            '"dir/file2.txt"': '"content2"}'
+            "{\"file1.txt\"": '"content1"'
+          type: object
       type: object
     WelcomeResponse:
       properties:

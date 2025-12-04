@@ -2,7 +2,6 @@ package mcp
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io/fs"
 	"os"
@@ -13,9 +12,12 @@ import (
 
 	"github.com/blaxel-ai/sandbox-api/src/lib"
 	"github.com/blaxel-ai/sandbox-api/src/lib/codegen"
+	jsoniter "github.com/json-iterator/go"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/sirupsen/logrus"
 )
+
+var json = jsoniter.ConfigCompatibleWithStandardLibrary
 
 // Codegen tool input/output types
 
