@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -48,7 +49,9 @@ func SetupRouter(disableRequestLogging bool) *gin.Engine {
 	processHandler := handler.NewProcessHandler()
 	networkHandler := handler.NewNetworkHandler()
 	codegenHandler := handler.NewCodegenHandler(fsHandler)
-	terminalHandler := handler.NewTerminalHandler()
+
+	// Check if terminal is disabled via environment variable
+	disableTerminal := os.Getenv("DISABLE_TERMINAL") == "true" || os.Getenv("DISABLE_TERMINAL") == "1"
 
 	// Custom filesystem tree router middleware to handle tree-specific routes
 	r.Use(func(c *gin.Context) {
@@ -138,8 +141,14 @@ func SetupRouter(disableRequestLogging bool) *gin.Engine {
 	r.GET("/codegen/reranking/*path", codegenHandler.HandleReranking)
 
 	// Terminal routes (web-based terminal with PTY)
-	r.GET("/terminal", terminalHandler.HandleTerminalPage)
-	r.GET("/terminal/ws", terminalHandler.HandleTerminalWS)
+	// Can be disabled with DISABLE_TERMINAL=true environment variable
+	if !disableTerminal {
+		terminalHandler := handler.NewTerminalHandler()
+		r.GET("/terminal", terminalHandler.HandleTerminalPage)
+		r.GET("/terminal/ws", terminalHandler.HandleTerminalWS)
+	} else {
+		logrus.Info("Terminal endpoint disabled via DISABLE_TERMINAL environment variable")
+	}
 
 	// Health check route
 	r.GET("/health", func(c *gin.Context) {
