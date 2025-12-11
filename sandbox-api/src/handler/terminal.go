@@ -95,8 +95,14 @@ func (h *TerminalHandler) HandleTerminalWS(c *gin.Context) {
 	}
 	defer session.Close()
 
-	// Channel to signal when to stop
+	// Channel to signal when to stop, with sync.Once to prevent double-close panic
 	done := make(chan struct{})
+	var closeOnce sync.Once
+	closeDone := func() {
+		closeOnce.Do(func() {
+			close(done)
+		})
+	}
 
 	// Read from PTY and send to WebSocket
 	go func() {
@@ -104,13 +110,8 @@ func (h *TerminalHandler) HandleTerminalWS(c *gin.Context) {
 		for {
 			n, err := session.Read(buf)
 			if err != nil {
-				select {
-				case <-done:
-					return
-				default:
-					close(done)
-					return
-				}
+				closeDone()
+				return
 			}
 			if n > 0 {
 				msg := TerminalMessage{
@@ -118,13 +119,8 @@ func (h *TerminalHandler) HandleTerminalWS(c *gin.Context) {
 					Data: string(buf[:n]),
 				}
 				if err := conn.WriteJSON(msg); err != nil {
-					select {
-					case <-done:
-						return
-					default:
-						close(done)
-						return
-					}
+					closeDone()
+					return
 				}
 			}
 		}
@@ -140,6 +136,7 @@ func (h *TerminalHandler) HandleTerminalWS(c *gin.Context) {
 
 		_, message, err := conn.ReadMessage()
 		if err != nil {
+			closeDone()
 			return
 		}
 

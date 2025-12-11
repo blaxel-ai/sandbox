@@ -4,6 +4,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"strings"
 	"sync"
 	"syscall"
 
@@ -12,11 +13,11 @@ import (
 
 // TerminalSession represents an interactive terminal session with PTY
 type TerminalSession struct {
-	ptmx    *os.File
-	cmd     *exec.Cmd
-	mu      sync.Mutex
-	closed  bool
-	closeCh chan struct{}
+	ptmx       *os.File
+	processPid int // Store only PID to avoid FD leak (not *exec.Cmd)
+	mu         sync.Mutex
+	closed     bool
+	closeCh    chan struct{}
 }
 
 // findShell returns the best available shell
@@ -78,8 +79,17 @@ func NewTerminalSession(shell string, workingDir string, env map[string]string, 
 	for k, v := range env {
 		finalEnv = append(finalEnv, k+"="+v)
 	}
-	// Set TERM for proper terminal emulation
-	finalEnv = append(finalEnv, "TERM=xterm-256color")
+	// Set TERM for proper terminal emulation only if not already set
+	hasTerm := false
+	for _, e := range finalEnv {
+		if strings.HasPrefix(e, "TERM=") {
+			hasTerm = true
+			break
+		}
+	}
+	if !hasTerm {
+		finalEnv = append(finalEnv, "TERM=xterm-256color")
+	}
 	cmd.Env = finalEnv
 
 	// NOTE: Do NOT set SysProcAttr here!
@@ -95,10 +105,22 @@ func NewTerminalSession(shell string, workingDir string, env map[string]string, 
 		return nil, err
 	}
 
+	// Store only the PID to avoid FD leak (workspace rule: never store *exec.Cmd in struct)
+	pid := cmd.Process.Pid
+
+	// Start a goroutine to wait for the process and release resources
+	go func() {
+		_ = cmd.Wait()
+		// Release process resources immediately after Wait() to close pidfd
+		if cmd.Process != nil {
+			_ = cmd.Process.Release()
+		}
+	}()
+
 	return &TerminalSession{
-		ptmx:    ptmx,
-		cmd:     cmd,
-		closeCh: make(chan struct{}),
+		ptmx:       ptmx,
+		processPid: pid,
+		closeCh:    make(chan struct{}),
 	}, nil
 }
 
@@ -143,16 +165,14 @@ func (t *TerminalSession) Close() error {
 		_ = t.ptmx.Close()
 	}
 
-	// Kill the process and its session
+	// Kill the process and its session using stored PID
 	// Since pty.Start uses Setsid, the shell is the session leader
 	// Killing the session leader will send SIGHUP to all processes in the session
-	if t.cmd != nil && t.cmd.Process != nil {
-		pid := t.cmd.Process.Pid
+	if t.processPid > 0 {
 		// Try to kill the session (negative PID with SIGKILL)
 		// This works because Setsid makes the process a session leader with pgid == pid
-		_ = syscall.Kill(-pid, syscall.SIGKILL)
-		// Wait for the process to exit
-		_ = t.cmd.Wait()
+		_ = syscall.Kill(-t.processPid, syscall.SIGKILL)
+		// The Wait() and Release() are handled by the goroutine started in NewTerminalSession
 	}
 
 	return nil
