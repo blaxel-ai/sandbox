@@ -48,6 +48,7 @@ func SetupRouter(disableRequestLogging bool) *gin.Engine {
 	processHandler := handler.NewProcessHandler()
 	networkHandler := handler.NewNetworkHandler()
 	codegenHandler := handler.NewCodegenHandler(fsHandler)
+	terminalHandler := handler.NewTerminalHandler()
 
 	// Custom filesystem tree router middleware to handle tree-specific routes
 	r.Use(func(c *gin.Context) {
@@ -135,6 +136,10 @@ func SetupRouter(disableRequestLogging bool) *gin.Engine {
 	// Codegen routes
 	r.PUT("/codegen/fastapply/*path", codegenHandler.HandleFastApply)
 	r.GET("/codegen/reranking/*path", codegenHandler.HandleReranking)
+
+	// Terminal routes (web-based terminal with PTY)
+	r.GET("/terminal", terminalHandler.HandleTerminalPage)
+	r.GET("/terminal/ws", terminalHandler.HandleTerminalWS)
 
 	// Health check route
 	r.GET("/health", func(c *gin.Context) {
