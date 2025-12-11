@@ -4,7 +4,6 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"runtime"
 	"sync"
 	"syscall"
 
@@ -18,16 +17,33 @@ type TerminalSession struct {
 	mu      sync.Mutex
 	closed  bool
 	closeCh chan struct{}
-	usePgrp bool // whether process group was set up
+}
+
+// findShell returns the best available shell
+func findShell() string {
+	// Check SHELL env first
+	if shell := os.Getenv("SHELL"); shell != "" {
+		if _, err := os.Stat(shell); err == nil {
+			return shell
+		}
+	}
+
+	// Try common shells in order of preference
+	shells := []string{"/bin/zsh", "/bin/bash", "/bin/sh", "/bin/ash"}
+	for _, shell := range shells {
+		if _, err := os.Stat(shell); err == nil {
+			return shell
+		}
+	}
+
+	// Fallback
+	return "/bin/sh"
 }
 
 // NewTerminalSession creates a new terminal session with the specified shell
 func NewTerminalSession(shell string, workingDir string, env map[string]string, cols, rows uint16) (*TerminalSession, error) {
 	if shell == "" {
-		shell = os.Getenv("SHELL")
-		if shell == "" {
-			shell = "/bin/sh"
-		}
+		shell = findShell()
 	}
 
 	cmd := exec.Command(shell)
@@ -66,14 +82,9 @@ func NewTerminalSession(shell string, workingDir string, env map[string]string, 
 	finalEnv = append(finalEnv, "TERM=xterm-256color")
 	cmd.Env = finalEnv
 
-	// Set up process group for clean termination (Linux only)
-	// On macOS, Setpgid can fail with "operation not permitted" in sandboxed environments
-	usePgrp := runtime.GOOS == "linux"
-	if usePgrp {
-		cmd.SysProcAttr = &syscall.SysProcAttr{
-			Setpgid: true,
-		}
-	}
+	// NOTE: Do NOT set SysProcAttr here!
+	// The pty.Start() function internally sets Setsid: true to create a new session,
+	// which is required for proper PTY operation. Setting Setpgid would conflict with Setsid.
 
 	// Start command with PTY
 	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{
@@ -88,7 +99,6 @@ func NewTerminalSession(shell string, workingDir string, env map[string]string, 
 		ptmx:    ptmx,
 		cmd:     cmd,
 		closeCh: make(chan struct{}),
-		usePgrp: usePgrp,
 	}, nil
 }
 
@@ -133,16 +143,14 @@ func (t *TerminalSession) Close() error {
 		_ = t.ptmx.Close()
 	}
 
-	// Kill the process (or process group on Linux)
+	// Kill the process and its session
+	// Since pty.Start uses Setsid, the shell is the session leader
+	// Killing the session leader will send SIGHUP to all processes in the session
 	if t.cmd != nil && t.cmd.Process != nil {
 		pid := t.cmd.Process.Pid
-		if t.usePgrp {
-			// Kill the entire process group (Linux)
-			_ = syscall.Kill(-pid, syscall.SIGKILL)
-		} else {
-			// Kill just the process (macOS / other)
-			_ = t.cmd.Process.Kill()
-		}
+		// Try to kill the session (negative PID with SIGKILL)
+		// This works because Setsid makes the process a session leader with pgid == pid
+		_ = syscall.Kill(-pid, syscall.SIGKILL)
 		// Wait for the process to exit
 		_ = t.cmd.Wait()
 	}
