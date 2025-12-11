@@ -114,7 +114,12 @@ func GetTerminalHTML() string {
 
         // Build WebSocket URL
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const wsUrl = protocol + '//' + window.location.host + '/terminal/ws?cols=' + term.cols + '&rows=' + term.rows;
+        const urlParams = new URLSearchParams(window.location.search);
+        const token = urlParams.get('token');
+        let wsUrl = protocol + '//' + window.location.host + '/terminal/ws?cols=' + term.cols + '&rows=' + term.rows;
+        if (token) {
+            wsUrl += '&token=' + encodeURIComponent(token);
+        }
 
         let ws = null;
         let reconnectAttempts = 0;
@@ -187,4 +192,3 @@ func GetTerminalHTML() string {
 </body>
 </html>`
 }
-
