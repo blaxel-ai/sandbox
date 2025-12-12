@@ -265,8 +265,8 @@ func (h *ProcessHandler) HandleExecuteCommand(c *gin.Context) {
 	h.SendJSON(c, http.StatusOK, processInfo)
 }
 
-// handleExecuteCommandStream handles streaming execution with plain text format
-// Logs are streamed with stdout:/stderr: prefixes, and the final result is sent as result:{json}
+// handleExecuteCommandStream handles streaming execution with JSON events
+// Events are streamed as newline-delimited JSON: {"type": "stdout|stderr|result|error|keepalive", "data": "..."}
 func (h *ProcessHandler) handleExecuteCommandStream(c *gin.Context) {
 	var req ProcessRequest
 	if err := h.BindJSON(c, &req); err != nil {
@@ -292,29 +292,27 @@ func (h *ProcessHandler) handleExecuteCommandStream(c *gin.Context) {
 		}
 	}
 
-	// Set headers for streaming (same as HandleGetProcessLogsStream)
-	c.Writer.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	// Set headers for streaming JSON events
+	c.Writer.Header().Set("Content-Type", "application/x-ndjson")
 	c.Writer.Header().Set("Cache-Control", "no-cache")
 	c.Writer.Header().Set("Connection", "keep-alive")
 	c.Writer.Header().Set("X-Accel-Buffering", "no")
 	c.Writer.Flush()
 
+	// Create JSON stream writer
+	jw := &JSONStreamWriter{gin: c}
+
 	// Execute the process without waiting for completion (we'll handle waiting ourselves)
 	processInfo, err := h.ExecuteProcess(req.Command, req.WorkingDir, req.Name, req.Env, false, req.Timeout, req.WaitForPorts, req.RestartOnFailure, req.MaxRestarts)
 	if err != nil {
-		fmt.Fprintf(c.Writer, "error:%s\n", err.Error())
-		c.Writer.Flush()
+		jw.WriteEvent("error", err.Error())
 		return
 	}
 
-	// Use the same ResponseWriter as HandleGetProcessLogsStream
-	rw := &ResponseWriter{gin: c}
-
-	// Stream process output
-	err = h.StreamProcessOutput(processInfo.PID, rw)
+	// Stream process output using JSON writer
+	err = h.StreamProcessOutput(processInfo.PID, jw)
 	if err != nil {
-		fmt.Fprintf(c.Writer, "error:%s\n", err.Error())
-		c.Writer.Flush()
+		jw.WriteEvent("error", err.Error())
 		return
 	}
 
@@ -331,39 +329,35 @@ func (h *ProcessHandler) handleExecuteCommandStream(c *gin.Context) {
 	for {
 		select {
 		case <-c.Request.Context().Done():
-			h.RemoveLogWriter(processInfo.PID, rw)
+			h.RemoveLogWriter(processInfo.PID, jw)
 			return
 		case <-proc.Done:
 			// Process completed
 			goto done
 		case <-keepaliveTicker.C:
 			// Send keepalive message to prevent connection timeout
-			fmt.Fprintf(c.Writer, "keepalive:\n")
-			c.Writer.Flush()
+			jw.WriteEvent("keepalive", "")
 		}
 	}
 done:
 
 	// Detach the writer
-	h.RemoveLogWriter(processInfo.PID, rw)
+	h.RemoveLogWriter(processInfo.PID, jw)
 
 	// Get final process info (now includes stdout, stderr, logs)
 	finalProcessInfo, err := h.GetProcess(processInfo.PID)
 	if err != nil {
-		fmt.Fprintf(c.Writer, "error:%s\n", err.Error())
-		c.Writer.Flush()
+		jw.WriteEvent("error", err.Error())
 		return
 	}
 
-	// Send final result as result:{json}
+	// Send final result as JSON event
 	resultJSON, err := json.Marshal(finalProcessInfo)
 	if err != nil {
-		fmt.Fprintf(c.Writer, "error:%s\n", err.Error())
-		c.Writer.Flush()
+		jw.WriteEvent("error", err.Error())
 		return
 	}
-	fmt.Fprintf(c.Writer, "result:%s\n", resultJSON)
-	c.Writer.Flush()
+	jw.WriteEvent("result", string(resultJSON))
 }
 
 // HandleGetProcessLogs handles GET requests to /process/{identifier}/logs
@@ -564,6 +558,69 @@ func (w *ResponseWriter) Write(data []byte) (int, error) {
 
 // Close marks the writer as closed to prevent further writes
 func (w *ResponseWriter) Close() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.closed = true
+}
+
+// JSONStreamWriter wraps a writer and formats output as JSON events
+// Used by handleExecuteCommandStream for structured streaming output
+type JSONStreamWriter struct {
+	gin    *gin.Context
+	closed bool
+	mu     sync.Mutex
+}
+
+// StreamEvent represents a JSON streaming event
+type StreamEvent struct {
+	Type string `json:"type"`
+	Data string `json:"data,omitempty"`
+}
+
+// IsJSONStreamWriter is a marker method to identify JSON stream writers
+func (w *JSONStreamWriter) IsJSONStreamWriter() bool {
+	return true
+}
+
+// WriteEvent writes a JSON event to the stream
+func (w *JSONStreamWriter) WriteEvent(eventType string, data string) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	if w.closed {
+		return 0, fmt.Errorf("writer closed")
+	}
+
+	select {
+	case <-w.gin.Request.Context().Done():
+		w.closed = true
+		return 0, fmt.Errorf("client connection closed")
+	default:
+	}
+
+	event := StreamEvent{Type: eventType, Data: data}
+	eventJSON, err := json.Marshal(event)
+	if err != nil {
+		return 0, err
+	}
+	eventJSON = append(eventJSON, '\n')
+
+	n, err := w.gin.Writer.Write(eventJSON)
+	if err != nil {
+		w.closed = true
+		return 0, err
+	}
+	w.gin.Writer.Flush()
+	return n, nil
+}
+
+// Write implements io.Writer - writes raw data as stdout event
+func (w *JSONStreamWriter) Write(data []byte) (int, error) {
+	return w.WriteEvent("stdout", string(data))
+}
+
+// Close marks the writer as closed
+func (w *JSONStreamWriter) Close() {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.closed = true

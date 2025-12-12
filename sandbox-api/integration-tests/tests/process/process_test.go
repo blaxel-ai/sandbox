@@ -837,6 +837,47 @@ func TestProcessNonExistentWorkingDirectory(t *testing.T) {
 	})
 }
 
+// StreamEvent represents a JSON streaming event
+type StreamEvent struct {
+	Type string `json:"type"`
+	Data string `json:"data,omitempty"`
+}
+
+// parseStreamEvents reads newline-delimited JSON events from a response body
+func parseStreamEvents(t *testing.T, resp *http.Response) ([]StreamEvent, map[string]interface{}) {
+	reader := bufio.NewReader(resp.Body)
+	events := []StreamEvent{}
+	var result map[string]interface{}
+
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			break
+		}
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+
+		var event StreamEvent
+		if err := json.Unmarshal([]byte(line), &event); err != nil {
+			t.Logf("Failed to parse event: %s", line)
+			continue
+		}
+		events = append(events, event)
+
+		// If this is the result event, parse the nested JSON
+		if event.Type == "result" {
+			if err := json.Unmarshal([]byte(event.Data), &result); err != nil {
+				t.Logf("Failed to parse result data: %s", event.Data)
+			}
+			break
+		}
+	}
+
+	return events, result
+}
+
 // TestProcessExecuteWithStreaming tests the streaming execution endpoint
 func TestProcessExecuteWithStreaming(t *testing.T) {
 	t.Log("=== Testing process execution with streaming ===")
@@ -854,58 +895,40 @@ func TestProcessExecuteWithStreaming(t *testing.T) {
 		defer resp.Body.Close()
 
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
-		assert.Equal(t, "text/plain; charset=utf-8", resp.Header.Get("Content-Type"))
+		assert.Equal(t, "application/x-ndjson", resp.Header.Get("Content-Type"))
 
-		// Read the streaming response
-		reader := bufio.NewReader(resp.Body)
-		lines := []string{}
-		var resultJSON string
+		events, result := parseStreamEvents(t, resp)
 
-		for {
-			line, err := reader.ReadString('\n')
-			if err != nil {
-				break
+		// Collect all stdout and stderr data from events
+		var allStdoutData string
+		var allStderrData string
+		for _, event := range events {
+			if event.Type == "stdout" {
+				allStdoutData += event.Data
 			}
-			line = strings.TrimSpace(line)
-			if line == "" {
-				continue
-			}
-			lines = append(lines, line)
-
-			// Check if this is the result line
-			if strings.HasPrefix(line, "result:") {
-				resultJSON = strings.TrimPrefix(line, "result:")
-				break
+			if event.Type == "stderr" {
+				allStderrData += event.Data
 			}
 		}
 
-		t.Logf("Received %d lines", len(lines))
-		for _, line := range lines {
-			t.Logf("  %s", line)
-		}
+		// Verify streamed stdout contains all lines (may come in single or multiple events)
+		assert.Contains(t, allStdoutData, "line1", "streamed stdout should contain line1")
+		assert.Contains(t, allStdoutData, "line2", "streamed stdout should contain line2")
+		assert.Contains(t, allStdoutData, "line3", "streamed stdout should contain line3")
+		assert.Contains(t, allStdoutData, "line4", "streamed stdout should contain line4")
 
-		// Verify we received stdout lines
-		stdoutCount := 0
-		for _, line := range lines {
-			if strings.HasPrefix(line, "stdout:") {
-				stdoutCount++
-			}
-		}
-		assert.GreaterOrEqual(t, stdoutCount, 1, "should receive at least 1 stdout line")
+		// Verify streamed stderr contains error line
+		assert.Contains(t, allStderrData, "error line", "streamed stderr should contain error line")
 
 		// Verify we received the result
-		require.NotEmpty(t, resultJSON, "should receive result JSON")
-
-		var result map[string]interface{}
-		err = json.Unmarshal([]byte(resultJSON), &result)
-		require.NoError(t, err, "result should be valid JSON")
+		require.NotNil(t, result, "should receive result")
 
 		assert.Contains(t, result, "pid")
 		assert.Contains(t, result, "status")
 		assert.Equal(t, "completed", result["status"])
 		assert.Equal(t, float64(0), result["exitCode"])
 
-		// Verify stdout, stderr, and logs are present separately
+		// Verify stdout, stderr, and logs are present separately in result
 		assert.Contains(t, result, "stdout")
 		assert.Contains(t, result, "stderr")
 		assert.Contains(t, result, "logs")
@@ -935,48 +958,25 @@ func TestProcessExecuteWithStreaming(t *testing.T) {
 
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-		reader := bufio.NewReader(resp.Body)
-		lines := []string{}
-		var resultJSON string
+		events, result := parseStreamEvents(t, resp)
 
-		for {
-			line, err := reader.ReadString('\n')
-			if err != nil {
-				break
-			}
-			line = strings.TrimSpace(line)
-			if line == "" {
-				continue
-			}
-			lines = append(lines, line)
-
-			if strings.HasPrefix(line, "result:") {
-				resultJSON = strings.TrimPrefix(line, "result:")
-				break
-			}
-		}
-
-		// Check for stdout and stderr prefixes
+		// Check for stdout and stderr events
 		hasStdout := false
 		hasStderr := false
-		for _, line := range lines {
-			if strings.HasPrefix(line, "stdout:") && strings.Contains(line, "stdout line") {
+		for _, event := range events {
+			if event.Type == "stdout" && strings.Contains(event.Data, "stdout line") {
 				hasStdout = true
 			}
-			if strings.HasPrefix(line, "stderr:") && strings.Contains(line, "stderr line") {
+			if event.Type == "stderr" && strings.Contains(event.Data, "stderr line") {
 				hasStderr = true
 			}
 		}
 
-		assert.True(t, hasStdout, "should receive stdout line in stream")
-		assert.True(t, hasStderr, "should receive stderr line in stream")
-		require.NotEmpty(t, resultJSON, "should receive result JSON")
+		assert.True(t, hasStdout, "should receive stdout event in stream")
+		assert.True(t, hasStderr, "should receive stderr event in stream")
+		require.NotNil(t, result, "should receive result")
 
 		// Verify result contains separate stdout, stderr, logs
-		var result map[string]interface{}
-		err = json.Unmarshal([]byte(resultJSON), &result)
-		require.NoError(t, err)
-
 		assert.Contains(t, result, "stdout")
 		assert.Contains(t, result, "stderr")
 		assert.Contains(t, result, "logs")
@@ -1004,26 +1004,9 @@ func TestProcessExecuteWithStreaming(t *testing.T) {
 
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-		reader := bufio.NewReader(resp.Body)
-		var resultJSON string
+		_, result := parseStreamEvents(t, resp)
 
-		for {
-			line, err := reader.ReadString('\n')
-			if err != nil {
-				break
-			}
-			line = strings.TrimSpace(line)
-			if strings.HasPrefix(line, "result:") {
-				resultJSON = strings.TrimPrefix(line, "result:")
-				break
-			}
-		}
-
-		require.NotEmpty(t, resultJSON, "should receive result JSON")
-
-		var result map[string]interface{}
-		err = json.Unmarshal([]byte(resultJSON), &result)
-		require.NoError(t, err)
+		require.NotNil(t, result, "should receive result")
 
 		assert.Equal(t, "failed", result["status"])
 		assert.Equal(t, float64(42), result["exitCode"])
@@ -1045,26 +1028,9 @@ func TestProcessExecuteWithStreaming(t *testing.T) {
 
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-		reader := bufio.NewReader(resp.Body)
-		var resultJSON string
+		_, result := parseStreamEvents(t, resp)
 
-		for {
-			line, err := reader.ReadString('\n')
-			if err != nil {
-				break
-			}
-			line = strings.TrimSpace(line)
-			if strings.HasPrefix(line, "result:") {
-				resultJSON = strings.TrimPrefix(line, "result:")
-				break
-			}
-		}
-
-		require.NotEmpty(t, resultJSON, "should receive result JSON")
-
-		var result map[string]interface{}
-		err = json.Unmarshal([]byte(resultJSON), &result)
-		require.NoError(t, err)
+		require.NotNil(t, result, "should receive result")
 
 		assert.Equal(t, processName, result["name"])
 		assert.Equal(t, "completed", result["status"])
