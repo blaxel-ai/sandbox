@@ -1074,7 +1074,7 @@ paths:
       tags:
         - process
     post:
-      description: Execute a command and return process information
+      description: Execute a command and return process information. If Accept header is text/event-stream, streams logs in SSE format and returns the process response as a final event.
       requestBody:
         content:
           application/json:
@@ -1089,10 +1089,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ProcessResponse"
+            text/event-stream:
+              schema:
+                $ref: "#/components/schemas/ProcessResponse"
         "400":
           description: Invalid request
           content:
             application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+            text/event-stream:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "422":
@@ -1101,10 +1107,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+            text/event-stream:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "500":
           description: Internal server error
           content:
             application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+            text/event-stream:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
       summary: Execute a command
@@ -1716,6 +1728,12 @@ components:
             - completed
           example: running
           type: string
+        stderr:
+          example: stderr output
+          type: string
+        stdout:
+          example: stdout output
+          type: string
         workingDir:
           example: /home/user
           type: string
@@ -1728,6 +1746,8 @@ components:
         - pid
         - startedAt
         - status
+        - stderr
+        - stdout
         - workingDir
       type: object
     RankedFile:

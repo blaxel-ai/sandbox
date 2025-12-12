@@ -1301,12 +1301,13 @@ const docTemplate = `{
                 }
             },
             "post": {
-                "description": "Execute a command and return process information",
+                "description": "Execute a command and return process information. If Accept header is text/event-stream, streams logs in SSE format and returns the process response as a final event.",
                 "consumes": [
                     "application/json"
                 ],
                 "produces": [
-                    "application/json"
+                    "application/json",
+                    "text/event-stream"
                 ],
                 "tags": [
                     "process"
@@ -2104,6 +2105,8 @@ const docTemplate = `{
                 "pid",
                 "startedAt",
                 "status",
+                "stderr",
+                "stdout",
                 "workingDir"
             ],
             "properties": {
@@ -2157,6 +2160,14 @@ const docTemplate = `{
                         "completed"
                     ],
                     "example": "running"
+                },
+                "stderr": {
+                    "type": "string",
+                    "example": "stderr output"
+                },
+                "stdout": {
+                    "type": "string",
+                    "example": "stdout output"
                 },
                 "workingDir": {
                     "type": "string",
