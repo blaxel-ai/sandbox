@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -203,10 +204,11 @@ func (h *ProcessHandler) HandleListProcesses(c *gin.Context) {
 
 // HandleExecuteCommand handles POST requests to /process/
 // @Summary Execute a command
-// @Description Execute a command and return process information
+// @Description Execute a command and return process information. If Accept header is text/event-stream, streams logs in SSE format and returns the process response as a final event.
 // @Tags process
 // @Accept json
 // @Produce json
+// @Produce text/event-stream
 // @Param request body ProcessRequest true "Process execution request"
 // @Success 200 {object} ProcessResponse "Process information"
 // @Failure 400 {object} ErrorResponse "Invalid request"
@@ -214,6 +216,13 @@ func (h *ProcessHandler) HandleListProcesses(c *gin.Context) {
 // @Failure 500 {object} ErrorResponse "Internal server error"
 // @Router /process [post]
 func (h *ProcessHandler) HandleExecuteCommand(c *gin.Context) {
+	// Check if client wants SSE streaming
+	acceptHeader := c.GetHeader("Accept")
+	if strings.Contains(acceptHeader, "text/event-stream") {
+		h.handleExecuteCommandStream(c)
+		return
+	}
+
 	var req ProcessRequest
 	if err := h.BindJSON(c, &req); err != nil {
 		h.SendError(c, http.StatusBadRequest, err)
@@ -246,6 +255,102 @@ func (h *ProcessHandler) HandleExecuteCommand(c *gin.Context) {
 	}
 
 	h.SendJSON(c, http.StatusOK, processInfo)
+}
+
+// handleExecuteCommandStream handles streaming execution with plain text format
+// Logs are streamed with stdout:/stderr: prefixes, and the final result is sent as result:{json}
+func (h *ProcessHandler) handleExecuteCommandStream(c *gin.Context) {
+	var req ProcessRequest
+	if err := h.BindJSON(c, &req); err != nil {
+		h.SendError(c, http.StatusBadRequest, err)
+		return
+	}
+
+	if req.WorkingDir != "" {
+		formattedWorkingDir, err := lib.FormatPath(req.WorkingDir)
+		if err != nil {
+			h.SendError(c, http.StatusBadRequest, err)
+			return
+		}
+		req.WorkingDir = formattedWorkingDir
+	}
+
+	// If a name is provided, check if a process with that name already exists
+	if req.Name != "" {
+		alreadyExists, err := h.GetProcess(req.Name)
+		if err == nil && alreadyExists.Status == string(constants.ProcessStatusRunning) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("process with name '%s' already exists and is running", req.Name)})
+			return
+		}
+	}
+
+	// Set headers for streaming (same as HandleGetProcessLogsStream)
+	c.Writer.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	c.Writer.Header().Set("Cache-Control", "no-cache")
+	c.Writer.Header().Set("Connection", "keep-alive")
+	c.Writer.Header().Set("X-Accel-Buffering", "no")
+	c.Writer.Flush()
+
+	// Execute the process without waiting for completion (we'll handle waiting ourselves)
+	processInfo, err := h.ExecuteProcess(req.Command, req.WorkingDir, req.Name, req.Env, false, req.Timeout, req.WaitForPorts, req.RestartOnFailure, req.MaxRestarts)
+	if err != nil {
+		fmt.Fprintf(c.Writer, "error:%s\n", err.Error())
+		c.Writer.Flush()
+		return
+	}
+
+	// Use the same ResponseWriter as HandleGetProcessLogsStream
+	rw := &ResponseWriter{gin: c}
+
+	// Stream process output
+	err = h.StreamProcessOutput(processInfo.PID, rw)
+	if err != nil {
+		fmt.Fprintf(c.Writer, "error:%s\n", err.Error())
+		c.Writer.Flush()
+		return
+	}
+
+	// Wait until the process is done or the client disconnects
+	proc, exists := h.processManager.GetProcessByIdentifier(processInfo.PID)
+	if !exists {
+		return
+	}
+	for proc.Status == constants.ProcessStatusRunning {
+		time.Sleep(200 * time.Millisecond)
+		// If client disconnects, break
+		select {
+		case <-c.Request.Context().Done():
+			h.RemoveLogWriter(processInfo.PID, rw)
+			return
+		default:
+		}
+		// Re-fetch process status
+		proc, exists = h.processManager.GetProcessByIdentifier(processInfo.PID)
+		if !exists {
+			break
+		}
+	}
+
+	// Detach the writer
+	h.RemoveLogWriter(processInfo.PID, rw)
+
+	// Get final process info
+	finalProcessInfo, err := h.GetProcess(processInfo.PID)
+	if err != nil {
+		fmt.Fprintf(c.Writer, "error:%s\n", err.Error())
+		c.Writer.Flush()
+		return
+	}
+
+	// Send final result as result:{json}
+	resultJSON, err := json.Marshal(finalProcessInfo)
+	if err != nil {
+		fmt.Fprintf(c.Writer, "error:%s\n", err.Error())
+		c.Writer.Flush()
+		return
+	}
+	fmt.Fprintf(c.Writer, "result:%s\n", resultJSON)
+	c.Writer.Flush()
 }
 
 // HandleGetProcessLogs handles GET requests to /process/{identifier}/logs
