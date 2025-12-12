@@ -66,6 +66,8 @@ type ProcessResponse struct {
 	ExitCode         int     `json:"exitCode" example:"0" binding:"required"`
 	WorkingDir       string  `json:"workingDir" example:"/home/user" binding:"required"`
 	Logs             *string `json:"logs" example:"logs output" binding:"required"`
+	Stdout           *string `json:"stdout" example:"stdout output" binding:"required"`
+	Stderr           *string `json:"stderr" example:"stderr output" binding:"required"`
 	RestartOnFailure bool    `json:"restartOnFailure" example:"true"`
 	MaxRestarts      int     `json:"maxRestarts" example:"3"`
 	RestartCount     int     `json:"restartCount" example:"2"`
@@ -103,6 +105,8 @@ func (h *ProcessHandler) ExecuteProcess(command string, workingDir string, name 
 		ExitCode:         processInfo.ExitCode,
 		WorkingDir:       processInfo.WorkingDir,
 		Logs:             processInfo.Logs,
+		Stdout:           processInfo.Stdout,
+		Stderr:           processInfo.Stderr,
 		RestartOnFailure: processInfo.RestartOnFailure,
 		MaxRestarts:      processInfo.MaxRestarts,
 		RestartCount:     processInfo.RestartCount,
@@ -129,6 +133,8 @@ func (h *ProcessHandler) ListProcesses() []ProcessResponse {
 			ExitCode:         p.ExitCode,
 			WorkingDir:       p.WorkingDir,
 			Logs:             p.Logs,
+			Stdout:           p.Stdout,
+			Stderr:           p.Stderr,
 			RestartOnFailure: p.RestartOnFailure,
 			MaxRestarts:      p.MaxRestarts,
 			RestartCount:     p.RestartCount,
@@ -158,6 +164,8 @@ func (h *ProcessHandler) GetProcess(identifier string) (ProcessResponse, error) 
 		ExitCode:         processInfo.ExitCode,
 		WorkingDir:       processInfo.WorkingDir,
 		Logs:             processInfo.Logs,
+		Stdout:           processInfo.Stdout,
+		Stderr:           processInfo.Stderr,
 		RestartOnFailure: processInfo.RestartOnFailure,
 		MaxRestarts:      processInfo.MaxRestarts,
 		RestartCount:     processInfo.RestartCount,
@@ -334,7 +342,7 @@ func (h *ProcessHandler) handleExecuteCommandStream(c *gin.Context) {
 	// Detach the writer
 	h.RemoveLogWriter(processInfo.PID, rw)
 
-	// Get final process info
+	// Get final process info (now includes stdout, stderr, logs)
 	finalProcessInfo, err := h.GetProcess(processInfo.PID)
 	if err != nil {
 		fmt.Fprintf(c.Writer, "error:%s\n", err.Error())

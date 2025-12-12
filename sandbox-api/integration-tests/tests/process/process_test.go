@@ -904,6 +904,21 @@ func TestProcessExecuteWithStreaming(t *testing.T) {
 		assert.Contains(t, result, "status")
 		assert.Equal(t, "completed", result["status"])
 		assert.Equal(t, float64(0), result["exitCode"])
+
+		// Verify stdout, stderr, and logs are present separately
+		assert.Contains(t, result, "stdout")
+		assert.Contains(t, result, "stderr")
+		assert.Contains(t, result, "logs")
+
+		stdout := result["stdout"].(string)
+		stderr := result["stderr"].(string)
+		logs := result["logs"].(string)
+
+		assert.Contains(t, stdout, "line1")
+		assert.Contains(t, stdout, "line4")
+		assert.Contains(t, stderr, "error line")
+		assert.Contains(t, logs, "line1")
+		assert.Contains(t, logs, "error line")
 	})
 
 	t.Run("streaming with stderr", func(t *testing.T) {
@@ -953,9 +968,26 @@ func TestProcessExecuteWithStreaming(t *testing.T) {
 			}
 		}
 
-		assert.True(t, hasStdout, "should receive stdout line")
-		assert.True(t, hasStderr, "should receive stderr line")
+		assert.True(t, hasStdout, "should receive stdout line in stream")
+		assert.True(t, hasStderr, "should receive stderr line in stream")
 		require.NotEmpty(t, resultJSON, "should receive result JSON")
+
+		// Verify result contains separate stdout, stderr, logs
+		var result map[string]interface{}
+		err = json.Unmarshal([]byte(resultJSON), &result)
+		require.NoError(t, err)
+
+		assert.Contains(t, result, "stdout")
+		assert.Contains(t, result, "stderr")
+		assert.Contains(t, result, "logs")
+
+		stdout := result["stdout"].(string)
+		stderr := result["stderr"].(string)
+
+		assert.Contains(t, stdout, "stdout line")
+		assert.Contains(t, stderr, "stderr line")
+		assert.NotContains(t, stdout, "stderr line", "stdout should not contain stderr content")
+		assert.NotContains(t, stderr, "stdout line", "stderr should not contain stdout content")
 	})
 
 	t.Run("streaming with failing process", func(t *testing.T) {
