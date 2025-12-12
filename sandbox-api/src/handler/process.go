@@ -323,21 +323,26 @@ func (h *ProcessHandler) handleExecuteCommandStream(c *gin.Context) {
 	if !exists {
 		return
 	}
-	for proc.Status == constants.ProcessStatusRunning {
-		time.Sleep(200 * time.Millisecond)
-		// If client disconnects, break
+
+	// Start keepalive ticker to prevent connection timeout
+	keepaliveTicker := time.NewTicker(5 * time.Second)
+	defer keepaliveTicker.Stop()
+
+	for {
 		select {
 		case <-c.Request.Context().Done():
 			h.RemoveLogWriter(processInfo.PID, rw)
 			return
-		default:
-		}
-		// Re-fetch process status
-		proc, exists = h.processManager.GetProcessByIdentifier(processInfo.PID)
-		if !exists {
-			break
+		case <-proc.Done:
+			// Process completed
+			goto done
+		case <-keepaliveTicker.C:
+			// Send keepalive message to prevent connection timeout
+			fmt.Fprintf(c.Writer, "keepalive:\n")
+			c.Writer.Flush()
 		}
 	}
+done:
 
 	// Detach the writer
 	h.RemoveLogWriter(processInfo.PID, rw)

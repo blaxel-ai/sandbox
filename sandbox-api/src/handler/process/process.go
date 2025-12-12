@@ -53,6 +53,7 @@ type ProcessInfo struct {
 	RestartOnFailure bool                    `json:"restartOnFailure"`
 	MaxRestarts      int                     `json:"maxRestarts"`
 	RestartCount     int                     `json:"restartCount"`
+	Done             chan struct{}
 	stdout           *strings.Builder
 	stderr           *strings.Builder
 	logs             *strings.Builder
@@ -189,6 +190,7 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 		RestartOnFailure: restartOnFailure,
 		MaxRestarts:      maxRestarts,
 		RestartCount:     0,
+		Done:             make(chan struct{}),
 		stdout:           stdout,
 		stderr:           stderr,
 		logs:             logs,
@@ -372,6 +374,8 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 				process.logWriters = nil // Clear all log writers
 				process.logLock.Unlock()
 
+				// Signal that the process is done
+				close(process.Done)
 				callback(process)
 			}
 			// If restart succeeds, the callback will be called when that process completes
@@ -381,6 +385,8 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 			process.logWriters = nil // Clear all log writers
 			process.logLock.Unlock()
 
+			// Signal that the process is done
+			close(process.Done)
 			callback(process)
 		}
 	}()
@@ -620,6 +626,8 @@ func (pm *ProcessManager) restartProcess(oldProcess *ProcessInfo, callback func(
 				oldProcess.logWriters = nil
 				oldProcess.logLock.Unlock()
 
+				// Signal that the process is done
+				close(oldProcess.Done)
 				callback(oldProcess)
 			}
 			// If restart succeeds, the callback will be called when that process completes
@@ -629,6 +637,8 @@ func (pm *ProcessManager) restartProcess(oldProcess *ProcessInfo, callback func(
 			oldProcess.logWriters = nil
 			oldProcess.logLock.Unlock()
 
+			// Signal that the process is done
+			close(oldProcess.Done)
 			callback(oldProcess)
 		}
 	}()
