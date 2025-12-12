@@ -2,8 +2,10 @@ package tests
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"sync"
@@ -262,7 +264,7 @@ func TestProcessKillByName(t *testing.T) {
 func TestProcessOutputByName(t *testing.T) {
 	// Create a process with output
 	processRequest := map[string]interface{}{
-		"command":           "echo 'test output' && echo 'test error' >&2",
+		"command":           "echo 'test output'; echo 'test error' >&2",
 		"waitForCompletion": true,
 		"cwd":               "/",
 	}
@@ -833,4 +835,294 @@ func TestProcessNonExistentWorkingDirectory(t *testing.T) {
 		logs := processResponse["logs"].(string)
 		assert.True(t, strings.Contains(logs, "/tmp"), "Logs should contain /tmp path")
 	})
+}
+
+// TestProcessExecuteWithStreaming tests the streaming execution endpoint
+func TestProcessExecuteWithStreaming(t *testing.T) {
+	t.Log("=== Testing process execution with streaming ===")
+
+	t.Run("basic streaming execution", func(t *testing.T) {
+		processRequest := map[string]interface{}{
+			"command": "echo 'line1' && echo 'line2' && echo 'line3' && sleep 1 && echo 'line4' && echo 'error line' >&2",
+			"cwd":     "/",
+		}
+
+		resp, err := makeRequestWithHeaders(http.MethodPost, "/process", processRequest, map[string]string{
+			"Accept": "text/event-stream",
+		})
+		require.NoError(t, err)
+		defer resp.Body.Close()
+
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+		assert.Equal(t, "text/plain; charset=utf-8", resp.Header.Get("Content-Type"))
+
+		// Read the streaming response
+		reader := bufio.NewReader(resp.Body)
+		lines := []string{}
+		var resultJSON string
+
+		for {
+			line, err := reader.ReadString('\n')
+			if err != nil {
+				break
+			}
+			line = strings.TrimSpace(line)
+			if line == "" {
+				continue
+			}
+			lines = append(lines, line)
+
+			// Check if this is the result line
+			if strings.HasPrefix(line, "result:") {
+				resultJSON = strings.TrimPrefix(line, "result:")
+				break
+			}
+		}
+
+		t.Logf("Received %d lines", len(lines))
+		for _, line := range lines {
+			t.Logf("  %s", line)
+		}
+
+		// Verify we received stdout lines
+		stdoutCount := 0
+		for _, line := range lines {
+			if strings.HasPrefix(line, "stdout:") {
+				stdoutCount++
+			}
+		}
+		assert.GreaterOrEqual(t, stdoutCount, 1, "should receive at least 1 stdout line")
+
+		// Verify we received the result
+		require.NotEmpty(t, resultJSON, "should receive result JSON")
+
+		var result map[string]interface{}
+		err = json.Unmarshal([]byte(resultJSON), &result)
+		require.NoError(t, err, "result should be valid JSON")
+
+		assert.Contains(t, result, "pid")
+		assert.Contains(t, result, "status")
+		assert.Equal(t, "completed", result["status"])
+		assert.Equal(t, float64(0), result["exitCode"])
+
+		// Verify stdout, stderr, and logs are present separately
+		assert.Contains(t, result, "stdout")
+		assert.Contains(t, result, "stderr")
+		assert.Contains(t, result, "logs")
+
+		stdout := result["stdout"].(string)
+		stderr := result["stderr"].(string)
+		logs := result["logs"].(string)
+
+		assert.Contains(t, stdout, "line1")
+		assert.Contains(t, stdout, "line4")
+		assert.Contains(t, stderr, "error line")
+		assert.Contains(t, logs, "line1")
+		assert.Contains(t, logs, "error line")
+	})
+
+	t.Run("streaming with stderr", func(t *testing.T) {
+		processRequest := map[string]interface{}{
+			"command": "echo 'stdout line' && echo 'stderr line' >&2",
+			"cwd":     "/",
+		}
+
+		resp, err := makeRequestWithHeaders(http.MethodPost, "/process", processRequest, map[string]string{
+			"Accept": "text/event-stream",
+		})
+		require.NoError(t, err)
+		defer resp.Body.Close()
+
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+		reader := bufio.NewReader(resp.Body)
+		lines := []string{}
+		var resultJSON string
+
+		for {
+			line, err := reader.ReadString('\n')
+			if err != nil {
+				break
+			}
+			line = strings.TrimSpace(line)
+			if line == "" {
+				continue
+			}
+			lines = append(lines, line)
+
+			if strings.HasPrefix(line, "result:") {
+				resultJSON = strings.TrimPrefix(line, "result:")
+				break
+			}
+		}
+
+		// Check for stdout and stderr prefixes
+		hasStdout := false
+		hasStderr := false
+		for _, line := range lines {
+			if strings.HasPrefix(line, "stdout:") && strings.Contains(line, "stdout line") {
+				hasStdout = true
+			}
+			if strings.HasPrefix(line, "stderr:") && strings.Contains(line, "stderr line") {
+				hasStderr = true
+			}
+		}
+
+		assert.True(t, hasStdout, "should receive stdout line in stream")
+		assert.True(t, hasStderr, "should receive stderr line in stream")
+		require.NotEmpty(t, resultJSON, "should receive result JSON")
+
+		// Verify result contains separate stdout, stderr, logs
+		var result map[string]interface{}
+		err = json.Unmarshal([]byte(resultJSON), &result)
+		require.NoError(t, err)
+
+		assert.Contains(t, result, "stdout")
+		assert.Contains(t, result, "stderr")
+		assert.Contains(t, result, "logs")
+
+		stdout := result["stdout"].(string)
+		stderr := result["stderr"].(string)
+
+		assert.Contains(t, stdout, "stdout line")
+		assert.Contains(t, stderr, "stderr line")
+		assert.NotContains(t, stdout, "stderr line", "stdout should not contain stderr content")
+		assert.NotContains(t, stderr, "stdout line", "stderr should not contain stdout content")
+	})
+
+	t.Run("streaming with failing process", func(t *testing.T) {
+		processRequest := map[string]interface{}{
+			"command": "echo 'before fail' && exit 42",
+			"cwd":     "/",
+		}
+
+		resp, err := makeRequestWithHeaders(http.MethodPost, "/process", processRequest, map[string]string{
+			"Accept": "text/event-stream",
+		})
+		require.NoError(t, err)
+		defer resp.Body.Close()
+
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+		reader := bufio.NewReader(resp.Body)
+		var resultJSON string
+
+		for {
+			line, err := reader.ReadString('\n')
+			if err != nil {
+				break
+			}
+			line = strings.TrimSpace(line)
+			if strings.HasPrefix(line, "result:") {
+				resultJSON = strings.TrimPrefix(line, "result:")
+				break
+			}
+		}
+
+		require.NotEmpty(t, resultJSON, "should receive result JSON")
+
+		var result map[string]interface{}
+		err = json.Unmarshal([]byte(resultJSON), &result)
+		require.NoError(t, err)
+
+		assert.Equal(t, "failed", result["status"])
+		assert.Equal(t, float64(42), result["exitCode"])
+	})
+
+	t.Run("streaming with named process", func(t *testing.T) {
+		processName := fmt.Sprintf("test-stream-%d", time.Now().UnixNano())
+		processRequest := map[string]interface{}{
+			"name":    processName,
+			"command": "echo 'hello streaming'",
+			"cwd":     "/",
+		}
+
+		resp, err := makeRequestWithHeaders(http.MethodPost, "/process", processRequest, map[string]string{
+			"Accept": "text/event-stream",
+		})
+		require.NoError(t, err)
+		defer resp.Body.Close()
+
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+		reader := bufio.NewReader(resp.Body)
+		var resultJSON string
+
+		for {
+			line, err := reader.ReadString('\n')
+			if err != nil {
+				break
+			}
+			line = strings.TrimSpace(line)
+			if strings.HasPrefix(line, "result:") {
+				resultJSON = strings.TrimPrefix(line, "result:")
+				break
+			}
+		}
+
+		require.NotEmpty(t, resultJSON, "should receive result JSON")
+
+		var result map[string]interface{}
+		err = json.Unmarshal([]byte(resultJSON), &result)
+		require.NoError(t, err)
+
+		assert.Equal(t, processName, result["name"])
+		assert.Equal(t, "completed", result["status"])
+	})
+
+	t.Run("non-streaming request still works", func(t *testing.T) {
+		// Verify that regular requests without Accept: text/event-stream still return JSON
+		processRequest := map[string]interface{}{
+			"command":           "echo 'regular request'",
+			"cwd":               "/",
+			"waitForCompletion": true,
+		}
+
+		resp, err := common.MakeRequest(http.MethodPost, "/process", processRequest)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+		// Should return JSON, not streaming
+		assert.Contains(t, resp.Header.Get("Content-Type"), "application/json")
+
+		var result map[string]interface{}
+		err = json.NewDecoder(resp.Body).Decode(&result)
+		require.NoError(t, err)
+
+		assert.Equal(t, "completed", result["status"])
+	})
+}
+
+// makeRequestWithHeaders makes an HTTP request with custom headers
+func makeRequestWithHeaders(method, path string, body interface{}, headers map[string]string) (*http.Response, error) {
+	var bodyReader io.Reader
+
+	if body != nil {
+		jsonData, err := json.Marshal(body)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling JSON: %w", err)
+		}
+		bodyReader = bytes.NewBuffer(jsonData)
+	}
+
+	req, err := http.NewRequest(method, common.BaseURL+path, bodyReader)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+
+	for key, value := range headers {
+		req.Header.Set(key, value)
+	}
+
+	// Use a client with longer timeout for streaming
+	client := &http.Client{
+		Timeout: 30 * time.Second,
+	}
+
+	return client.Do(req)
 }

@@ -156,6 +156,10 @@ func (pm *ProcessManager) ExecuteProcess(
 	if waitForCompletion {
 		logs := processInfo.logs.String()
 		processInfo.Logs = &logs
+		stdout := processInfo.stdout.String()
+		processInfo.Stdout = &stdout
+		stderr := processInfo.stderr.String()
+		processInfo.Stderr = &stderr
 	}
 	return processInfo, nil
 }

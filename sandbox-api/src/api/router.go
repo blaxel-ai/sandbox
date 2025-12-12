@@ -105,47 +105,65 @@ func SetupRouter(disableRequestLogging bool) *gin.Engine {
 		c.Next()
 	})
 
+	// HEAD handler for checking endpoint existence
+	head := headHandler()
+
 	// Multipart upload routes (separate endpoint to avoid wildcard conflicts)
 	r.GET("/filesystem-multipart", fsHandler.HandleListMultipartUploads)
+	r.HEAD("/filesystem-multipart", head)
 	r.POST("/filesystem-multipart/initiate/*path", fsHandler.HandleInitiateMultipartUpload)
 	r.PUT("/filesystem-multipart/:uploadId/part", fsHandler.HandleUploadPart)
 	r.POST("/filesystem-multipart/:uploadId/complete", fsHandler.HandleCompleteMultipartUpload)
 	r.DELETE("/filesystem-multipart/:uploadId/abort", fsHandler.HandleAbortMultipartUpload)
 	r.GET("/filesystem-multipart/:uploadId/parts", fsHandler.HandleListParts)
+	r.HEAD("/filesystem-multipart/:uploadId/parts", head)
 
 	// Filesystem routes
 	r.GET("/filesystem-find/*path", fsHandler.HandleFind)
+	r.HEAD("/filesystem-find/*path", head)
 	r.GET("/filesystem-search/*path", fsHandler.HandleFuzzySearch)
+	r.HEAD("/filesystem-search/*path", head)
 	r.GET("/filesystem-content-search/*path", fsHandler.HandleContentSearch)
+	r.HEAD("/filesystem-content-search/*path", head)
 	r.GET("/watch/filesystem/*path", fsHandler.HandleWatchDirectory)
+	r.HEAD("/watch/filesystem/*path", head)
 	r.GET("/filesystem/*path", fsHandler.HandleGetFile)
+	r.HEAD("/filesystem/*path", head)
 	r.PUT("/filesystem/*path", fsHandler.HandleCreateOrUpdateFile)
 	r.DELETE("/filesystem/*path", fsHandler.HandleDeleteFile)
 
 	// Process routes
 	r.GET("/process", processHandler.HandleListProcesses)
+	r.HEAD("/process", head)
 	r.POST("/process", processHandler.HandleExecuteCommand)
 	r.GET("/process/:identifier/logs", processHandler.HandleGetProcessLogs)
+	r.HEAD("/process/:identifier/logs", head)
 	r.GET("/process/:identifier/logs/stream", processHandler.HandleGetProcessLogsStream)
+	r.HEAD("/process/:identifier/logs/stream", head)
 	r.DELETE("/process/:identifier", processHandler.HandleStopProcess)
 	r.DELETE("/process/:identifier/kill", processHandler.HandleKillProcess)
 	r.GET("/process/:identifier", processHandler.HandleGetProcess)
+	r.HEAD("/process/:identifier", head)
 
 	// Network routes
 	r.GET("/network/process/:pid/ports", networkHandler.HandleGetPorts)
+	r.HEAD("/network/process/:pid/ports", head)
 	r.POST("/network/process/:pid/monitor", networkHandler.HandleMonitorPorts)
 	r.DELETE("/network/process/:pid/monitor", networkHandler.HandleStopMonitoringPorts)
 
 	// Codegen routes
 	r.PUT("/codegen/fastapply/*path", codegenHandler.HandleFastApply)
 	r.GET("/codegen/reranking/*path", codegenHandler.HandleReranking)
+	r.HEAD("/codegen/reranking/*path", head)
 
 	// Terminal routes (web-based terminal with PTY)
 	// Can be disabled with DISABLE_TERMINAL=true environment variable
 	if !disableTerminal {
 		terminalHandler := handler.NewTerminalHandler()
 		r.GET("/terminal", terminalHandler.HandleTerminalPage)
+		r.HEAD("/terminal", head)
 		r.GET("/terminal/ws", terminalHandler.HandleTerminalWS)
+		r.HEAD("/terminal/ws", head)
 	} else {
 		logrus.Info("Terminal endpoint disabled via DISABLE_TERMINAL environment variable")
 	}
@@ -154,6 +172,7 @@ func SetupRouter(disableRequestLogging bool) *gin.Engine {
 	r.GET("/health", func(c *gin.Context) {
 		c.JSON(200, gin.H{"status": "ok"})
 	})
+	r.HEAD("/health", head)
 
 	// Root welcome endpoint - handles all HTTP methods
 	r.GET("/", baseHandler.HandleWelcome)
@@ -170,7 +189,7 @@ func SetupRouter(disableRequestLogging bool) *gin.Engine {
 func corsMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
-		c.Writer.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		c.Writer.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, HEAD, OPTIONS")
 		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 
 		if c.Request.Method == "OPTIONS" {
@@ -179,6 +198,13 @@ func corsMiddleware() gin.HandlerFunc {
 		}
 
 		c.Next()
+	}
+}
+
+// headHandler returns a simple 200 OK for HEAD requests to check endpoint existence
+func headHandler() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.Status(http.StatusOK)
 	}
 }
 

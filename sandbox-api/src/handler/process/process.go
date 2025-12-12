@@ -48,6 +48,8 @@ type ProcessInfo struct {
 	Status           constants.ProcessStatus `json:"status"`
 	WorkingDir       string                  `json:"workingDir"`
 	Logs             *string                 `json:"logs"`
+	Stdout           *string                 `json:"stdout"`
+	Stderr           *string                 `json:"stderr"`
 	RestartOnFailure bool                    `json:"restartOnFailure"`
 	MaxRestarts      int                     `json:"maxRestarts"`
 	RestartCount     int                     `json:"restartCount"`
@@ -661,6 +663,14 @@ func (pm *ProcessManager) GetProcessByIdentifier(identifier string) (*ProcessInf
 			logs := process.logs.String()
 			process.Logs = &logs
 		}
+		if process.stdout != nil {
+			stdout := process.stdout.String()
+			process.Stdout = &stdout
+		}
+		if process.stderr != nil {
+			stderr := process.stderr.String()
+			process.Stderr = &stderr
+		}
 		process.logLock.RUnlock()
 		return process, true
 	}
@@ -680,6 +690,14 @@ func (pm *ProcessManager) GetProcessByIdentifier(identifier string) (*ProcessInf
 		if latestProcess.logs != nil {
 			logs := latestProcess.logs.String()
 			latestProcess.Logs = &logs
+		}
+		if latestProcess.stdout != nil {
+			stdout := latestProcess.stdout.String()
+			latestProcess.Stdout = &stdout
+		}
+		if latestProcess.stderr != nil {
+			stderr := latestProcess.stderr.String()
+			latestProcess.Stderr = &stderr
 		}
 		latestProcess.logLock.RUnlock()
 		return latestProcess, true
