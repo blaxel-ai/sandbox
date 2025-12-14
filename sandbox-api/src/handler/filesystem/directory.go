@@ -166,6 +166,8 @@ func (fs *Filesystem) WatchDirectory(path string, callback func(event fsnotify.E
 
 // WatchDirectoryRecursive watches a directory and all its subdirectories for changes.
 // The callback is called with the event when a change occurs.
+// This handles the race condition where files may be created in a new directory
+// before the watch is established on that directory.
 func (fs *Filesystem) WatchDirectoryRecursive(path string, callback func(event fsnotify.Event)) (func(), error) {
 	absPath, err := fs.GetAbsolutePath(path)
 	if err != nil {
@@ -177,6 +179,11 @@ func (fs *Filesystem) WatchDirectoryRecursive(path string, callback func(event f
 		return nil, err
 	}
 
+	// Helper to add a directory to the watcher
+	addDir := func(dir string) error {
+		return watcher.Add(dir)
+	}
+
 	// Helper to add all subdirectories
 	addDirs := func(root string) error {
 		return filepath.Walk(root, func(p string, info os.FileInfo, err error) error {
@@ -184,10 +191,40 @@ func (fs *Filesystem) WatchDirectoryRecursive(path string, callback func(event f
 				return err
 			}
 			if info.IsDir() {
-				return watcher.Add(p)
+				return addDir(p)
 			}
 			return nil
 		})
+	}
+
+	// Declare the function variable first to allow recursive calls
+	var emitExistingFiles func(dir string)
+
+	// Helper to emit synthetic CREATE events for existing files in a directory
+	// This handles the race condition where files are created before the watch is established
+	emitExistingFiles = func(dir string) {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			return
+		}
+		for _, entry := range entries {
+			fullPath := filepath.Join(dir, entry.Name())
+			// Emit a synthetic CREATE event for each existing file/directory
+			syntheticEvent := fsnotify.Event{
+				Name: fullPath,
+				Op:   fsnotify.Create,
+			}
+			callback(syntheticEvent)
+
+			// If it's a directory, recursively process it
+			if entry.IsDir() {
+				// Add watch to the subdirectory
+				if err := addDir(fullPath); err == nil {
+					// Emit events for files in the subdirectory
+					emitExistingFiles(fullPath)
+				}
+			}
+		}
 	}
 
 	if err := addDirs(absPath); err != nil {
@@ -205,11 +242,17 @@ func (fs *Filesystem) WatchDirectoryRecursive(path string, callback func(event f
 					return
 				}
 				callback(event)
-				// If a new directory is created, add it (and its subdirs)
+				// If a new directory is created, add it (and its subdirs) and emit events for existing files
 				if event.Op&fsnotify.Create != 0 {
 					info, err := os.Stat(event.Name)
 					if err == nil && info.IsDir() {
-						_ = addDirs(event.Name)
+						// Add watch to the new directory first
+						if err := addDir(event.Name); err == nil {
+							// Emit synthetic events for any files already in the directory
+							// This handles the race condition where files are written
+							// between directory creation and watch establishment
+							emitExistingFiles(event.Name)
+						}
 					}
 				}
 				// If a directory is removed, watcher will error on it, but fsnotify cleans up

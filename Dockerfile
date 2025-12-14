@@ -5,6 +5,8 @@ WORKDIR /blaxel/sandbox-api
 RUN apk update && apk add --no-cache \
   git \
   go \
+  inotify-tools \
+  bash \
   && rm -rf /var/cache/apk/*
 
 
