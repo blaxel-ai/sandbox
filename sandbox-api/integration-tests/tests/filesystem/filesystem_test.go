@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -605,6 +606,355 @@ func TestFileSystemWatchRecursive(t *testing.T) {
 
 		close(done)
 	})
+}
+
+// TestFileSystemWatchRecursiveNpmInstall tests that the recursive watcher captures all file events
+// during npm install, comparing with inotify as a baseline. This validates the race condition fix
+// where files are created in new directories before the watch can be established.
+func TestFileSystemWatchRecursiveNpmInstall(t *testing.T) {
+	sessionID := time.Now().UnixNano()
+	projectDir := fmt.Sprintf("/tmp/npm_watch_%d", sessionID)
+	inotifyLogFile := fmt.Sprintf("/tmp/inotify_npm_%d.log", sessionID)
+
+	// Ensure cleanup happens even if test fails
+	defer func() {
+		var successResp handler.SuccessResponse
+		if resp, err := common.MakeRequestAndParse(http.MethodDelete, common.EncodeFilesystemPath(projectDir)+"?recursive=true", nil, &successResp); err == nil {
+			resp.Body.Close()
+		}
+		// Clean up inotify log file
+		common.MakeRequest(http.MethodPost, "/process", map[string]interface{}{
+			"command": fmt.Sprintf("rm -f %s", inotifyLogFile),
+		})
+	}()
+
+	// Create project directory
+	createDirRequest := map[string]interface{}{
+		"isDirectory": true,
+	}
+	var successResp handler.SuccessResponse
+	resp, err := common.MakeRequestAndParse(http.MethodPut, common.EncodeFilesystemPath(projectDir), createDirRequest, &successResp)
+	require.NoError(t, err)
+	resp.Body.Close()
+
+	// Create package.json with dependencies
+	packageJSON := `{
+		"name": "test-project",
+		"version": "1.0.0",
+		"dependencies": {
+			"lodash": "^4.17.21",
+			"axios": "^1.6.0"
+		}
+	}`
+	resp, err = common.MakeRequestAndParse(http.MethodPut, common.EncodeFilesystemPath(projectDir+"/package.json"), map[string]interface{}{
+		"content": packageJSON,
+	}, &successResp)
+	require.NoError(t, err)
+	resp.Body.Close()
+
+	// ========== Test 1: Blaxel native watchFolder during npm install ==========
+	t.Log("\n========== Starting Blaxel watchFolder test ==========")
+
+	watchPath := projectDir + "/**"
+	blaxelEvents := make([]map[string]interface{}, 0, 1000)
+	var blaxelEventsMu sync.Mutex
+
+	blaxelStartTime := time.Now()
+
+	// Start watcher goroutine
+	go func() {
+		resp, err := common.MakeRequest("GET", common.EncodeWatchPath(watchPath), nil)
+		if err != nil {
+			t.Errorf("Error in watcher goroutine: %v", err)
+			return
+		}
+		defer resp.Body.Close()
+
+		reader := bufio.NewReader(resp.Body)
+		for {
+			line, err := reader.ReadString('\n')
+			if err != nil {
+				return
+			}
+			line = strings.TrimSpace(line)
+			if line != "" && !strings.Contains(line, "keepalive") {
+				var event map[string]interface{}
+				if json.Unmarshal([]byte(line), &event) == nil {
+					blaxelEventsMu.Lock()
+					blaxelEvents = append(blaxelEvents, event)
+					blaxelEventsMu.Unlock()
+				}
+			}
+		}
+	}()
+
+	// Wait for watcher to establish (same pattern as existing tests)
+	time.Sleep(500 * time.Millisecond)
+
+	// Run npm install
+	blaxelInstallStart := time.Now()
+	resp, err = common.MakeRequest(http.MethodPost, "/process", map[string]interface{}{
+		"command": fmt.Sprintf("cd %s && npm install --silent 2>&1", projectDir),
+		"timeout": 180000,
+	})
+	require.NoError(t, err)
+	resp.Body.Close()
+	blaxelInstallEnd := time.Now()
+
+	// Wait for events to propagate
+	time.Sleep(3 * time.Second)
+
+	blaxelEndTime := time.Now()
+
+	// ========== Test 2: inotify-based watching during npm install ==========
+	// Check if inotifywait is available
+	var checkResp map[string]interface{}
+	resp, err = common.MakeRequestAndParse(http.MethodPost, "/process", map[string]interface{}{
+		"command": "which inotifywait",
+	}, &checkResp)
+	inotifyAvailable := false
+	if err == nil {
+		resp.Body.Close()
+		if exitCode, ok := checkResp["exitCode"].(float64); ok && exitCode == 0 {
+			inotifyAvailable = true
+		}
+	}
+
+	var inotifyLines []string
+	inotifyPathToEvents := make(map[string]map[string]bool)
+	var inotifyInstallStart, inotifyInstallEnd, inotifyStartTime, inotifyEndTime time.Time
+
+	if !inotifyAvailable {
+		t.Log("\n========== Skipping inotify test (inotifywait not installed) ==========")
+	} else {
+		t.Log("\n========== Starting inotify test ==========")
+
+		// Clean node_modules
+		resp, err = common.MakeRequest(http.MethodPost, "/process", map[string]interface{}{
+			"command": fmt.Sprintf("rm -rf %s/node_modules %s/package-lock.json", projectDir, projectDir),
+		})
+		require.NoError(t, err)
+		resp.Body.Close()
+
+		inotifyStartTime = time.Now()
+
+		// Create the log file first
+		resp, err = common.MakeRequest(http.MethodPost, "/process", map[string]interface{}{
+			"command": fmt.Sprintf("touch %s", inotifyLogFile),
+		})
+		require.NoError(t, err)
+		resp.Body.Close()
+
+		// Start inotify watcher in background
+		watchCmd := fmt.Sprintf(`nohup inotifywait -m -r --timefmt "%%s" --format "%%T|%%e|%%w%%f" --event modify,create,delete,move %s >> %s 2>&1 & echo $!`, projectDir, inotifyLogFile)
+		resp, err = common.MakeRequest(http.MethodPost, "/process", map[string]interface{}{
+			"command": watchCmd,
+		})
+		require.NoError(t, err)
+		resp.Body.Close()
+
+		// Wait for watcher to establish
+		time.Sleep(500 * time.Millisecond)
+
+		// Run npm install again
+		inotifyInstallStart = time.Now()
+		resp, err = common.MakeRequest(http.MethodPost, "/process", map[string]interface{}{
+			"command": fmt.Sprintf("cd %s && npm install --silent 2>&1", projectDir),
+			"timeout": 180000,
+		})
+		require.NoError(t, err)
+		resp.Body.Close()
+		inotifyInstallEnd = time.Now()
+
+		// Wait for events to be logged
+		time.Sleep(3 * time.Second)
+
+		// Stop inotify
+		resp, err = common.MakeRequest(http.MethodPost, "/process", map[string]interface{}{
+			"command": "pkill -f inotifywait || true",
+		})
+		require.NoError(t, err)
+		resp.Body.Close()
+		time.Sleep(500 * time.Millisecond)
+
+		inotifyEndTime = time.Now()
+
+		// Read inotify log
+		var inotifyLogResp filesystem.FileWithContent
+		resp, err = common.MakeRequestAndParse(http.MethodGet, common.EncodeFilesystemPath(inotifyLogFile), nil, &inotifyLogResp)
+		inotifyLogContent := ""
+		if err == nil {
+			inotifyLogContent = string(inotifyLogResp.Content)
+			resp.Body.Close()
+		} else {
+			t.Logf("Warning: Could not read inotify log file: %v", err)
+		}
+
+		// Parse inotify events
+		inotifyLines = strings.Split(strings.TrimSpace(inotifyLogContent), "\n")
+		for _, line := range inotifyLines {
+			if line == "" {
+				continue
+			}
+			parts := strings.Split(line, "|")
+			if len(parts) >= 3 {
+				event := parts[1]
+				path := parts[2]
+				if _, exists := inotifyPathToEvents[path]; !exists {
+					inotifyPathToEvents[path] = make(map[string]bool)
+				}
+				inotifyPathToEvents[path][event] = true
+			}
+		}
+	}
+
+	// Build Blaxel path to events map
+	blaxelPathToEvents := make(map[string]map[string]bool)
+	blaxelEventsMu.Lock()
+	for _, event := range blaxelEvents {
+		path, _ := event["path"].(string)
+		name, _ := event["name"].(string)
+		op, _ := event["op"].(string)
+		fullPath := path + "/" + name
+		if _, exists := blaxelPathToEvents[fullPath]; !exists {
+			blaxelPathToEvents[fullPath] = make(map[string]bool)
+		}
+		blaxelPathToEvents[fullPath][op] = true
+	}
+	blaxelEventsMu.Unlock()
+
+	// Compute set differences
+	var onlyInBlaxel, onlyInInotify, inBoth []string
+	for path := range blaxelPathToEvents {
+		if _, exists := inotifyPathToEvents[path]; exists {
+			inBoth = append(inBoth, path)
+		} else {
+			onlyInBlaxel = append(onlyInBlaxel, path)
+		}
+	}
+	for path := range inotifyPathToEvents {
+		if _, exists := blaxelPathToEvents[path]; !exists {
+			onlyInInotify = append(onlyInInotify, path)
+		}
+	}
+
+	// Get unique event types for Blaxel
+	blaxelEventTypes := make(map[string]bool)
+	for _, events := range blaxelPathToEvents {
+		for evt := range events {
+			blaxelEventTypes[evt] = true
+		}
+	}
+
+	// ========== Results comparison ==========
+	t.Log("\n========== npm install Watch Comparison ==========")
+	t.Log("")
+	t.Log("--- Blaxel Native watchFolder ---")
+	t.Logf("  Total events: %d", len(blaxelEvents))
+	t.Logf("  Unique paths: %d", len(blaxelPathToEvents))
+	t.Logf("  Install time: %v", blaxelInstallEnd.Sub(blaxelInstallStart))
+	t.Logf("  Total time (including setup): %v", blaxelEndTime.Sub(blaxelStartTime))
+	eventTypesList := make([]string, 0, len(blaxelEventTypes))
+	for evt := range blaxelEventTypes {
+		eventTypesList = append(eventTypesList, evt)
+	}
+	t.Logf("  Event types: %s", strings.Join(eventTypesList, ", "))
+	t.Log("")
+
+	if inotifyAvailable {
+		t.Log("--- inotify-based watching ---")
+		t.Logf("  Total events: %d", len(inotifyLines))
+		t.Logf("  Unique paths: %d", len(inotifyPathToEvents))
+		t.Logf("  Install time: %v", inotifyInstallEnd.Sub(inotifyInstallStart))
+		t.Logf("  Total time (including setup): %v", inotifyEndTime.Sub(inotifyStartTime))
+		t.Log("")
+
+		// Calculate ratios
+		if len(inotifyLines) > 0 {
+			eventRatio := float64(len(blaxelEvents)) / float64(len(inotifyLines))
+			t.Logf("  Event count ratio (Blaxel/inotify): %.2fx", eventRatio)
+		}
+		if len(inotifyPathToEvents) > 0 {
+			pathRatio := float64(len(blaxelPathToEvents)) / float64(len(inotifyPathToEvents))
+			t.Logf("  Unique paths ratio (Blaxel/inotify): %.2fx", pathRatio)
+		}
+		t.Log("")
+		t.Log("--- Path Differences ---")
+		t.Logf("  Paths in both: %d", len(inBoth))
+		t.Logf("  Only in Blaxel: %d", len(onlyInBlaxel))
+		t.Logf("  Only in inotify: %d", len(onlyInInotify))
+		t.Log("")
+
+		// Show sample of paths only in each
+		sampleLimit := 20
+		if len(onlyInBlaxel) > 0 {
+			t.Logf("  Sample paths only in Blaxel (first %d):", min(sampleLimit, len(onlyInBlaxel)))
+			for i, p := range onlyInBlaxel {
+				if i >= sampleLimit {
+					t.Logf("    ... and %d more", len(onlyInBlaxel)-sampleLimit)
+					break
+				}
+				events := make([]string, 0)
+				for evt := range blaxelPathToEvents[p] {
+					events = append(events, evt)
+				}
+				t.Logf("    - [%s] %s", strings.Join(events, ", "), p)
+			}
+		}
+		t.Log("")
+		if len(onlyInInotify) > 0 {
+			t.Logf("  Sample paths only in inotify (first %d):", min(sampleLimit, len(onlyInInotify)))
+			for i, p := range onlyInInotify {
+				if i >= sampleLimit {
+					t.Logf("    ... and %d more", len(onlyInInotify)-sampleLimit)
+					break
+				}
+				events := make([]string, 0)
+				for evt := range inotifyPathToEvents[p] {
+					events = append(events, evt)
+				}
+				t.Logf("    - [%s] %s", strings.Join(events, ", "), p)
+			}
+		}
+
+		// Show event type breakdown for differences
+		blaxelOnlyEventTypes := make(map[string]int)
+		for _, p := range onlyInBlaxel {
+			for evt := range blaxelPathToEvents[p] {
+				blaxelOnlyEventTypes[evt]++
+			}
+		}
+		inotifyOnlyEventTypes := make(map[string]int)
+		for _, p := range onlyInInotify {
+			for evt := range inotifyPathToEvents[p] {
+				inotifyOnlyEventTypes[evt]++
+			}
+		}
+
+		t.Log("")
+		t.Log("--- Event Type Breakdown for Differences ---")
+		if len(blaxelOnlyEventTypes) > 0 {
+			t.Log("  Events only in Blaxel by type:")
+			for evt, count := range blaxelOnlyEventTypes {
+				t.Logf("    %s: %d", evt, count)
+			}
+		}
+		if len(inotifyOnlyEventTypes) > 0 {
+			t.Log("  Events only in inotify by type:")
+			for evt, count := range inotifyOnlyEventTypes {
+				t.Logf("    %s: %d", evt, count)
+			}
+		}
+	}
+
+	// Assertions - Blaxel should capture significant activity
+	assert.Greater(t, len(blaxelEvents), 100, "Blaxel should capture at least 100 events")
+
+	if inotifyAvailable {
+		// The key assertion: after our fix, Blaxel should capture everything that inotify captures
+		// onlyInInotify should be 0 - meaning no paths were missed by Blaxel
+		assert.Equal(t, 0, len(onlyInInotify), "Blaxel should capture all paths that inotify captures. Missing %d paths.", len(onlyInInotify))
+	}
 }
 
 // TestFileSystemDownload tests the file download functionality with different Accept headers and query parameters
