@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"net/url"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -220,6 +222,81 @@ func noCacheMiddleware() gin.HandlerFunc {
 	}
 }
 
+// sensitiveQueryParams contains query parameter names that should be redacted from logs
+var sensitiveQueryParams = []string{
+	"api_key", "apikey", "api-key",
+	"token", "access_token", "refresh_token", "auth_token", "bearer",
+	"password", "passwd", "pwd",
+	"secret", "client_secret", "api_secret",
+	"key", "private_key", "encryption_key",
+	"authorization", "auth",
+	"credential", "credentials",
+	"session", "session_id", "sessionid",
+	"jwt",
+}
+
+// redactSecrets redacts sensitive information from a URL path with query string
+func redactSecrets(pathWithQuery string) string {
+	// Split path and query
+	parts := strings.SplitN(pathWithQuery, "?", 2)
+	if len(parts) != 2 {
+		return pathWithQuery // No query string, return as-is
+	}
+
+	basePath := parts[0]
+	queryString := parts[1]
+
+	// Parse query parameters
+	values, err := url.ParseQuery(queryString)
+	if err != nil {
+		// If parsing fails, try to redact using pattern matching
+		return redactQueryPatterns(pathWithQuery)
+	}
+
+	// Check if any sensitive param exists
+	hasSecrets := false
+	for _, param := range sensitiveQueryParams {
+		if values.Get(param) != "" {
+			hasSecrets = true
+			break
+		}
+		// Also check case-insensitive
+		for key := range values {
+			if strings.EqualFold(key, param) {
+				hasSecrets = true
+				break
+			}
+		}
+	}
+
+	if !hasSecrets {
+		return pathWithQuery
+	}
+
+	// Redact sensitive values
+	for key := range values {
+		for _, param := range sensitiveQueryParams {
+			if strings.EqualFold(key, param) {
+				values.Set(key, "[REDACTED]")
+				break
+			}
+		}
+	}
+
+	return basePath + "?" + values.Encode()
+}
+
+// redactQueryPatterns redacts secrets using regex patterns when URL parsing fails
+func redactQueryPatterns(pathWithQuery string) string {
+	result := pathWithQuery
+	for _, param := range sensitiveQueryParams {
+		// Match param=value patterns (case-insensitive)
+		pattern := regexp.MustCompile(`(?i)(` + regexp.QuoteMeta(param) + `=)[^&\s]*`)
+		result = pattern.ReplaceAllString(result, "${1}[REDACTED]")
+	}
+	return result
+}
+
 func logrusMiddleware() gin.HandlerFunc {
 	var skip map[string]struct{}
 
@@ -230,6 +307,10 @@ func logrusMiddleware() gin.HandlerFunc {
 		if c.Request.URL.RawQuery != "" {
 			path = path + "?" + c.Request.URL.RawQuery
 		}
+
+		// Redact secrets from the path before logging
+		sanitizedPath := redactSecrets(path)
+
 		start := time.Now()
 		c.Next()
 		stop := time.Since(start)
@@ -247,7 +328,7 @@ func logrusMiddleware() gin.HandlerFunc {
 		if len(c.Errors) > 0 {
 			logrus.Error(c.Errors.ByType(gin.ErrorTypePrivate).String())
 		} else {
-			msg := fmt.Sprintf("%s %s %d %d %dms", c.Request.Method, path, statusCode, dataLength, latency)
+			msg := fmt.Sprintf("%s %s %d %d %dms", c.Request.Method, sanitizedPath, statusCode, dataLength, latency)
 			if statusCode >= http.StatusInternalServerError {
 				logrus.Error(msg)
 			} else if statusCode >= http.StatusBadRequest {
