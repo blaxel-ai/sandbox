@@ -56,6 +56,34 @@ func MakeRequest(method, path string, body interface{}) (*http.Response, error) 
 	return Client.Do(req)
 }
 
+// MakeRequestWithTimeout is a helper function to make HTTP requests with a custom timeout
+func MakeRequestWithTimeout(method, path string, body interface{}, timeout time.Duration) (*http.Response, error) {
+	var bodyReader io.Reader
+
+	if body != nil {
+		jsonData, err := json.Marshal(body)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling JSON: %w", err)
+		}
+		bodyReader = bytes.NewBuffer(jsonData)
+	}
+
+	req, err := http.NewRequest(method, BaseURL+path, bodyReader)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+
+	client := &http.Client{
+		Timeout: timeout,
+	}
+
+	return client.Do(req)
+}
+
 // MakeMultipartRequest is a helper function to make multipart form data requests with file uploads
 func MakeMultipartRequest(method, path string, fileContent []byte, filename string, formValues map[string]string) (*http.Response, error) {
 	body := &bytes.Buffer{}

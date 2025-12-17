@@ -202,6 +202,39 @@ func getOpenPortsForPID(pid int) ([]*PortInfo, error) {
 	return getPortsUsingNetstat(pid)
 }
 
+// IsPortOpen checks if a specific port is open and listening
+func IsPortOpen(port int) bool {
+	if runtime.GOOS == "darwin" {
+		// On macOS, use lsof to check if port is listening
+		cmd := exec.Command("lsof", "-i", fmt.Sprintf(":%d", port), "-sTCP:LISTEN", "-n", "-P")
+		output, err := cmd.Output()
+		if err != nil {
+			return false
+		}
+		return len(strings.TrimSpace(string(output))) > 0
+	}
+
+	// On Linux, try ss first
+	cmd := exec.Command("ss", "-tlnp", fmt.Sprintf("sport = :%d", port))
+	output, err := cmd.Output()
+	if err == nil {
+		// ss always outputs a header line, so check if there's more than just the header
+		lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+		return len(lines) > 1
+	}
+
+	// Fall back to netstat if ss is not available
+	cmd = exec.Command("netstat", "-tlnp")
+	output, err = cmd.Output()
+	if err != nil {
+		return false
+	}
+
+	// Check if the port appears in netstat output
+	portStr := fmt.Sprintf(":%d ", port)
+	return strings.Contains(string(output), portStr)
+}
+
 // getPortsUsingSS uses the 'ss' command to get port information for a specific PID
 func getPortsUsingSS(pid int) ([]*PortInfo, error) {
 	// Run ss command: ss -tunap | grep <pid>
@@ -291,8 +324,49 @@ func getPortsUsingSS(pid int) ([]*PortInfo, error) {
 	return portsInfo, nil
 }
 
+// getChildPIDs returns all child PIDs of a given parent PID (macOS)
+func getChildPIDs(parentPID int) []int {
+	// Use pgrep to find child processes
+	cmd := exec.Command("pgrep", "-P", strconv.Itoa(parentPID))
+	output, err := cmd.Output()
+	if err != nil {
+		return []int{}
+	}
+
+	var childPIDs []int
+	scanner := bufio.NewScanner(strings.NewReader(string(output)))
+	for scanner.Scan() {
+		if pid, err := strconv.Atoi(strings.TrimSpace(scanner.Text())); err == nil {
+			childPIDs = append(childPIDs, pid)
+			// Recursively get grandchildren
+			childPIDs = append(childPIDs, getChildPIDs(pid)...)
+		}
+	}
+	return childPIDs
+}
+
 // getPortsUsingLsof uses the 'lsof' command to get port information for a specific PID (macOS)
 func getPortsUsingLsof(pid int) ([]*PortInfo, error) {
+	// Get all PIDs to check (parent + all children)
+	pidsToCheck := []int{pid}
+	childPIDs := getChildPIDs(pid)
+	pidsToCheck = append(pidsToCheck, childPIDs...)
+
+	var allPorts []*PortInfo
+
+	for _, checkPID := range pidsToCheck {
+		ports, err := getPortsForSinglePID(checkPID)
+		if err != nil {
+			continue
+		}
+		allPorts = append(allPorts, ports...)
+	}
+
+	return allPorts, nil
+}
+
+// getPortsForSinglePID gets ports for a single PID using lsof
+func getPortsForSinglePID(pid int) ([]*PortInfo, error) {
 	// Run lsof command: lsof -iTCP -iUDP -n -P -a -p <pid>
 	cmd := exec.Command("lsof", "-iTCP", "-iUDP", "-n", "-P", "-a", "-p", strconv.Itoa(pid))
 	output, err := cmd.Output()

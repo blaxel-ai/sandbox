@@ -300,7 +300,10 @@ func TestProcessOutputByName(t *testing.T) {
 
 	assert.Equal(t, "test output\n", outputResponse["stdout"])
 	assert.Equal(t, "test error\n", outputResponse["stderr"])
-	assert.Equal(t, "test output\ntest error\n", outputResponse["logs"])
+	// logs contains both stdout and stderr, but order is non-deterministic
+	logs := outputResponse["logs"].(string)
+	assert.Contains(t, logs, "test output\n")
+	assert.Contains(t, logs, "test error\n")
 }
 
 func TestProcessStreamLogs(t *testing.T) {
@@ -1058,6 +1061,104 @@ func TestProcessExecuteWithStreaming(t *testing.T) {
 
 		assert.Equal(t, "completed", result["status"])
 	})
+}
+
+// TestWaitForPorts tests starting a process with waitForPorts and verifying the port is callable
+func TestWaitForPorts(t *testing.T) {
+	const port = 3010
+	processName := "test-waitforports"
+
+	// Kill the process if it already exists
+	t.Logf("Cleaning up any existing process named %s", processName)
+	resp, _ := common.MakeRequest(http.MethodDelete, "/process/"+processName+"/kill", nil)
+	if resp != nil {
+		resp.Body.Close()
+	}
+	time.Sleep(500 * time.Millisecond)
+
+	t.Logf("Starting simple HTTP server on port %d with waitForPorts (server starts after 2s dela)", port)
+
+	// Simple Python HTTP server that starts after 2 seconds and returns "OK" on root endpoint
+	command := fmt.Sprintf(`sleep 2 && python3 -c "
+from http.server import HTTPServer, BaseHTTPRequestHandler
+class H(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header('Content-type', 'text/plain')
+        self.end_headers()
+        self.wfile.write(b'OK')
+    def log_message(self, format, *args):
+        pass
+HTTPServer(('', %d), H).serve_forever()
+"`, port)
+
+	processRequest := map[string]interface{}{
+		"name":         processName,
+		"command":      command,
+		"workingDir":   "/",
+		"waitForPorts": []int{port},
+		"timeout":      30,
+	}
+
+	// Use a client with longer timeout since waitForPorts waits for the port
+	resp, err := common.MakeRequestWithTimeout(http.MethodPost, "/process", processRequest, 60*time.Second)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var processResponse map[string]interface{}
+	err = json.NewDecoder(resp.Body).Decode(&processResponse)
+	require.NoError(t, err)
+
+	require.Contains(t, processResponse, "pid")
+	require.Contains(t, processResponse, "name")
+	assert.Equal(t, processName, processResponse["name"])
+
+	t.Logf("Process started with PID: %s, status: %v", processResponse["pid"], processResponse["status"])
+
+	// The endpoint has returned, meaning waitForPorts has completed
+	// Now immediately check that localhost:PORT is callable
+	t.Logf("Checking if localhost:%d is callable...", port)
+
+	client := &http.Client{
+		Timeout: 5 * time.Second,
+	}
+
+	httpResp, err := client.Get(fmt.Sprintf("http://localhost:%d", port))
+	require.NoError(t, err, "localhost:%d should be callable immediately after waitForPorts returns", port)
+	defer httpResp.Body.Close()
+
+	t.Logf("Got HTTP response status: %d", httpResp.StatusCode)
+	assert.Equal(t, http.StatusOK, httpResp.StatusCode, "Expected 200 OK from simple HTTP server")
+
+	// Read response body
+	body, err := io.ReadAll(httpResp.Body)
+	require.NoError(t, err)
+	assert.Equal(t, "OK", string(body), "Expected 'OK' response from simple HTTP server")
+
+	// Cleanup: kill the process
+	t.Logf("Cleaning up: killing process %s", processName)
+	resp, err = common.MakeRequest(http.MethodDelete, "/process/"+processName+"/kill", nil)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	// Wait for cleanup
+	time.Sleep(500 * time.Millisecond)
+
+	// Verify process is killed
+	resp, err = common.MakeRequest(http.MethodGet, "/process/"+processName, nil)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	var processDetails map[string]interface{}
+	err = json.NewDecoder(resp.Body).Decode(&processDetails)
+	require.NoError(t, err)
+
+	assert.Equal(t, "killed", processDetails["status"], "Process should be killed after cleanup")
+	t.Log("Test passed: HTTP server started successfully and port was immediately callable after waitForPorts returned")
 }
 
 // makeRequestWithHeaders makes an HTTP request with custom headers
