@@ -3,6 +3,7 @@ package network
 import (
 	"bufio"
 	"fmt"
+	"net"
 	"os/exec"
 	"runtime"
 	"strconv"
@@ -209,7 +210,8 @@ func IsPortOpen(port int) bool {
 		cmd := exec.Command("lsof", "-i", fmt.Sprintf(":%d", port), "-sTCP:LISTEN", "-n", "-P")
 		output, err := cmd.Output()
 		if err != nil {
-			return false
+			// Fallback to direct connection attempt
+			return isPortOpenByConnect(port)
 		}
 		return len(strings.TrimSpace(string(output))) > 0
 	}
@@ -226,13 +228,26 @@ func IsPortOpen(port int) bool {
 	// Fall back to netstat if ss is not available
 	cmd = exec.Command("netstat", "-tlnp")
 	output, err = cmd.Output()
+	if err == nil {
+		// Check if the port appears in netstat output
+		portStr := fmt.Sprintf(":%d ", port)
+		return strings.Contains(string(output), portStr)
+	}
+
+	// Final fallback: try to connect directly to the port
+	// This works on minimal images without ss/netstat/lsof
+	return isPortOpenByConnect(port)
+}
+
+// isPortOpenByConnect checks if a port is open by attempting to connect to it
+// This is the most reliable method and works on any system without external dependencies
+func isPortOpenByConnect(port int) bool {
+	conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), 500*time.Millisecond)
 	if err != nil {
 		return false
 	}
-
-	// Check if the port appears in netstat output
-	portStr := fmt.Sprintf(":%d ", port)
-	return strings.Contains(string(output), portStr)
+	conn.Close()
+	return true
 }
 
 // getPortsUsingSS uses the 'ss' command to get port information for a specific PID
