@@ -7,6 +7,7 @@ RUN apk update && apk add --no-cache \
   go \
   inotify-tools \
   bash \
+  python3 \
   && rm -rf /var/cache/apk/*
 
 

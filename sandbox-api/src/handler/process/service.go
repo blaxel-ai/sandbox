@@ -3,7 +3,6 @@ package process
 import (
 	"context"
 	"fmt"
-	"runtime"
 	"slices"
 	"strconv"
 	"sync"
@@ -88,48 +87,82 @@ func (pm *ProcessManager) ExecuteProcess(
 
 	// Set up port monitoring if requested
 	if len(waitForPorts) > 0 {
-		// Check for Mac OS and skip port monitoring if needed
-		if runtime.GOOS == "darwin" {
-			// Just close the channel without trying to monitor ports
-			func() {
-				defer func() {
-					_ = recover()
-				}()
-
-				mu.Lock()
-				if !portChClosed {
-					close(portCh)
-					portChClosed = true
-				}
-				mu.Unlock()
-			}()
-		} else {
-			n := network.GetNetwork()
-			ports := make([]int, 0, len(waitForPorts))
-			pidInt, _ := strconv.Atoi(pid)
-			n.RegisterPortOpenCallback(pidInt, func(pid int, port *network.PortInfo) {
-				if slices.Contains(waitForPorts, port.LocalPort) {
-					ports = append(ports, port.LocalPort)
-				}
-				if len(ports) == len(waitForPorts) {
-					// Safely close the channel with defer-recover to prevent panics
-					func() {
-						defer func() {
-							_ = recover()
-						}()
-
-						mu.Lock()
-						if !portChClosed {
-							close(portCh)
-							portChClosed = true
-						}
-						mu.Unlock()
-
-						// Unregister callbacks for this PID to stop monitoring
-						n.UnregisterPortOpenCallback(pidInt)
+		n := network.GetNetwork()
+		ports := make([]int, 0, len(waitForPorts))
+		pidInt, _ := strconv.Atoi(pid)
+		n.RegisterPortOpenCallback(pidInt, func(pid int, port *network.PortInfo) {
+			if slices.Contains(waitForPorts, port.LocalPort) {
+				ports = append(ports, port.LocalPort)
+			}
+			if len(ports) == len(waitForPorts) {
+				// Safely close the channel with defer-recover to prevent panics
+				func() {
+					defer func() {
+						_ = recover()
 					}()
+
+					mu.Lock()
+					if !portChClosed {
+						close(portCh)
+						portChClosed = true
+					}
+					mu.Unlock()
+
+					// Unregister callbacks for this PID to stop monitoring
+					n.UnregisterPortOpenCallback(pidInt)
+				}()
+			}
+		})
+
+		// Also start a direct port polling goroutine as a fallback (especially for macOS)
+		go func() {
+			ticker := time.NewTicker(500 * time.Millisecond)
+			defer ticker.Stop()
+
+			for {
+				select {
+				case <-ticker.C:
+					allPortsOpen := true
+					for _, port := range waitForPorts {
+						if !network.IsPortOpen(port) {
+							allPortsOpen = false
+							break
+						}
+					}
+					if allPortsOpen {
+						func() {
+							defer func() {
+								_ = recover()
+							}()
+
+							mu.Lock()
+							if !portChClosed {
+								close(portCh)
+								portChClosed = true
+							}
+							mu.Unlock()
+
+							n.UnregisterPortOpenCallback(pidInt)
+						}()
+						return
+					}
+				case <-ctx.Done():
+					return
+				case <-portCh:
+					// Already closed by PID-based monitoring
+					return
 				}
-			})
+			}
+		}()
+	}
+
+	// Wait for ports if requested
+	if len(waitForPorts) > 0 {
+		select {
+		case <-portCh:
+			// Ports are ready
+		case <-ctx.Done():
+			return nil, fmt.Errorf("process timed out waiting for ports after %d seconds", timeout)
 		}
 	}
 
