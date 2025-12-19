@@ -5,79 +5,6 @@ info:
   title: Sandbox API
   version: 0.0.1
 paths:
-  /:
-    delete:
-      description: Returns a welcome message with links to documentation
-      responses:
-        "200":
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/WelcomeResponse"
-      summary: Welcome message
-      tags:
-        - root
-    get:
-      description: Returns a welcome message with links to documentation
-      responses:
-        "200":
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/WelcomeResponse"
-      summary: Welcome message
-      tags:
-        - root
-    options:
-      description: Returns a welcome message with links to documentation
-      responses:
-        "200":
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/WelcomeResponse"
-      summary: Welcome message
-      tags:
-        - root
-    patch:
-      description: Returns a welcome message with links to documentation
-      responses:
-        "200":
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/WelcomeResponse"
-      summary: Welcome message
-      tags:
-        - root
-    post:
-      description: Returns a welcome message with links to documentation
-      responses:
-        "200":
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/WelcomeResponse"
-      summary: Welcome message
-      tags:
-        - root
-    put:
-      description: Returns a welcome message with links to documentation
-      responses:
-        "200":
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/WelcomeResponse"
-      summary: Welcome message
-      tags:
-        - root
   "/codegen/fastapply/{path}":
     put:
       description: >-
@@ -1802,18 +1729,6 @@ components:
             '"dir/file2.txt"': '"content2"}'
             "{\"file1.txt\"": '"content1"'
           type: object
-      type: object
-    WelcomeResponse:
-      properties:
-        description:
-          example: This sandbox provides a full-featured environment for running code securely
-          type: string
-        documentation:
-          example: https://docs.blaxel.ai/Sandboxes/Overview
-          type: string
-        message:
-          example: Welcome to your Blaxel Sandbox
-          type: string
       type: object
     filesystem.MultipartUpload:
       properties:
