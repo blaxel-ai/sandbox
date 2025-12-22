@@ -1475,6 +1475,11 @@ func (h *FileSystemHandler) HandleFuzzySearch(c *gin.Context) {
 			if maxResults > 1000 {
 				maxResults = 1000
 			}
+		} else if err == nil && parsed == 0 {
+			maxResults = -1
+		} else {
+			h.SendError(c, http.StatusBadRequest, fmt.Errorf("invalid maxResults: %s", c.Query("maxResults")))
+			return
 		}
 	}
 
@@ -1688,6 +1693,11 @@ func (h *FileSystemHandler) HandleContentSearch(c *gin.Context) {
 			if maxResults > 1000 {
 				maxResults = 1000
 			}
+		} else if err == nil && parsed == 0 {
+			maxResults = -1
+		} else {
+			h.SendError(c, http.StatusBadRequest, fmt.Errorf("invalid maxResults: %s", c.Query("maxResults")))
+			return
 		}
 	}
 
