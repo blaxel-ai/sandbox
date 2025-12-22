@@ -1294,6 +1294,8 @@ func (h *FileSystemHandler) HandleFind(c *gin.Context) {
 			if maxResults > 1000 {
 				maxResults = 1000
 			}
+		} else if parsed == 0 {
+			maxResults = -1
 		}
 	}
 
@@ -1330,6 +1332,11 @@ func (h *FileSystemHandler) HandleFind(c *gin.Context) {
 		for i, d := range excludeDirs {
 			excludeDirs[i] = strings.TrimSpace(d)
 		}
+	} else {
+		excludeDirs = []string{
+			"node_modules", "vendor", ".git", "dist", "build",
+			"target", "__pycache__", ".venv", ".next", "coverage",
+		}
 	}
 
 	// Create a map for O(1) lookup
@@ -1363,6 +1370,10 @@ func (h *FileSystemHandler) HandleFind(c *gin.Context) {
 		}
 
 		base := filepath.Base(path)
+
+		if d.IsDir() && excludeDirsMap[base] {
+			return filepath.SkipDir
+		}
 
 		// Skip hidden files and directories if excludeHidden is true
 		if excludeHidden && len(base) > 0 && base[0] == '.' {
@@ -1411,7 +1422,7 @@ func (h *FileSystemHandler) HandleFind(c *gin.Context) {
 	// Convert to response format
 	results := make([]FindMatch, 0, len(candidates))
 	for i, absPath := range candidates {
-		if maxResults > 0 && i >= maxResults {
+		if maxResults >= 0 && i >= maxResults { // -1 means all results
 			break
 		}
 
