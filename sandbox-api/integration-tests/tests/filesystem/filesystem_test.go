@@ -1280,7 +1280,6 @@ func TestFileSystemFind(t *testing.T) {
 		defer resp.Body.Close()
 
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
-		fmt.Println(findResp)
 		// Should find: . (self), src, src/utils, docs (4 directories - node_modules and .hidden are excluded by default)
 		assert.Equal(t, 4, findResp.Total)
 
