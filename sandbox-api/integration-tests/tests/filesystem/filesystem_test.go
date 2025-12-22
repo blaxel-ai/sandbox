@@ -1188,3 +1188,184 @@ func TestFileSystemDownload(t *testing.T) {
 		}
 	})
 }
+
+func TestFileSystemFind(t *testing.T) {
+	// Create a unique test directory
+	testDir := fmt.Sprintf("/tmp/find-test-%d", time.Now().UnixNano())
+
+	// Create test directory structure
+	createDirRequest := map[string]interface{}{
+		"isDirectory": true,
+	}
+	var successResp handler.SuccessResponse
+
+	// Create main test directory
+	resp, err := common.MakeRequestAndParse(http.MethodPut, common.EncodeFilesystemPath(testDir), createDirRequest, &successResp)
+	require.NoError(t, err)
+	resp.Body.Close()
+
+	// Create subdirectories
+	subdirs := []string{"src", "src/utils", "docs", ".hidden", "node_modules"}
+	for _, subdir := range subdirs {
+		resp, err := common.MakeRequestAndParse(http.MethodPut, common.EncodeFilesystemPath(testDir+"/"+subdir), createDirRequest, &successResp)
+		require.NoError(t, err)
+		resp.Body.Close()
+	}
+
+	// Create test files
+	testFiles := []struct {
+		path    string
+		content string
+	}{
+		{"file1.go", "package main"},
+		{"file2.go", "package utils"},
+		{"readme.md", "# Readme"},
+		{"src/main.go", "package main"},
+		{"src/utils/helper.go", "package utils"},
+		{"docs/guide.md", "# Guide"},
+		{".hidden/secret.txt", "secret"},
+		{".hiddenfile", "hidden content"},
+		{"node_modules/package.json", "{}"},
+	}
+
+	for _, tf := range testFiles {
+		createFileRequest := map[string]interface{}{
+			"content": tf.content,
+		}
+		resp, err := common.MakeRequestAndParse(http.MethodPut, common.EncodeFilesystemPath(testDir+"/"+tf.path), createFileRequest, &successResp)
+		require.NoError(t, err)
+		resp.Body.Close()
+	}
+
+	// Cleanup function
+	defer func() {
+		resp, err := common.MakeRequestAndParse(http.MethodDelete, common.EncodeFilesystemPath(testDir), nil, &successResp)
+		if err == nil {
+			resp.Body.Close()
+		}
+	}()
+
+	t.Run("find all Go files", func(t *testing.T) {
+		var findResp handler.FindResponse
+		resp, err := common.MakeRequestAndParse(http.MethodGet, common.EncodeFilesystemFindPath(testDir)+"?patterns=*.go", nil, &findResp)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+		// Should find: file1.go, file2.go, src/main.go, src/utils/helper.go (4 files)
+		assert.Equal(t, 4, findResp.Total)
+
+		// Verify all matches are Go files
+		for _, match := range findResp.Matches {
+			assert.True(t, strings.HasSuffix(match.Path, ".go"), "Expected .go file, got: %s", match.Path)
+			assert.Equal(t, "file", match.Type)
+		}
+	})
+
+	t.Run("find markdown files", func(t *testing.T) {
+		var findResp handler.FindResponse
+		resp, err := common.MakeRequestAndParse(http.MethodGet, common.EncodeFilesystemFindPath(testDir)+"?patterns=*.md", nil, &findResp)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+		// Should find: readme.md, docs/guide.md (2 files)
+		assert.Equal(t, 2, findResp.Total)
+	})
+
+	t.Run("find directories", func(t *testing.T) {
+		var findResp handler.FindResponse
+		resp, err := common.MakeRequestAndParse(http.MethodGet, common.EncodeFilesystemFindPath(testDir)+"?type=directory", nil, &findResp)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+		// Should find: . (self), src, src/utils, docs (4 directories - node_modules and .hidden are excluded by default)
+		assert.Equal(t, 4, findResp.Total)
+
+		// Verify all matches are directories
+		for _, match := range findResp.Matches {
+			assert.Equal(t, "directory", match.Type)
+		}
+	})
+
+	t.Run("maxResults limits results", func(t *testing.T) {
+		var findResp handler.FindResponse
+		resp, err := common.MakeRequestAndParse(http.MethodGet, common.EncodeFilesystemFindPath(testDir)+"?patterns=*.go&maxResults=2", nil, &findResp)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+		assert.Equal(t, 2, findResp.Total)
+		assert.Len(t, findResp.Matches, 2)
+	})
+
+	t.Run("custom excludeDirs", func(t *testing.T) {
+		var findResp handler.FindResponse
+		// Exclude only 'docs' directory, include node_modules (which is excluded by default)
+		resp, err := common.MakeRequestAndParse(http.MethodGet, common.EncodeFilesystemFindPath(testDir)+"?patterns=*.md,*.json&excludeDirs=docs", nil, &findResp)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+		// Should find: readme.md, node_modules/package.json (2 files - docs/guide.md excluded)
+		assert.Equal(t, 2, findResp.Total)
+
+		// Verify docs/guide.md is not in results
+		for _, match := range findResp.Matches {
+			assert.False(t, strings.HasPrefix(match.Path, "docs/"), "docs directory should be excluded")
+		}
+	})
+
+	t.Run("include hidden files with excludeHidden=false", func(t *testing.T) {
+		var findResp handler.FindResponse
+		resp, err := common.MakeRequestAndParse(http.MethodGet, common.EncodeFilesystemFindPath(testDir)+"?patterns=*.txt&excludeHidden=false&excludeDirs=node_modules", nil, &findResp)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+		// Should find: .hidden/secret.txt (1 file)
+		assert.Equal(t, 1, findResp.Total)
+	})
+
+	t.Run("hidden files excluded by default", func(t *testing.T) {
+		var findResp handler.FindResponse
+		resp, err := common.MakeRequestAndParse(http.MethodGet, common.EncodeFilesystemFindPath(testDir)+"?patterns=*.txt", nil, &findResp)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+		// Should find nothing - .hidden/secret.txt is in hidden directory
+		assert.Equal(t, 0, findResp.Total)
+	})
+
+	t.Run("multiple patterns", func(t *testing.T) {
+		var findResp handler.FindResponse
+		resp, err := common.MakeRequestAndParse(http.MethodGet, common.EncodeFilesystemFindPath(testDir)+"?patterns=*.go,*.md", nil, &findResp)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+		// Should find: 4 .go files + 2 .md files = 6 files
+		assert.Equal(t, 6, findResp.Total)
+	})
+
+	t.Run("invalid search type returns error", func(t *testing.T) {
+		resp, err := common.MakeRequest(http.MethodGet, common.EncodeFilesystemFindPath(testDir)+"?type=invalid", nil)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+
+		assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	})
+
+	t.Run("find in subdirectory", func(t *testing.T) {
+		var findResp handler.FindResponse
+		resp, err := common.MakeRequestAndParse(http.MethodGet, common.EncodeFilesystemFindPath(testDir+"/src")+"?patterns=*.go", nil, &findResp)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+		// Should find: main.go, utils/helper.go (2 files in src directory)
+		assert.Equal(t, 2, findResp.Total)
+	})
+}

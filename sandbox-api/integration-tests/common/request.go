@@ -269,3 +269,18 @@ func EncodeTreePath(path string) string {
 	// For relative paths, just append to /filesystem/tree/
 	return "/filesystem/tree/" + path
 }
+
+// EncodeFilesystemFindPath encodes a path for the filesystem-find API
+// Similar to EncodeFilesystemPath but for /filesystem-find endpoint
+func EncodeFilesystemFindPath(path string) string {
+	if path == "" {
+		return "/filesystem-find/"
+	}
+
+	if path[0] == '/' {
+		// For absolute paths, encode only the leading slash to indicate absolute path
+		return "/filesystem-find%2F" + path[1:]
+	}
+	// For relative paths, just append to /filesystem-find/
+	return "/filesystem-find/" + path
+}
