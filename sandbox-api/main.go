@@ -12,6 +12,7 @@ import (
 
 	"github.com/blaxel-ai/sandbox-api/docs" // swagger generated docs
 	"github.com/blaxel-ai/sandbox-api/src/api"
+	"github.com/blaxel-ai/sandbox-api/src/lib/networking"
 	"github.com/blaxel-ai/sandbox-api/src/mcp"
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
@@ -35,6 +36,12 @@ func main() {
 
 	// Load .env file
 	_ = godotenv.Load()
+
+	// Initialize WireGuard client if configuration is present
+	if err := networking.StartWireGuardFromEnv(); err != nil {
+		logrus.Warnf("Failed to start WireGuard client: %v", err)
+		// Continue anyway - WireGuard is optional
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
