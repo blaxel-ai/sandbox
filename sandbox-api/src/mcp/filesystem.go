@@ -6,6 +6,7 @@ import (
 	"os"
 	"strconv"
 
+	"github.com/blaxel-ai/sandbox-api/src/handler/filesystem"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -21,7 +22,7 @@ type ListDirectoryInput struct {
 }
 
 type ListDirectoryOutput struct {
-	Entries []interface{} `json:"entries"`
+	Directory *filesystem.Directory `json:"directory"`
 }
 
 type ReadFileInput struct {
@@ -29,7 +30,14 @@ type ReadFileInput struct {
 }
 
 type ReadFileOutput struct {
-	Content interface{} `json:"content"`
+	Path         string `json:"path"`
+	Name         string `json:"name"`
+	Permissions  string `json:"permissions"`
+	Size         int64  `json:"size"`
+	LastModified string `json:"lastModified"`
+	Owner        string `json:"owner"`
+	Group        string `json:"group"`
+	Content      string `json:"content"`
 }
 
 type WriteFileInput struct {
@@ -78,10 +86,7 @@ func (s *Server) registerFileSystemTools() error {
 		if err != nil {
 			return nil, ListDirectoryOutput{}, fmt.Errorf("failed to list directory: %w", err)
 		}
-		// Convert to interface{} slice
-		entries := make([]interface{}, 0)
-		entries = append(entries, dir)
-		return nil, ListDirectoryOutput{Entries: entries}, nil
+		return nil, ListDirectoryOutput{Directory: dir}, nil
 	}))
 
 	// Read file
@@ -93,7 +98,16 @@ func (s *Server) registerFileSystemTools() error {
 		if err != nil {
 			return nil, ReadFileOutput{}, fmt.Errorf("failed to read file: %w", err)
 		}
-		return nil, ReadFileOutput{Content: file}, nil
+		return nil, ReadFileOutput{
+			Path:         file.Path,
+			Name:         file.Path, // Name will be derived from path
+			Permissions:  fmt.Sprintf("%o", file.Permissions),
+			Size:         file.Size,
+			LastModified: file.LastModified.Format("2006-01-02T15:04:05Z07:00"),
+			Owner:        file.Owner,
+			Group:        file.Group,
+			Content:      string(file.Content),
+		}, nil
 	}))
 
 	// Write file

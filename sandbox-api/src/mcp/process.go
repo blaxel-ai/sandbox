@@ -23,26 +23,20 @@ type ProcessExecuteInput struct {
 	WaitForCompletion *bool             `json:"waitForCompletion,omitempty" jsonschema:"Whether to wait for the command to complete before returning"`
 	Timeout           *int              `json:"timeout,omitempty" jsonschema:"Timeout in seconds for the command (default: 30)"`
 	WaitForPorts      []int             `json:"waitForPorts,omitempty" jsonschema:"List of ports to wait for before returning"`
-	IncludeLogs       *bool             `json:"includeLogs,omitempty" jsonschema:"Whether to include logs in the response"`
 	RestartOnFailure  *bool             `json:"restartOnFailure,omitempty" jsonschema:"Whether to restart the process on failure (default: false)"`
 	MaxRestarts       *int              `json:"maxRestarts,omitempty" jsonschema:"Maximum number of restarts (default: 0)"`
-}
-
-type ProcessExecuteOutput struct {
-	Process  handler.ProcessResponse         `json:"process,omitempty"`
-	WithLogs handler.ProcessResponseWithLogs `json:"withLogs,omitempty"`
 }
 
 type ProcessIdentifierInput struct {
 	Identifier string `json:"identifier" jsonschema:"Process identifier (PID or name)"`
 }
 
-type ProcessInfoOutput struct {
-	Process handler.ProcessResponse `json:"process"`
-}
-
 type ProcessLogsOutput struct {
 	Logs string `json:"logs"`
+}
+
+type ProcessStatusOutput struct {
+	Status string `json:"status"`
 }
 
 // registerProcessTools registers process-related tools
@@ -60,7 +54,7 @@ func (s *Server) registerProcessTools() error {
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "processExecute",
 		Description: "Execute a command",
-	}, LogToolCall("processExecute", func(ctx context.Context, req *mcp.CallToolRequest, input ProcessExecuteInput) (*mcp.CallToolResult, ProcessExecuteOutput, error) {
+	}, LogToolCall("processExecute", func(ctx context.Context, req *mcp.CallToolRequest, input ProcessExecuteInput) (*mcp.CallToolResult, handler.ProcessResponse, error) {
 		// Apply defaults for optional fields
 		name := ""
 		if input.Name != nil {
@@ -92,11 +86,6 @@ func (s *Server) registerProcessTools() error {
 			waitForPorts = []int{}
 		}
 
-		includeLogs := false
-		if input.IncludeLogs != nil {
-			includeLogs = *input.IncludeLogs
-		}
-
 		restartOnFailure := false
 		if input.RestartOnFailure != nil {
 			restartOnFailure = *input.RestartOnFailure
@@ -118,36 +107,22 @@ func (s *Server) registerProcessTools() error {
 			maxRestarts,
 		)
 		if err != nil {
-			return nil, ProcessExecuteOutput{}, err
+			return nil, handler.ProcessResponse{}, err
 		}
 
-		if !includeLogs {
-			return nil, ProcessExecuteOutput{Process: processInfo}, nil
-		}
-
-		logs, err := s.handlers.Process.GetProcessOutput(processInfo.PID)
-		if err != nil {
-			return nil, ProcessExecuteOutput{}, fmt.Errorf("failed to get process output: %w", err)
-		}
-
-		withLogs := handler.ProcessResponseWithLogs{
-			ProcessResponse: processInfo,
-			Logs:            logs.Logs,
-		}
-
-		return nil, ProcessExecuteOutput{WithLogs: withLogs}, nil
+		return nil, processInfo, nil
 	}))
 
 	// Get process by identifier
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "processGet",
 		Description: "Get process information by identifier (PID or name)",
-	}, LogToolCall("processGet", func(ctx context.Context, req *mcp.CallToolRequest, input ProcessIdentifierInput) (*mcp.CallToolResult, ProcessInfoOutput, error) {
+	}, LogToolCall("processGet", func(ctx context.Context, req *mcp.CallToolRequest, input ProcessIdentifierInput) (*mcp.CallToolResult, handler.ProcessResponse, error) {
 		process, err := s.handlers.Process.GetProcess(input.Identifier)
 		if err != nil {
-			return nil, ProcessInfoOutput{}, fmt.Errorf("failed to get process: %w", err)
+			return nil, handler.ProcessResponse{}, fmt.Errorf("failed to get process: %w", err)
 		}
-		return nil, ProcessInfoOutput{Process: process}, nil
+		return nil, process, nil
 	}))
 
 	// Get process logs
@@ -166,22 +141,22 @@ func (s *Server) registerProcessTools() error {
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "processStop",
 		Description: "Stop a specific process",
-	}, LogToolCall("processStop", func(ctx context.Context, req *mcp.CallToolRequest, input ProcessIdentifierInput) (*mcp.CallToolResult, map[string]string, error) {
+	}, LogToolCall("processStop", func(ctx context.Context, req *mcp.CallToolRequest, input ProcessIdentifierInput) (*mcp.CallToolResult, ProcessStatusOutput, error) {
 		if err := s.handlers.Process.StopProcess(input.Identifier); err != nil {
-			return nil, nil, fmt.Errorf("failed to stop process: %w", err)
+			return nil, ProcessStatusOutput{}, fmt.Errorf("failed to stop process: %w", err)
 		}
-		return nil, map[string]string{"status": "stopped"}, nil
+		return nil, ProcessStatusOutput{Status: "stopped"}, nil
 	}))
 
 	// Kill process
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "processKill",
 		Description: "Kill a specific process",
-	}, LogToolCall("processKill", func(ctx context.Context, req *mcp.CallToolRequest, input ProcessIdentifierInput) (*mcp.CallToolResult, map[string]string, error) {
+	}, LogToolCall("processKill", func(ctx context.Context, req *mcp.CallToolRequest, input ProcessIdentifierInput) (*mcp.CallToolResult, ProcessStatusOutput, error) {
 		if err := s.handlers.Process.KillProcess(input.Identifier); err != nil {
-			return nil, nil, fmt.Errorf("failed to kill process: %w", err)
+			return nil, ProcessStatusOutput{}, fmt.Errorf("failed to kill process: %w", err)
 		}
-		return nil, map[string]string{"status": "killed"}, nil
+		return nil, ProcessStatusOutput{Status: "killed"}, nil
 	}))
 
 	return nil

@@ -124,6 +124,11 @@ func LogToolCall[T any, R any](toolName string, handler func(ctx context.Context
 		duration := time.Since(start)
 		if err != nil {
 			logrus.Errorf("Tool call failed: %s (duration: %v, error: %v)", toolName, duration, err)
+			// Ensure error message is never empty to comply with MCP/Claude requirements.
+			// Claude's API rejects tool results with is_error=true but empty content.
+			if err.Error() == "" {
+				err = fmt.Errorf("tool %s failed with unknown error", toolName)
+			}
 		} else {
 			logrus.Infof("Tool call completed: %s (duration: %v)", toolName, duration)
 		}
