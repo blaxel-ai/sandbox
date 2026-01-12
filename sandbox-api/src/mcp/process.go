@@ -3,10 +3,15 @@ package mcp
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/blaxel-ai/sandbox-api/src/handler"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
+
+// MaxWaitForCompletionTimeout is the maximum time to wait for a process when waitForCompletion is true.
+// This prevents CloudFront/proxy timeouts (typically 60 seconds).
+const MaxWaitForCompletionTimeout = 58
 
 // Process tool input/output types
 type ListProcessesInput struct{}
@@ -25,6 +30,17 @@ type ProcessExecuteInput struct {
 	WaitForPorts      []int             `json:"waitForPorts,omitempty" jsonschema:"List of ports to wait for before returning"`
 	RestartOnFailure  *bool             `json:"restartOnFailure,omitempty" jsonschema:"Whether to restart the process on failure (default: false)"`
 	MaxRestarts       *int              `json:"maxRestarts,omitempty" jsonschema:"Maximum number of restarts (default: 0)"`
+}
+
+// ProcessExecuteOutput is the output for processExecute tool
+type ProcessExecuteOutput struct {
+	PID          string `json:"pid"`
+	Name         string `json:"name"`
+	Status       string `json:"status"`
+	ExitCode     int    `json:"exitCode"`
+	Logs         string `json:"logs,omitempty"`
+	Message      string `json:"message,omitempty"`
+	PollRequired bool   `json:"pollRequired,omitempty"`
 }
 
 type ProcessIdentifierInput struct {
@@ -54,7 +70,7 @@ func (s *Server) registerProcessTools() error {
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "processExecute",
 		Description: "Execute a command",
-	}, LogToolCall("processExecute", func(ctx context.Context, req *mcp.CallToolRequest, input ProcessExecuteInput) (*mcp.CallToolResult, handler.ProcessResponse, error) {
+	}, LogToolCall("processExecute", func(ctx context.Context, req *mcp.CallToolRequest, input ProcessExecuteInput) (*mcp.CallToolResult, ProcessExecuteOutput, error) {
 		// Apply defaults for optional fields
 		name := ""
 		if input.Name != nil {
@@ -95,22 +111,69 @@ func (s *Server) registerProcessTools() error {
 		if input.MaxRestarts != nil {
 			maxRestarts = *input.MaxRestarts
 		}
+
+		// Cap the effective timeout for waitForCompletion to prevent proxy timeouts
+		effectiveTimeout := timeout
+		originalTimeoutExceeded := false
+		if waitForCompletion && timeout > MaxWaitForCompletionTimeout {
+			effectiveTimeout = MaxWaitForCompletionTimeout
+			originalTimeoutExceeded = true
+		}
+
 		processInfo, err := s.handlers.Process.ExecuteProcess(
 			input.Command,
 			workingDir,
 			name,
 			env,
 			waitForCompletion,
-			timeout,
+			effectiveTimeout,
 			waitForPorts,
 			restartOnFailure,
 			maxRestarts,
 		)
-		if err != nil {
-			return nil, handler.ProcessResponse{}, err
+
+		// Check if this is a timeout error due to the capped timeout (CloudFront workaround)
+		// In this case, it's not an error - we just need to tell the agent to poll
+		// ExecuteProcess returns the process info even on timeout, so we can use it
+		isTimeoutError := err != nil && strings.Contains(err.Error(), "process timed out")
+		hasProcessInfo := processInfo.PID != "" // Check if we got valid process info
+		if isTimeoutError && originalTimeoutExceeded && hasProcessInfo {
+			output := ProcessExecuteOutput{
+				PID:          processInfo.PID,
+				Name:         processInfo.Name,
+				Status:       processInfo.Status,
+				ExitCode:     processInfo.ExitCode,
+				PollRequired: true,
+				Message: fmt.Sprintf(
+					"Process is still running after %d seconds. Poll processGet with identifier '%s' (or PID %s) in a loop until the status is 'completed', 'failed', 'killed', or 'stopped'. The process continues running in the background.",
+					MaxWaitForCompletionTimeout+2,
+					processInfo.Name,
+					processInfo.PID,
+				),
+			}
+			if processInfo.Logs != nil {
+				output.Logs = *processInfo.Logs
+			}
+			return nil, output, nil
 		}
 
-		return nil, processInfo, nil
+		if err != nil {
+			return nil, ProcessExecuteOutput{}, err
+		}
+
+		// Build response
+		output := ProcessExecuteOutput{
+			PID:      processInfo.PID,
+			Name:     processInfo.Name,
+			Status:   processInfo.Status,
+			ExitCode: processInfo.ExitCode,
+		}
+
+		if processInfo.Logs != nil {
+			output.Logs = *processInfo.Logs
+		}
+
+		return nil, output, nil
 	}))
 
 	// Get process by identifier
