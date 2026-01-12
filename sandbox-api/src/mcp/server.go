@@ -76,18 +76,26 @@ func (s *Server) Serve() error {
 // setupHTTPEndpoints sets up the HTTP endpoints using the official SDK pattern
 func (s *Server) setupHTTPEndpoints() {
 	// Create the streamable HTTP handler using the official SDK
+	// Configure as stateless (no session ID required) and JSON responses (no SSE)
 	handler := mcp.NewStreamableHTTPHandler(func(req *http.Request) *mcp.Server {
 		// Return the MCP server for each request
 		return s.mcpServer
-	}, nil)
+	}, &mcp.StreamableHTTPOptions{
+		Stateless:    true, // No session ID validation required
+		JSONResponse: true, // Return JSON instead of SSE text/event-stream
+	})
 
-	// Wrap the handler with Gin
-	s.engine.Any("/mcp/*path", gin.WrapH(http.StripPrefix("/mcp", handler)))
+	// POST /mcp - Main MCP endpoint
+	s.engine.POST("/mcp", gin.WrapH(handler))
 
-	// Also handle the base /mcp endpoint without trailing slash
-	s.engine.Any("/mcp", gin.WrapH(handler))
+	// GET /mcp - Return 405 Method Not Allowed (SSE not supported)
+	s.engine.GET("/mcp", func(c *gin.Context) {
+		c.JSON(http.StatusMethodNotAllowed, gin.H{
+			"error": "SSE streaming not supported. Please use POST for MCP communication.",
+		})
+	})
 
-	logrus.Info("MCP HTTP endpoints configured at /mcp")
+	logrus.Info("MCP HTTP endpoints configured at /mcp (stateless, JSON responses)")
 }
 
 // registerTools registers all the tools with the MCP server

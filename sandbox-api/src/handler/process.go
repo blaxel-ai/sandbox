@@ -86,7 +86,9 @@ type ProcessKillRequest struct {
 // ExecuteProcess executes a process
 func (h *ProcessHandler) ExecuteProcess(command string, workingDir string, name string, env map[string]string, waitForCompletion bool, timeout int, waitForPorts []int, restartOnFailure bool, maxRestarts int) (ProcessResponse, error) {
 	processInfo, err := h.processManager.ExecuteProcess(command, workingDir, name, env, waitForCompletion, timeout, waitForPorts, restartOnFailure, maxRestarts)
-	if err != nil {
+
+	// If processInfo is nil (process failed to start), return empty response with error
+	if processInfo == nil {
 		return ProcessResponse{}, err
 	}
 
@@ -95,6 +97,8 @@ func (h *ProcessHandler) ExecuteProcess(command string, workingDir string, name 
 		completedAt = processInfo.CompletedAt.Format("Mon, 02 Jan 2006 15:04:05 GMT")
 	}
 
+	// Return the process response even if there's an error (e.g., timeout)
+	// This allows callers to access process info for still-running processes
 	return ProcessResponse{
 		PID:              processInfo.PID,
 		Name:             processInfo.Name,
@@ -110,7 +114,7 @@ func (h *ProcessHandler) ExecuteProcess(command string, workingDir string, name 
 		RestartOnFailure: processInfo.RestartOnFailure,
 		MaxRestarts:      processInfo.MaxRestarts,
 		RestartCount:     processInfo.RestartCount,
-	}, nil
+	}, err
 }
 
 // ListProcesses lists all running processes

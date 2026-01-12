@@ -177,6 +177,14 @@ func (pm *ProcessManager) ExecuteProcess(
 			pid = receivedPID // Update pid to the received PID
 			break
 		case <-ctx.Done():
+			// Process timed out but is still running - return process info along with error
+			// so the caller can still access the running process
+			processInfo, exists := pm.GetProcessByIdentifier(pid)
+			if exists {
+				logs := processInfo.logs.String()
+				processInfo.Logs = &logs
+				return processInfo, fmt.Errorf("process timed out after %d seconds", timeout)
+			}
 			return nil, fmt.Errorf("process timed out after %d seconds", timeout)
 		}
 	}
