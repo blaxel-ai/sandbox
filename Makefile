@@ -30,6 +30,9 @@ codspeed:
 integration-test:
 	cd sandbox-api/integration-tests && ./run_tests.sh
 
+integration-test-deploy:
+	cd sandbox-api/integration-tests && go test -tags deploy -v -run ^TestDeployTypeScriptAgent ./tests/deploy/...
+
 mcp:
 	cd sandbox-api/mcp-inspect && npm run inspect
 

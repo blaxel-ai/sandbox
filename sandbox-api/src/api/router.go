@@ -51,6 +51,7 @@ func SetupRouter(disableRequestLogging bool) *gin.Engine {
 	processHandler := handler.NewProcessHandler()
 	networkHandler := handler.NewNetworkHandler()
 	codegenHandler := handler.NewCodegenHandler(fsHandler)
+	deployHandler := handler.NewDeployHandler()
 
 	// Check if terminal is disabled via environment variable
 	disableTerminal := os.Getenv("DISABLE_TERMINAL") == "true" || os.Getenv("DISABLE_TERMINAL") == "1"
@@ -157,6 +158,10 @@ func SetupRouter(disableRequestLogging bool) *gin.Engine {
 	r.PUT("/codegen/fastapply/*path", codegenHandler.HandleFastApply)
 	r.GET("/codegen/reranking/*path", codegenHandler.HandleReranking)
 	r.HEAD("/codegen/reranking/*path", head)
+
+	// Deploy routes
+	r.POST("/deploy", deployHandler.HandleDeploy)
+	r.HEAD("/deploy", head)
 
 	// Terminal routes (web-based terminal with PTY)
 	// Can be disabled with DISABLE_TERMINAL=true environment variable

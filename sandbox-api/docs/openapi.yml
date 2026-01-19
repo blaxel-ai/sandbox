@@ -161,6 +161,44 @@ paths:
       summary: Code reranking/semantic search
       tags:
         - codegen
+  /deploy:
+    post:
+      description: Deploy an application to Blaxel as an agent. Streams status updates and build logs.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DeployRequest"
+        description: Deployment request
+        required: true
+      responses:
+        "200":
+          description: Stream of deployment events
+          content:
+            application/x-ndjson:
+              schema:
+                $ref: "#/components/schemas/DeployStatusEvent"
+        "400":
+          description: Invalid request
+          content:
+            application/x-ndjson:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Authentication failed
+          content:
+            application/x-ndjson:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/x-ndjson:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+      summary: Deploy an application as an agent
+      tags:
+        - deploy
   "/filesystem-content-search/{path}":
     get:
       description: Searches for text content inside files using ripgrep. Returns matching lines with context.
@@ -1321,6 +1359,14 @@ components:
             }
           type: string
       type: object
+    AuthMethod:
+      enum:
+        - apikey
+        - client_credentials
+      type: string
+      x-enum-varnames:
+        - AuthMethodAPIKey
+        - AuthMethodClientCredentials
     ContentSearchMatch:
       properties:
         column:
@@ -1354,6 +1400,70 @@ components:
         total:
           example: 5
           type: integer
+      type: object
+    DeployRequest:
+      properties:
+        apiKey:
+          example: bl_xxx
+          type: string
+        authMethod:
+          allOf:
+            - $ref: "#/components/schemas/AuthMethod"
+          description: Authentication
+          example: apikey
+        clientId:
+          example: client_id
+          type: string
+        clientSecret:
+          example: client_secret
+          type: string
+        directory:
+          example: /app
+          type: string
+        envs:
+          additionalProperties:
+            type: string
+          type: object
+        name:
+          description: Deployment configuration
+          example: my-agent
+          type: string
+        policies:
+          items:
+            type: string
+          type: array
+        public:
+          example: false
+          type: boolean
+        runtime:
+          additionalProperties: true
+          type: object
+        triggers:
+          items:
+            additionalProperties: true
+            type: object
+          type: array
+        type:
+          description: agent, function, job, sandbox
+          example: agent
+          type: string
+        workspace:
+          description: Optional, defaults to BL_WORKSPACE env var
+          example: my-workspace
+          type: string
+      required:
+        - name
+      type: object
+    DeployStatusEvent:
+      properties:
+        data: {}
+        message:
+          type: string
+        status:
+          type: string
+        type:
+          description: '"status", "log", "error", "result"'
+          type: string
       type: object
     Directory:
       properties:

@@ -146,6 +146,58 @@ const docTemplate = `{
                 }
             }
         },
+        "/deploy": {
+            "post": {
+                "description": "Deploy an application to Blaxel as an agent. Streams status updates and build logs.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/x-ndjson"
+                ],
+                "tags": [
+                    "deploy"
+                ],
+                "summary": "Deploy an application as an agent",
+                "parameters": [
+                    {
+                        "description": "Deployment request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/DeployRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Stream of deployment events",
+                        "schema": {
+                            "$ref": "#/definitions/DeployStatusEvent"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Authentication failed",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/filesystem-content-search/{path}": {
             "get": {
                 "description": "Searches for text content inside files using ripgrep. Returns matching lines with context.",
@@ -1569,6 +1621,17 @@ const docTemplate = `{
                 }
             }
         },
+        "AuthMethod": {
+            "type": "string",
+            "enum": [
+                "apikey",
+                "client_credentials"
+            ],
+            "x-enum-varnames": [
+                "AuthMethodAPIKey",
+                "AuthMethodClientCredentials"
+            ]
+        },
         "ContentSearchMatch": {
             "type": "object",
             "properties": {
@@ -1610,6 +1673,97 @@ const docTemplate = `{
                 "total": {
                     "type": "integer",
                     "example": 5
+                }
+            }
+        },
+        "DeployRequest": {
+            "type": "object",
+            "required": [
+                "name"
+            ],
+            "properties": {
+                "apiKey": {
+                    "type": "string",
+                    "example": "bl_xxx"
+                },
+                "authMethod": {
+                    "description": "Authentication",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/AuthMethod"
+                        }
+                    ],
+                    "example": "apikey"
+                },
+                "clientId": {
+                    "type": "string",
+                    "example": "client_id"
+                },
+                "clientSecret": {
+                    "type": "string",
+                    "example": "client_secret"
+                },
+                "directory": {
+                    "type": "string",
+                    "example": "/app"
+                },
+                "envs": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "name": {
+                    "description": "Deployment configuration",
+                    "type": "string",
+                    "example": "my-agent"
+                },
+                "policies": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "public": {
+                    "type": "boolean",
+                    "example": false
+                },
+                "runtime": {
+                    "type": "object",
+                    "additionalProperties": true
+                },
+                "triggers": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": true
+                    }
+                },
+                "type": {
+                    "description": "agent, function, job, sandbox",
+                    "type": "string",
+                    "example": "agent"
+                },
+                "workspace": {
+                    "description": "Optional, defaults to BL_WORKSPACE env var",
+                    "type": "string",
+                    "example": "my-workspace"
+                }
+            }
+        },
+        "DeployStatusEvent": {
+            "type": "object",
+            "properties": {
+                "data": {},
+                "message": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "type": {
+                    "description": "\"status\", \"log\", \"error\", \"result\"",
+                    "type": "string"
                 }
             }
         },
