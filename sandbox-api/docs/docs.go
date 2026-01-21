@@ -1005,6 +1005,26 @@ const docTemplate = `{
                 }
             }
         },
+        "/health": {
+            "get": {
+                "description": "Returns health status and system information including restart count and binary details",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "system"
+                ],
+                "summary": "Health check",
+                "responses": {
+                    "200": {
+                        "description": "Health status",
+                        "schema": {
+                            "$ref": "#/definitions/HealthResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/network/process/{pid}/monitor": {
             "post": {
                 "description": "Start monitoring for new ports opened by a process",
@@ -1475,6 +1495,35 @@ const docTemplate = `{
                 }
             }
         },
+        "/restart": {
+            "post": {
+                "description": "Triggers a restart of the sandbox-api process. Returns 200 immediately before restarting.\nThe restart will: save process state, rebuild from source (if configured), and restart.\nAll running processes will be preserved across the restart.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "system"
+                ],
+                "summary": "Restart the sandbox-api",
+                "responses": {
+                    "200": {
+                        "description": "Restart initiated",
+                        "schema": {
+                            "$ref": "#/definitions/SuccessResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/watch/filesystem/{path}": {
             "get": {
                 "description": "Streams the path of modified files (one per line) in the given directory. Closes when the client disconnects.",
@@ -1805,6 +1854,44 @@ const docTemplate = `{
                 "total": {
                     "type": "integer",
                     "example": 5
+                }
+            }
+        },
+        "HealthResponse": {
+            "type": "object",
+            "properties": {
+                "arch": {
+                    "type": "string"
+                },
+                "buildTime": {
+                    "type": "string"
+                },
+                "gitCommit": {
+                    "type": "string"
+                },
+                "goVersion": {
+                    "type": "string"
+                },
+                "os": {
+                    "type": "string"
+                },
+                "restartCount": {
+                    "type": "integer"
+                },
+                "startedAt": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "uptime": {
+                    "type": "string"
+                },
+                "uptimeSeconds": {
+                    "type": "number"
+                },
+                "version": {
+                    "type": "string"
                 }
             }
         },

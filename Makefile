@@ -6,7 +6,7 @@ dependencies:
 
 
 api:
-	cd sandbox-api && air
+	cd sandbox-api && SANDBOX_LOG_DIR=./tmp/log air
 
 docker-build:
 	docker build -t blaxel/sandbox-api .

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -127,6 +128,19 @@ func (h *ProcessHandler) ListProcesses() []ProcessResponse {
 			completedAt := p.CompletedAt.Format("Mon, 02 Jan 2006 15:04:05 GMT")
 			completedAtPtr = &completedAt
 		}
+
+		// Get logs from file if available
+		var logs, stdout, stderr *string
+		if output, err := h.processManager.GetProcessOutput(p.PID); err == nil {
+			logs = &output.Logs
+			stdout = &output.Stdout
+			stderr = &output.Stderr
+		} else {
+			logs = p.Logs
+			stdout = p.Stdout
+			stderr = p.Stderr
+		}
+
 		result = append(result, ProcessResponse{
 			PID:              p.PID,
 			Name:             p.Name,
@@ -136,9 +150,9 @@ func (h *ProcessHandler) ListProcesses() []ProcessResponse {
 			CompletedAt:      completedAtPtr,
 			ExitCode:         p.ExitCode,
 			WorkingDir:       p.WorkingDir,
-			Logs:             p.Logs,
-			Stdout:           p.Stdout,
-			Stderr:           p.Stderr,
+			Logs:             logs,
+			Stdout:           stdout,
+			Stderr:           stderr,
 			RestartOnFailure: p.RestartOnFailure,
 			MaxRestarts:      p.MaxRestarts,
 			RestartCount:     p.RestartCount,
@@ -158,6 +172,19 @@ func (h *ProcessHandler) GetProcess(identifier string) (ProcessResponse, error) 
 	if processInfo.CompletedAt != nil {
 		completedAt = processInfo.CompletedAt.Format("Mon, 02 Jan 2006 15:04:05 GMT")
 	}
+
+	// Get logs from file if available
+	var logs, stdout, stderr *string
+	if output, err := h.processManager.GetProcessOutput(identifier); err == nil {
+		logs = &output.Logs
+		stdout = &output.Stdout
+		stderr = &output.Stderr
+	} else {
+		logs = processInfo.Logs
+		stdout = processInfo.Stdout
+		stderr = processInfo.Stderr
+	}
+
 	return ProcessResponse{
 		PID:              processInfo.PID,
 		Name:             processInfo.Name,
@@ -167,9 +194,9 @@ func (h *ProcessHandler) GetProcess(identifier string) (ProcessResponse, error) 
 		CompletedAt:      &completedAt,
 		ExitCode:         processInfo.ExitCode,
 		WorkingDir:       processInfo.WorkingDir,
-		Logs:             processInfo.Logs,
-		Stdout:           processInfo.Stdout,
-		Stderr:           processInfo.Stderr,
+		Logs:             logs,
+		Stdout:           stdout,
+		Stderr:           stderr,
 		RestartOnFailure: processInfo.RestartOnFailure,
 		MaxRestarts:      processInfo.MaxRestarts,
 		RestartCount:     processInfo.RestartCount,
@@ -345,7 +372,11 @@ func (h *ProcessHandler) handleExecuteCommandStream(c *gin.Context) {
 	}
 done:
 
-	// Detach the writer
+	// Wait for tailLogFiles to complete its final reads
+	// The 150ms delay gives it time to flush all content to log writers
+	time.Sleep(150 * time.Millisecond)
+
+	// Detach the writer before reading final content
 	h.RemoveLogWriter(processInfo.PID, jw)
 
 	// Get final process info (now includes stdout, stderr, logs)
@@ -353,6 +384,28 @@ done:
 	if err != nil {
 		jw.WriteEvent("error", err.Error())
 		return
+	}
+
+	// For very fast commands, streaming might not have sent anything
+	// Check if we need to send the final output (compare with what jw received)
+	if !jw.HasSentData() {
+		// No streaming data was sent, send the final output now
+		if finalProcessInfo.Stdout != nil && *finalProcessInfo.Stdout != "" {
+			lines := strings.Split(*finalProcessInfo.Stdout, "\n")
+			for _, line := range lines {
+				if line != "" {
+					jw.WriteEvent("stdout", line)
+				}
+			}
+		}
+		if finalProcessInfo.Stderr != nil && *finalProcessInfo.Stderr != "" {
+			lines := strings.Split(*finalProcessInfo.Stderr, "\n")
+			for _, line := range lines {
+				if line != "" {
+					jw.WriteEvent("stderr", line)
+				}
+			}
+		}
 	}
 
 	// Send final result as JSON event
@@ -427,11 +480,11 @@ func (h *ProcessHandler) HandleGetProcessLogsStream(c *gin.Context) {
 	}
 
 	// Wait until the process is done or the client disconnects
-	process, exists := h.processManager.GetProcessByIdentifier(identifier)
+	proc, exists := h.processManager.GetProcessByIdentifier(identifier)
 	if !exists {
 		return
 	}
-	for process.Status == constants.ProcessStatusRunning {
+	for proc.Status == constants.ProcessStatusRunning {
 		time.Sleep(200 * time.Millisecond)
 		// If client disconnects, break
 		select {
@@ -440,9 +493,27 @@ func (h *ProcessHandler) HandleGetProcessLogsStream(c *gin.Context) {
 			return
 		default:
 		}
+		// Refresh process status
+		proc, exists = h.processManager.GetProcessByIdentifier(identifier)
+		if !exists {
+			break
+		}
 	}
+
+	// Wait for tailLogFiles to complete its final reads
+	time.Sleep(150 * time.Millisecond)
+
 	// Detach the writer
 	h.RemoveLogWriter(identifier, rw)
+
+	// Send final content from combined log file (which has prefixed, ordered content)
+	// This ensures any content written at the very end (like stderr) is captured
+	// The combined log file preserves the interleaved order of stdout/stderr
+	if proc.LogFile != "" {
+		if content, err := os.ReadFile(proc.LogFile); err == nil && len(content) > 0 {
+			rw.Write(content)
+		}
+	}
 }
 
 // HandleStopProcess handles DELETE requests to /process/{identifier}
@@ -529,9 +600,10 @@ func (h *ProcessHandler) HandleGetProcess(c *gin.Context) {
 
 // ResponseWriter is a custom writer for SSE responses that also flushes after each write
 type ResponseWriter struct {
-	gin    *gin.Context
-	closed bool
-	mu     sync.Mutex // Protects the closed field
+	gin      *gin.Context
+	closed   bool
+	sentData bool // Track if any data was sent
+	mu       sync.Mutex
 }
 
 // Write writes data to the buffer and flushes to the client in a safe manner
@@ -550,6 +622,11 @@ func (w *ResponseWriter) Write(data []byte) (int, error) {
 	default:
 	}
 
+	// Track that we've sent data
+	if len(data) > 0 {
+		w.sentData = true
+	}
+
 	// Write data as-is (no SSE wrapping)
 	n, err := w.gin.Writer.Write(data)
 	if err != nil {
@@ -558,6 +635,13 @@ func (w *ResponseWriter) Write(data []byte) (int, error) {
 	}
 	w.gin.Writer.Flush()
 	return n, nil
+}
+
+// HasSentData returns true if any data was sent
+func (w *ResponseWriter) HasSentData() bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.sentData
 }
 
 // Close marks the writer as closed to prevent further writes
@@ -570,9 +654,10 @@ func (w *ResponseWriter) Close() {
 // JSONStreamWriter wraps a writer and formats output as JSON events
 // Used by handleExecuteCommandStream for structured streaming output
 type JSONStreamWriter struct {
-	gin    *gin.Context
-	closed bool
-	mu     sync.Mutex
+	gin      *gin.Context
+	closed   bool
+	sentData bool // Track if any stdout/stderr data was sent
+	mu       sync.Mutex
 }
 
 // StreamEvent represents a JSON streaming event
@@ -602,6 +687,11 @@ func (w *JSONStreamWriter) WriteEvent(eventType string, data string) (int, error
 	default:
 	}
 
+	// Track if we've sent any stdout/stderr data
+	if eventType == "stdout" || eventType == "stderr" {
+		w.sentData = true
+	}
+
 	event := StreamEvent{Type: eventType, Data: data}
 	eventJSON, err := json.Marshal(event)
 	if err != nil {
@@ -616,6 +706,13 @@ func (w *JSONStreamWriter) WriteEvent(eventType string, data string) (int, error
 	}
 	w.gin.Writer.Flush()
 	return n, nil
+}
+
+// HasSentData returns true if any stdout/stderr data was sent
+func (w *JSONStreamWriter) HasSentData() bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.sentData
 }
 
 // Write implements io.Writer - writes raw data as stdout event

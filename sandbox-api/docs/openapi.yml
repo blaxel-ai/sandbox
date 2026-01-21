@@ -862,6 +862,19 @@ paths:
       summary: Create or update directory tree
       tags:
         - filesystem
+  /health:
+    get:
+      description: Returns health status and system information including restart count and binary details
+      responses:
+        "200":
+          description: Health status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+      summary: Health check
+      tags:
+        - system
   "/network/process/{pid}/monitor":
     delete:
       description: Stop monitoring for new ports opened by a process
@@ -1226,6 +1239,30 @@ paths:
       summary: Stream process logs in real time
       tags:
         - process
+  /restart:
+    post:
+      description: >-
+        Triggers a restart of the sandbox-api process. Returns 200 immediately before restarting.
+
+        The restart will: save process state, rebuild from source (if configured), and restart.
+
+        All running processes will be preserved across the restart.
+      responses:
+        "200":
+          description: Restart initiated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+      summary: Restart the sandbox-api
+      tags:
+        - system
   "/watch/filesystem/{path}":
     get:
       description: Streams the path of modified files (one per line) in the given directory. Closes when the client disconnects.
@@ -1491,6 +1528,31 @@ components:
         total:
           example: 5
           type: integer
+      type: object
+    HealthResponse:
+      properties:
+        arch:
+          type: string
+        buildTime:
+          type: string
+        gitCommit:
+          type: string
+        goVersion:
+          type: string
+        os:
+          type: string
+        restartCount:
+          type: integer
+        startedAt:
+          type: string
+        status:
+          type: string
+        uptime:
+          type: string
+        uptimeSeconds:
+          type: number
+        version:
+          type: string
       type: object
     MultipartCompleteRequest:
       properties:
