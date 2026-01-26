@@ -82,18 +82,42 @@ func writeWithLock(operation string) error {
 
 // ScaleDisable disables scale-to-zero by incrementing the counter
 func ScaleDisable() error {
-	return writeWithLock("+")
+	err := writeWithLock("+")
+	if err != nil {
+		logrus.Warnf("[Scale] Failed to disable scale-to-zero: %v", err)
+		return err
+	}
+	counter, _ := GetCounter()
+	logrus.Infof("[Scale] Disabled scale-to-zero (wrote '+', counter now: %d) - sandbox staying AWAKE", counter)
+	return nil
 }
 
 // ScaleEnable enables scale-to-zero by decrementing the counter
 func ScaleEnable() error {
-	return writeWithLock("-")
+	err := writeWithLock("-")
+	if err != nil {
+		logrus.Warnf("[Scale] Failed to enable scale-to-zero: %v", err)
+		return err
+	}
+	counter, _ := GetCounter()
+	if counter == 0 {
+		logrus.Infof("[Scale] Enabled scale-to-zero (wrote '-', counter now: %d) - sandbox can AUTO-HIBERNATE", counter)
+	} else {
+		logrus.Infof("[Scale] Decremented scale-to-zero (wrote '-', counter now: %d) - still AWAKE", counter)
+	}
+	return nil
 }
 
 // ScaleReset resets the scale-to-zero counter to 0
 // This should be called on startup to handle crash recovery
 func ScaleReset() error {
-	return writeWithLock("=0")
+	err := writeWithLock("=0")
+	if err != nil {
+		logrus.Warnf("[Scale] Failed to reset scale-to-zero: %v", err)
+		return err
+	}
+	logrus.Infof("[Scale] Reset scale-to-zero counter to 0 (wrote '=0') - sandbox can AUTO-HIBERNATE")
+	return nil
 }
 
 // GetCounter reads the current scale-to-zero counter value

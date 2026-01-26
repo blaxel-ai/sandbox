@@ -12,7 +12,7 @@ The sandbox-api provides mechanisms to control the sandbox's auto-hibernation be
 
 ## How Auto-Hibernation Works
 
-The sandbox uses a **counter-based scale-to-zero** system controlled via a special file (`/uk/libukp/scale_to_zero_disable`):
+The sandbox uses a **counter-based scale-to-zero** system controlled via a special file:
 
 | Operation | Effect |
 |-----------|--------|
@@ -252,9 +252,7 @@ This ensures that if the sandbox-api crashed while keepAlive processes were runn
                                                          ▼
                                                  ┌─────────────────┐
                                                  │  Scale File     │
-                                                 │ /uk/libukp/     │
-                                                 │ scale_to_zero_  │
-                                                 │ disable         │
+                                                 │ (internal)      │
                                                  └─────────────────┘
 ```
 
