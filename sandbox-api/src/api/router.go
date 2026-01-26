@@ -153,6 +153,12 @@ func SetupRouter(disableRequestLogging bool) *gin.Engine {
 	r.POST("/network/process/:pid/monitor", networkHandler.HandleMonitorPorts)
 	r.DELETE("/network/process/:pid/monitor", networkHandler.HandleStopMonitoringPorts)
 
+	// Lifecycle routes (stop/status sandbox)
+	lifecycleHandler := handler.NewLifecycleHandler(processHandler)
+	r.POST("/stop", lifecycleHandler.HandleStop)
+	r.GET("/status", lifecycleHandler.HandleStatus)
+	r.HEAD("/status", head)
+
 	// Codegen routes
 	r.PUT("/codegen/fastapply/*path", codegenHandler.HandleFastApply)
 	r.GET("/codegen/reranking/*path", codegenHandler.HandleReranking)
