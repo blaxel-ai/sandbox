@@ -99,43 +99,43 @@ type FuzzySearchRequest struct {
 
 // FuzzySearchMatch represents a single fuzzy search match
 type FuzzySearchMatch struct {
-	Path  string `json:"path" example:"src/main.go"`
-	Score int    `json:"score" example:"100"`
-	Type  string `json:"type" example:"file"` // "file" or "directory"
+	Path  string `json:"path" binding:"required" example:"src/main.go"`
+	Score int    `json:"score" binding:"required" example:"100"`
+	Type  string `json:"type" binding:"required" example:"file"` // "file" or "directory"
 } // @name FuzzySearchMatch
 
 // FuzzySearchResponse represents the response from fuzzy search
 type FuzzySearchResponse struct {
-	Matches []FuzzySearchMatch `json:"matches"`
-	Total   int                `json:"total" example:"5"`
+	Matches []FuzzySearchMatch `json:"matches" binding:"required"`
+	Total   int                `json:"total" binding:"required" example:"5"`
 } // @name FuzzySearchResponse
 
 // ContentSearchMatch represents a single content search match
 type ContentSearchMatch struct {
-	Path    string `json:"path" example:"src/main.go"`
-	Line    int    `json:"line" example:"42"`
-	Column  int    `json:"column" example:"10"`
-	Text    string `json:"text" example:"const searchText = 'example'"`
+	Path    string `json:"path" binding:"required" example:"src/main.go"`
+	Line    int    `json:"line" binding:"required" example:"42"`
+	Column  int    `json:"column" binding:"required" example:"10"`
+	Text    string `json:"text" binding:"required" example:"const searchText = 'example'"`
 	Context string `json:"context,omitempty" example:"previous line\ncurrent line\nnext line"`
 } // @name ContentSearchMatch
 
 // ContentSearchResponse represents the response from content search
 type ContentSearchResponse struct {
-	Query   string               `json:"query" example:"searchText"`
-	Matches []ContentSearchMatch `json:"matches"`
-	Total   int                  `json:"total" example:"5"`
+	Query   string               `json:"query" binding:"required" example:"searchText"`
+	Matches []ContentSearchMatch `json:"matches" binding:"required"`
+	Total   int                  `json:"total" binding:"required" example:"5"`
 } // @name ContentSearchResponse
 
 // FindMatch represents a single find result
 type FindMatch struct {
-	Path string `json:"path" example:"src/main.go"`
-	Type string `json:"type" example:"file"` // "file" or "directory"
+	Path string `json:"path" binding:"required" example:"src/main.go"`
+	Type string `json:"type" binding:"required" example:"file"` // "file" or "directory"
 } // @name FindMatch
 
 // FindResponse represents the response from find
 type FindResponse struct {
-	Matches []FindMatch `json:"matches"`
-	Total   int         `json:"total" example:"5"`
+	Matches []FindMatch `json:"matches" binding:"required"`
+	Total   int         `json:"total" binding:"required" example:"5"`
 } // @name FindResponse
 
 // NewFileSystemHandler creates a new filesystem handler
