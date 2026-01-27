@@ -1571,6 +1571,12 @@ const docTemplate = `{
         },
         "ContentSearchMatch": {
             "type": "object",
+            "required": [
+                "column",
+                "line",
+                "path",
+                "text"
+            ],
             "properties": {
                 "column": {
                     "type": "integer",
@@ -1596,6 +1602,11 @@ const docTemplate = `{
         },
         "ContentSearchResponse": {
             "type": "object",
+            "required": [
+                "matches",
+                "query",
+                "total"
+            ],
             "properties": {
                 "matches": {
                     "type": "array",
@@ -1748,6 +1759,10 @@ const docTemplate = `{
         },
         "FindMatch": {
             "type": "object",
+            "required": [
+                "path",
+                "type"
+            ],
             "properties": {
                 "path": {
                     "type": "string",
@@ -1762,6 +1777,10 @@ const docTemplate = `{
         },
         "FindResponse": {
             "type": "object",
+            "required": [
+                "matches",
+                "total"
+            ],
             "properties": {
                 "matches": {
                     "type": "array",
@@ -1777,6 +1796,11 @@ const docTemplate = `{
         },
         "FuzzySearchMatch": {
             "type": "object",
+            "required": [
+                "path",
+                "score",
+                "type"
+            ],
             "properties": {
                 "path": {
                     "type": "string",
@@ -1795,6 +1819,10 @@ const docTemplate = `{
         },
         "FuzzySearchResponse": {
             "type": "object",
+            "required": [
+                "matches",
+                "total"
+            ],
             "properties": {
                 "matches": {
                     "type": "array",

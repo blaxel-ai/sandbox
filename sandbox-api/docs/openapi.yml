@@ -1341,6 +1341,11 @@ components:
         text:
           example: const searchText = 'example'
           type: string
+      required:
+        - column
+        - line
+        - path
+        - text
       type: object
     ContentSearchResponse:
       properties:
@@ -1354,6 +1359,10 @@ components:
         total:
           example: 5
           type: integer
+      required:
+        - matches
+        - query
+        - total
       type: object
     Directory:
       properties:
@@ -1458,6 +1467,9 @@ components:
           description: '"file" or "directory"'
           example: file
           type: string
+      required:
+        - path
+        - type
       type: object
     FindResponse:
       properties:
@@ -1468,6 +1480,9 @@ components:
         total:
           example: 5
           type: integer
+      required:
+        - matches
+        - total
       type: object
     FuzzySearchMatch:
       properties:
@@ -1481,6 +1496,10 @@ components:
           description: '"file" or "directory"'
           example: file
           type: string
+      required:
+        - path
+        - score
+        - type
       type: object
     FuzzySearchResponse:
       properties:
@@ -1491,6 +1510,9 @@ components:
         total:
           example: 5
           type: integer
+      required:
+        - matches
+        - total
       type: object
     MultipartCompleteRequest:
       properties:
