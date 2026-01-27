@@ -275,15 +275,20 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 	if keepAlive && timeout > 0 {
 		go func() {
 			timer := time.NewTimer(time.Duration(timeout) * time.Second)
+			defer timer.Stop()
 			select {
 			case <-timer.C:
 				// Timeout expired, kill the process
 				logrus.Infof("[KeepAlive] Timeout expired for process %s after %d seconds, killing process", process.PID, timeout)
 				_ = pm.KillProcess(process.PID)
 			case <-process.stopTimeout:
-				// Process completed before timeout, stop the timer
-				timer.Stop()
+				// Process completed before timeout
 			}
+		}()
+	} else if keepAlive {
+		// For infinite timeout, start a goroutine that just waits for completion
+		go func() {
+			<-process.stopTimeout
 		}()
 	}
 
@@ -376,7 +381,12 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 
 		// Signal the timeout goroutine to stop (if any)
 		if process.stopTimeout != nil {
-			close(process.stopTimeout)
+			select {
+			case <-process.stopTimeout:
+				// Already closed
+			default:
+				close(process.stopTimeout)
+			}
 		}
 
 		// Check if we should restart on failure
@@ -621,7 +631,12 @@ func (pm *ProcessManager) restartProcess(oldProcess *ProcessInfo, callback func(
 
 		// Signal the timeout goroutine to stop (if any)
 		if oldProcess.stopTimeout != nil {
-			close(oldProcess.stopTimeout)
+			select {
+			case <-oldProcess.stopTimeout:
+				// Already closed
+			default:
+				close(oldProcess.stopTimeout)
+			}
 		}
 
 		// Check if we should restart again on failure
@@ -867,6 +882,29 @@ func (pm *ProcessManager) KillProcess(identifier string) error {
 
 	// Remove the process from memory
 	process.Status = StatusKilled
+
+	// Handle keepAlive cleanup - re-enable scale-to-zero if this was a keepAlive process
+	if process.KeepAlive {
+		// Signal the timeout goroutine to stop (if any)
+		if process.stopTimeout != nil {
+			select {
+			case <-process.stopTimeout:
+				// Already closed
+			default:
+				close(process.stopTimeout)
+			}
+		}
+
+		// Re-enable scale-to-zero
+		if err := blaxel.ScaleEnable(); err != nil {
+			logrus.Warnf("[KeepAlive] Failed to enable scale-to-zero after killing process %s: %v", process.PID, err)
+		}
+		logrus.Infof("[KeepAlive] Stopped process %s (name: %s, status: killed, exit_code: -1)", process.PID, process.Name)
+
+		// Mark keepAlive as handled so completion callback doesn't try to decrement again
+		process.KeepAlive = false
+	}
+
 	return nil
 }
 

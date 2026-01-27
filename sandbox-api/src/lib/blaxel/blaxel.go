@@ -27,7 +27,7 @@ func isScaleAvailable() bool {
 		dir := scaleFile[:strings.LastIndex(scaleFile, "/")]
 		if _, err := os.Stat(dir); os.IsNotExist(err) {
 			scaleAvailable = false
-			logrus.Infof("Scale-to-zero infrastructure not available (directory %s not found)", dir)
+			logrus.Infof("[Scale] Scale-to-zero infrastructure not available (running in debug/test mode)")
 		} else {
 			scaleAvailable = true
 		}
@@ -55,7 +55,7 @@ func writeWithLock(operation string) error {
 	// Open or create the file (same as async-sidecar)
 	file, err := os.OpenFile(scaleFile, os.O_RDWR|os.O_CREATE, 0644)
 	if err != nil {
-		logrus.Debugf("Failed to open scale file: %s (error: %v)", scaleFile, err)
+		logrus.Debugf("[Scale] Failed to open scale control file (error: %v)", err)
 		return err
 	}
 	defer func() {
@@ -64,7 +64,7 @@ func writeWithLock(operation string) error {
 
 	// Acquire exclusive lock
 	if err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX); err != nil {
-		logrus.Debugf("Failed to acquire lock on scale file (error: %v)", err)
+		logrus.Debugf("[Scale] Failed to acquire lock on scale control file (error: %v)", err)
 		return err
 	}
 	defer func() {
@@ -73,7 +73,7 @@ func writeWithLock(operation string) error {
 
 	// Write the operation
 	if _, err := file.WriteString(operation); err != nil {
-		logrus.Debugf("Failed to write to scale file (error: %v)", err)
+		logrus.Debugf("[Scale] Failed to write to scale control file (error: %v)", err)
 		return err
 	}
 
