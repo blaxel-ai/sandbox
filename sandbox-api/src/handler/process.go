@@ -151,11 +151,6 @@ func (h *ProcessHandler) ListProcesses() []ProcessResponse {
 	return result
 }
 
-// RemoveKeepAlive removes the keepAlive flag from a process by PID
-func (h *ProcessHandler) RemoveKeepAlive(pid string) error {
-	return h.processManager.RemoveKeepAlive(pid)
-}
-
 // GetProcess gets a process by identifier (PID or name)
 func (h *ProcessHandler) GetProcess(identifier string) (ProcessResponse, error) {
 	processInfo, exists := h.processManager.GetProcessByIdentifier(identifier)

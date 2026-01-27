@@ -1165,65 +1165,6 @@ const docTemplate = `{
                 }
             }
         },
-        "/stop": {
-            "post": {
-                "description": "Force stop removes keepAlive from all current keepAlive processes, enabling auto-hibernation. Optionally schedule the stop with a timeout.",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "lifecycle"
-                ],
-                "summary": "Force stop sandbox (remove keepAlive from processes)",
-                "parameters": [
-                    {
-                        "description": "Stop request with optional timeout",
-                        "name": "request",
-                        "in": "body",
-                        "schema": {
-                            "$ref": "#/definitions/StopRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "Status response",
-                        "schema": {
-                            "$ref": "#/definitions/StatusResponse"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal server error",
-                        "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
-                        }
-                    }
-                }
-            }
-        },
-        "/status": {
-            "get": {
-                "description": "Returns the current sandbox status, scheduled stop time, and active keepAlive processes.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "lifecycle"
-                ],
-                "summary": "Get sandbox status",
-                "responses": {
-                    "200": {
-                        "description": "Status response",
-                        "schema": {
-                            "$ref": "#/definitions/StatusResponse"
-                        }
-                    }
-                }
-            }
-        },
         "/process": {
             "get": {
                 "description": "Get a list of all running and completed processes",
@@ -2165,73 +2106,6 @@ const docTemplate = `{
                 "success": {
                     "type": "boolean",
                     "example": true
-                }
-            }
-        },
-        "StopRequest": {
-            "type": "object",
-            "properties": {
-                "timeout": {
-                    "description": "Timeout in seconds before the stop takes effect. Default is 0 (immediate). If set, the stop will be scheduled.",
-                    "type": "integer",
-                    "example": 0
-                }
-            }
-        },
-        "StatusResponse": {
-            "type": "object",
-            "required": [
-                "state",
-                "keepAliveProcesses"
-            ],
-            "properties": {
-                "state": {
-                    "description": "Sandbox state: 'awake' (at least one keepAlive process) or 'auto' (no keepAlive processes)",
-                    "type": "string",
-                    "enum": ["awake", "auto"],
-                    "example": "awake"
-                },
-                "scheduledStopAt": {
-                    "description": "When a scheduled stop will occur (null if no stop is scheduled)",
-                    "type": "string",
-                    "example": "2024-01-01T12:10:00Z"
-                },
-                "keepAliveProcesses": {
-                    "description": "List of processes with keepAlive enabled that are currently running",
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/KeepAliveProcessInfo"
-                    }
-                }
-            }
-        },
-        "KeepAliveProcessInfo": {
-            "type": "object",
-            "properties": {
-                "pid": {
-                    "description": "Process ID",
-                    "type": "string",
-                    "example": "1234"
-                },
-                "name": {
-                    "description": "Process name",
-                    "type": "string",
-                    "example": "my-process"
-                },
-                "command": {
-                    "description": "Command being executed",
-                    "type": "string",
-                    "example": "npm start"
-                },
-                "startedAt": {
-                    "description": "When the process was started",
-                    "type": "string",
-                    "example": "2024-01-01T12:00:00Z"
-                },
-                "timeout": {
-                    "description": "Process timeout in seconds",
-                    "type": "integer",
-                    "example": 600
                 }
             }
         },

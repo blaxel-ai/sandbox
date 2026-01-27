@@ -985,45 +985,6 @@ paths:
       summary: Get open ports for a process
       tags:
         - network
-  /stop:
-    post:
-      description: Force stop removes keepAlive from all current keepAlive processes, enabling auto-hibernation. Optionally schedule the stop with a timeout.
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/StopRequest"
-        description: Stop request with optional timeout
-        required: false
-      responses:
-        "200":
-          description: Status response
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/StatusResponse"
-        "500":
-          description: Internal server error
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-      summary: Force stop sandbox (remove keepAlive from processes)
-      tags:
-        - lifecycle
-  /status:
-    get:
-      description: Returns the current sandbox status, scheduled stop time, and active keepAlive processes.
-      responses:
-        "200":
-          description: Status response
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/StatusResponse"
-      summary: Get sandbox status
-      tags:
-        - lifecycle
   /process:
     get:
       description: Get a list of all running and completed processes
@@ -1746,60 +1707,6 @@ components:
         success:
           example: true
           type: boolean
-      type: object
-    StopRequest:
-      properties:
-        timeout:
-          description: Timeout in seconds before the stop takes effect. Default is 0 (immediate). If set, the stop will be scheduled.
-          example: 0
-          type: integer
-      type: object
-    StatusResponse:
-      properties:
-        state:
-          description: "Sandbox state: 'awake' (at least one keepAlive process) or 'auto' (no keepAlive processes)"
-          example: awake
-          type: string
-          enum:
-            - awake
-            - auto
-        scheduledStopAt:
-          description: When a scheduled stop will occur (null if no stop is scheduled)
-          example: "2024-01-01T12:10:00Z"
-          type: string
-          format: date-time
-        keepAliveProcesses:
-          description: List of processes with keepAlive enabled that are currently running
-          type: array
-          items:
-            $ref: "#/components/schemas/KeepAliveProcessInfo"
-      required:
-        - state
-        - keepAliveProcesses
-      type: object
-    KeepAliveProcessInfo:
-      properties:
-        pid:
-          description: Process ID
-          example: "1234"
-          type: string
-        name:
-          description: Process name
-          example: my-process
-          type: string
-        command:
-          description: Command being executed
-          example: npm start
-          type: string
-        startedAt:
-          description: When the process was started
-          example: "2024-01-01T12:00:00Z"
-          type: string
-          format: date-time
-        timeout:
-          description: Process timeout in seconds
-          example: 600
-          type: integer
       type: object
     Subdirectory:
       properties:

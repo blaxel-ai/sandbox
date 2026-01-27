@@ -942,34 +942,6 @@ func (pm *ProcessManager) RemoveLogWriter(identifier string, w io.Writer) error 
 	return nil
 }
 
-// RemoveKeepAlive removes the keepAlive flag from a process and re-enables scale-to-zero
-func (pm *ProcessManager) RemoveKeepAlive(pid string) error {
-	pm.mu.Lock()
-	defer pm.mu.Unlock()
-
-	process, exists := pm.processes[pid]
-	if !exists {
-		return fmt.Errorf("process with PID %s not found", pid)
-	}
-
-	if !process.KeepAlive {
-		// Process doesn't have keepAlive enabled, nothing to do
-		return nil
-	}
-
-	// Remove keepAlive flag
-	process.KeepAlive = false
-
-	// Re-enable scale-to-zero
-	if err := blaxel.ScaleEnable(); err != nil {
-		logrus.Warnf("[KeepAlive] Failed to enable scale-to-zero when removing keepAlive from process %s: %v", pid, err)
-		return err
-	}
-
-	logrus.Infof("[KeepAlive] Removed keepAlive from process %s (name: %s) via force stop", pid, process.Name)
-	return nil
-}
-
 func GenerateRandomName(length int) string {
 	const charset = "abcdefghijklmnopqrstuvwxyz0123456789"
 	randomName := strings.Builder{}

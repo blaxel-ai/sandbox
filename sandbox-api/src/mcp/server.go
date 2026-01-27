@@ -25,7 +25,6 @@ type Handlers struct {
 	FileSystem *handler.FileSystemHandler
 	Process    *handler.ProcessHandler
 	Network    *handler.NetworkHandler
-	Lifecycle  *handler.LifecycleHandler
 }
 
 // NewServer creates a new MCP server using the official SDK
@@ -42,12 +41,10 @@ func NewServer(ginEngine *gin.Engine) (*Server, error) {
 	)
 
 	// Initialize handlers
-	processHandler := handler.NewProcessHandler()
 	handlers := &Handlers{
 		FileSystem: handler.NewFileSystemHandler(),
-		Process:    processHandler,
+		Process:    handler.NewProcessHandler(),
 		Network:    handler.NewNetworkHandler(),
-		Lifecycle:  handler.NewLifecycleHandler(processHandler),
 	}
 
 	server := &Server{
@@ -120,10 +117,6 @@ func (s *Server) registerTools() error {
 		return err
 	}
 	logrus.Info("Codegen tools registered")
-
-	// Lifecycle tools
-	s.registerLifecycleTools()
-	logrus.Info("Lifecycle tools registered")
 
 	return nil
 }
