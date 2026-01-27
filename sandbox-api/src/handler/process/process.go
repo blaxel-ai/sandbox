@@ -543,6 +543,27 @@ func (pm *ProcessManager) restartProcess(oldProcess *ProcessInfo, callback func(
 	pm.processes[oldProcess.PID] = oldProcess
 	pm.mu.Unlock()
 
+	// If keepAlive is enabled, start timeout goroutine for the restarted process
+	if oldProcess.KeepAlive && oldProcess.Timeout > 0 {
+		go func() {
+			timer := time.NewTimer(time.Duration(oldProcess.Timeout) * time.Second)
+			defer timer.Stop()
+			select {
+			case <-timer.C:
+				// Timeout expired, kill the process
+				logrus.Infof("[KeepAlive] Timeout expired for process %s after %d seconds, killing process", oldProcess.PID, oldProcess.Timeout)
+				_ = pm.KillProcess(oldProcess.PID)
+			case <-oldProcess.stopTimeout:
+				// Process completed before timeout
+			}
+		}()
+	} else if oldProcess.KeepAlive {
+		// For infinite timeout, start a goroutine that just waits for completion
+		go func() {
+			<-oldProcess.stopTimeout
+		}()
+	}
+
 	// WaitGroup to ensure stdout/stderr goroutines finish before marking process complete
 	var outputWg sync.WaitGroup
 	outputWg.Add(2) // For stdout and stderr goroutines
