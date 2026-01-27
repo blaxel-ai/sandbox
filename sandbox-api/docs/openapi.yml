@@ -1608,6 +1608,10 @@ components:
           example:
             "{\"PORT\"": ' "3000"}'
           type: object
+        keepAlive:
+          description: Disable scale-to-zero while process runs. Default timeout is 600s (10 minutes). Set timeout to 0 for infinite.
+          example: false
+          type: boolean
         maxRestarts:
           example: 3
           type: integer
@@ -1618,6 +1622,7 @@ components:
           example: true
           type: boolean
         timeout:
+          description: Timeout in seconds. When keepAlive is true, defaults to 600s (10 minutes). Set to 0 for infinite (no auto-kill).
           example: 30
           type: integer
         waitForCompletion:
@@ -1647,6 +1652,10 @@ components:
         exitCode:
           example: 0
           type: integer
+        keepAlive:
+          description: Whether scale-to-zero is disabled for this process
+          example: false
+          type: boolean
         logs:
           example: logs output
           type: string

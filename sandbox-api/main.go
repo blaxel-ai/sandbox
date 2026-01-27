@@ -12,6 +12,7 @@ import (
 
 	"github.com/blaxel-ai/sandbox-api/docs" // swagger generated docs
 	"github.com/blaxel-ai/sandbox-api/src/api"
+	"github.com/blaxel-ai/sandbox-api/src/lib/blaxel"
 	"github.com/blaxel-ai/sandbox-api/src/mcp"
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
@@ -35,6 +36,13 @@ func main() {
 
 	// Load .env file
 	_ = godotenv.Load()
+
+	// Reset scale-to-zero counter on startup (crash recovery)
+	// If sandbox-api crashed while keepAlive processes were running,
+	// the counter would be left in a bad state - this resets it to 0
+	if err := blaxel.ScaleReset(); err != nil {
+		logrus.Warnf("Failed to reset scale-to-zero counter on startup: %v", err)
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
