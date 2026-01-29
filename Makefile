@@ -1,3 +1,5 @@
+ARGS:= $(wordlist 2,$(words $(MAKECMDGOALS)),$(MAKECMDGOALS))
+
 dependencies:
 	cd sandbox-api && \
 		go install github.com/air-verse/air@latest && \
@@ -89,9 +91,10 @@ mr_develop:
 	gh pr create --base develop --head $(BRANCH_NAME) --title "$(BRANCH_NAME)" --body "Merge request from $(BRANCH_NAME) to develop"
 
 tag:
-	@if [ -z "$(VERSION)" ]; then \
-		echo "Usage: make tag VERSION=x.y.z"; \
-		exit 1; \
-	fi
-	git tag -a v$(VERSION) -m "Release v$(VERSION)"
-	git push origin v$(VERSION)
+	git checkout main
+	git pull origin main
+	git tag -a v$(ARGS) -m "Release v$(ARGS)"
+	git push origin v$(ARGS)
+
+%:
+	@:
