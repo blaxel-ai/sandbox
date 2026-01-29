@@ -862,6 +862,19 @@ paths:
       summary: Create or update directory tree
       tags:
         - filesystem
+  /health:
+    get:
+      description: Returns health status and system information including upgrade count and binary details
+      responses:
+        "200":
+          description: Health status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+      summary: Health check
+      tags:
+        - system
   "/network/process/{pid}/monitor":
     delete:
       description: Stop monitoring for new ports opened by a process
@@ -1226,6 +1239,32 @@ paths:
       summary: Stream process logs in real time
       tags:
         - process
+  /upgrade:
+    post:
+      description: >-
+        Triggers an upgrade of the sandbox-api process. Returns 200 immediately before upgrading.
+
+        The upgrade will: save process state, rebuild from source or download release (if configured), and restart.
+
+        All running processes will be preserved across the upgrade.
+
+        Instead of using this endpoint, you can also manually download pre-built binaries from https://github.com/blaxel-ai/sandbox/releases
+      responses:
+        "200":
+          description: Upgrade initiated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+      summary: Upgrade the sandbox-api
+      tags:
+        - system
   "/watch/filesystem/{path}":
     get:
       description: Streams the path of modified files (one per line) in the given directory. Closes when the client disconnects.
@@ -1513,6 +1552,31 @@ components:
       required:
         - matches
         - total
+      type: object
+    HealthResponse:
+      properties:
+        arch:
+          type: string
+        buildTime:
+          type: string
+        gitCommit:
+          type: string
+        goVersion:
+          type: string
+        os:
+          type: string
+        startedAt:
+          type: string
+        status:
+          type: string
+        upgradeCount:
+          type: integer
+        uptime:
+          type: string
+        uptimeSeconds:
+          type: number
+        version:
+          type: string
       type: object
     MultipartCompleteRequest:
       properties:

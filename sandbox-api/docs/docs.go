@@ -1005,6 +1005,26 @@ const docTemplate = `{
                 }
             }
         },
+        "/health": {
+            "get": {
+                "description": "Returns health status and system information including upgrade count and binary details",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "system"
+                ],
+                "summary": "Health check",
+                "responses": {
+                    "200": {
+                        "description": "Health status",
+                        "schema": {
+                            "$ref": "#/definitions/HealthResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/network/process/{pid}/monitor": {
             "post": {
                 "description": "Start monitoring for new ports opened by a process",
@@ -1475,6 +1495,35 @@ const docTemplate = `{
                 }
             }
         },
+        "/upgrade": {
+            "post": {
+                "description": "Triggers an upgrade of the sandbox-api process. Returns 200 immediately before upgrading.\nThe upgrade will: save process state, rebuild from source or download release (if configured), and restart.\nAll running processes will be preserved across the upgrade.\nInstead of using this endpoint, you can also manually download pre-built binaries from https://github.com/blaxel-ai/sandbox/releases",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "system"
+                ],
+                "summary": "Upgrade the sandbox-api",
+                "responses": {
+                    "200": {
+                        "description": "Upgrade initiated",
+                        "schema": {
+                            "$ref": "#/definitions/SuccessResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/watch/filesystem/{path}": {
             "get": {
                 "description": "Streams the path of modified files (one per line) in the given directory. Closes when the client disconnects.",
@@ -1833,6 +1882,44 @@ const docTemplate = `{
                 "total": {
                     "type": "integer",
                     "example": 5
+                }
+            }
+        },
+        "HealthResponse": {
+            "type": "object",
+            "properties": {
+                "arch": {
+                    "type": "string"
+                },
+                "buildTime": {
+                    "type": "string"
+                },
+                "gitCommit": {
+                    "type": "string"
+                },
+                "goVersion": {
+                    "type": "string"
+                },
+                "os": {
+                    "type": "string"
+                },
+                "startedAt": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "upgradeCount": {
+                    "type": "integer"
+                },
+                "uptime": {
+                    "type": "string"
+                },
+                "uptimeSeconds": {
+                    "type": "number"
+                },
+                "version": {
+                    "type": "string"
                 }
             }
         },
