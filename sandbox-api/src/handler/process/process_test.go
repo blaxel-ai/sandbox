@@ -16,7 +16,7 @@ func TestProcessManagerIntegrationWithPID(t *testing.T) {
 
 	// Test starting a long-running process
 	t.Run("StartLongRunningProcess", func(t *testing.T) {
-		sleepPID, err := pm.StartProcess("sleep 5", "", nil, false, 0, func(process *ProcessInfo) {
+		sleepPID, err := pm.StartProcess("sleep 5", "", nil, false, 0, false, 0, func(process *ProcessInfo) {
 			t.Logf("Process: %+v", process.stderr)
 		})
 		if err != nil {
@@ -64,7 +64,7 @@ func TestProcessManagerIntegrationWithPID(t *testing.T) {
 	// Test process with output
 	t.Run("ProcessWithOutput", func(t *testing.T) {
 		expectedOutput := "Hello, Process Manager!"
-		echoPID, err := pm.StartProcess("echo '"+expectedOutput+"'", "", nil, false, 0, func(process *ProcessInfo) {
+		echoPID, err := pm.StartProcess("echo '"+expectedOutput+"'", "", nil, false, 0, false, 0, func(process *ProcessInfo) {
 			t.Logf("Process: %+v", process.stderr)
 		})
 		if err != nil {
@@ -104,7 +104,7 @@ func TestProcessManagerIntegrationWithPID(t *testing.T) {
 
 	// Test process with working directory
 	t.Run("ProcessWithWorkingDirectory", func(t *testing.T) {
-		lsPID, err := pm.StartProcess("ls -la", "/tmp", nil, false, 0, func(process *ProcessInfo) {
+		lsPID, err := pm.StartProcess("ls -la", "/tmp", nil, false, 0, false, 0, func(process *ProcessInfo) {
 			t.Logf("Process: %+v", process.stderr)
 		})
 		if err != nil {
@@ -151,7 +151,7 @@ func TestProcessManagerIntegrationWithPID(t *testing.T) {
 	// Test list processes functionality
 	t.Run("ListProcesses", func(t *testing.T) {
 		// Start a new process for this test
-		testPID, err := pm.StartProcess("sleep 1", "", nil, false, 0, func(process *ProcessInfo) {
+		testPID, err := pm.StartProcess("sleep 1", "", nil, false, 0, false, 0, func(process *ProcessInfo) {
 			t.Logf("Process: %+v", process.stderr)
 		})
 		if err != nil {
@@ -188,7 +188,7 @@ func TestProcessManagerIntegrationWithName(t *testing.T) {
 	// Test starting a long-running process
 	t.Run("StartLongRunningProcess", func(t *testing.T) {
 		name := "sleep-process"
-		_, err := pm.StartProcessWithName("sleep 5", "", name, nil, false, 0, func(process *ProcessInfo) {
+		_, err := pm.StartProcessWithName("sleep 5", "", name, nil, false, 0, false, 0, func(process *ProcessInfo) {
 			t.Logf("Process: %+v", process.stderr)
 		})
 		if err != nil {
@@ -237,7 +237,7 @@ func TestProcessManagerIntegrationWithName(t *testing.T) {
 	t.Run("ProcessWithOutput", func(t *testing.T) {
 		expectedOutput := "Hello, Process Manager!"
 		name := "echo-process"
-		_, err := pm.StartProcessWithName("echo '"+expectedOutput+"'", "", name, nil, false, 0, func(process *ProcessInfo) {
+		_, err := pm.StartProcessWithName("echo '"+expectedOutput+"'", "", name, nil, false, 0, false, 0, func(process *ProcessInfo) {
 			t.Logf("Process: %+v", process.stderr)
 		})
 		if err != nil {
@@ -278,7 +278,7 @@ func TestProcessManagerIntegrationWithName(t *testing.T) {
 	// Test process with working directory
 	t.Run("ProcessWithWorkingDirectory", func(t *testing.T) {
 		name := "ls-process"
-		_, err := pm.StartProcessWithName("ls -la", "", name, nil, false, 0, func(process *ProcessInfo) {
+		_, err := pm.StartProcessWithName("ls -la", "", name, nil, false, 0, false, 0, func(process *ProcessInfo) {
 			t.Logf("Process: %+v", process.stderr)
 		})
 		if err != nil {
@@ -326,7 +326,7 @@ func TestProcessManagerIntegrationWithName(t *testing.T) {
 	t.Run("ListProcesses", func(t *testing.T) {
 		// Start a new process for this test
 		name := "test-process"
-		_, err := pm.StartProcessWithName("sleep 1", "", name, nil, false, 0, func(process *ProcessInfo) {
+		_, err := pm.StartProcessWithName("sleep 1", "", name, nil, false, 0, false, 0, func(process *ProcessInfo) {
 			t.Logf("Process: %+v", process.stderr)
 		})
 		if err != nil {
@@ -375,7 +375,7 @@ func TestEnvironmentVariableHandling(t *testing.T) {
 			t.Logf("Test iteration %d", i+1)
 
 			// Use printenv to check all environment variables
-			pid, err := pm.StartProcess("printenv", "", env, false, 0, func(process *ProcessInfo) {
+			pid, err := pm.StartProcess("printenv", "", env, false, 0, false, 0, func(process *ProcessInfo) {
 				t.Logf("Process completed: %s", process.PID)
 			})
 			if err != nil {
@@ -446,7 +446,7 @@ func TestEnvironmentVariableHandling(t *testing.T) {
 		// Test with empty environment map - should inherit system environment
 		env := map[string]string{}
 
-		pid, err := pm.StartProcess("printenv PATH", "", env, false, 0, func(process *ProcessInfo) {
+		pid, err := pm.StartProcess("printenv PATH", "", env, false, 0, false, 0, func(process *ProcessInfo) {
 			t.Logf("Process completed: %s", process.PID)
 		})
 		if err != nil {
@@ -472,7 +472,7 @@ func TestEnvironmentVariableHandling(t *testing.T) {
 		// Test with nil environment map - should inherit system environment
 		var env map[string]string = nil
 
-		pid, err := pm.StartProcess("printenv PATH", "", env, false, 0, func(process *ProcessInfo) {
+		pid, err := pm.StartProcess("printenv PATH", "", env, false, 0, false, 0, func(process *ProcessInfo) {
 			t.Logf("Process completed: %s", process.PID)
 		})
 		if err != nil {
@@ -506,7 +506,7 @@ func TestProcessRestartOnFailure(t *testing.T) {
 
 		completionChan := make(chan *ProcessInfo, 1)
 
-		pid, err := pm.StartProcess(command, "", nil, true, 3, func(process *ProcessInfo) {
+		pid, err := pm.StartProcess(command, "", nil, true, 3, false, 0, func(process *ProcessInfo) {
 			completionChan <- process
 		})
 		if err != nil {
@@ -560,7 +560,7 @@ func TestProcessRestartOnFailure(t *testing.T) {
 
 		completionChan := make(chan *ProcessInfo, 1)
 
-		pid, err := pm.StartProcess(command, "", nil, true, 2, func(process *ProcessInfo) {
+		pid, err := pm.StartProcess(command, "", nil, true, 2, false, 0, func(process *ProcessInfo) {
 			completionChan <- process
 		})
 		if err != nil {
@@ -611,7 +611,7 @@ func TestProcessRestartOnFailure(t *testing.T) {
 
 		completionChan := make(chan *ProcessInfo, 1)
 
-		pid, err := pm.StartProcess(command, "", nil, true, 3, func(process *ProcessInfo) {
+		pid, err := pm.StartProcess(command, "", nil, true, 3, false, 0, func(process *ProcessInfo) {
 			completionChan <- process
 		})
 		if err != nil {
@@ -654,7 +654,7 @@ func TestProcessRestartOnFailure(t *testing.T) {
 		completionChan := make(chan *ProcessInfo, 1)
 
 		// Try to set max restarts to 30 (should be capped at 25)
-		pid, err := pm.StartProcess(command, "", nil, true, 30, func(process *ProcessInfo) {
+		pid, err := pm.StartProcess(command, "", nil, true, 30, false, 0, func(process *ProcessInfo) {
 			completionChan <- process
 		})
 		if err != nil {
@@ -711,7 +711,7 @@ func TestLargeOutputPrefixHandling(t *testing.T) {
 
 		completionChan := make(chan *ProcessInfo, 1)
 
-		pid, err := pm.StartProcess(command, "", nil, false, 0, func(process *ProcessInfo) {
+		pid, err := pm.StartProcess(command, "", nil, false, 0, false, 0, func(process *ProcessInfo) {
 			completionChan <- process
 		})
 		if err != nil {
@@ -780,7 +780,7 @@ func TestLargeOutputPrefixHandling(t *testing.T) {
 
 		completionChan := make(chan *ProcessInfo, 1)
 
-		pid, err := pm.StartProcess(command, "", nil, false, 0, func(process *ProcessInfo) {
+		pid, err := pm.StartProcess(command, "", nil, false, 0, false, 0, func(process *ProcessInfo) {
 			completionChan <- process
 		})
 		if err != nil {
@@ -834,7 +834,7 @@ func TestLargeOutputPrefixHandling(t *testing.T) {
 
 		completionChan := make(chan *ProcessInfo, 1)
 
-		pid, err := pm.StartProcess(command, "", nil, false, 0, func(process *ProcessInfo) {
+		pid, err := pm.StartProcess(command, "", nil, false, 0, false, 0, func(process *ProcessInfo) {
 			completionChan <- process
 		})
 		if err != nil {
