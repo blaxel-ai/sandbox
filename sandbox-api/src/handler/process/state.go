@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -499,12 +500,9 @@ func ClearState() error {
 	return nil
 }
 
-// Restart configuration
+// Upgrade configuration
 const (
-	DefaultRepoURL    = "https://github.com/blaxel-ai/sandbox.git"
-	DefaultRepoBranch = "main"
-	DefaultRepoDir    = "/tmp/sandbox-repo"
-	DefaultGoVersion  = "1.25.0"
+	DefaultReleaseURL = "https://github.com/blaxel-ai/sandbox/releases"
 	ValidationPort    = 19999 // Port used for validating the new binary
 )
 
@@ -530,64 +528,116 @@ func isDevMode() bool {
 	return false
 }
 
-// TriggerRestart initiates a restart of the sandbox-api process
-// It clones/updates the repo, builds a new binary, validates it, and restarts
-func TriggerRestart() {
-	logger := logrus.WithField("component", "restart")
+// TriggerUpgrade initiates an upgrade of the sandbox-api process
+// It downloads the latest binary from GitHub releases, validates it, and restarts
+// Pre-built binaries are available at https://github.com/blaxel-ai/sandbox/releases
+func TriggerUpgrade() {
+	logger := logrus.WithField("component", "upgrade")
 
-	// In dev mode, don't do the full restart - let air handle it
+	// In dev mode, don't do the full upgrade - let air handle it
 	if isDevMode() {
-		logger.Info("Dev mode detected - skipping full restart (air will handle rebuilds)")
+		logger.Info("Dev mode detected - skipping full upgrade (air will handle rebuilds)")
 		logger.Info("To trigger a rebuild, modify a .go file or run 'air' manually")
 		return
 	}
 
-	logger.Info("Initiating sandbox-api hot reload...")
+	logger.Info("Initiating sandbox-api hot upgrade...")
 
-	// Get configuration from environment
-	repoURL := getEnvOrDefault("SANDBOX_REPO_URL", DefaultRepoURL)
-	branch := getEnvOrDefault("SANDBOX_BRANCH", DefaultRepoBranch)
-	repoDir := getEnvOrDefault("SANDBOX_REPO_DIR", DefaultRepoDir)
-
-	// Step 1: Ensure Go is installed
-	if err := ensureGoInstalled(); err != nil {
-		logger.WithError(err).Error("Failed to ensure Go is installed")
-		// Fall back to simple restart without rebuild
-		restartCurrentProcess()
-		return
-	}
-
-	// Step 2: Clone or update repository
-	if err := updateRepository(repoURL, branch, repoDir); err != nil {
-		logger.WithError(err).Error("Failed to update repository")
-		// Fall back to simple restart without rebuild
-		restartCurrentProcess()
-		return
-	}
-
-	// Step 3: Build new binary
-	newBinaryPath, err := buildSandboxAPI(repoDir)
+	// Step 1: Download the latest binary from GitHub releases
+	newBinaryPath, err := downloadLatestRelease()
 	if err != nil {
-		logger.WithError(err).Error("Failed to build sandbox-api")
-		// Fall back to simple restart without rebuild
-		restartCurrentProcess()
+		logger.WithError(err).Error("Failed to download latest release")
 		return
 	}
 
-	// Step 4: Validate the new binary by running it on a different port
+	// Step 2: Validate the new binary by running it on a different port
 	if err := validateNewBinary(newBinaryPath); err != nil {
 		logger.WithError(err).Error("New binary validation failed, aborting upgrade")
 		os.Remove(newBinaryPath)
 		return
 	}
 
-	// Step 5: Replace current binary and restart
-	restartWithNewBinary(newBinaryPath)
+	// Step 3: Replace current binary and upgrade
+	upgradeWithNewBinary(newBinaryPath)
+}
+
+// downloadLatestRelease downloads the latest sandbox-api binary from GitHub releases
+func downloadLatestRelease() (string, error) {
+	logger := logrus.WithField("component", "upgrade")
+
+	// Detect OS and architecture
+	goos := runtime.GOOS
+	goarch := runtime.GOARCH
+
+	// Build the asset name based on OS and architecture
+	assetName := fmt.Sprintf("sandbox-api-%s-%s", goos, goarch)
+	logger.WithFields(logrus.Fields{
+		"os":        goos,
+		"arch":      goarch,
+		"assetName": assetName,
+	}).Info("Detecting platform for binary download")
+
+	// Get version from environment or use "latest"
+	version := getEnvOrDefault("SANDBOX_UPGRADE_VERSION", "latest")
+
+	// Build the download URL
+	var downloadURL string
+	if version == "latest" {
+		downloadURL = fmt.Sprintf("https://github.com/blaxel-ai/sandbox/releases/latest/download/%s", assetName)
+	} else {
+		downloadURL = fmt.Sprintf("https://github.com/blaxel-ai/sandbox/releases/download/%s/%s", version, assetName)
+	}
+
+	logger.WithFields(logrus.Fields{
+		"version": version,
+		"url":     downloadURL,
+	}).Info("Downloading binary from GitHub releases")
+
+	// Create temp file for download
+	tmpFile := filepath.Join("/tmp", fmt.Sprintf("sandbox-api-new-%d", time.Now().UnixNano()))
+
+	// Download the binary
+	resp, err := http.Get(downloadURL)
+	if err != nil {
+		return "", fmt.Errorf("failed to download binary: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("failed to download binary: HTTP %d", resp.StatusCode)
+	}
+
+	// Create the output file
+	out, err := os.Create(tmpFile)
+	if err != nil {
+		return "", fmt.Errorf("failed to create temp file: %w", err)
+	}
+	defer out.Close()
+
+	// Copy the response body to the file
+	written, err := io.Copy(out, resp.Body)
+	if err != nil {
+		os.Remove(tmpFile)
+		return "", fmt.Errorf("failed to write binary: %w", err)
+	}
+
+	// Make executable
+	if err := os.Chmod(tmpFile, 0755); err != nil {
+		os.Remove(tmpFile)
+		return "", fmt.Errorf("failed to make binary executable: %w", err)
+	}
+
+	logger.WithFields(logrus.Fields{
+		"path":  tmpFile,
+		"bytes": written,
+	}).Info("Binary downloaded successfully")
+
+	return tmpFile, nil
 }
 
 // validateNewBinary starts the new binary on a different port and validates it works correctly
 func validateNewBinary(binaryPath string) error {
-	logger := logrus.WithField("component", "restart")
+	logger := logrus.WithField("component", "upgrade")
 	logger.Info("Validating new binary before replacement...")
 
 	// Get the process count from current instance for comparison
@@ -663,7 +713,7 @@ func waitForHealthy(baseURL string, timeout time.Duration) error {
 
 // verifyProcessRecovery checks that the new instance recovered processes correctly
 func verifyProcessRecovery(baseURL string, expectedTotal, expectedRunning int) error {
-	logger := logrus.WithField("component", "restart")
+	logger := logrus.WithField("component", "upgrade")
 
 	processURL := baseURL + "/process"
 	resp, err := http.Get(processURL)
@@ -717,166 +767,6 @@ func getEnvOrDefault(key, defaultValue string) string {
 	return defaultValue
 }
 
-// ensureGoInstalled checks if Go is installed, installs it if not
-func ensureGoInstalled() error {
-	logger := logrus.WithField("component", "restart")
-
-	// Check if go is already in PATH
-	if _, err := exec.LookPath("go"); err == nil {
-		logger.Info("Go is already installed")
-		return nil
-	}
-
-	// Check if go is in /usr/local/go/bin
-	goPath := "/usr/local/go/bin/go"
-	if _, err := os.Stat(goPath); err == nil {
-		// Add to PATH for this process
-		os.Setenv("PATH", os.Getenv("PATH")+":/usr/local/go/bin")
-		logger.Info("Go found at /usr/local/go/bin")
-		return nil
-	}
-
-	logger.Info("Go not found, installing...")
-
-	// Detect architecture
-	goArch := "amd64"
-	arch := os.Getenv("GOARCH")
-	if arch == "" {
-		// Try to detect from uname
-		cmd := exec.Command("uname", "-m")
-		output, err := cmd.Output()
-		if err == nil {
-			archStr := strings.TrimSpace(string(output))
-			if archStr == "aarch64" || archStr == "arm64" {
-				goArch = "arm64"
-			}
-		}
-	} else {
-		goArch = arch
-	}
-
-	goVersion := getEnvOrDefault("GO_VERSION", DefaultGoVersion)
-	goTar := fmt.Sprintf("go%s.linux-%s.tar.gz", goVersion, goArch)
-	goURL := fmt.Sprintf("https://go.dev/dl/%s", goTar)
-
-	// Download Go
-	logger.WithField("url", goURL).Info("Downloading Go")
-	tmpFile := filepath.Join("/tmp", goTar)
-
-	cmd := exec.Command("curl", "-L", "-o", tmpFile, goURL)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("failed to download Go: %w", err)
-	}
-
-	// Extract Go
-	logger.Info("Extracting Go")
-	cmd = exec.Command("tar", "-C", "/usr/local", "-xzf", tmpFile)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("failed to extract Go: %w", err)
-	}
-
-	// Clean up
-	os.Remove(tmpFile)
-
-	// Add to PATH
-	os.Setenv("PATH", os.Getenv("PATH")+":/usr/local/go/bin")
-
-	logger.Info("Go installed successfully")
-	return nil
-}
-
-// updateRepository clones or updates the sandbox repository
-func updateRepository(repoURL, branch, repoDir string) error {
-	logger := logrus.WithFields(logrus.Fields{
-		"component": "restart",
-		"repo":      repoURL,
-		"branch":    branch,
-		"dir":       repoDir,
-	})
-
-	gitDir := filepath.Join(repoDir, ".git")
-	if _, err := os.Stat(gitDir); err == nil {
-		// Repository exists, pull latest
-		logger.Info("Repository exists, pulling latest changes")
-
-		cmd := exec.Command("git", "fetch", "origin")
-		cmd.Dir = repoDir
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("failed to fetch: %w", err)
-		}
-
-		cmd = exec.Command("git", "checkout", branch)
-		cmd.Dir = repoDir
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("failed to checkout branch: %w", err)
-		}
-
-		cmd = exec.Command("git", "pull", "origin", branch)
-		cmd.Dir = repoDir
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("failed to pull: %w", err)
-		}
-	} else {
-		// Clone fresh
-		logger.Info("Cloning repository")
-
-		// Remove existing directory if any
-		os.RemoveAll(repoDir)
-
-		cmd := exec.Command("git", "clone", "--depth", "1", "--branch", branch, repoURL, repoDir)
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("failed to clone: %w", err)
-		}
-	}
-
-	logger.Info("Repository updated successfully")
-	return nil
-}
-
-// buildSandboxAPI builds the sandbox-api binary and returns the path to the new binary
-func buildSandboxAPI(repoDir string) (string, error) {
-	logger := logrus.WithField("component", "restart")
-	logger.Info("Building sandbox-api...")
-
-	sandboxAPIDir := filepath.Join(repoDir, "sandbox-api")
-	newBinaryPath := filepath.Join(sandboxAPIDir, "sandbox-api-new")
-
-	// Download dependencies
-	cmd := exec.Command("go", "mod", "download")
-	cmd.Dir = sandboxAPIDir
-	cmd.Env = append(os.Environ(), "CGO_ENABLED=0")
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("failed to download dependencies: %w", err)
-	}
-
-	// Build
-	cmd = exec.Command("go", "build", "-v", "-ldflags", "-s -w", "-o", "sandbox-api-new", ".")
-	cmd.Dir = sandboxAPIDir
-	cmd.Env = append(os.Environ(), "CGO_ENABLED=0")
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("failed to build: %w", err)
-	}
-
-	logger.WithField("path", newBinaryPath).Info("Build completed successfully")
-	return newBinaryPath, nil
-}
-
 // validateBinaryFormat performs basic validation on a binary file to ensure it's a valid executable.
 // It checks for ELF (Linux) or Mach-O (macOS) magic bytes and verifies the file is executable.
 func validateBinaryFormat(binaryPath string) error {
@@ -925,9 +815,10 @@ func validateBinaryFormat(binaryPath string) error {
 	return nil
 }
 
-// restartWithNewBinary replaces the current binary and restarts
-func restartWithNewBinary(newBinaryPath string) {
-	logger := logrus.WithField("component", "restart")
+// upgradeWithNewBinary moves the new binary to a permanent location and execs into it
+// We can't overwrite the running binary ("text file busy"), so we exec into a new file
+func upgradeWithNewBinary(newBinaryPath string) {
+	logger := logrus.WithField("component", "upgrade")
 
 	// Validate the new binary before replacing
 	if err := validateBinaryFormat(newBinaryPath); err != nil {
@@ -949,35 +840,40 @@ func restartWithNewBinary(newBinaryPath string) {
 		logger.WithError(err).Warn("Failed to resolve symlinks, using original path")
 	}
 
+	// Determine the permanent path for the new binary
+	// We place it in the same directory as the current binary
+	currentDir := filepath.Dir(currentExe)
+	permanentPath := filepath.Join(currentDir, "sandbox-api-upgraded")
+
 	logger.WithFields(logrus.Fields{
-		"current": currentExe,
-		"new":     newBinaryPath,
-	}).Info("Replacing binary")
+		"current":       currentExe,
+		"new":           newBinaryPath,
+		"permanentPath": permanentPath,
+	}).Info("Moving new binary to permanent location")
 
-	// Backup current binary
-	backupPath := currentExe + ".bak"
-	if err := copyFile(currentExe, backupPath); err != nil {
-		logger.WithError(err).Warn("Failed to backup current binary")
-	}
+	// Remove old upgraded binary if it exists
+	os.Remove(permanentPath)
 
-	// Copy new binary to current location
-	if err := copyFile(newBinaryPath, currentExe); err != nil {
-		logger.WithError(err).Error("Failed to copy new binary")
-		// Try to restore backup
-		copyFile(backupPath, currentExe)
-		os.Exit(1)
+	// Move (or copy) new binary to permanent location
+	if err := os.Rename(newBinaryPath, permanentPath); err != nil {
+		// If rename fails (e.g., cross-device), try copy
+		if err := copyFile(newBinaryPath, permanentPath); err != nil {
+			logger.WithError(err).Error("Failed to move new binary to permanent location")
+			os.Remove(newBinaryPath)
+			os.Exit(1)
+		}
+		os.Remove(newBinaryPath)
 	}
 
 	// Make executable
-	if err := os.Chmod(currentExe, 0755); err != nil {
+	if err := os.Chmod(permanentPath, 0755); err != nil {
 		logger.WithError(err).Warn("Failed to chmod new binary")
 	}
 
-	// Clean up
-	os.Remove(newBinaryPath)
+	logger.Info("Executing new binary...")
 
-	// Restart with new binary
-	restartCurrentProcess()
+	// Exec into the new binary (this replaces the current process)
+	execIntoNewBinary(permanentPath)
 }
 
 // copyFile copies a file from src to dst
@@ -1007,55 +903,49 @@ func copyFile(src, dst string) error {
 	return os.Chmod(dst, sourceInfo.Mode())
 }
 
-// restartCurrentProcess restarts the current sandbox-api process
-func restartCurrentProcess() {
-	logger := logrus.WithField("component", "restart")
+// execIntoNewBinary execs into the new binary at the given path
+func execIntoNewBinary(newBinaryPath string) {
+	logger := logrus.WithField("component", "upgrade")
 
-	// Get the current executable path
-	execPath, err := os.Executable()
-	if err != nil {
-		logger.WithError(err).Error("Failed to get executable path")
-		os.Exit(1)
-	}
-
-	// Get current arguments
+	// Get current arguments (use the new binary path as args[0])
 	args := os.Args
+	args[0] = newBinaryPath
 
-	// Increment restart count and pass to new process
+	// Increment upgrade count and pass to new process
 	currentCount := 0
-	if countStr := os.Getenv("SANDBOX_RESTART_COUNT"); countStr != "" {
+	if countStr := os.Getenv("SANDBOX_UPGRADE_COUNT"); countStr != "" {
 		if count, err := strconv.Atoi(countStr); err == nil {
 			currentCount = count
 		}
 	}
 	newCount := currentCount + 1
 
-	// Build environment with updated restart count
+	// Build environment with updated upgrade count
 	env := os.Environ()
-	restartEnvSet := false
+	upgradeEnvSet := false
 	for i, e := range env {
-		if strings.HasPrefix(e, "SANDBOX_RESTART_COUNT=") {
-			env[i] = fmt.Sprintf("SANDBOX_RESTART_COUNT=%d", newCount)
-			restartEnvSet = true
+		if strings.HasPrefix(e, "SANDBOX_UPGRADE_COUNT=") {
+			env[i] = fmt.Sprintf("SANDBOX_UPGRADE_COUNT=%d", newCount)
+			upgradeEnvSet = true
 			break
 		}
 	}
-	if !restartEnvSet {
-		env = append(env, fmt.Sprintf("SANDBOX_RESTART_COUNT=%d", newCount))
+	if !upgradeEnvSet {
+		env = append(env, fmt.Sprintf("SANDBOX_UPGRADE_COUNT=%d", newCount))
 	}
 
 	logger.WithFields(logrus.Fields{
-		"executable":   execPath,
+		"executable":   newBinaryPath,
 		"args":         args,
-		"restartCount": newCount,
-	}).Info("Restarting process")
+		"upgradeCount": newCount,
+	}).Info("Executing new binary")
 
 	// Use syscall.Exec to replace the current process
-	// This is the cleanest way to restart - it replaces the current process
-	// with a new instance without creating a child process
-	err = syscall.Exec(execPath, args, env)
+	// This is the cleanest way to upgrade - it replaces the current process
+	// with the new binary without creating a child process
+	err := syscall.Exec(newBinaryPath, args, env)
 	if err != nil {
-		logger.WithError(err).Error("Failed to exec new process")
+		logger.WithError(err).Error("Failed to exec new binary")
 		os.Exit(1)
 	}
 }

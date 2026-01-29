@@ -22,14 +22,14 @@ var (
 // Runtime information
 var (
 	startTime    = time.Now()
-	restartCount = 0
+	upgradeCount = 0
 )
 
 func init() {
-	// Load restart count from environment (set by previous instance before restart)
-	if countStr := os.Getenv("SANDBOX_RESTART_COUNT"); countStr != "" {
+	// Load upgrade count from environment (set by previous instance before upgrade)
+	if countStr := os.Getenv("SANDBOX_UPGRADE_COUNT"); countStr != "" {
 		if count, err := strconv.Atoi(countStr); err == nil {
-			restartCount = count
+			upgradeCount = count
 		}
 	}
 }
@@ -59,13 +59,13 @@ type HealthResponse struct {
 	Arch          string  `json:"arch"`
 	Uptime        string  `json:"uptime"`
 	UptimeSeconds float64 `json:"uptimeSeconds"`
-	RestartCount  int     `json:"restartCount"`
+	UpgradeCount  int     `json:"upgradeCount"`
 	StartedAt     string  `json:"startedAt"`
 } // @name HealthResponse
 
 // HandleHealth handles GET requests to /health
 // @Summary Health check
-// @Description Returns health status and system information including restart count and binary details
+// @Description Returns health status and system information including upgrade count and binary details
 // @Tags system
 // @Produce json
 // @Success 200 {object} HealthResponse "Health status"
@@ -83,23 +83,24 @@ func (h *SystemHandler) HandleHealth(c *gin.Context) {
 		Arch:          runtime.GOARCH,
 		Uptime:        uptime.Round(time.Second).String(),
 		UptimeSeconds: uptime.Seconds(),
-		RestartCount:  restartCount,
+		UpgradeCount:  upgradeCount,
 		StartedAt:     startTime.Format(time.RFC3339),
 	})
 }
 
-// HandleRestart handles POST requests to /restart
-// @Summary Restart the sandbox-api
-// @Description Triggers a restart of the sandbox-api process. Returns 200 immediately before restarting.
-// @Description The restart will: save process state, rebuild from source (if configured), and restart.
-// @Description All running processes will be preserved across the restart.
+// HandleUpgrade handles POST requests to /upgrade
+// @Summary Upgrade the sandbox-api
+// @Description Triggers an upgrade of the sandbox-api process. Returns 200 immediately before upgrading.
+// @Description The upgrade will: download the latest binary from GitHub releases, validate it, and restart.
+// @Description All running processes will be preserved across the upgrade.
+// @Description Set SANDBOX_UPGRADE_VERSION environment variable to specify a version (defaults to "latest").
 // @Tags system
 // @Accept json
 // @Produce json
-// @Success 200 {object} SuccessResponse "Restart initiated"
+// @Success 200 {object} SuccessResponse "Upgrade initiated"
 // @Failure 500 {object} ErrorResponse "Internal server error"
-// @Router /restart [post]
-func (h *SystemHandler) HandleRestart(c *gin.Context) {
+// @Router /upgrade [post]
+func (h *SystemHandler) HandleUpgrade(c *gin.Context) {
 	// Save state before responding
 	if err := h.processManager.SaveState(); err != nil {
 		h.SendError(c, http.StatusInternalServerError, err)
@@ -108,7 +109,7 @@ func (h *SystemHandler) HandleRestart(c *gin.Context) {
 
 	// Send response immediately
 	h.SendJSON(c, http.StatusOK, gin.H{
-		"message": "Restart initiated. Process state saved. The server will restart shortly.",
+		"message": "Upgrade initiated. Process state saved. The server will upgrade shortly.",
 	})
 
 	// Flush the response to ensure the client receives it
@@ -116,10 +117,10 @@ func (h *SystemHandler) HandleRestart(c *gin.Context) {
 		flusher.Flush()
 	}
 
-	// Trigger restart in background goroutine after a short delay
+	// Trigger upgrade in background goroutine after a short delay
 	// This gives time for the response to be sent
 	go func() {
 		time.Sleep(500 * time.Millisecond)
-		process.TriggerRestart()
+		process.TriggerUpgrade()
 	}()
 }

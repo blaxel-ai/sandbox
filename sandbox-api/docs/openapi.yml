@@ -864,7 +864,7 @@ paths:
         - filesystem
   /health:
     get:
-      description: Returns health status and system information including restart count and binary details
+      description: Returns health status and system information including upgrade count and binary details
       responses:
         "200":
           description: Health status
@@ -1239,17 +1239,19 @@ paths:
       summary: Stream process logs in real time
       tags:
         - process
-  /restart:
+  /upgrade:
     post:
       description: >-
-        Triggers a restart of the sandbox-api process. Returns 200 immediately before restarting.
+        Triggers an upgrade of the sandbox-api process. Returns 200 immediately before upgrading.
 
-        The restart will: save process state, rebuild from source (if configured), and restart.
+        The upgrade will: save process state, rebuild from source or download release (if configured), and restart.
 
-        All running processes will be preserved across the restart.
+        All running processes will be preserved across the upgrade.
+
+        Instead of using this endpoint, you can also manually download pre-built binaries from https://github.com/blaxel-ai/sandbox/releases
       responses:
         "200":
-          description: Restart initiated
+          description: Upgrade initiated
           content:
             application/json:
               schema:
@@ -1260,7 +1262,7 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
-      summary: Restart the sandbox-api
+      summary: Upgrade the sandbox-api
       tags:
         - system
   "/watch/filesystem/{path}":
@@ -1541,12 +1543,12 @@ components:
           type: string
         os:
           type: string
-        restartCount:
-          type: integer
         startedAt:
           type: string
         status:
           type: string
+        upgradeCount:
+          type: integer
         uptime:
           type: string
         uptimeSeconds:

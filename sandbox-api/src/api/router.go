@@ -172,8 +172,8 @@ func SetupRouter(disableRequestLogging bool) *gin.Engine {
 	}
 
 	// System routes
-	r.POST("/restart", systemHandler.HandleRestart)
-	r.HEAD("/restart", head)
+	r.POST("/upgrade", systemHandler.HandleUpgrade)
+	r.HEAD("/upgrade", head)
 	r.GET("/health", systemHandler.HandleHealth)
 	r.HEAD("/health", head)
 

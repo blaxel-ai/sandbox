@@ -1007,7 +1007,7 @@ const docTemplate = `{
         },
         "/health": {
             "get": {
-                "description": "Returns health status and system information including restart count and binary details",
+                "description": "Returns health status and system information including upgrade count and binary details",
                 "produces": [
                     "application/json"
                 ],
@@ -1495,9 +1495,9 @@ const docTemplate = `{
                 }
             }
         },
-        "/restart": {
+        "/upgrade": {
             "post": {
-                "description": "Triggers a restart of the sandbox-api process. Returns 200 immediately before restarting.\nThe restart will: save process state, rebuild from source (if configured), and restart.\nAll running processes will be preserved across the restart.",
+                "description": "Triggers an upgrade of the sandbox-api process. Returns 200 immediately before upgrading.\nThe upgrade will: save process state, rebuild from source or download release (if configured), and restart.\nAll running processes will be preserved across the upgrade.\nInstead of using this endpoint, you can also manually download pre-built binaries from https://github.com/blaxel-ai/sandbox/releases",
                 "consumes": [
                     "application/json"
                 ],
@@ -1507,10 +1507,10 @@ const docTemplate = `{
                 "tags": [
                     "system"
                 ],
-                "summary": "Restart the sandbox-api",
+                "summary": "Upgrade the sandbox-api",
                 "responses": {
                     "200": {
-                        "description": "Restart initiated",
+                        "description": "Upgrade initiated",
                         "schema": {
                             "$ref": "#/definitions/SuccessResponse"
                         }
@@ -1875,14 +1875,14 @@ const docTemplate = `{
                 "os": {
                     "type": "string"
                 },
-                "restartCount": {
-                    "type": "integer"
-                },
                 "startedAt": {
                     "type": "string"
                 },
                 "status": {
                     "type": "string"
+                },
+                "upgradeCount": {
+                    "type": "integer"
                 },
                 "uptime": {
                     "type": "string"
