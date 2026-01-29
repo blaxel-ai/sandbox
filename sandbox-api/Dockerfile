@@ -1,4 +1,4 @@
-FROM --platform=linux/amd64 golang:1.25.0-bookworm as build
+FROM golang:1.25.0-bookworm as build
 
 ARG VERSION=dev
 ARG GIT_COMMIT=unknown
