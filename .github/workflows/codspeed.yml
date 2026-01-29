@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - main
+    paths:
+      - 'sandbox-api/**'
 
 permissions: # optional for public repositories
   contents: read # required for actions/checkout
