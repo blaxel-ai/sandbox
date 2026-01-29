@@ -87,3 +87,11 @@ e2e:
 mr_develop:
 	$(eval BRANCH_NAME := $(shell git rev-parse --abbrev-ref HEAD))
 	gh pr create --base develop --head $(BRANCH_NAME) --title "$(BRANCH_NAME)" --body "Merge request from $(BRANCH_NAME) to develop"
+
+tag:
+	@if [ -z "$(VERSION)" ]; then \
+		echo "Usage: make tag VERSION=x.y.z"; \
+		exit 1; \
+	fi
+	git tag -a v$(VERSION) -m "Release v$(VERSION)"
+	git push origin v$(VERSION)
