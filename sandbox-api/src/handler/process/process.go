@@ -182,23 +182,10 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 	// Start with system environment
 	systemEnv := os.Environ()
 
-	// Add default env vars to disable output buffering for common runtimes
-	// These can be overridden by user-provided env vars
-	defaultEnv := map[string]string{
-		"PYTHONUNBUFFERED": "1",             // Python
-		"NODE_OPTIONS":     "--no-warnings", // Node.js (doesn't have unbuffered but this helps)
-		"FORCE_COLOR":      "0",             // Disable colors when not a TTY
-	}
-
 	// Create a map to track which env vars we're overriding
 	envOverrides := make(map[string]bool)
 	for k := range env {
 		envOverrides[k] = true
-	}
-	for k := range defaultEnv {
-		if !envOverrides[k] {
-			envOverrides[k] = true
-		}
 	}
 
 	// Build the final environment
@@ -216,34 +203,12 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 		}
 	}
 
-	// Add default env vars (only if not already overridden by user or system)
-	for k, v := range defaultEnv {
-		if _, userOverride := env[k]; !userOverride {
-			// Check if already in system env
-			found := false
-			for _, envVar := range systemEnv {
-				if strings.HasPrefix(envVar, k+"=") {
-					found = true
-					break
-				}
-			}
-			if !found {
-				finalEnv = append(finalEnv, k+"="+v)
-			}
-		}
-	}
-
 	// Add all custom environment variables (these take priority)
 	for k, v := range env {
 		finalEnv = append(finalEnv, k+"="+v)
 	}
 
 	cmd.Env = finalEnv
-
-	// Ensure maxRestarts doesn't exceed the limit
-	if maxRestarts > 25 {
-		maxRestarts = 25
-	}
 
 	// Ensure log directory exists
 	if err := ensureLogDir(); err != nil {

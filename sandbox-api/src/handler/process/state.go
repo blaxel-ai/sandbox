@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -72,6 +73,8 @@ func (pm *ProcessManager) SaveState() error {
 		Processes: make(map[string]ProcessState),
 	}
 
+	logrus.WithField("totalInMemory", len(pm.processes)).Info("SaveState: starting to save processes")
+
 	for pid, proc := range pm.processes {
 		// Safely read logs under lock
 		proc.logLock.RLock()
@@ -107,6 +110,14 @@ func (pm *ProcessManager) SaveState() error {
 			MaxRestarts:      proc.MaxRestarts,
 			RestartCount:     proc.RestartCount,
 		}
+
+		logrus.WithFields(logrus.Fields{
+			"pid":        proc.PID,
+			"name":       proc.Name,
+			"command":    proc.Command,
+			"processPid": proc.ProcessPid,
+			"status":     proc.Status,
+		}).Info("SaveState: saving process")
 	}
 
 	data, err := json.MarshalIndent(state, "", "  ")
@@ -134,7 +145,8 @@ func (pm *ProcessManager) SaveState() error {
 	logrus.WithFields(logrus.Fields{
 		"path":         stateFile,
 		"processCount": len(state.Processes),
-	}).Info("Process state saved to disk")
+		"fileSize":     len(data),
+	}).Info("SaveState: process state saved to disk")
 
 	return nil
 }
@@ -143,19 +155,32 @@ func (pm *ProcessManager) SaveState() error {
 func (pm *ProcessManager) LoadState() error {
 	stateFile := GetStateFilePath()
 
+	logrus.WithField("path", stateFile).Info("LoadState: attempting to load state file")
+
 	data, err := os.ReadFile(stateFile)
 	if err != nil {
 		if os.IsNotExist(err) {
-			logrus.Debug("No process state file found, starting fresh")
+			logrus.WithField("path", stateFile).Warn("LoadState: No process state file found, starting fresh")
 			return nil
 		}
 		return fmt.Errorf("failed to read state file: %w", err)
 	}
 
+	logrus.WithFields(logrus.Fields{
+		"path":     stateFile,
+		"fileSize": len(data),
+	}).Info("LoadState: state file read successfully")
+
 	var state ManagerState
 	if err := json.Unmarshal(data, &state); err != nil {
 		return fmt.Errorf("failed to unmarshal state: %w", err)
 	}
+
+	logrus.WithFields(logrus.Fields{
+		"version":      state.Version,
+		"savedAt":      state.SavedAt,
+		"processCount": len(state.Processes),
+	}).Info("LoadState: state file parsed")
 
 	pm.mu.Lock()
 	defer pm.mu.Unlock()
@@ -166,6 +191,15 @@ func (pm *ProcessManager) LoadState() error {
 	for pid, procState := range state.Processes {
 		// Check if process is still running
 		isRunning := isProcessRunning(procState.ProcessPid)
+
+		logrus.WithFields(logrus.Fields{
+			"pid":        procState.PID,
+			"name":       procState.Name,
+			"command":    procState.Command,
+			"processPid": procState.ProcessPid,
+			"status":     procState.Status,
+			"isRunning":  isRunning,
+		}).Info("LoadState: processing saved process")
 
 		// Create ProcessInfo from saved state
 		proc := &ProcessInfo{
@@ -298,11 +332,6 @@ func (pm *ProcessManager) LoadState() error {
 		pm.processes[pid] = proc
 	}
 
-	// Remove the state file after loading
-	if err := os.Remove(stateFile); err != nil && !os.IsNotExist(err) {
-		logrus.WithError(err).Warn("Failed to remove state file after loading")
-	}
-
 	logrus.WithFields(logrus.Fields{
 		"totalProcesses":    len(state.Processes),
 		"recoveredRunning":  recoveredCount,
@@ -314,6 +343,7 @@ func (pm *ProcessManager) LoadState() error {
 }
 
 // isProcessRunning checks if a process with the given PID is still running
+// Returns false for zombie processes (which exist but are not actually running)
 func isProcessRunning(pid int) bool {
 	if pid <= 0 {
 		return false
@@ -321,7 +351,76 @@ func isProcessRunning(pid int) bool {
 
 	// Send signal 0 to check if process exists
 	err := syscall.Kill(pid, 0)
-	return err == nil
+	if err != nil {
+		return false
+	}
+
+	// Check if the process is a zombie by reading /proc/[pid]/stat
+	// The third field in stat is the state: R=running, S=sleeping, Z=zombie, etc.
+	statPath := fmt.Sprintf("/proc/%d/stat", pid)
+	data, err := os.ReadFile(statPath)
+	if err != nil {
+		// If we can't read the stat file, the process may have just exited
+		return false
+	}
+
+	// Parse the stat file - format is: pid (comm) state ...
+	// We need to find the state after the closing parenthesis
+	statStr := string(data)
+	closeParenIdx := strings.LastIndex(statStr, ")")
+	if closeParenIdx == -1 || closeParenIdx+2 >= len(statStr) {
+		return false
+	}
+
+	// State is the character after ") "
+	state := statStr[closeParenIdx+2]
+
+	// Z = zombie, X = dead - these are not running
+	if state == 'Z' || state == 'X' {
+		return false
+	}
+
+	return true
+}
+
+// reapZombieProcess attempts to reap a zombie process and get its exit code
+// Returns the exit code if available, or 0 if we couldn't determine it
+func reapZombieProcess(pid int) int {
+	if pid <= 0 {
+		return 0
+	}
+
+	// Try to wait on the process to reap it
+	// We use WNOHANG to not block if the process isn't our child
+	var wstatus syscall.WaitStatus
+	wpid, err := syscall.Wait4(pid, &wstatus, syscall.WNOHANG, nil)
+	if err != nil {
+		// ECHILD means the process is not our child - we can't reap it
+		// This is expected for adopted processes
+		logrus.WithFields(logrus.Fields{
+			"pid":   pid,
+			"error": err,
+		}).Debug("Could not reap process (not our child)")
+		return 0
+	}
+
+	if wpid == pid {
+		// Successfully reaped
+		exitCode := 0
+		if wstatus.Exited() {
+			exitCode = wstatus.ExitStatus()
+		} else if wstatus.Signaled() {
+			// Process was killed by a signal
+			exitCode = 128 + int(wstatus.Signal())
+		}
+		logrus.WithFields(logrus.Fields{
+			"pid":      pid,
+			"exitCode": exitCode,
+		}).Debug("Successfully reaped zombie process")
+		return exitCode
+	}
+
+	return 0
 }
 
 // readLogsSince safely reads log content from a file starting at a given offset.
@@ -443,23 +542,45 @@ func verifyProcessHealth(pid int) bool {
 
 // monitorAdoptedProcess monitors an adopted process for completion
 func (pm *ProcessManager) monitorAdoptedProcess(proc *ProcessInfo) {
+	logrus.WithFields(logrus.Fields{
+		"pid":        proc.PID,
+		"name":       proc.Name,
+		"command":    proc.Command,
+		"processPid": proc.ProcessPid,
+	}).Info("Starting monitoring for adopted process")
+
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
 
+	checkCount := 0
 	for {
 		select {
 		case <-ticker.C:
-			if !isProcessRunning(proc.ProcessPid) {
-				// Process has exited
+			checkCount++
+			isRunning := isProcessRunning(proc.ProcessPid)
+
+			if checkCount <= 3 || checkCount%10 == 0 {
+				logrus.WithFields(logrus.Fields{
+					"pid":        proc.PID,
+					"name":       proc.Name,
+					"processPid": proc.ProcessPid,
+					"isRunning":  isRunning,
+					"checkCount": checkCount,
+				}).Debug("Monitoring adopted process")
+			}
+
+			if !isRunning {
+				// Process has exited (or is a zombie)
 				now := time.Now()
 				proc.CompletedAt = &now
 
-				// Try to get exit status (may not be available for adopted processes)
-				// Since we didn't start this process, we can't call Wait() on it
-				// We'll mark it as completed with unknown exit code
+				// Try to reap the zombie process to clean it up
+				exitCode := reapZombieProcess(proc.ProcessPid)
+
+				// Update status
 				if proc.Status == StatusRunning {
 					proc.Status = StatusCompleted
-					proc.ExitCode = 0 // Assume success if we can't determine
+					proc.ExitCode = exitCode
 				}
 
 				// Update process in memory
@@ -476,15 +597,21 @@ func (pm *ProcessManager) monitorAdoptedProcess(proc *ProcessInfo) {
 				close(proc.Done)
 
 				logrus.WithFields(logrus.Fields{
-					"pid":     proc.PID,
-					"name":    proc.Name,
-					"command": proc.Command,
+					"pid":        proc.PID,
+					"name":       proc.Name,
+					"command":    proc.Command,
+					"processPid": proc.ProcessPid,
+					"checkCount": checkCount,
 				}).Info("Adopted process completed")
 
 				return
 			}
 		case <-proc.Done:
 			// Process was killed/stopped through our API
+			logrus.WithFields(logrus.Fields{
+				"pid":  proc.PID,
+				"name": proc.Name,
+			}).Info("Adopted process monitoring stopped (Done channel closed)")
 			return
 		}
 	}
@@ -505,6 +632,61 @@ const (
 	DefaultReleaseURL = "https://github.com/blaxel-ai/sandbox/releases"
 	ValidationPort    = 19999 // Port used for validating the new binary
 )
+
+// UpgradeState represents the current state of an upgrade
+type UpgradeState string
+
+const (
+	UpgradeStateIdle      UpgradeState = "idle"      // No upgrade in progress
+	UpgradeStateRunning   UpgradeState = "running"   // Upgrade is currently running
+	UpgradeStateCompleted UpgradeState = "completed" // Upgrade completed successfully
+	UpgradeStateFailed    UpgradeState = "failed"    // Upgrade failed
+)
+
+// UpgradeStatus represents the status of the last upgrade attempt
+type UpgradeStatus struct {
+	Status          UpgradeState `json:"status" binding:"required" example:"running"`            // Current state (idle, running, completed, failed)
+	Step            string       `json:"step" binding:"required" example:"download"`             // Current/last step (none, starting, download, validate, replace, completed, skipped)
+	Version         string       `json:"version" binding:"required" example:"latest"`            // Version being upgraded to
+	LastAttempt     *time.Time   `json:"lastAttempt,omitempty"`                                  // When the upgrade was attempted
+	Error           string       `json:"error,omitempty" example:"Failed to download binary"`    // Error message if failed
+	DownloadURL     string       `json:"downloadUrl,omitempty" example:"https://github.com/..."` // URL used for download
+	BinaryPath      string       `json:"binaryPath,omitempty" example:"/tmp/sandbox-api-new"`    // Path to downloaded binary
+	BytesDownloaded int64        `json:"bytesDownloaded,omitempty" example:"25034936"`           // Bytes downloaded
+} // @name UpgradeStatus
+
+var (
+	lastUpgradeStatus = UpgradeStatus{
+		Status:  UpgradeStateIdle,
+		Step:    "none",
+		Version: "",
+	}
+	upgradeStatusMu sync.RWMutex
+)
+
+// GetLastUpgradeStatus returns the status of the last upgrade attempt
+func GetLastUpgradeStatus() UpgradeStatus {
+	upgradeStatusMu.RLock()
+	defer upgradeStatusMu.RUnlock()
+	return lastUpgradeStatus
+}
+
+// setUpgradeStatus updates the last upgrade status
+func setUpgradeStatus(status UpgradeStatus) {
+	upgradeStatusMu.Lock()
+	defer upgradeStatusMu.Unlock()
+	now := time.Now()
+	status.LastAttempt = &now
+	lastUpgradeStatus = status
+}
+
+// setUpgradeError records an upgrade error and marks status as failed
+func setUpgradeError(step, errorMsg string, status *UpgradeStatus) {
+	status.Status = UpgradeStateFailed
+	status.Step = step
+	status.Error = errorMsg
+	setUpgradeStatus(*status)
+}
 
 // isDevMode checks if running in development mode (e.g., with air)
 func isDevMode() bool {
@@ -529,40 +711,92 @@ func isDevMode() bool {
 }
 
 // TriggerUpgrade initiates an upgrade of the sandbox-api process
-// It downloads the latest binary from GitHub releases, validates it, and restarts
+// It downloads the specified binary from GitHub releases, validates it, and restarts
 // Pre-built binaries are available at https://github.com/blaxel-ai/sandbox/releases
-func TriggerUpgrade() {
+// Available versions: "develop", "main", "latest", or specific tag like "v1.0.0"
+// baseURL can be customized for forks (e.g., https://github.com/your-org/sandbox/releases)
+func TriggerUpgrade(version, baseURL string) {
 	logger := logrus.WithField("component", "upgrade")
+
+	// Initialize upgrade status
+	status := UpgradeStatus{
+		Status:  UpgradeStateRunning,
+		Step:    "starting",
+		Version: version,
+	}
+	setUpgradeStatus(status)
 
 	// In dev mode, don't do the full upgrade - let air handle it
 	if isDevMode() {
 		logger.Info("Dev mode detected - skipping full upgrade (air will handle rebuilds)")
 		logger.Info("To trigger a rebuild, modify a .go file or run 'air' manually")
+		status.Status = UpgradeStateFailed
+		status.Step = "skipped"
+		status.Error = "dev mode detected - use air for rebuilds"
+		setUpgradeStatus(status)
 		return
 	}
 
 	logger.Info("Initiating sandbox-api hot upgrade...")
 
 	// Step 1: Download the latest binary from GitHub releases
-	newBinaryPath, err := downloadLatestRelease()
+	status.Step = "download"
+	setUpgradeStatus(status)
+
+	newBinaryPath, downloadURL, bytesDownloaded, err := downloadReleaseWithDetails(version, baseURL)
+	status.DownloadURL = downloadURL
+	status.BytesDownloaded = bytesDownloaded
+
 	if err != nil {
-		logger.WithError(err).Error("Failed to download latest release")
+		errMsg := fmt.Sprintf("Failed to download release from %s: %v", downloadURL, err)
+		logger.WithError(err).WithField("url", downloadURL).Error("Failed to download release")
+		setUpgradeError("download", errMsg, &status)
 		return
 	}
 
+	status.BinaryPath = newBinaryPath
+	logger.WithFields(logrus.Fields{
+		"path":  newBinaryPath,
+		"bytes": bytesDownloaded,
+		"url":   downloadURL,
+	}).Info("Download completed successfully")
+
 	// Step 2: Validate the new binary by running it on a different port
+	status.Step = "validate"
+	setUpgradeStatus(status)
+
 	if err := validateNewBinary(newBinaryPath); err != nil {
-		logger.WithError(err).Error("New binary validation failed, aborting upgrade")
+		errMsg := fmt.Sprintf("Binary validation failed: %v", err)
+		logger.WithError(err).WithFields(logrus.Fields{
+			"binaryPath":     newBinaryPath,
+			"validationPort": ValidationPort,
+		}).Error("New binary validation failed, aborting upgrade")
+		setUpgradeError("validate", errMsg, &status)
 		os.Remove(newBinaryPath)
 		return
 	}
 
+	logger.Info("Validation completed successfully")
+
 	// Step 3: Replace current binary and upgrade
+	status.Step = "replace"
+	setUpgradeStatus(status)
+
+	// Note: upgradeWithNewBinary will exec into the new process, so we won't return here on success
+	// If it fails, it will call os.Exit, so we also won't return
+	// Mark as successful before attempting (the new process won't have this state)
+	status.Status = UpgradeStateCompleted
+	status.Step = "completed"
+	setUpgradeStatus(status)
+
 	upgradeWithNewBinary(newBinaryPath)
 }
 
-// downloadLatestRelease downloads the latest sandbox-api binary from GitHub releases
-func downloadLatestRelease() (string, error) {
+// downloadReleaseWithDetails downloads the sandbox-api binary from GitHub releases
+// version can be: "develop", "main", "latest", or a specific tag like "v1.0.0"
+// baseURL is the releases URL (e.g., https://github.com/blaxel-ai/sandbox/releases)
+// Returns: binaryPath, downloadURL, bytesDownloaded, error
+func downloadReleaseWithDetails(version, baseURL string) (string, string, int64, error) {
 	logger := logrus.WithField("component", "upgrade")
 
 	// Detect OS and architecture
@@ -575,17 +809,17 @@ func downloadLatestRelease() (string, error) {
 		"os":        goos,
 		"arch":      goarch,
 		"assetName": assetName,
+		"baseURL":   baseURL,
 	}).Info("Detecting platform for binary download")
-
-	// Get version from environment or use "latest"
-	version := getEnvOrDefault("SANDBOX_UPGRADE_VERSION", "latest")
 
 	// Build the download URL
 	var downloadURL string
 	if version == "latest" {
-		downloadURL = fmt.Sprintf("https://github.com/blaxel-ai/sandbox/releases/latest/download/%s", assetName)
+		// "latest" is a special GitHub alias that points to the most recent non-prerelease
+		downloadURL = fmt.Sprintf("%s/latest/download/%s", baseURL, assetName)
 	} else {
-		downloadURL = fmt.Sprintf("https://github.com/blaxel-ai/sandbox/releases/download/%s/%s", version, assetName)
+		// For branch releases (develop, main) or specific tags (v1.0.0)
+		downloadURL = fmt.Sprintf("%s/download/%s/%s", baseURL, version, assetName)
 	}
 
 	logger.WithFields(logrus.Fields{
@@ -599,18 +833,20 @@ func downloadLatestRelease() (string, error) {
 	// Download the binary
 	resp, err := http.Get(downloadURL)
 	if err != nil {
-		return "", fmt.Errorf("failed to download binary: %w", err)
+		return "", downloadURL, 0, fmt.Errorf("HTTP request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("failed to download binary: HTTP %d", resp.StatusCode)
+		// Try to read error body for more details
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return "", downloadURL, 0, fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
 	}
 
 	// Create the output file
 	out, err := os.Create(tmpFile)
 	if err != nil {
-		return "", fmt.Errorf("failed to create temp file: %w", err)
+		return "", downloadURL, 0, fmt.Errorf("failed to create temp file %s: %w", tmpFile, err)
 	}
 	defer out.Close()
 
@@ -618,13 +854,13 @@ func downloadLatestRelease() (string, error) {
 	written, err := io.Copy(out, resp.Body)
 	if err != nil {
 		os.Remove(tmpFile)
-		return "", fmt.Errorf("failed to write binary: %w", err)
+		return "", downloadURL, written, fmt.Errorf("failed to write binary after %d bytes: %w", written, err)
 	}
 
 	// Make executable
 	if err := os.Chmod(tmpFile, 0755); err != nil {
 		os.Remove(tmpFile)
-		return "", fmt.Errorf("failed to make binary executable: %w", err)
+		return "", downloadURL, written, fmt.Errorf("failed to chmod binary: %w", err)
 	}
 
 	logger.WithFields(logrus.Fields{
@@ -632,7 +868,7 @@ func downloadLatestRelease() (string, error) {
 		"bytes": written,
 	}).Info("Binary downloaded successfully")
 
-	return tmpFile, nil
+	return tmpFile, downloadURL, written, nil
 }
 
 // validateNewBinary starts the new binary on a different port and validates it works correctly
@@ -663,49 +899,78 @@ func validateNewBinary(binaryPath string) error {
 	cmd.Stderr = os.Stderr
 
 	if err := cmd.Start(); err != nil {
+		logger.WithError(err).Error("Failed to start new binary")
 		return fmt.Errorf("failed to start new binary: %w", err)
 	}
+	logger.WithField("pid", cmd.Process.Pid).Info("Validation binary started")
 
 	// Ensure we kill the validation process when done
 	defer func() {
 		if cmd.Process != nil {
-			logger.Info("Stopping validation instance")
+			logger.WithField("pid", cmd.Process.Pid).Info("Stopping validation instance")
 			cmd.Process.Kill()
 			cmd.Wait()
+			logger.Info("Validation instance stopped")
 		}
 	}()
 
 	// Wait for the new binary to be ready (health check)
-	validationURL := fmt.Sprintf("http://localhost:%d", ValidationPort)
+	// Use 127.0.0.1 instead of localhost - localhost may not resolve on all base images
+	validationURL := fmt.Sprintf("http://127.0.0.1:%d", ValidationPort)
+	logger.WithField("url", validationURL).Info("Waiting for validation instance to be healthy...")
 	if err := waitForHealthy(validationURL, 30*time.Second); err != nil {
+		logger.WithError(err).Error("Validation instance failed health check")
 		return fmt.Errorf("new binary failed health check: %w", err)
 	}
 
-	logger.Info("New binary is healthy, checking process recovery...")
+	logger.Info("Validation instance is healthy, checking process recovery...")
 
 	// Verify process state was recovered correctly
 	if err := verifyProcessRecovery(validationURL, len(currentProcesses), runningCount); err != nil {
+		logger.WithError(err).Error("Process recovery verification failed")
 		return fmt.Errorf("process recovery verification failed: %w", err)
 	}
 
-	logger.Info("New binary validation successful!")
+	logger.Info("New binary validation successful, proceeding with upgrade...")
 	return nil
 }
 
 // waitForHealthy waits for the health endpoint to return OK
 func waitForHealthy(baseURL string, timeout time.Duration) error {
+	logger := logrus.WithField("component", "upgrade")
 	healthURL := baseURL + "/health"
 	deadline := time.Now().Add(timeout)
+	attempts := 0
+	var lastErr error
 
 	for time.Now().Before(deadline) {
+		attempts++
 		resp, err := http.Get(healthURL)
 		if err == nil {
 			resp.Body.Close()
 			if resp.StatusCode == http.StatusOK {
+				logger.WithFields(logrus.Fields{
+					"attempts": attempts,
+					"url":      healthURL,
+				}).Info("Health check passed")
 				return nil
+			}
+			logger.WithFields(logrus.Fields{
+				"attempt": attempts,
+				"status":  resp.StatusCode,
+				"url":     healthURL,
+			}).Warn("Health check returned non-OK status")
+		} else {
+			lastErr = err
+			if attempts == 1 || attempts%10 == 0 {
+				logger.Warnf("Health check attempt %d failed for %s: %v", attempts, healthURL, err)
 			}
 		}
 		time.Sleep(500 * time.Millisecond)
+	}
+
+	if lastErr != nil {
+		return fmt.Errorf("health check timed out after %d attempts, last error: %w", attempts, lastErr)
 	}
 
 	return fmt.Errorf("health check timed out after %v", timeout)
@@ -746,17 +1011,17 @@ func verifyProcessRecovery(baseURL string, expectedTotal, expectedRunning int) e
 		"recoveredRunning": recoveredRunning,
 	}).Info("Process recovery comparison")
 
-	// Verify all processes were recovered
-	if recoveredTotal < expectedTotal {
-		return fmt.Errorf("process count mismatch: expected %d, got %d", expectedTotal, recoveredTotal)
+	// Process recovery is mandatory - if we can't recover processes, fail the upgrade
+	if recoveredTotal != expectedTotal {
+		return fmt.Errorf("process count mismatch: expected %d, got %d - upgrade aborted to preserve running processes", expectedTotal, recoveredTotal)
 	}
 
-	// Running processes might have exited during the validation, so we just check it's not drastically different
-	// Allow some tolerance (processes may have completed naturally)
-	if expectedRunning > 0 && recoveredRunning == 0 {
-		return fmt.Errorf("no running processes recovered, expected at least some of %d", expectedRunning)
+	// Verify running processes were recovered
+	if recoveredRunning != expectedRunning {
+		return fmt.Errorf("running process count mismatch: expected %d running, got %d - upgrade aborted", expectedRunning, recoveredRunning)
 	}
 
+	logger.Info("All processes recovered successfully")
 	return nil
 }
 

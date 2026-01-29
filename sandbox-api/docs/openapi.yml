@@ -864,7 +864,10 @@ paths:
         - filesystem
   /health:
     get:
-      description: Returns health status and system information including upgrade count and binary details
+      description: >-
+        Returns health status and system information including upgrade count and binary details
+
+        Also includes last upgrade attempt status with detailed error information if available
       responses:
         "200":
           description: Health status
@@ -1244,11 +1247,19 @@ paths:
       description: >-
         Triggers an upgrade of the sandbox-api process. Returns 200 immediately before upgrading.
 
-        The upgrade will: save process state, rebuild from source or download release (if configured), and restart.
+        The upgrade will: download the specified binary from GitHub releases, validate it, and restart.
 
         All running processes will be preserved across the upgrade.
 
-        Instead of using this endpoint, you can also manually download pre-built binaries from https://github.com/blaxel-ai/sandbox/releases
+        Available versions: "develop" (default), "main", "latest", or specific tag like "v1.0.0"
+
+        You can also specify a custom baseUrl for forks (defaults to https://github.com/blaxel-ai/sandbox/releases)
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpgradeRequest"
+        description: Upgrade options
       responses:
         "200":
           description: Upgrade initiated
@@ -1556,27 +1567,53 @@ components:
     HealthResponse:
       properties:
         arch:
+          example: amd64
           type: string
         buildTime:
+          example: 2026-01-29T17:36:52Z
           type: string
         gitCommit:
+          example: abc123
           type: string
         goVersion:
+          example: go1.25.0
           type: string
+        lastUpgrade:
+          $ref: "#/components/schemas/UpgradeStatus"
         os:
+          example: linux
           type: string
         startedAt:
+          example: 2026-01-29T18:45:49Z
           type: string
         status:
+          example: ok
           type: string
         upgradeCount:
+          example: 0
           type: integer
         uptime:
+          example: 1h30m
           type: string
         uptimeSeconds:
+          example: 5400.5
           type: number
         version:
+          example: v0.1.0
           type: string
+      required:
+        - arch
+        - buildTime
+        - gitCommit
+        - goVersion
+        - lastUpgrade
+        - os
+        - startedAt
+        - status
+        - upgradeCount
+        - uptime
+        - uptimeSeconds
+        - version
       type: object
     MultipartCompleteRequest:
       properties:
@@ -1816,6 +1853,56 @@ components:
             "{\"file1.txt\"": '"content1"'
           type: object
       type: object
+    UpgradeRequest:
+      properties:
+        baseUrl:
+          description: Base URL for releases (useful for forks)
+          example: https://github.com/blaxel-ai/sandbox/releases
+          type: string
+        version:
+          description: 'Version to upgrade to: "develop", "main", "latest", or specific tag like "v1.0.0"'
+          example: develop
+          type: string
+      type: object
+    UpgradeStatus:
+      properties:
+        binaryPath:
+          description: Path to downloaded binary
+          example: /tmp/sandbox-api-new
+          type: string
+        bytesDownloaded:
+          description: Bytes downloaded
+          example: 25034936
+          type: integer
+        downloadUrl:
+          description: URL used for download
+          example: https://github.com/...
+          type: string
+        error:
+          description: Error message if failed
+          example: Failed to download binary
+          type: string
+        lastAttempt:
+          description: When the upgrade was attempted
+          type: string
+        status:
+          allOf:
+            - $ref: "#/components/schemas/process.UpgradeState"
+          description: Current state (idle, running, completed, failed)
+          example: running
+        step:
+          description: Current/last step (none, starting, download, validate, replace, completed, skipped)
+          example: download
+          type: string
+        version:
+          description: Version being upgraded to
+          example: latest
+          type: string
+      required:
+        - status
+        - step
+        - version
+      type: object
     filesystem.MultipartUpload:
       properties:
         initiatedAt:
@@ -1848,5 +1935,27 @@ components:
         uploadedAt:
           type: string
       type: object
+    process.UpgradeState:
+      enum:
+        - idle
+        - running
+        - completed
+        - failed
+      type: string
+      x-enum-comments:
+        UpgradeStateCompleted: Upgrade completed successfully
+        UpgradeStateFailed: Upgrade failed
+        UpgradeStateIdle: No upgrade in progress
+        UpgradeStateRunning: Upgrade is currently running
+      x-enum-descriptions:
+        - No upgrade in progress
+        - Upgrade is currently running
+        - Upgrade completed successfully
+        - Upgrade failed
+      x-enum-varnames:
+        - UpgradeStateIdle
+        - UpgradeStateRunning
+        - UpgradeStateCompleted
+        - UpgradeStateFailed
 security:
   - BearerAuth: []
