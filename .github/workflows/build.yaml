@@ -153,7 +153,7 @@ jobs:
             type=raw,value=preview,enable=${{ github.ref_name == 'main' }}
             type=raw,value=develop,enable=${{ github.ref_name == 'develop' }}
             type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/') }}
-            type=ref,event=tag
+            type=semver,pattern={{version}}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -273,7 +273,7 @@ jobs:
             type=sha,prefix={{branch}}-,enable=${{ !startsWith(github.ref, 'refs/tags/') }}
             type=raw,value=develop,enable=${{ github.ref_name == 'develop' }}
             type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/') }}
-            type=ref,event=tag
+            type=semver,pattern={{version}}
 
       - name: Build and push sandbox image
         uses: docker/build-push-action@v5
