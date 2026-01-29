@@ -310,17 +310,26 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-      - name: Set short SHA
-        id: short-sha
-        run: echo "sha_short=$(git rev-parse --short ${{ github.sha }})" >> $GITHUB_OUTPUT
+      - name: Set image tag
+        id: image-tag
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            # For tags, strip the 'v' prefix to match semver Docker tag
+            VERSION="${{ github.ref_name }}"
+            echo "tag=${VERSION#v}" >> $GITHUB_OUTPUT
+          else
+            # For branches, use branch-sha format
+            SHA_SHORT=$(git rev-parse --short ${{ github.sha }})
+            echo "tag=${{ github.ref_name }}-${SHA_SHORT}" >> $GITHUB_OUTPUT
+          fi
       - name: Build sandbox image
         env:
           SANDBOX_NAME: ${{ matrix.sandbox }}
-          IMAGE_TAG: ${{ github.ref_name }}-${{ steps.short-sha.outputs.sha_short }}
+          IMAGE_TAG: ${{ steps.image-tag.outputs.tag }}
           BL_TYPE: sandbox
           BL_ENV: ${{ env.BL_ENV }}
           SRC_REGISTRY: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-${{ matrix.sandbox }}
-          BASE_IMAGE_TAG: ${{ github.ref_name }}-${{ steps.short-sha.outputs.sha_short }}
+          BASE_IMAGE_TAG: ${{ steps.image-tag.outputs.tag }}
           BUILD_ID: ${{ github.run_id }}-${{ github.run_attempt }}
           LOG_LEVEL: debug
           IMAGE_BUCKET_MK3: ${{ env.BL_ENV == 'prod' && env.PROD_IMAGE_BUCKET || env.DEV_IMAGE_BUCKET }}
