@@ -50,22 +50,24 @@ func NewSystemHandler() *SystemHandler {
 
 // HealthResponse is the response body for the health endpoint
 type HealthResponse struct {
-	Status        string  `json:"status"`
-	Version       string  `json:"version"`
-	GitCommit     string  `json:"gitCommit"`
-	BuildTime     string  `json:"buildTime"`
-	GoVersion     string  `json:"goVersion"`
-	OS            string  `json:"os"`
-	Arch          string  `json:"arch"`
-	Uptime        string  `json:"uptime"`
-	UptimeSeconds float64 `json:"uptimeSeconds"`
-	UpgradeCount  int     `json:"upgradeCount"`
-	StartedAt     string  `json:"startedAt"`
+	Status        string                `json:"status" binding:"required" example:"ok"`
+	Version       string                `json:"version" binding:"required" example:"v0.1.0"`
+	GitCommit     string                `json:"gitCommit" binding:"required" example:"abc123"`
+	BuildTime     string                `json:"buildTime" binding:"required" example:"2026-01-29T17:36:52Z"`
+	GoVersion     string                `json:"goVersion" binding:"required" example:"go1.25.0"`
+	OS            string                `json:"os" binding:"required" example:"linux"`
+	Arch          string                `json:"arch" binding:"required" example:"amd64"`
+	Uptime        string                `json:"uptime" binding:"required" example:"1h30m"`
+	UptimeSeconds float64               `json:"uptimeSeconds" binding:"required" example:"5400.5"`
+	UpgradeCount  int                   `json:"upgradeCount" binding:"required" example:"0"`
+	StartedAt     string                `json:"startedAt" binding:"required" example:"2026-01-29T18:45:49Z"`
+	LastUpgrade   process.UpgradeStatus `json:"lastUpgrade" binding:"required"`
 } // @name HealthResponse
 
 // HandleHealth handles GET requests to /health
 // @Summary Health check
 // @Description Returns health status and system information including upgrade count and binary details
+// @Description Also includes last upgrade attempt status with detailed error information if available
 // @Tags system
 // @Produce json
 // @Success 200 {object} HealthResponse "Health status"
@@ -85,22 +87,47 @@ func (h *SystemHandler) HandleHealth(c *gin.Context) {
 		UptimeSeconds: uptime.Seconds(),
 		UpgradeCount:  upgradeCount,
 		StartedAt:     startTime.Format(time.RFC3339),
+		LastUpgrade:   process.GetLastUpgradeStatus(),
 	})
 }
+
+// UpgradeRequest represents the request body for the upgrade endpoint
+type UpgradeRequest struct {
+	Version string `json:"version" example:"develop"`                                        // Version to upgrade to: "develop", "main", "latest", or specific tag like "v1.0.0"
+	BaseURL string `json:"baseUrl" example:"https://github.com/blaxel-ai/sandbox/releases"` // Base URL for releases (useful for forks)
+} // @name UpgradeRequest
 
 // HandleUpgrade handles POST requests to /upgrade
 // @Summary Upgrade the sandbox-api
 // @Description Triggers an upgrade of the sandbox-api process. Returns 200 immediately before upgrading.
-// @Description The upgrade will: download the latest binary from GitHub releases, validate it, and restart.
+// @Description The upgrade will: download the specified binary from GitHub releases, validate it, and restart.
 // @Description All running processes will be preserved across the upgrade.
-// @Description Set SANDBOX_UPGRADE_VERSION environment variable to specify a version (defaults to "latest").
+// @Description Available versions: "develop" (default), "main", "latest", or specific tag like "v1.0.0"
+// @Description You can also specify a custom baseUrl for forks (defaults to https://github.com/blaxel-ai/sandbox/releases)
 // @Tags system
 // @Accept json
 // @Produce json
+// @Param request body UpgradeRequest false "Upgrade options"
 // @Success 200 {object} SuccessResponse "Upgrade initiated"
 // @Failure 500 {object} ErrorResponse "Internal server error"
 // @Router /upgrade [post]
 func (h *SystemHandler) HandleUpgrade(c *gin.Context) {
+	// Parse request body (optional)
+	var req UpgradeRequest
+	c.ShouldBindJSON(&req) // Ignore errors - empty body is valid
+
+	// Default to "develop" if no version specified
+	version := req.Version
+	if version == "" {
+		version = "develop"
+	}
+
+	// Default base URL
+	baseURL := req.BaseURL
+	if baseURL == "" {
+		baseURL = "https://github.com/blaxel-ai/sandbox/releases"
+	}
+
 	// Save state before responding
 	if err := h.processManager.SaveState(); err != nil {
 		h.SendError(c, http.StatusInternalServerError, err)
@@ -110,6 +137,8 @@ func (h *SystemHandler) HandleUpgrade(c *gin.Context) {
 	// Send response immediately
 	h.SendJSON(c, http.StatusOK, gin.H{
 		"message": "Upgrade initiated. Process state saved. The server will upgrade shortly.",
+		"version": version,
+		"baseUrl": baseURL,
 	})
 
 	// Flush the response to ensure the client receives it
@@ -121,6 +150,6 @@ func (h *SystemHandler) HandleUpgrade(c *gin.Context) {
 	// This gives time for the response to be sent
 	go func() {
 		time.Sleep(500 * time.Millisecond)
-		process.TriggerUpgrade()
+		process.TriggerUpgrade(version, baseURL)
 	}()
 }
