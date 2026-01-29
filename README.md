@@ -98,6 +98,24 @@ curl http://localhost:8080/filesystem/~
 Go to sandbox-api/integration-tests
 [Detailed documentation](sandbox-api/integration-tests/README.md)
 
+#### Upgrading the Sandbox API
+
+You can upgrade a running sandbox-api instance using the `/upgrade` endpoint:
+
+```bash
+curl -X POST http://localhost:8080/upgrade
+```
+
+This will automatically download the latest binary from [GitHub Releases](https://github.com/blaxel-ai/sandbox/releases), validate it, and restart the server. All running processes are preserved across the upgrade.
+
+You can also specify a version using the `SANDBOX_UPGRADE_VERSION` environment variable (defaults to `latest`).
+
+If you prefer to upgrade manually, download the appropriate binary for your platform:
+- `sandbox-api-linux-amd64` for Linux x86_64
+- `sandbox-api-linux-arm64` for Linux ARM64
+- `sandbox-api-darwin-amd64` for macOS Intel
+- `sandbox-api-darwin-arm64` for macOS Apple Silicon
+
 ## Configuration
 
 Template configurations are defined in `template.json` files within each template directory. These files specify:

@@ -51,6 +51,7 @@ func SetupRouter(disableRequestLogging bool) *gin.Engine {
 	processHandler := handler.NewProcessHandler()
 	networkHandler := handler.NewNetworkHandler()
 	codegenHandler := handler.NewCodegenHandler(fsHandler)
+	systemHandler := handler.NewSystemHandler()
 
 	// Check if terminal is disabled via environment variable
 	disableTerminal := os.Getenv("DISABLE_TERMINAL") == "true" || os.Getenv("DISABLE_TERMINAL") == "1"
@@ -170,10 +171,10 @@ func SetupRouter(disableRequestLogging bool) *gin.Engine {
 		logrus.Info("Terminal endpoint disabled via DISABLE_TERMINAL environment variable")
 	}
 
-	// Health check route
-	r.GET("/health", func(c *gin.Context) {
-		c.JSON(200, gin.H{"status": "ok"})
-	})
+	// System routes
+	r.POST("/upgrade", systemHandler.HandleUpgrade)
+	r.HEAD("/upgrade", head)
+	r.GET("/health", systemHandler.HandleHealth)
 	r.HEAD("/health", head)
 
 	// Root welcome endpoint - handles all HTTP methods

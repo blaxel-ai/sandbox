@@ -67,6 +67,8 @@ services:
       dockerfile: docker/alpine.Dockerfile
     env_file:
       - .env
+    environment:
+      - SANDBOX_DEV_MODE=true
     ports:
       - "8080:8080"
       - "3010:3010"
