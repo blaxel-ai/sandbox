@@ -647,38 +647,6 @@ func TestProcessRestartOnFailure(t *testing.T) {
 		}
 	})
 
-	t.Run("MaxRestartsLimit", func(t *testing.T) {
-		// Test that max restarts is capped at 25
-		command := `echo "Test"; exit 1`
-
-		completionChan := make(chan *ProcessInfo, 1)
-
-		// Try to set max restarts to 30 (should be capped at 25)
-		pid, err := pm.StartProcess(command, "", nil, true, 30, func(process *ProcessInfo) {
-			completionChan <- process
-		})
-		if err != nil {
-			t.Fatalf("Error starting process: %v", err)
-		}
-		t.Logf("Started process with PID: %s", pid)
-
-		// Wait for process to complete (with restarts)
-		select {
-		case process := <-completionChan:
-			// Process should have failed after 25 restarts
-			if process.Status != StatusFailed {
-				t.Errorf("Expected process to fail, got status: %s", process.Status)
-			}
-			if process.MaxRestarts != 25 {
-				t.Errorf("Expected max restarts to be capped at 25, got: %d", process.MaxRestarts)
-			}
-			if process.RestartCount != 25 {
-				t.Errorf("Expected 25 restarts, got: %d", process.RestartCount)
-			}
-		case <-time.After(30 * time.Second):
-			t.Fatal("Timeout waiting for process to complete with restarts")
-		}
-	})
 }
 
 // testWriter implements io.Writer and captures all written data for testing

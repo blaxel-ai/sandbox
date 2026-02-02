@@ -2,8 +2,13 @@ name: Release Sandbox API
 
 on:
   push:
+    branches:
+      - main
+      - develop
     tags:
       - 'v*'
+    paths:
+      - 'sandbox-api/**'
 
 permissions:
   contents: write
@@ -105,13 +110,21 @@ jobs:
             sha256sum "$file" > "$file.sha256"
           done
 
+      - name: Delete existing branch release
+        if: github.ref_name == 'develop' || github.ref_name == 'main'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release delete ${{ github.ref_name }} --yes --cleanup-tag 2>/dev/null || true
+
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.version }}
-          name: Sandbox API ${{ steps.version.outputs.version }}
+          name: ${{ startsWith(github.ref, 'refs/tags/') && format('Sandbox API {0}', steps.version.outputs.version) || format('Sandbox API ({0})', steps.version.outputs.version) }}
           draft: false
-          prerelease: ${{ contains(steps.version.outputs.version, '-') }}
-          generate_release_notes: true
+          prerelease: ${{ !startsWith(github.ref, 'refs/tags/') || contains(steps.version.outputs.version, '-') }}
+          generate_release_notes: ${{ startsWith(github.ref, 'refs/tags/') }}
+          body: ${{ !startsWith(github.ref, 'refs/tags/') && format('Automated build from {0} branch at commit {1}', github.ref_name, github.sha) || '' }}
           files: |
             release/*
