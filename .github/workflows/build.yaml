@@ -78,6 +78,16 @@ jobs:
           platform=${{ matrix.platform }}
           echo "pair=${platform//\//-}" >> $GITHUB_OUTPUT
 
+      - name: Set version
+        id: version
+        run: |
+          VERSION="${{ github.ref_name }}"
+          # Strip 'v' prefix for tags (v0.2.0 -> 0.2.0)
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            VERSION="${VERSION#v}"
+          fi
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+
       - name: Log in to Container Registry
         uses: docker/login-action@v3
         with:
@@ -102,6 +112,9 @@ jobs:
           file: ./sandbox-api/Dockerfile
           platforms: ${{ matrix.platform }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ steps.version.outputs.version }}
+            GIT_COMMIT=${{ github.sha }}
           outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true
           cache-from: type=gha,scope=${{ steps.platform.outputs.pair }}
           cache-to: type=gha,scope=${{ steps.platform.outputs.pair }},mode=max
