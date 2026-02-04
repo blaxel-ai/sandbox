@@ -61,7 +61,7 @@ func processingTimeMiddleware() gin.HandlerFunc {
 
 		// Also store in context for backward compatibility
 		stop := time.Since(start)
-		latency := int(math.Ceil(float64(stop.Nanoseconds()) / 1000000.0))
+		latency := float64(stop.Nanoseconds()) / 1000000.0
 		c.Set("processingTime", latency)
 	}
 }
