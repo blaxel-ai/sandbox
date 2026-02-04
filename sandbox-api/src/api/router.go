@@ -21,7 +21,8 @@ import (
 
 // SetupRouter configures all the routes for the Sandbox API
 // If disableRequestLogging is true, the logrus middleware will be skipped
-func SetupRouter(disableRequestLogging bool) *gin.Engine {
+// If enableProcessingTime is true, the Server-Timing header middleware will be added
+func SetupRouter(disableRequestLogging bool, enableProcessingTime bool) *gin.Engine {
 	// Initialize the router
 	r := gin.New()
 
@@ -34,8 +35,10 @@ func SetupRouter(disableRequestLogging bool) *gin.Engine {
 	// Add middleware to prevent caching
 	r.Use(noCacheMiddleware())
 
-	// Add processing time middleware
-	r.Use(processingTimeMiddleware())
+	// Add processing time middleware if enabled
+	if enableProcessingTime {
+		r.Use(processingTimeMiddleware())
+	}
 
 	// Add logrus middleware unless disabled
 	if !disableRequestLogging {
@@ -341,37 +344,5 @@ func logrusMiddleware() gin.HandlerFunc {
 				logrus.Info(msg)
 			}
 		}
-	}
-}
-
-// processingTimeWriter wraps gin.ResponseWriter to add processing time header
-type processingTimeWriter struct {
-	gin.ResponseWriter
-	startTime time.Time
-}
-
-func (w *processingTimeWriter) WriteHeader(statusCode int) {
-	elapsed := time.Since(w.startTime)
-	latency := int(math.Ceil(float64(elapsed.Nanoseconds()) / 1000000.0))
-	w.Header().Set("X-Processing-Time-Ms", fmt.Sprintf("%d", latency))
-	w.ResponseWriter.WriteHeader(statusCode)
-}
-
-func processingTimeMiddleware() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		start := time.Now()
-		// Wrap the response writer to intercept WriteHeader
-		ptw := &processingTimeWriter{
-			ResponseWriter: c.Writer,
-			startTime:      start,
-		}
-		c.Writer = ptw
-
-		c.Next()
-
-		// Also store in context for backward compatibility
-		stop := time.Since(start)
-		latency := int(math.Ceil(float64(stop.Nanoseconds()) / 1000000.0))
-		c.Set("processingTime", latency)
 	}
 }

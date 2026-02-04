@@ -36,7 +36,8 @@ func setupBenchmarkRouter() *gin.Engine {
 	// Discard all output during benchmarks to only preserve benchmark output
 	gin.DefaultWriter = io.Discard
 	// Disable request logging for clean benchmark output
-	return SetupRouter(true)
+	// Disable processing time middleware to reduce overhead
+	return SetupRouter(true, false)
 }
 
 // benchmarkRequest executes an HTTP request against the router for benchmarking
