@@ -862,6 +862,421 @@ paths:
       summary: Create or update directory tree
       tags:
         - filesystem
+  "/git/add/{path}":
+    post:
+      description: Add files to the staging area
+      parameters:
+        - description: Repository path
+          in: path
+          name: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GitAddRequest"
+        description: Files to stage
+        required: true
+      responses:
+        "200":
+          description: Files staged successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Unprocessable entity
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+      summary: Stage files
+      tags:
+        - git
+  "/git/branch/{name}/{path}":
+    delete:
+      description: Delete a branch from a git repository
+      parameters:
+        - description: Branch name
+          in: path
+          name: name
+          required: true
+          schema:
+            type: string
+        - description: Repository path
+          in: path
+          name: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Branch deleted successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Unprocessable entity
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+      summary: Delete a branch
+      tags:
+        - git
+    put:
+      description: Switch to a different branch in a git repository
+      parameters:
+        - description: Branch name
+          in: path
+          name: name
+          required: true
+          schema:
+            type: string
+        - description: Repository path
+          in: path
+          name: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Branch checked out successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Unprocessable entity
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+      summary: Checkout a branch
+      tags:
+        - git
+  "/git/branches/{path}":
+    get:
+      description: List all branches in a git repository
+      parameters:
+        - description: Repository path
+          in: path
+          name: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List of branches
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GitBranchesResponse"
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Unprocessable entity
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+      summary: List branches
+      tags:
+        - git
+    post:
+      description: Create a new branch in a git repository
+      parameters:
+        - description: Repository path
+          in: path
+          name: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GitBranchRequest"
+        description: Branch name
+        required: true
+      responses:
+        "200":
+          description: Branch created successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Unprocessable entity
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+      summary: Create a new branch
+      tags:
+        - git
+  /git/clone:
+    post:
+      description: Clone a git repository to the specified path
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GitCloneRequest"
+        description: Clone request
+        required: true
+      responses:
+        "200":
+          description: Repository cloned successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GitCloneResponse"
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Unprocessable entity
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+      summary: Clone a git repository
+      tags:
+        - git
+  "/git/commit/{path}":
+    post:
+      description: Create a commit with staged changes
+      parameters:
+        - description: Repository path
+          in: path
+          name: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GitCommitRequest"
+        description: Commit details
+        required: true
+      responses:
+        "200":
+          description: Commit created successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GitCommitResponse"
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Unprocessable entity
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+      summary: Create a commit
+      tags:
+        - git
+  "/git/pull/{path}":
+    post:
+      description: Pull commits from remote repository
+      parameters:
+        - description: Repository path
+          in: path
+          name: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        $ref: "#/components/requestBodies/GitPushPullRequest"
+      responses:
+        "200":
+          description: Commits pulled successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Unprocessable entity
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+      summary: Pull commits
+      tags:
+        - git
+  "/git/push/{path}":
+    post:
+      description: Push commits to remote repository
+      parameters:
+        - description: Repository path
+          in: path
+          name: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        $ref: "#/components/requestBodies/GitPushPullRequest"
+      responses:
+        "200":
+          description: Commits pushed successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Unprocessable entity
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+      summary: Push commits
+      tags:
+        - git
+  "/git/status/{path}":
+    get:
+      description: Get the status of a git repository
+      parameters:
+        - description: Repository path
+          in: path
+          name: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Repository status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GitStatusResponse"
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Unprocessable entity
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+      summary: Get repository status
+      tags:
+        - git
   /health:
     get:
       description: >-
@@ -1571,6 +1986,117 @@ components:
         - matches
         - total
       type: object
+    GitAddRequest:
+      properties:
+        files:
+          example:
+            - file1.txt
+            - file2.txt
+          items:
+            type: string
+          type: array
+      required:
+        - files
+      type: object
+    GitBranchRequest:
+      properties:
+        name:
+          example: feature/new-feature
+          type: string
+      required:
+        - name
+      type: object
+    GitBranchesResponse:
+      properties:
+        branches:
+          example:
+            - main
+            - develop
+            - feature/new-feature
+          items:
+            type: string
+          type: array
+      type: object
+    GitCloneRequest:
+      properties:
+        branch:
+          example: main
+          type: string
+        password:
+          example: personal_access_token
+          type: string
+        path:
+          example: workspace/repo
+          type: string
+        url:
+          example: https://github.com/user/repo.git
+          type: string
+        username:
+          example: git
+          type: string
+      required:
+        - path
+        - url
+      type: object
+    GitCloneResponse:
+      properties:
+        message:
+          example: Repository cloned successfully
+          type: string
+        path:
+          example: workspace/repo
+          type: string
+      type: object
+    GitCommitRequest:
+      properties:
+        author:
+          example: John Doe
+          type: string
+        email:
+          example: john@example.com
+          type: string
+        message:
+          example: "feat: add new feature"
+          type: string
+      required:
+        - author
+        - email
+        - message
+      type: object
+    GitCommitResponse:
+      properties:
+        commitHash:
+          example: abc123def456
+          type: string
+        message:
+          example: Commit created successfully
+          type: string
+      type: object
+    GitPushPullRequest:
+      properties:
+        password:
+          example: personal_access_token
+          type: string
+        username:
+          example: git
+          type: string
+      type: object
+    GitStatusResponse:
+      properties:
+        ahead:
+          example: 2
+          type: integer
+        behind:
+          example: 0
+          type: integer
+        currentBranch:
+          example: main
+          type: string
+        fileStatus:
+          items:
+            $ref: "#/components/schemas/git.FileStatus"
+          type: array
+      type: object
     HealthResponse:
       properties:
         arch:
@@ -1940,6 +2466,17 @@ components:
           example: 5242880
           type: integer
         uploadedAt:
+          type: string
+      type: object
+    git.FileStatus:
+      properties:
+        name:
+          type: string
+        staging:
+          description: '"modified", "added", "deleted", "renamed", "untracked"'
+          type: string
+        worktree:
+          description: '"modified", "added", "deleted", "renamed", "untracked"'
           type: string
       type: object
     process.UpgradeState:

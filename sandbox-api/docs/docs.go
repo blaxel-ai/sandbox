@@ -1005,6 +1005,549 @@ const docTemplate = `{
                 }
             }
         },
+        "/git/add/{path}": {
+            "post": {
+                "description": "Add files to the staging area",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "git"
+                ],
+                "summary": "Stage files",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Repository path",
+                        "name": "path",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Files to stage",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/GitAddRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Files staged successfully",
+                        "schema": {
+                            "$ref": "#/definitions/SuccessResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable entity",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/git/branch/{name}/{path}": {
+            "put": {
+                "description": "Switch to a different branch in a git repository",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "git"
+                ],
+                "summary": "Checkout a branch",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Branch name",
+                        "name": "name",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Repository path",
+                        "name": "path",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Branch checked out successfully",
+                        "schema": {
+                            "$ref": "#/definitions/SuccessResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable entity",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "description": "Delete a branch from a git repository",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "git"
+                ],
+                "summary": "Delete a branch",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Branch name",
+                        "name": "name",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Repository path",
+                        "name": "path",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Branch deleted successfully",
+                        "schema": {
+                            "$ref": "#/definitions/SuccessResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable entity",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/git/branches/{path}": {
+            "get": {
+                "description": "List all branches in a git repository",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "git"
+                ],
+                "summary": "List branches",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Repository path",
+                        "name": "path",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "List of branches",
+                        "schema": {
+                            "$ref": "#/definitions/GitBranchesResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable entity",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "description": "Create a new branch in a git repository",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "git"
+                ],
+                "summary": "Create a new branch",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Repository path",
+                        "name": "path",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Branch name",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/GitBranchRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Branch created successfully",
+                        "schema": {
+                            "$ref": "#/definitions/SuccessResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable entity",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/git/clone": {
+            "post": {
+                "description": "Clone a git repository to the specified path",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "git"
+                ],
+                "summary": "Clone a git repository",
+                "parameters": [
+                    {
+                        "description": "Clone request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/GitCloneRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Repository cloned successfully",
+                        "schema": {
+                            "$ref": "#/definitions/GitCloneResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable entity",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/git/commit/{path}": {
+            "post": {
+                "description": "Create a commit with staged changes",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "git"
+                ],
+                "summary": "Create a commit",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Repository path",
+                        "name": "path",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Commit details",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/GitCommitRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Commit created successfully",
+                        "schema": {
+                            "$ref": "#/definitions/GitCommitResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable entity",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/git/pull/{path}": {
+            "post": {
+                "description": "Pull commits from remote repository",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "git"
+                ],
+                "summary": "Pull commits",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Repository path",
+                        "name": "path",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Authentication credentials",
+                        "name": "request",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/GitPushPullRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Commits pulled successfully",
+                        "schema": {
+                            "$ref": "#/definitions/SuccessResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable entity",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/git/push/{path}": {
+            "post": {
+                "description": "Push commits to remote repository",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "git"
+                ],
+                "summary": "Push commits",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Repository path",
+                        "name": "path",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Authentication credentials",
+                        "name": "request",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/GitPushPullRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Commits pushed successfully",
+                        "schema": {
+                            "$ref": "#/definitions/SuccessResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable entity",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/git/status/{path}": {
+            "get": {
+                "description": "Get the status of a git repository",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "git"
+                ],
+                "summary": "Get repository status",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Repository path",
+                        "name": "path",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Repository status",
+                        "schema": {
+                            "$ref": "#/definitions/GitStatusResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable entity",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/health": {
             "get": {
                 "description": "Returns health status and system information including upgrade count and binary details\nAlso includes last upgrade attempt status with detailed error information if available",
@@ -1895,6 +2438,165 @@ const docTemplate = `{
                 }
             }
         },
+        "GitAddRequest": {
+            "type": "object",
+            "required": [
+                "files"
+            ],
+            "properties": {
+                "files": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "example": [
+                        "file1.txt",
+                        "file2.txt"
+                    ]
+                }
+            }
+        },
+        "GitBranchRequest": {
+            "type": "object",
+            "required": [
+                "name"
+            ],
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "example": "feature/new-feature"
+                }
+            }
+        },
+        "GitBranchesResponse": {
+            "type": "object",
+            "properties": {
+                "branches": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "example": [
+                        "main",
+                        "develop",
+                        "feature/new-feature"
+                    ]
+                }
+            }
+        },
+        "GitCloneRequest": {
+            "type": "object",
+            "required": [
+                "path",
+                "url"
+            ],
+            "properties": {
+                "branch": {
+                    "type": "string",
+                    "example": "main"
+                },
+                "password": {
+                    "type": "string",
+                    "example": "personal_access_token"
+                },
+                "path": {
+                    "type": "string",
+                    "example": "workspace/repo"
+                },
+                "url": {
+                    "type": "string",
+                    "example": "https://github.com/user/repo.git"
+                },
+                "username": {
+                    "type": "string",
+                    "example": "git"
+                }
+            }
+        },
+        "GitCloneResponse": {
+            "type": "object",
+            "properties": {
+                "message": {
+                    "type": "string",
+                    "example": "Repository cloned successfully"
+                },
+                "path": {
+                    "type": "string",
+                    "example": "workspace/repo"
+                }
+            }
+        },
+        "GitCommitRequest": {
+            "type": "object",
+            "required": [
+                "author",
+                "email",
+                "message"
+            ],
+            "properties": {
+                "author": {
+                    "type": "string",
+                    "example": "John Doe"
+                },
+                "email": {
+                    "type": "string",
+                    "example": "john@example.com"
+                },
+                "message": {
+                    "type": "string",
+                    "example": "feat: add new feature"
+                }
+            }
+        },
+        "GitCommitResponse": {
+            "type": "object",
+            "properties": {
+                "commitHash": {
+                    "type": "string",
+                    "example": "abc123def456"
+                },
+                "message": {
+                    "type": "string",
+                    "example": "Commit created successfully"
+                }
+            }
+        },
+        "GitPushPullRequest": {
+            "type": "object",
+            "properties": {
+                "password": {
+                    "type": "string",
+                    "example": "personal_access_token"
+                },
+                "username": {
+                    "type": "string",
+                    "example": "git"
+                }
+            }
+        },
+        "GitStatusResponse": {
+            "type": "object",
+            "properties": {
+                "ahead": {
+                    "type": "integer",
+                    "example": 2
+                },
+                "behind": {
+                    "type": "integer",
+                    "example": 0
+                },
+                "currentBranch": {
+                    "type": "string",
+                    "example": "main"
+                },
+                "fileStatus": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/git.FileStatus"
+                    }
+                }
+            }
+        },
         "HealthResponse": {
             "type": "object",
             "required": [
@@ -2407,6 +3109,22 @@ const docTemplate = `{
                     "example": 5242880
                 },
                 "uploadedAt": {
+                    "type": "string"
+                }
+            }
+        },
+        "git.FileStatus": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string"
+                },
+                "staging": {
+                    "description": "\"modified\", \"added\", \"deleted\", \"renamed\", \"untracked\"",
+                    "type": "string"
+                },
+                "worktree": {
+                    "description": "\"modified\", \"added\", \"deleted\", \"renamed\", \"untracked\"",
                     "type": "string"
                 }
             }
