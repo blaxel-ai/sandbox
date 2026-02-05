@@ -15,6 +15,34 @@ import (
 	"github.com/blaxel-ai/sandbox-api/src/handler/constants"
 )
 
+// StreamEvent represents a streaming event sent to JSON log writers
+type StreamEvent struct {
+	Type string `json:"type"`
+	Data string `json:"data,omitempty"`
+}
+
+// JSONStreamWriter is an interface for writers that want JSON-formatted events
+type JSONStreamWriter interface {
+	io.Writer
+	WriteEvent(eventType string, data string) (int, error)
+	IsJSONStreamWriter() bool
+}
+
+// writeToLogWriter sends data to a log writer, using JSON format if supported
+func writeToLogWriter(w io.Writer, eventType string, data []byte) {
+	if jw, ok := w.(JSONStreamWriter); ok {
+		// JSON writer - send structured event
+		jw.WriteEvent(eventType, string(data))
+	} else {
+		// Regular writer - send prefixed text (stdout: or stderr:)
+		prefixed := append([]byte(eventType+":"), data...)
+		_, _ = w.Write(prefixed)
+	}
+	if f, ok := w.(interface{ Flush() }); ok {
+		f.Flush()
+	}
+}
+
 // Define process status constants
 const (
 	StatusFailed    = constants.ProcessStatusFailed
@@ -48,16 +76,43 @@ type ProcessInfo struct {
 	Status           constants.ProcessStatus `json:"status"`
 	WorkingDir       string                  `json:"workingDir"`
 	Logs             *string                 `json:"logs"`
+	Stdout           *string                 `json:"stdout"`
+	Stderr           *string                 `json:"stderr"`
 	RestartOnFailure bool                    `json:"restartOnFailure"`
 	MaxRestarts      int                     `json:"maxRestarts"`
 	RestartCount     int                     `json:"restartCount"`
+	LogFile          string                  `json:"-"` // Path to combined log file
+	StdoutFile       string                  `json:"-"` // Path to stdout log file
+	StderrFile       string                  `json:"-"` // Path to stderr log file
+	Done             chan struct{}
 	stdout           *strings.Builder
 	stderr           *strings.Builder
 	logs             *strings.Builder
-	stdoutPipe       io.ReadCloser
-	stderrPipe       io.ReadCloser
 	logWriters       []io.Writer
 	logLock          sync.RWMutex
+}
+
+// ProcessLogDir is the directory where process logs are stored
+// Can be configured via SANDBOX_LOG_DIR environment variable
+var ProcessLogDir = "/var/log/sandbox-api"
+
+func init() {
+	if dir := os.Getenv("SANDBOX_LOG_DIR"); dir != "" {
+		ProcessLogDir = dir
+	}
+}
+
+// getLogFilePaths returns the log file paths for a process (stdout, stderr, combined)
+func getLogFilePaths(name string) (stdout, stderr, combined string) {
+	stdout = fmt.Sprintf("%s/%s.stdout.log", ProcessLogDir, name)
+	stderr = fmt.Sprintf("%s/%s.stderr.log", ProcessLogDir, name)
+	combined = fmt.Sprintf("%s/%s.log", ProcessLogDir, name)
+	return
+}
+
+// ensureLogDir ensures the log directory exists
+func ensureLogDir() error {
+	return os.MkdirAll(ProcessLogDir, 0755)
 }
 
 // NewProcessManager creates a new process manager
@@ -148,33 +203,39 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 		}
 	}
 
-	// Add all custom environment variables
+	// Add all custom environment variables (these take priority)
 	for k, v := range env {
 		finalEnv = append(finalEnv, k+"="+v)
 	}
 
 	cmd.Env = finalEnv
 
-	// Set up stdout and stderr pipes
-	stdoutPipe, err := cmd.StdoutPipe()
-	if err != nil {
-		return "", fmt.Errorf("failed to create stdout pipe: %w", err)
+	// Ensure log directory exists
+	if err := ensureLogDir(); err != nil {
+		return "", fmt.Errorf("failed to create log directory: %w", err)
 	}
 
-	stderrPipe, err := cmd.StderrPipe()
-	if err != nil {
-		return "", fmt.Errorf("failed to create stderr pipe: %w", err)
-	}
-
-	// Ensure maxRestarts doesn't exceed the limit
-	if maxRestarts > 25 {
-		maxRestarts = 25
-	}
-
-	// Set up stdout and stderr capture
+	// Set up in-memory buffers
 	stdout := &strings.Builder{}
 	stderr := &strings.Builder{}
 	logs := &strings.Builder{}
+
+	// Create separate log files for stdout and stderr
+	// Child processes write DIRECTLY to these files (no pipes)
+	// This ensures processes survive sandbox-api restarts
+	stdoutPath, stderrPath, combinedPath := getLogFilePaths(name)
+
+	stdoutFile, err := os.OpenFile(stdoutPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	if err != nil {
+		return "", fmt.Errorf("failed to create stdout log file: %w", err)
+	}
+
+	stderrFile, err := os.OpenFile(stderrPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	if err != nil {
+		stdoutFile.Close()
+		return "", fmt.Errorf("failed to create stderr log file: %w", err)
+	}
+
 	process := &ProcessInfo{
 		Name:             name,
 		Command:          command,
@@ -185,80 +246,49 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 		RestartOnFailure: restartOnFailure,
 		MaxRestarts:      maxRestarts,
 		RestartCount:     0,
+		LogFile:          combinedPath,
+		StdoutFile:       stdoutPath,
+		StderrFile:       stderrPath,
+		Done:             make(chan struct{}),
 		stdout:           stdout,
 		stderr:           stderr,
 		logs:             logs,
-		stdoutPipe:       stdoutPipe,
-		stderrPipe:       stderrPipe,
 		logWriters:       make([]io.Writer, 0),
 	}
 
+	// Redirect stdout/stderr directly to files
+	// This is crucial - child writes to files, not pipes
+	// So child survives sandbox-api restart without blocking
+	cmd.Stdout = stdoutFile
+	cmd.Stderr = stderrFile
+
 	// Start the process
 	if err := cmd.Start(); err != nil {
+		stdoutFile.Close()
+		stderrFile.Close()
+		os.Remove(stdoutPath)
+		os.Remove(stderrPath)
 		return "", err
 	}
+
 	process.PID = fmt.Sprintf("%d", cmd.Process.Pid)
 	process.ProcessPid = cmd.Process.Pid
+
+	// Close the write handles in parent - child has its own FDs
+	stdoutFile.Close()
+	stderrFile.Close()
+
 	// Store process in memory
 	pm.mu.Lock()
 	pm.processes[process.PID] = process
 	pm.mu.Unlock()
 
-	// Handle stdout
-	go func() {
-		buf := make([]byte, 4096)
-		for {
-			n, err := stdoutPipe.Read(buf)
-			if n > 0 {
-				data := buf[:n]
-				process.logLock.Lock()
-				process.stdout.Write(data)
-				process.logs.Write(data)
-				// Send to any attached log writers, prefix with stdout:
-				for _, w := range process.logWriters {
-					fullMsg := append([]byte("stdout:"), data...)
-					_, _ = w.Write(fullMsg)
-					if f, ok := w.(interface{ Flush() }); ok {
-						f.Flush()
-					}
-				}
-				process.logLock.Unlock()
-			}
-			if err != nil {
-				break
-			}
-		}
-	}()
+	// Start file tailer for real-time log streaming
+	go pm.tailLogFiles(process)
 
-	// Handle stderr
-	go func() {
-		buf := make([]byte, 4096)
-		for {
-			n, err := stderrPipe.Read(buf)
-			if n > 0 {
-				data := buf[:n]
-				process.logLock.Lock()
-				process.stderr.Write(data)
-				process.logs.Write(data)
-				// Send to any attached log writers, prefix with stderr:
-				for _, w := range process.logWriters {
-					fullMsg := append([]byte("stderr:"), data...)
-					_, _ = w.Write(fullMsg)
-					if f, ok := w.(interface{ Flush() }); ok {
-						f.Flush()
-					}
-				}
-				process.logLock.Unlock()
-			}
-			if err != nil {
-				break
-			}
-		}
-	}()
-
+	// Monitor process completion
 	go func() {
 		err := cmd.Wait()
-		now := time.Now()
 
 		// IMPORTANT: Release process resources immediately after Wait() to close pidfd
 		// This must be done right after Wait() completes to prevent FD leaks
@@ -266,6 +296,12 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 			_ = cmd.Process.Release()
 		}
 
+		// Small delay to allow filesystem to sync writes from the child process
+		// This is necessary on macOS where file writes may not be immediately visible
+		// to readers in other goroutines due to filesystem caching
+		time.Sleep(1 * time.Millisecond)
+
+		now := time.Now()
 		process.CompletedAt = &now
 
 		// Determine exit status and create appropriate message
@@ -294,18 +330,26 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 			restartMsg := fmt.Sprintf("\n[Process failed with exit code %d. Attempting restart %d/%d...]\n",
 				process.ExitCode, process.RestartCount+1, process.MaxRestarts)
 
+			process.logLock.Lock()
 			process.stdout.WriteString(restartMsg)
 			process.logs.WriteString(restartMsg)
 
+			// Append restart message to log files
+			if process.StdoutFile != "" {
+				if f, err := os.OpenFile(process.StdoutFile, os.O_APPEND|os.O_WRONLY, 0644); err == nil {
+					f.WriteString(restartMsg)
+					f.Close()
+				}
+			}
+
 			// Notify log writers about the restart
-			process.logLock.RLock()
 			for _, w := range process.logWriters {
 				_, _ = w.Write([]byte(restartMsg))
 				if f, ok := w.(interface{ Flush() }); ok {
 					f.Flush()
 				}
 			}
-			process.logLock.RUnlock()
+			process.logLock.Unlock()
 
 			// Increment restart count
 			process.RestartCount++
@@ -327,6 +371,8 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 				process.logWriters = nil // Clear all log writers
 				process.logLock.Unlock()
 
+				// Signal that the process is done
+				close(process.Done)
 				callback(process)
 			}
 			// If restart succeeds, the callback will be called when that process completes
@@ -336,11 +382,93 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 			process.logWriters = nil // Clear all log writers
 			process.logLock.Unlock()
 
+			// Signal that the process is done
+			close(process.Done)
 			callback(process)
 		}
 	}()
 
 	return process.PID, nil
+}
+
+// tailLogFiles tails the stdout and stderr log files for real-time streaming
+func (pm *ProcessManager) tailLogFiles(proc *ProcessInfo) {
+	// Open files for reading
+	stdoutFile, err := os.Open(proc.StdoutFile)
+	if err != nil {
+		return
+	}
+	defer stdoutFile.Close()
+
+	stderrFile, err := os.Open(proc.StderrFile)
+	if err != nil {
+		return
+	}
+	defer stderrFile.Close()
+
+	// Open combined log file for writing prefixed output (preserves order)
+	var combinedFile *os.File
+	if proc.LogFile != "" {
+		combinedFile, err = os.OpenFile(proc.LogFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+		if err != nil {
+			combinedFile = nil
+		} else {
+			defer combinedFile.Close()
+		}
+	}
+
+	stdoutBuf := make([]byte, 4096)
+	stderrBuf := make([]byte, 4096)
+
+	for {
+		select {
+		case <-proc.Done:
+			// Do final reads
+			pm.readAndBroadcast(stdoutFile, stdoutBuf, proc, "stdout", combinedFile)
+			pm.readAndBroadcast(stderrFile, stderrBuf, proc, "stderr", combinedFile)
+			return
+		default:
+			// Read from stdout file
+			pm.readAndBroadcast(stdoutFile, stdoutBuf, proc, "stdout", combinedFile)
+			// Read from stderr file
+			pm.readAndBroadcast(stderrFile, stderrBuf, proc, "stderr", combinedFile)
+			// Small sleep to avoid busy loop
+			time.Sleep(50 * time.Millisecond)
+		}
+	}
+}
+
+// readAndBroadcast reads from a file and broadcasts to log writers
+func (pm *ProcessManager) readAndBroadcast(file *os.File, buf []byte, proc *ProcessInfo, streamType string, combinedFile *os.File) {
+	n, err := file.Read(buf)
+	if n > 0 {
+		data := buf[:n]
+		proc.logLock.Lock()
+		if streamType == "stdout" {
+			proc.stdout.Write(data)
+		} else {
+			proc.stderr.Write(data)
+		}
+		proc.logs.Write(data)
+		// Write prefixed content to combined log file (preserves interleaved order)
+		if combinedFile != nil {
+			// Write each line with prefix
+			lines := strings.SplitAfter(string(data), "\n")
+			for _, line := range lines {
+				if line != "" {
+					combinedFile.WriteString(streamType + ":" + line)
+				}
+			}
+		}
+		// Send to log writers for streaming
+		for _, w := range proc.logWriters {
+			writeToLogWriter(w, streamType, data)
+		}
+		proc.logLock.Unlock()
+	}
+	if err != nil && err != io.EOF {
+		// Real error, but we'll keep trying
+	}
 }
 
 // restartProcess restarts a failed process with the same configuration
@@ -387,27 +515,32 @@ func (pm *ProcessManager) restartProcess(oldProcess *ProcessInfo, callback func(
 	// Use the same environment as the original process
 	cmd.Env = os.Environ()
 
-	// Set up stdout and stderr pipes
-	stdoutPipe, err := cmd.StdoutPipe()
+	// Open log files for appending - child writes directly to files
+	stdoutFile, err := os.OpenFile(oldProcess.StdoutFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
-		return "", fmt.Errorf("failed to create stdout pipe: %w", err)
+		return "", fmt.Errorf("failed to open stdout log file: %w", err)
 	}
 
-	stderrPipe, err := cmd.StderrPipe()
+	stderrFile, err := os.OpenFile(oldProcess.StderrFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
-		return "", fmt.Errorf("failed to create stderr pipe: %w", err)
+		stdoutFile.Close()
+		return "", fmt.Errorf("failed to open stderr log file: %w", err)
 	}
+
+	// Redirect stdout/stderr directly to files (no pipes)
+	cmd.Stdout = stdoutFile
+	cmd.Stderr = stderrFile
 
 	// Keep the existing process info but reset status
 	oldProcess.Status = StatusRunning
 	oldProcess.StartedAt = time.Now()
 	oldProcess.CompletedAt = nil
 	oldProcess.ExitCode = 0
-	oldProcess.stdoutPipe = stdoutPipe
-	oldProcess.stderrPipe = stderrPipe
 
 	// Start the process
 	if err := cmd.Start(); err != nil {
+		stdoutFile.Close()
+		stderrFile.Close()
 		return "", err
 	}
 
@@ -415,67 +548,21 @@ func (pm *ProcessManager) restartProcess(oldProcess *ProcessInfo, callback func(
 	// Keep the user-facing PID (oldProcess.PID) unchanged for transparency
 	oldProcess.ProcessPid = cmd.Process.Pid
 
+	// Close write handles in parent - child has its own FDs
+	stdoutFile.Close()
+	stderrFile.Close()
+
 	// Update the process in memory (same map key, just updating the entry)
 	pm.mu.Lock()
 	pm.processes[oldProcess.PID] = oldProcess
 	pm.mu.Unlock()
 
-	// Handle stdout
-	go func() {
-		buf := make([]byte, 4096)
-		for {
-			n, err := stdoutPipe.Read(buf)
-			if n > 0 {
-				data := buf[:n]
-				oldProcess.logLock.Lock()
-				oldProcess.stdout.Write(data)
-				oldProcess.logs.Write(data)
-				// Send to any attached log writers, prefix with stdout:
-				for _, w := range oldProcess.logWriters {
-					fullMsg := append([]byte("stdout:"), data...)
-					_, _ = w.Write(fullMsg)
-					if f, ok := w.(interface{ Flush() }); ok {
-						f.Flush()
-					}
-				}
-				oldProcess.logLock.Unlock()
-			}
-			if err != nil {
-				break
-			}
-		}
-	}()
-
-	// Handle stderr
-	go func() {
-		buf := make([]byte, 4096)
-		for {
-			n, err := stderrPipe.Read(buf)
-			if n > 0 {
-				data := buf[:n]
-				oldProcess.logLock.Lock()
-				oldProcess.stderr.Write(data)
-				oldProcess.logs.Write(data)
-				// Send to any attached log writers, prefix with stderr:
-				for _, w := range oldProcess.logWriters {
-					fullMsg := append([]byte("stderr:"), data...)
-					_, _ = w.Write(fullMsg)
-					if f, ok := w.(interface{ Flush() }); ok {
-						f.Flush()
-					}
-				}
-				oldProcess.logLock.Unlock()
-			}
-			if err != nil {
-				break
-			}
-		}
-	}()
+	// Start file tailer for real-time log streaming
+	go pm.tailLogFiles(oldProcess)
 
 	// Monitor the restarted process
 	go func() {
 		err := cmd.Wait()
-		now := time.Now()
 
 		// IMPORTANT: Release process resources immediately after Wait() to close pidfd
 		// This must be done right after Wait() completes to prevent FD leaks
@@ -483,6 +570,12 @@ func (pm *ProcessManager) restartProcess(oldProcess *ProcessInfo, callback func(
 			_ = cmd.Process.Release()
 		}
 
+		// Small delay to allow filesystem to sync writes from the child process
+		// This is necessary on macOS where file writes may not be immediately visible
+		// to readers in other goroutines due to filesystem caching
+		time.Sleep(1 * time.Millisecond)
+
+		now := time.Now()
 		oldProcess.CompletedAt = &now
 
 		// Determine exit status
@@ -511,18 +604,26 @@ func (pm *ProcessManager) restartProcess(oldProcess *ProcessInfo, callback func(
 			restartMsg := fmt.Sprintf("\n[Process failed with exit code %d. Attempting restart %d/%d...]\n",
 				oldProcess.ExitCode, oldProcess.RestartCount+1, oldProcess.MaxRestarts)
 
+			oldProcess.logLock.Lock()
 			oldProcess.stdout.WriteString(restartMsg)
 			oldProcess.logs.WriteString(restartMsg)
 
+			// Append restart message to log file
+			if oldProcess.StdoutFile != "" {
+				if f, err := os.OpenFile(oldProcess.StdoutFile, os.O_APPEND|os.O_WRONLY, 0644); err == nil {
+					f.WriteString(restartMsg)
+					f.Close()
+				}
+			}
+
 			// Notify log writers about the restart
-			oldProcess.logLock.RLock()
 			for _, w := range oldProcess.logWriters {
 				_, _ = w.Write([]byte(restartMsg))
 				if f, ok := w.(interface{ Flush() }); ok {
 					f.Flush()
 				}
 			}
-			oldProcess.logLock.RUnlock()
+			oldProcess.logLock.Unlock()
 
 			// Increment restart count
 			oldProcess.RestartCount++
@@ -544,6 +645,8 @@ func (pm *ProcessManager) restartProcess(oldProcess *ProcessInfo, callback func(
 				oldProcess.logWriters = nil
 				oldProcess.logLock.Unlock()
 
+				// Signal that the process is done
+				close(oldProcess.Done)
 				callback(oldProcess)
 			}
 			// If restart succeeds, the callback will be called when that process completes
@@ -553,6 +656,8 @@ func (pm *ProcessManager) restartProcess(oldProcess *ProcessInfo, callback func(
 			oldProcess.logWriters = nil
 			oldProcess.logLock.Unlock()
 
+			// Signal that the process is done
+			close(oldProcess.Done)
 			callback(oldProcess)
 		}
 	}()
@@ -581,10 +686,21 @@ func (pm *ProcessManager) GetProcessByIdentifier(identifier string) (*ProcessInf
 				process.ProcessPid = pidInt
 			}
 		}
+		// Acquire logLock to safely read logs (they're written under this lock)
+		process.logLock.RLock()
 		if process.logs != nil && process.logs.Len() > 0 {
 			logs := process.logs.String()
 			process.Logs = &logs
 		}
+		if process.stdout != nil {
+			stdout := process.stdout.String()
+			process.Stdout = &stdout
+		}
+		if process.stderr != nil {
+			stderr := process.stderr.String()
+			process.Stderr = &stderr
+		}
+		process.logLock.RUnlock()
 		return process, true
 	}
 	// Search by name - find the most recent process with this name
@@ -598,10 +714,21 @@ func (pm *ProcessManager) GetProcessByIdentifier(identifier string) (*ProcessInf
 	}
 
 	if latestProcess != nil {
+		// Acquire logLock to safely read logs (they're written under this lock)
+		latestProcess.logLock.RLock()
 		if latestProcess.logs != nil {
 			logs := latestProcess.logs.String()
 			latestProcess.Logs = &logs
 		}
+		if latestProcess.stdout != nil {
+			stdout := latestProcess.stdout.String()
+			latestProcess.Stdout = &stdout
+		}
+		if latestProcess.stderr != nil {
+			stderr := latestProcess.stderr.String()
+			latestProcess.Stderr = &stderr
+		}
+		latestProcess.logLock.RUnlock()
 		return latestProcess, true
 	}
 
@@ -716,10 +843,38 @@ func (pm *ProcessManager) GetProcessOutput(identifier string) (ProcessLogs, erro
 		return ProcessLogs{}, fmt.Errorf("process with PID %s not found", identifier)
 	}
 
+	// Try to read from separate log files if available
+	var stdout, stderr, logs string
+
+	// Read stdout from file or memory
+	if process.StdoutFile != "" {
+		if content, err := os.ReadFile(process.StdoutFile); err == nil {
+			stdout = string(content)
+		} else {
+			stdout = process.stdout.String()
+		}
+	} else {
+		stdout = process.stdout.String()
+	}
+
+	// Read stderr from file or memory
+	if process.StderrFile != "" {
+		if content, err := os.ReadFile(process.StderrFile); err == nil {
+			stderr = string(content)
+		} else {
+			stderr = process.stderr.String()
+		}
+	} else {
+		stderr = process.stderr.String()
+	}
+
+	// Combined logs
+	logs = stdout + stderr
+
 	return ProcessLogs{
-		Stdout: process.stdout.String(),
-		Stderr: process.stderr.String(),
-		Logs:   process.logs.String(),
+		Stdout: stdout,
+		Stderr: stderr,
+		Logs:   logs,
 	}, nil
 }
 
@@ -729,8 +884,25 @@ func (pm *ProcessManager) StreamProcessOutput(identifier string, w io.Writer) er
 		return fmt.Errorf("process with Identifier %s not found", identifier)
 	}
 
-	// Write current content first
-	_, _ = w.Write([]byte(process.logs.String()))
+	// Write current content first - read from combined log file which has prefixed, ordered content
+	// The combined log file is written by tailLogFiles with "stdout:" and "stderr:" prefixes
+	if process.LogFile != "" {
+		if content, err := os.ReadFile(process.LogFile); err == nil && len(content) > 0 {
+			// Parse prefixed lines and send as proper events
+			// This ensures JSONStreamWriter receives structured stdout/stderr events
+			lines := strings.Split(string(content), "\n")
+			for _, line := range lines {
+				if strings.HasPrefix(line, "stdout:") {
+					writeToLogWriter(w, "stdout", []byte(strings.TrimPrefix(line, "stdout:")+"\n"))
+				} else if strings.HasPrefix(line, "stderr:") {
+					writeToLogWriter(w, "stderr", []byte(strings.TrimPrefix(line, "stderr:")+"\n"))
+				} else if line != "" {
+					// Fallback for unprefixed lines (shouldn't happen, but handle gracefully)
+					writeToLogWriter(w, "stdout", []byte(line+"\n"))
+				}
+			}
+		}
+	}
 
 	// Attach writer for future output
 	process.logLock.Lock()

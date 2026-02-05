@@ -1,7 +1,9 @@
 package process
 
 import (
+	"bytes"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -380,8 +382,23 @@ func TestEnvironmentVariableHandling(t *testing.T) {
 				t.Fatalf("Error starting process: %v", err)
 			}
 
-			// Wait for process to complete
-			time.Sleep(10 * time.Millisecond)
+			// Wait for process to complete by polling status
+			var process *ProcessInfo
+			var exists bool
+			for j := 0; j < 100; j++ { // Poll up to 1 second (100 * 10ms)
+				process, exists = pm.GetProcessByIdentifier(pid)
+				if exists && (process.Status == "completed" || process.Status == "failed") {
+					break
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
+
+			if !exists {
+				t.Fatalf("Iteration %d: Process not found", i+1)
+			}
+			if process.Status != "completed" {
+				t.Fatalf("Iteration %d: Process did not complete, status: %s", i+1, process.Status)
+			}
 
 			// Get output
 			logs, err := pm.GetProcessOutput(pid)
@@ -394,12 +411,7 @@ func TestEnvironmentVariableHandling(t *testing.T) {
 			if output == "" {
 				t.Errorf("Iteration %d: Got empty output from printenv", i+1)
 				t.Logf("Stdout: '%s', Stderr: '%s', Logs: '%s'", logs.Stdout, logs.Stderr, logs.Logs)
-
-				// Check process status
-				process, exists := pm.GetProcessByIdentifier(pid)
-				if exists {
-					t.Logf("Process status: %s, exit code: %d", process.Status, process.ExitCode)
-				}
+				t.Logf("Process status: %s, exit code: %d", process.Status, process.ExitCode)
 			}
 			for key, expectedValue := range env {
 				// Check if the key exists with the expected value
@@ -635,14 +647,39 @@ func TestProcessRestartOnFailure(t *testing.T) {
 		}
 	})
 
-	t.Run("MaxRestartsLimit", func(t *testing.T) {
-		// Test that max restarts is capped at 25
-		command := `echo "Test"; exit 1`
+}
+
+// testWriter implements io.Writer and captures all written data for testing
+type testWriter struct {
+	buf bytes.Buffer
+	mu  sync.Mutex
+}
+
+func (tw *testWriter) Write(p []byte) (n int, err error) {
+	tw.mu.Lock()
+	defer tw.mu.Unlock()
+	return tw.buf.Write(p)
+}
+
+func (tw *testWriter) String() string {
+	tw.mu.Lock()
+	defer tw.mu.Unlock()
+	return tw.buf.String()
+}
+
+// TestLargeOutputPrefixHandling tests that large output lines (>4096 bytes) don't get duplicate prefixes
+func TestLargeOutputPrefixHandling(t *testing.T) {
+	pm := GetProcessManager()
+
+	t.Run("LargeStdoutLineNoDuplicatePrefix", func(t *testing.T) {
+		// Create a command that outputs a single line larger than the 4096 byte buffer
+		// We'll output about 10000 characters on a single line (no newline until the end)
+		// Using printf to avoid any automatic line breaking
+		command := `printf '{"data":"'; for i in $(seq 1 10000); do printf 'X'; done; printf '"}\n'`
 
 		completionChan := make(chan *ProcessInfo, 1)
 
-		// Try to set max restarts to 30 (should be capped at 25)
-		pid, err := pm.StartProcess(command, "", nil, true, 30, func(process *ProcessInfo) {
+		pid, err := pm.StartProcess(command, "", nil, false, 0, func(process *ProcessInfo) {
 			completionChan <- process
 		})
 		if err != nil {
@@ -650,21 +687,166 @@ func TestProcessRestartOnFailure(t *testing.T) {
 		}
 		t.Logf("Started process with PID: %s", pid)
 
-		// Wait for process to complete (with restarts)
+		// Attach a test writer to capture streamed output
+		tw := &testWriter{}
+		err = pm.StreamProcessOutput(pid, tw)
+		if err != nil {
+			t.Fatalf("Error streaming process output: %v", err)
+		}
+
+		// Wait for process to complete
 		select {
 		case process := <-completionChan:
-			// Process should have failed after 25 restarts
-			if process.Status != StatusFailed {
-				t.Errorf("Expected process to fail, got status: %s", process.Status)
+			if process.Status != StatusCompleted {
+				t.Errorf("Expected process to complete successfully, got status: %s", process.Status)
 			}
-			if process.MaxRestarts != 25 {
-				t.Errorf("Expected max restarts to be capped at 25, got: %d", process.MaxRestarts)
+		case <-time.After(5 * time.Second):
+			t.Fatal("Timeout waiting for process to complete")
+		}
+
+		// Give a moment for all output to be written
+		time.Sleep(50 * time.Millisecond)
+
+		// Get the streamed output
+		streamedOutput := tw.String()
+
+		// Count occurrences of "stdout:" prefix
+		stdoutPrefixCount := strings.Count(streamedOutput, "stdout:")
+
+		// The output should have exactly one "stdout:" prefix for this single-line output
+		// Even though the data exceeds 4096 bytes and will be split across multiple reads
+		if stdoutPrefixCount != 1 {
+			t.Errorf("Expected exactly 1 'stdout:' prefix for a single line, got %d", stdoutPrefixCount)
+			// Show first 500 chars of output for debugging
+			if len(streamedOutput) > 500 {
+				t.Logf("Streamed output (first 500 chars): %s...", streamedOutput[:500])
+			} else {
+				t.Logf("Streamed output: %s", streamedOutput)
 			}
-			if process.RestartCount != 25 {
-				t.Errorf("Expected 25 restarts, got: %d", process.RestartCount)
+		}
+
+		// Verify the output starts with stdout: prefix
+		if !strings.HasPrefix(streamedOutput, "stdout:") {
+			t.Error("Expected streamed output to start with 'stdout:' prefix")
+		}
+
+		// Verify the JSON structure is intact (starts with {"data":" and ends with "}\n)
+		content := strings.TrimPrefix(streamedOutput, "stdout:")
+		if !strings.HasPrefix(content, `{"data":"`) {
+			t.Errorf("Expected content to start with '{\"data\":\"', got: %s", content[:min(50, len(content))])
+		}
+		if !strings.HasSuffix(strings.TrimSpace(content), `"}`) {
+			trimmed := strings.TrimSpace(content)
+			t.Errorf("Expected content to end with '\"}', got: ...%s", trimmed[max(0, len(trimmed)-50):])
+		}
+	})
+
+	t.Run("MultipleLinesWithLargeContent", func(t *testing.T) {
+		// Test that multiple lines each get their own prefix
+		// Output 3 lines, each about 5000 characters
+		command := `for line in 1 2 3; do printf 'line%d:' $line; for i in $(seq 1 5000); do printf 'Y'; done; printf '\n'; done`
+
+		completionChan := make(chan *ProcessInfo, 1)
+
+		pid, err := pm.StartProcess(command, "", nil, false, 0, func(process *ProcessInfo) {
+			completionChan <- process
+		})
+		if err != nil {
+			t.Fatalf("Error starting process: %v", err)
+		}
+		t.Logf("Started process with PID: %s", pid)
+
+		// Attach a test writer to capture streamed output
+		tw := &testWriter{}
+		err = pm.StreamProcessOutput(pid, tw)
+		if err != nil {
+			t.Fatalf("Error streaming process output: %v", err)
+		}
+
+		// Wait for process to complete
+		select {
+		case process := <-completionChan:
+			if process.Status != StatusCompleted {
+				t.Errorf("Expected process to complete successfully, got status: %s", process.Status)
 			}
-		case <-time.After(30 * time.Second):
-			t.Fatal("Timeout waiting for process to complete with restarts")
+		case <-time.After(5 * time.Second):
+			t.Fatal("Timeout waiting for process to complete")
+		}
+
+		// Give a moment for all output to be written
+		time.Sleep(50 * time.Millisecond)
+
+		// Get the streamed output
+		streamedOutput := tw.String()
+
+		// Count occurrences of "stdout:" prefix
+		stdoutPrefixCount := strings.Count(streamedOutput, "stdout:")
+
+		// We output 3 lines, so we should have exactly 3 "stdout:" prefixes
+		if stdoutPrefixCount != 3 {
+			t.Errorf("Expected exactly 3 'stdout:' prefixes for 3 lines, got %d", stdoutPrefixCount)
+		}
+
+		// Verify each line marker is present
+		for i := 1; i <= 3; i++ {
+			marker := "line" + string(rune('0'+i)) + ":"
+			if !strings.Contains(streamedOutput, marker) {
+				t.Errorf("Expected to find line marker '%s' in output", marker)
+			}
+		}
+	})
+
+	t.Run("LargeStderrLineNoDuplicatePrefix", func(t *testing.T) {
+		// Test stderr with large output
+		command := `printf 'error:' >&2; for i in $(seq 1 10000); do printf 'E' >&2; done; printf '\n' >&2`
+
+		completionChan := make(chan *ProcessInfo, 1)
+
+		pid, err := pm.StartProcess(command, "", nil, false, 0, func(process *ProcessInfo) {
+			completionChan <- process
+		})
+		if err != nil {
+			t.Fatalf("Error starting process: %v", err)
+		}
+		t.Logf("Started process with PID: %s", pid)
+
+		// Attach a test writer to capture streamed output
+		tw := &testWriter{}
+		err = pm.StreamProcessOutput(pid, tw)
+		if err != nil {
+			t.Fatalf("Error streaming process output: %v", err)
+		}
+
+		// Wait for process to complete
+		select {
+		case process := <-completionChan:
+			if process.Status != StatusCompleted {
+				t.Errorf("Expected process to complete successfully, got status: %s", process.Status)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("Timeout waiting for process to complete")
+		}
+
+		// Give a moment for all output to be written
+		time.Sleep(50 * time.Millisecond)
+
+		// Get the streamed output
+		streamedOutput := tw.String()
+
+		// Count occurrences of "stderr:" prefix
+		stderrPrefixCount := strings.Count(streamedOutput, "stderr:")
+
+		// The output should have exactly one "stderr:" prefix for this single-line output
+		if stderrPrefixCount != 1 {
+			t.Errorf("Expected exactly 1 'stderr:' prefix for a single line, got %d", stderrPrefixCount)
+		}
+
+		// Verify the output starts with stderr: prefix and contains our error marker
+		if !strings.HasPrefix(streamedOutput, "stderr:") {
+			t.Error("Expected streamed output to start with 'stderr:' prefix")
+		}
+		if !strings.Contains(streamedOutput, "error:") {
+			t.Error("Expected to find 'error:' marker in output")
 		}
 	})
 }

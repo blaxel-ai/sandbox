@@ -5,79 +5,6 @@ info:
   title: Sandbox API
   version: 0.0.1
 paths:
-  /:
-    delete:
-      description: Returns a welcome message with links to documentation
-      responses:
-        "200":
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/WelcomeResponse"
-      summary: Welcome message
-      tags:
-        - root
-    get:
-      description: Returns a welcome message with links to documentation
-      responses:
-        "200":
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/WelcomeResponse"
-      summary: Welcome message
-      tags:
-        - root
-    options:
-      description: Returns a welcome message with links to documentation
-      responses:
-        "200":
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/WelcomeResponse"
-      summary: Welcome message
-      tags:
-        - root
-    patch:
-      description: Returns a welcome message with links to documentation
-      responses:
-        "200":
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/WelcomeResponse"
-      summary: Welcome message
-      tags:
-        - root
-    post:
-      description: Returns a welcome message with links to documentation
-      responses:
-        "200":
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/WelcomeResponse"
-      summary: Welcome message
-      tags:
-        - root
-    put:
-      description: Returns a welcome message with links to documentation
-      responses:
-        "200":
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/WelcomeResponse"
-      summary: Welcome message
-      tags:
-        - root
   "/codegen/fastapply/{path}":
     put:
       description: >-
@@ -234,6 +161,133 @@ paths:
       summary: Code reranking/semantic search
       tags:
         - codegen
+  "/filesystem-content-search/{path}":
+    get:
+      description: Searches for text content inside files using ripgrep. Returns matching lines with context.
+      parameters:
+        - description: Directory path to search in
+          in: path
+          name: path
+          required: true
+          schema:
+            type: string
+        - description: Text to search for
+          in: query
+          name: query
+          required: true
+          schema:
+            type: string
+        - description: "Case sensitive search (default: false)"
+          in: query
+          name: caseSensitive
+          schema:
+            type: boolean
+        - description: "Maximum number of results to return (default: 100)"
+          in: query
+          name: maxResults
+          schema:
+            type: integer
+        - description: File pattern to include (e.g., *.go)
+          in: query
+          name: filePattern
+          schema:
+            type: string
+        - description: "Comma-separated directory names to skip (default: node_modules,vendor,.git,dist,build,target,__pycache__,.venv,.next,coverage)"
+          in: query
+          name: excludeDirs
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Content search results
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContentSearchResponse"
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Unprocessable entity
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+      summary: Search for text content in files
+      tags:
+        - filesystem
+  "/filesystem-find/{path}":
+    get:
+      description: Finds files and directories using the find command.
+      parameters:
+        - description: Path to search in (e.g., /home/user/projects)
+          in: path
+          name: path
+          required: true
+          schema:
+            type: string
+        - description: Type of search (file or directory)
+          in: query
+          name: type
+          schema:
+            type: string
+        - description: Comma-separated file patterns to include (e.g., *.go,*.js)
+          in: query
+          name: patterns
+          schema:
+            type: string
+        - description: "Maximum number of results to return (default: 20). If set to 0, all results will be returned."
+          in: query
+          name: maxResults
+          schema:
+            type: integer
+        - description: "Comma-separated directory names to skip (default: node_modules,vendor,.git,dist,build,target,__pycache__,.venv,.next,coverage). Use empty string to skip no directories."
+          in: query
+          name: excludeDirs
+          schema:
+            type: string
+        - description: "Exclude hidden files and directories (default: true)"
+          in: query
+          name: excludeHidden
+          schema:
+            type: boolean
+      responses:
+        "200":
+          description: Find results
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FindResponse"
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Unprocessable entity
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+      summary: Find files and directories
+      tags:
+        - filesystem
   /filesystem-multipart:
     get:
       description: List all active multipart uploads
@@ -469,6 +523,64 @@ paths:
       summary: Initiate multipart upload
       tags:
         - filesystem
+  "/filesystem-search/{path}":
+    get:
+      description: Performs fuzzy search on filesystem paths using fuzzy matching algorithm. Optimized alternative to find and grep commands.
+      parameters:
+        - description: Path to search in (e.g., /home/user/projects)
+          in: path
+          name: path
+          required: true
+          schema:
+            type: string
+        - description: "Maximum number of results to return (default: 20)"
+          in: query
+          name: maxResults
+          schema:
+            type: integer
+        - description: Comma-separated file patterns to include (e.g., *.go,*.js)
+          in: query
+          name: patterns
+          schema:
+            type: string
+        - description: "Comma-separated directory names to skip (default: node_modules,vendor,.git,dist,build,target,__pycache__,.venv,.next,coverage). Use empty string to skip no directories."
+          in: query
+          name: excludeDirs
+          schema:
+            type: string
+        - description: "Exclude hidden files and directories (default: true)"
+          in: query
+          name: excludeHidden
+          schema:
+            type: boolean
+      responses:
+        "200":
+          description: Fuzzy search results
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FuzzySearchResponse"
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Unprocessable entity
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+      summary: Fuzzy search for files and directories
+      tags:
+        - filesystem
   "/filesystem/{path}":
     delete:
       description: Delete a file or directory
@@ -618,70 +730,24 @@ paths:
       summary: Create or update a file or directory
       tags:
         - filesystem
-  "/git/add/{path}":
-    post:
-      description: Add files to the staging area
-      parameters:
-        - description: Repository path
-          in: path
-          name: path
-          required: true
-          schema:
-            type: string
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/GitAddRequest"
-        description: Files to stage
-        required: true
-      responses:
-        "200":
-          description: Files staged successfully
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/SuccessResponse"
-        "400":
-          description: Bad request
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "422":
-          description: Unprocessable entity
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "500":
-          description: Internal server error
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-      summary: Stage files
-      tags:
-        - git
-  "/git/branch/{name}/{path}":
+  "/filesystem/tree/{path}":
     delete:
-      description: Delete a branch from a git repository
+      description: Delete a directory tree recursively
       parameters:
-        - description: Branch name
-          in: path
-          name: name
-          required: true
-          schema:
-            type: string
-        - description: Repository path
+        - description: Root directory path
           in: path
           name: path
           required: true
           schema:
             type: string
+        - description: Delete directory recursively
+          in: query
+          name: recursive
+          schema:
+            type: boolean
       responses:
         "200":
-          description: Branch deleted successfully
+          description: Directory deleted successfully
           content:
             application/json:
               schema:
@@ -704,31 +770,77 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
-      summary: Delete a branch
+      summary: Delete directory tree
       tags:
-        - git
+        - filesystem
+    get:
+      description: Get a recursive directory tree structure starting from the specified path
+      parameters:
+        - description: Root directory path
+          in: path
+          name: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Directory tree
+          content:
+            application/json:
+              schema:
+                oneOf:
+                    - $ref: "#/components/schemas/Directory"
+                    - $ref: "#/components/schemas/FileWithContent"
+                    - type: string
+                      format: binary
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Unprocessable entity
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+      summary: Get directory tree
+      tags:
+        - filesystem
     put:
-      description: Switch to a different branch in a git repository
+      description: Create or update multiple files within a directory tree structure
       parameters:
-        - description: Branch name
-          in: path
-          name: name
-          required: true
-          schema:
-            type: string
-        - description: Repository path
+        - description: Root directory path
           in: path
           name: path
           required: true
           schema:
             type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TreeRequest"
+        description: Map of file paths to content
+        required: true
       responses:
         "200":
-          description: Branch checked out successfully
+          description: Updated directory tree
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/SuccessResponse"
+                oneOf:
+                    - $ref: "#/components/schemas/Directory"
+                    - $ref: "#/components/schemas/FileWithContent"
+                    - type: string
+                      format: binary
         "400":
           description: Bad request
           content:
@@ -747,292 +859,25 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
-      summary: Checkout a branch
+      summary: Create or update directory tree
       tags:
-        - git
-  "/git/branches/{path}":
+        - filesystem
+  /health:
     get:
-      description: List all branches in a git repository
-      parameters:
-        - description: Repository path
-          in: path
-          name: path
-          required: true
-          schema:
-            type: string
+      description: >-
+        Returns health status and system information including upgrade count and binary details
+
+        Also includes last upgrade attempt status with detailed error information if available
       responses:
         "200":
-          description: List of branches
+          description: Health status
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/GitBranchesResponse"
-        "400":
-          description: Bad request
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "422":
-          description: Unprocessable entity
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "500":
-          description: Internal server error
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-      summary: List branches
+                $ref: "#/components/schemas/HealthResponse"
+      summary: Health check
       tags:
-        - git
-    post:
-      description: Create a new branch in a git repository
-      parameters:
-        - description: Repository path
-          in: path
-          name: path
-          required: true
-          schema:
-            type: string
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/GitBranchRequest"
-        description: Branch name
-        required: true
-      responses:
-        "200":
-          description: Branch created successfully
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/SuccessResponse"
-        "400":
-          description: Bad request
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "422":
-          description: Unprocessable entity
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "500":
-          description: Internal server error
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-      summary: Create a new branch
-      tags:
-        - git
-  /git/clone:
-    post:
-      description: Clone a git repository to the specified path
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/GitCloneRequest"
-        description: Clone request
-        required: true
-      responses:
-        "200":
-          description: Repository cloned successfully
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/GitCloneResponse"
-        "400":
-          description: Bad request
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "422":
-          description: Unprocessable entity
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "500":
-          description: Internal server error
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-      summary: Clone a git repository
-      tags:
-        - git
-  "/git/commit/{path}":
-    post:
-      description: Create a commit with staged changes
-      parameters:
-        - description: Repository path
-          in: path
-          name: path
-          required: true
-          schema:
-            type: string
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/GitCommitRequest"
-        description: Commit details
-        required: true
-      responses:
-        "200":
-          description: Commit created successfully
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/GitCommitResponse"
-        "400":
-          description: Bad request
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "422":
-          description: Unprocessable entity
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "500":
-          description: Internal server error
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-      summary: Create a commit
-      tags:
-        - git
-  "/git/pull/{path}":
-    post:
-      description: Pull commits from remote repository
-      parameters:
-        - description: Repository path
-          in: path
-          name: path
-          required: true
-          schema:
-            type: string
-      requestBody:
-        $ref: "#/components/requestBodies/GitPushPullRequest"
-      responses:
-        "200":
-          description: Commits pulled successfully
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/SuccessResponse"
-        "400":
-          description: Bad request
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "422":
-          description: Unprocessable entity
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "500":
-          description: Internal server error
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-      summary: Pull commits
-      tags:
-        - git
-  "/git/push/{path}":
-    post:
-      description: Push commits to remote repository
-      parameters:
-        - description: Repository path
-          in: path
-          name: path
-          required: true
-          schema:
-            type: string
-      requestBody:
-        $ref: "#/components/requestBodies/GitPushPullRequest"
-      responses:
-        "200":
-          description: Commits pushed successfully
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/SuccessResponse"
-        "400":
-          description: Bad request
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "422":
-          description: Unprocessable entity
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "500":
-          description: Internal server error
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-      summary: Push commits
-      tags:
-        - git
-  "/git/status/{path}":
-    get:
-      description: Get the status of a git repository
-      parameters:
-        - description: Repository path
-          in: path
-          name: path
-          required: true
-          schema:
-            type: string
-      responses:
-        "200":
-          description: Repository status
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/GitStatusResponse"
-        "400":
-          description: Bad request
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "422":
-          description: Unprocessable entity
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "500":
-          description: Internal server error
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-      summary: Get repository status
-      tags:
-        - git
+        - system
   "/network/process/{pid}/monitor":
     delete:
       description: Stop monitoring for new ports opened by a process
@@ -1172,7 +1017,7 @@ paths:
       tags:
         - process
     post:
-      description: Execute a command and return process information
+      description: Execute a command and return process information. If Accept header is text/event-stream, streams logs in SSE format and returns the process response as a final event.
       requestBody:
         content:
           application/json:
@@ -1187,10 +1032,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ProcessResponse"
+            text/event-stream:
+              schema:
+                $ref: "#/components/schemas/ProcessResponse"
         "400":
           description: Invalid request
           content:
             application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+            text/event-stream:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "422":
@@ -1199,10 +1050,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+            text/event-stream:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "500":
           description: Internal server error
           content:
             application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+            text/event-stream:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
       summary: Execute a command
@@ -1385,6 +1242,40 @@ paths:
       summary: Stream process logs in real time
       tags:
         - process
+  /upgrade:
+    post:
+      description: >-
+        Triggers an upgrade of the sandbox-api process. Returns 200 immediately before upgrading.
+
+        The upgrade will: download the specified binary from GitHub releases, validate it, and restart.
+
+        All running processes will be preserved across the upgrade.
+
+        Available versions: "develop" (default), "main", "latest", or specific tag like "v1.0.0"
+
+        You can also specify a custom baseUrl for forks (defaults to https://github.com/blaxel-ai/sandbox/releases)
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpgradeRequest"
+        description: Upgrade options
+      responses:
+        "200":
+          description: Upgrade initiated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+      summary: Upgrade the sandbox-api
+      tags:
+        - system
   "/watch/filesystem/{path}":
     get:
       description: Streams the path of modified files (one per line) in the given directory. Closes when the client disconnects.
@@ -1423,11 +1314,13 @@ paths:
       tags:
         - filesystem
 servers:
-  - url: https://run.blaxel.ai/{workspace_id}/sandboxes/{sandbox_id}
+  - url: https://sbx-{sandbox_id}-{workspace_id}.{region}.bl.run
     variables:
+      sandbox_id:
+        default: unknown
       workspace_id:
         default: unknown
-      sandbox_id:
+      region:
         default: unknown
 components:
   requestBodies:
@@ -1484,6 +1377,49 @@ components:
               console.log('Hello', world);
             }
           type: string
+      type: object
+    ContentSearchMatch:
+      properties:
+        column:
+          example: 10
+          type: integer
+        context:
+          example: |-
+            previous line
+            current line
+            next line
+          type: string
+        line:
+          example: 42
+          type: integer
+        path:
+          example: src/main.go
+          type: string
+        text:
+          example: const searchText = 'example'
+          type: string
+      required:
+        - column
+        - line
+        - path
+        - text
+      type: object
+    ContentSearchResponse:
+      properties:
+        matches:
+          items:
+            $ref: "#/components/schemas/ContentSearchMatch"
+          type: array
+        query:
+          example: searchText
+          type: string
+        total:
+          example: 5
+          type: integer
+      required:
+        - matches
+        - query
+        - total
       type: object
     Directory:
       properties:
@@ -1579,116 +1515,112 @@ components:
         - permissions
         - size
       type: object
-    GitAddRequest:
+    FindMatch:
       properties:
-        files:
-          example:
-            - file1.txt
-            - file2.txt
-          items:
-            type: string
-          type: array
-      required:
-        - files
-      type: object
-    GitBranchRequest:
-      properties:
-        name:
-          example: feature/new-feature
-          type: string
-      required:
-        - name
-      type: object
-    GitBranchesResponse:
-      properties:
-        branches:
-          example:
-            - main
-            - develop
-            - feature/new-feature
-          items:
-            type: string
-          type: array
-      type: object
-    GitCloneRequest:
-      properties:
-        branch:
-          example: main
-          type: string
-        password:
-          example: personal_access_token
-          type: string
         path:
-          example: workspace/repo
+          example: src/main.go
           type: string
-        url:
-          example: https://github.com/user/repo.git
-          type: string
-        username:
-          example: git
+        type:
+          description: '"file" or "directory"'
+          example: file
           type: string
       required:
         - path
-        - url
+        - type
       type: object
-    GitCloneResponse:
+    FindResponse:
       properties:
-        message:
-          example: Repository cloned successfully
-          type: string
+        matches:
+          items:
+            $ref: "#/components/schemas/FindMatch"
+          type: array
+        total:
+          example: 5
+          type: integer
+      required:
+        - matches
+        - total
+      type: object
+    FuzzySearchMatch:
+      properties:
         path:
-          example: workspace/repo
+          example: src/main.go
           type: string
-      type: object
-    GitCommitRequest:
-      properties:
-        author:
-          example: John Doe
-          type: string
-        email:
-          example: john@example.com
-          type: string
-        message:
-          example: "feat: add new feature"
+        score:
+          example: 100
+          type: integer
+        type:
+          description: '"file" or "directory"'
+          example: file
           type: string
       required:
-        - author
-        - email
-        - message
+        - path
+        - score
+        - type
       type: object
-    GitCommitResponse:
+    FuzzySearchResponse:
       properties:
-        commitHash:
-          example: abc123def456
-          type: string
-        message:
-          example: Commit created successfully
-          type: string
-      type: object
-    GitPushPullRequest:
-      properties:
-        password:
-          example: personal_access_token
-          type: string
-        username:
-          example: git
-          type: string
-      type: object
-    GitStatusResponse:
-      properties:
-        ahead:
-          example: 2
+        matches:
+          items:
+            $ref: "#/components/schemas/FuzzySearchMatch"
+          type: array
+        total:
+          example: 5
           type: integer
-        behind:
+      required:
+        - matches
+        - total
+      type: object
+    HealthResponse:
+      properties:
+        arch:
+          example: amd64
+          type: string
+        buildTime:
+          example: 2026-01-29T17:36:52Z
+          type: string
+        gitCommit:
+          example: abc123
+          type: string
+        goVersion:
+          example: go1.25.0
+          type: string
+        lastUpgrade:
+          $ref: "#/components/schemas/UpgradeStatus"
+        os:
+          example: linux
+          type: string
+        startedAt:
+          example: 2026-01-29T18:45:49Z
+          type: string
+        status:
+          example: ok
+          type: string
+        upgradeCount:
           example: 0
           type: integer
-        currentBranch:
-          example: main
+        uptime:
+          example: 1h30m
           type: string
-        fileStatus:
-          items:
-            $ref: "#/components/schemas/git.FileStatus"
-          type: array
+        uptimeSeconds:
+          example: 5400.5
+          type: number
+        version:
+          example: v0.1.0
+          type: string
+      required:
+        - arch
+        - buildTime
+        - gitCommit
+        - goVersion
+        - lastUpgrade
+        - os
+        - startedAt
+        - status
+        - upgradeCount
+        - uptime
+        - uptimeSeconds
+        - version
       type: object
     MultipartCompleteRequest:
       properties:
@@ -1853,6 +1785,12 @@ components:
             - completed
           example: running
           type: string
+        stderr:
+          example: stderr output
+          type: string
+        stdout:
+          example: stdout output
+          type: string
         workingDir:
           example: /home/user
           type: string
@@ -1861,13 +1799,12 @@ components:
         - completedAt
         - exitCode
         - logs
-        - maxRestarts
         - name
         - pid
-        - restartCount
-        - restartOnFailure
         - startedAt
         - status
+        - stderr
+        - stdout
         - workingDir
       type: object
     RankedFile:
@@ -1913,17 +1850,65 @@ components:
       required:
         - message
       type: object
-    WelcomeResponse:
+    TreeRequest:
       properties:
-        description:
-          example: This sandbox provides a full-featured environment for running code securely
+        files:
+          additionalProperties:
+            type: string
+          example:
+            '"dir/file2.txt"': '"content2"}'
+            "{\"file1.txt\"": '"content1"'
+          type: object
+      type: object
+    UpgradeRequest:
+      properties:
+        baseUrl:
+          description: Base URL for releases (useful for forks)
+          example: https://github.com/blaxel-ai/sandbox/releases
           type: string
-        documentation:
-          example: https://docs.blaxel.ai/Sandboxes/Overview
+        version:
+          description: 'Version to upgrade to: "develop", "main", "latest", or specific tag like "v1.0.0"'
+          example: develop
           type: string
-        message:
-          example: Welcome to your Blaxel Sandbox
+      type: object
+    UpgradeStatus:
+      properties:
+        binaryPath:
+          description: Path to downloaded binary
+          example: /tmp/sandbox-api-new
           type: string
+        bytesDownloaded:
+          description: Bytes downloaded
+          example: 25034936
+          type: integer
+        downloadUrl:
+          description: URL used for download
+          example: https://github.com/...
+          type: string
+        error:
+          description: Error message if failed
+          example: Failed to download binary
+          type: string
+        lastAttempt:
+          description: When the upgrade was attempted
+          type: string
+        status:
+          allOf:
+            - $ref: "#/components/schemas/process.UpgradeState"
+          description: Current state (idle, running, completed, failed)
+          example: running
+        step:
+          description: Current/last step (none, starting, download, validate, replace, completed, skipped)
+          example: download
+          type: string
+        version:
+          description: Version being upgraded to
+          example: latest
+          type: string
+      required:
+        - status
+        - step
+        - version
       type: object
     filesystem.MultipartUpload:
       properties:
@@ -1957,16 +1942,27 @@ components:
         uploadedAt:
           type: string
       type: object
-    git.FileStatus:
-      properties:
-        name:
-          type: string
-        staging:
-          description: '"modified", "added", "deleted", "renamed", "untracked"'
-          type: string
-        worktree:
-          description: '"modified", "added", "deleted", "renamed", "untracked"'
-          type: string
-      type: object
+    process.UpgradeState:
+      enum:
+        - idle
+        - running
+        - completed
+        - failed
+      type: string
+      x-enum-comments:
+        UpgradeStateCompleted: Upgrade completed successfully
+        UpgradeStateFailed: Upgrade failed
+        UpgradeStateIdle: No upgrade in progress
+        UpgradeStateRunning: Upgrade is currently running
+      x-enum-descriptions:
+        - No upgrade in progress
+        - Upgrade is currently running
+        - Upgrade completed successfully
+        - Upgrade failed
+      x-enum-varnames:
+        - UpgradeStateIdle
+        - UpgradeStateRunning
+        - UpgradeStateCompleted
+        - UpgradeStateFailed
 security:
   - BearerAuth: []

@@ -2,8 +2,10 @@ package tests
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"sync"
@@ -262,7 +264,7 @@ func TestProcessKillByName(t *testing.T) {
 func TestProcessOutputByName(t *testing.T) {
 	// Create a process with output
 	processRequest := map[string]interface{}{
-		"command":           "echo 'test output' && echo 'test error' >&2",
+		"command":           "echo 'test output'; echo 'test error' >&2",
 		"waitForCompletion": true,
 		"cwd":               "/",
 	}
@@ -298,7 +300,10 @@ func TestProcessOutputByName(t *testing.T) {
 
 	assert.Equal(t, "test output\n", outputResponse["stdout"])
 	assert.Equal(t, "test error\n", outputResponse["stderr"])
-	assert.Equal(t, "test output\ntest error\n", outputResponse["logs"])
+	// logs contains both stdout and stderr, but order is non-deterministic
+	logs := outputResponse["logs"].(string)
+	assert.Contains(t, logs, "test output\n")
+	assert.Contains(t, logs, "test error\n")
 }
 
 func TestProcessStreamLogs(t *testing.T) {
@@ -833,4 +838,443 @@ func TestProcessNonExistentWorkingDirectory(t *testing.T) {
 		logs := processResponse["logs"].(string)
 		assert.True(t, strings.Contains(logs, "/tmp"), "Logs should contain /tmp path")
 	})
+}
+
+// StreamEvent represents a JSON streaming event
+type StreamEvent struct {
+	Type string `json:"type"`
+	Data string `json:"data,omitempty"`
+}
+
+// parseStreamEvents reads newline-delimited JSON events from a response body
+func parseStreamEvents(t *testing.T, resp *http.Response) ([]StreamEvent, map[string]interface{}) {
+	reader := bufio.NewReader(resp.Body)
+	events := []StreamEvent{}
+	var result map[string]interface{}
+
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			break
+		}
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+
+		var event StreamEvent
+		if err := json.Unmarshal([]byte(line), &event); err != nil {
+			t.Logf("Failed to parse event: %s", line)
+			continue
+		}
+		events = append(events, event)
+
+		// If this is the result event, parse the nested JSON
+		if event.Type == "result" {
+			if err := json.Unmarshal([]byte(event.Data), &result); err != nil {
+				t.Logf("Failed to parse result data: %s", event.Data)
+			}
+			break
+		}
+	}
+
+	return events, result
+}
+
+// TestProcessExecuteWithStreaming tests the streaming execution endpoint
+func TestProcessExecuteWithStreaming(t *testing.T) {
+	t.Log("=== Testing process execution with streaming ===")
+
+	t.Run("basic streaming execution", func(t *testing.T) {
+		processRequest := map[string]interface{}{
+			"command": "echo 'line1' && echo 'line2' && echo 'line3' && sleep 1 && echo 'line4' && echo 'error line' >&2",
+			"cwd":     "/",
+		}
+
+		resp, err := makeRequestWithHeaders(http.MethodPost, "/process", processRequest, map[string]string{
+			"Accept": "text/event-stream",
+		})
+		require.NoError(t, err)
+		defer resp.Body.Close()
+
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+		assert.Equal(t, "application/x-ndjson", resp.Header.Get("Content-Type"))
+
+		events, result := parseStreamEvents(t, resp)
+
+		// Collect all stdout and stderr data from events
+		var allStdoutData string
+		var allStderrData string
+		for _, event := range events {
+			if event.Type == "stdout" {
+				allStdoutData += event.Data
+			}
+			if event.Type == "stderr" {
+				allStderrData += event.Data
+			}
+		}
+
+		// Verify streamed stdout contains all lines (may come in single or multiple events)
+		assert.Contains(t, allStdoutData, "line1", "streamed stdout should contain line1")
+		assert.Contains(t, allStdoutData, "line2", "streamed stdout should contain line2")
+		assert.Contains(t, allStdoutData, "line3", "streamed stdout should contain line3")
+		assert.Contains(t, allStdoutData, "line4", "streamed stdout should contain line4")
+
+		// Verify streamed stderr contains error line
+		assert.Contains(t, allStderrData, "error line", "streamed stderr should contain error line")
+
+		// Verify we received the result
+		require.NotNil(t, result, "should receive result")
+
+		assert.Contains(t, result, "pid")
+		assert.Contains(t, result, "status")
+		assert.Equal(t, "completed", result["status"])
+		assert.Equal(t, float64(0), result["exitCode"])
+
+		// Verify stdout, stderr, and logs are present separately in result
+		assert.Contains(t, result, "stdout")
+		assert.Contains(t, result, "stderr")
+		assert.Contains(t, result, "logs")
+
+		stdout := result["stdout"].(string)
+		stderr := result["stderr"].(string)
+		logs := result["logs"].(string)
+
+		assert.Contains(t, stdout, "line1")
+		assert.Contains(t, stdout, "line4")
+		assert.Contains(t, stderr, "error line")
+		assert.Contains(t, logs, "line1")
+		assert.Contains(t, logs, "error line")
+	})
+
+	t.Run("streaming with stderr", func(t *testing.T) {
+		processRequest := map[string]interface{}{
+			"command": "echo 'stdout line' && echo 'stderr line' >&2",
+			"cwd":     "/",
+		}
+
+		resp, err := makeRequestWithHeaders(http.MethodPost, "/process", processRequest, map[string]string{
+			"Accept": "text/event-stream",
+		})
+		require.NoError(t, err)
+		defer resp.Body.Close()
+
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+		events, result := parseStreamEvents(t, resp)
+
+		// Check for stdout and stderr events
+		hasStdout := false
+		hasStderr := false
+		for _, event := range events {
+			if event.Type == "stdout" && strings.Contains(event.Data, "stdout line") {
+				hasStdout = true
+			}
+			if event.Type == "stderr" && strings.Contains(event.Data, "stderr line") {
+				hasStderr = true
+			}
+		}
+
+		assert.True(t, hasStdout, "should receive stdout event in stream")
+		assert.True(t, hasStderr, "should receive stderr event in stream")
+		require.NotNil(t, result, "should receive result")
+
+		// Verify result contains separate stdout, stderr, logs
+		assert.Contains(t, result, "stdout")
+		assert.Contains(t, result, "stderr")
+		assert.Contains(t, result, "logs")
+
+		stdout := result["stdout"].(string)
+		stderr := result["stderr"].(string)
+
+		assert.Contains(t, stdout, "stdout line")
+		assert.Contains(t, stderr, "stderr line")
+		assert.NotContains(t, stdout, "stderr line", "stdout should not contain stderr content")
+		assert.NotContains(t, stderr, "stdout line", "stderr should not contain stdout content")
+	})
+
+	t.Run("streaming with failing process", func(t *testing.T) {
+		processRequest := map[string]interface{}{
+			"command": "echo 'before fail' && exit 42",
+			"cwd":     "/",
+		}
+
+		resp, err := makeRequestWithHeaders(http.MethodPost, "/process", processRequest, map[string]string{
+			"Accept": "text/event-stream",
+		})
+		require.NoError(t, err)
+		defer resp.Body.Close()
+
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+		_, result := parseStreamEvents(t, resp)
+
+		require.NotNil(t, result, "should receive result")
+
+		assert.Equal(t, "failed", result["status"])
+		assert.Equal(t, float64(42), result["exitCode"])
+	})
+
+	t.Run("streaming with named process", func(t *testing.T) {
+		processName := fmt.Sprintf("test-stream-%d", time.Now().UnixNano())
+		processRequest := map[string]interface{}{
+			"name":    processName,
+			"command": "echo 'hello streaming'",
+			"cwd":     "/",
+		}
+
+		resp, err := makeRequestWithHeaders(http.MethodPost, "/process", processRequest, map[string]string{
+			"Accept": "text/event-stream",
+		})
+		require.NoError(t, err)
+		defer resp.Body.Close()
+
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+		_, result := parseStreamEvents(t, resp)
+
+		require.NotNil(t, result, "should receive result")
+
+		assert.Equal(t, processName, result["name"])
+		assert.Equal(t, "completed", result["status"])
+	})
+
+	t.Run("non-streaming request still works", func(t *testing.T) {
+		// Verify that regular requests without Accept: text/event-stream still return JSON
+		processRequest := map[string]interface{}{
+			"command":           "echo 'regular request'",
+			"cwd":               "/",
+			"waitForCompletion": true,
+		}
+
+		resp, err := common.MakeRequest(http.MethodPost, "/process", processRequest)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+		// Should return JSON, not streaming
+		assert.Contains(t, resp.Header.Get("Content-Type"), "application/json")
+
+		var result map[string]interface{}
+		err = json.NewDecoder(resp.Body).Decode(&result)
+		require.NoError(t, err)
+
+		assert.Equal(t, "completed", result["status"])
+	})
+}
+
+// TestWaitForPorts tests starting a process with waitForPorts and verifying the port is callable
+func TestWaitForPorts(t *testing.T) {
+	const port = 3010
+	processName := "test-waitforports"
+
+	// Kill the process if it already exists
+	t.Logf("Cleaning up any existing process named %s", processName)
+	resp, _ := common.MakeRequest(http.MethodDelete, "/process/"+processName+"/kill", nil)
+	if resp != nil {
+		resp.Body.Close()
+	}
+	time.Sleep(500 * time.Millisecond)
+
+	t.Logf("Starting simple HTTP server on port %d with waitForPorts (server starts after 2s dela)", port)
+
+	// Simple Python HTTP server that starts after 2 seconds and returns "OK" on root endpoint
+	command := fmt.Sprintf(`sleep 2 && python3 -c "
+from http.server import HTTPServer, BaseHTTPRequestHandler
+class H(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header('Content-type', 'text/plain')
+        self.end_headers()
+        self.wfile.write(b'OK')
+    def log_message(self, format, *args):
+        pass
+HTTPServer(('', %d), H).serve_forever()
+"`, port)
+
+	processRequest := map[string]interface{}{
+		"name":         processName,
+		"command":      command,
+		"workingDir":   "/",
+		"waitForPorts": []int{port},
+		"timeout":      30,
+	}
+
+	// Use a client with longer timeout since waitForPorts waits for the port
+	resp, err := common.MakeRequestWithTimeout(http.MethodPost, "/process", processRequest, 60*time.Second)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var processResponse map[string]interface{}
+	err = json.NewDecoder(resp.Body).Decode(&processResponse)
+	require.NoError(t, err)
+
+	require.Contains(t, processResponse, "pid")
+	require.Contains(t, processResponse, "name")
+	assert.Equal(t, processName, processResponse["name"])
+
+	t.Logf("Process started with PID: %s, status: %v", processResponse["pid"], processResponse["status"])
+
+	// The endpoint has returned, meaning waitForPorts has completed
+	// Now immediately check that localhost:PORT is callable
+	t.Logf("Checking if localhost:%d is callable...", port)
+
+	client := &http.Client{
+		Timeout: 5 * time.Second,
+	}
+
+	httpResp, err := client.Get(fmt.Sprintf("http://localhost:%d", port))
+	require.NoError(t, err, "localhost:%d should be callable immediately after waitForPorts returns", port)
+	defer httpResp.Body.Close()
+
+	t.Logf("Got HTTP response status: %d", httpResp.StatusCode)
+	assert.Equal(t, http.StatusOK, httpResp.StatusCode, "Expected 200 OK from simple HTTP server")
+
+	// Read response body
+	body, err := io.ReadAll(httpResp.Body)
+	require.NoError(t, err)
+	assert.Equal(t, "OK", string(body), "Expected 'OK' response from simple HTTP server")
+
+	// Cleanup: kill the process
+	t.Logf("Cleaning up: killing process %s", processName)
+	resp, err = common.MakeRequest(http.MethodDelete, "/process/"+processName+"/kill", nil)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	// Wait for cleanup
+	time.Sleep(500 * time.Millisecond)
+
+	// Verify process is killed
+	resp, err = common.MakeRequest(http.MethodGet, "/process/"+processName, nil)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	var processDetails map[string]interface{}
+	err = json.NewDecoder(resp.Body).Decode(&processDetails)
+	require.NoError(t, err)
+
+	assert.Equal(t, "killed", processDetails["status"], "Process should be killed after cleanup")
+	t.Log("Test passed: HTTP server started successfully and port was immediately callable after waitForPorts returned")
+}
+
+// TestProcessTimeoutWithWaitForCompletion tests that when a process times out with waitForCompletion,
+// the API returns an error but the process continues running and can be retrieved
+func TestProcessTimeoutWithWaitForCompletion(t *testing.T) {
+	t.Log("=== Testing process timeout with waitForCompletion ===")
+
+	processName := fmt.Sprintf("test-timeout-%d", time.Now().UnixNano())
+
+	// Start a long-running process with a short timeout
+	processRequest := map[string]interface{}{
+		"name":              processName,
+		"command":           "sleep 30", // Will run longer than the timeout
+		"cwd":               "/",
+		"waitForCompletion": true,
+		"timeout":           1, // Short timeout to trigger the timeout behavior
+	}
+
+	t.Log("Starting process with short timeout...")
+	startTime := time.Now()
+	resp, err := common.MakeRequestWithTimeout(http.MethodPost, "/process", processRequest, 10*time.Second)
+	elapsed := time.Since(startTime)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	t.Logf("Response received after %v", elapsed)
+
+	// Verify the timeout actually triggered - response should come back in ~3 seconds, not 30
+	assert.Less(t, elapsed, 2*time.Second, "Response should return within 4 seconds (timeout is 3s)")
+	assert.GreaterOrEqual(t, elapsed, 1*time.Second, "Response should take at least 3 seconds (the timeout duration)")
+
+	// The request should return 422 (Unprocessable Entity) on timeout
+	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, "Should return 422 on timeout")
+
+	var errorResponse map[string]interface{}
+	err = json.NewDecoder(resp.Body).Decode(&errorResponse)
+	require.NoError(t, err)
+
+	t.Logf("Error response: %+v", errorResponse)
+
+	// Verify error message indicates timeout
+	require.Contains(t, errorResponse, "error", "Response should contain error")
+	errorMsg := errorResponse["error"].(string)
+	assert.Contains(t, errorMsg, "timed out", "Error message should mention timeout")
+
+	// The process should still be running even though the API returned an error
+	// We can retrieve it by name
+	t.Log("Verifying process is still accessible and running...")
+	resp, err = common.MakeRequest(http.MethodGet, "/process/"+processName, nil)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var processDetails map[string]interface{}
+	err = json.NewDecoder(resp.Body).Decode(&processDetails)
+	require.NoError(t, err)
+
+	assert.Equal(t, "running", processDetails["status"], "Process should still be running after timeout error")
+	assert.Equal(t, processName, processDetails["name"], "Process name should match")
+
+	pid := processDetails["pid"].(string)
+	t.Logf("Process PID: %s, Status: %s", pid, processDetails["status"])
+
+	// Cleanup: kill the process
+	t.Log("Cleaning up: killing process...")
+	resp, err = common.MakeRequest(http.MethodDelete, "/process/"+processName+"/kill", nil)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	// Wait for cleanup
+	time.Sleep(500 * time.Millisecond)
+
+	// Verify process is killed
+	resp, err = common.MakeRequest(http.MethodGet, "/process/"+processName, nil)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	err = json.NewDecoder(resp.Body).Decode(&processDetails)
+	require.NoError(t, err)
+
+	assert.Equal(t, "killed", processDetails["status"], "Process should be killed after cleanup")
+	t.Log("✓ Test passed: Process timeout returns error but process continues running and is accessible")
+}
+
+// makeRequestWithHeaders makes an HTTP request with custom headers
+func makeRequestWithHeaders(method, path string, body interface{}, headers map[string]string) (*http.Response, error) {
+	var bodyReader io.Reader
+
+	if body != nil {
+		jsonData, err := json.Marshal(body)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling JSON: %w", err)
+		}
+		bodyReader = bytes.NewBuffer(jsonData)
+	}
+
+	req, err := http.NewRequest(method, common.BaseURL+path, bodyReader)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+
+	for key, value := range headers {
+		req.Header.Set(key, value)
+	}
+
+	// Use a client with longer timeout for streaming
+	client := &http.Client{
+		Timeout: 30 * time.Second,
+	}
+
+	return client.Do(req)
 }

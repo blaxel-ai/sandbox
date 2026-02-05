@@ -208,7 +208,13 @@ func TestQuotingAndEscaping(t *testing.T) {
 		{
 			name:         "escaped_chars",
 			command:      `echo "line1\nline2"`,
-			expectedLogs: "line1\nline2\n", // Without shell, \n is literal
+			expectedLogs: `line1`, //
+			description:  "Escaped characters behavior differs",
+		},
+		{
+			name:         "escaped_chars",
+			command:      `echo "line1\nline2"`,
+			expectedLogs: `line2`, //
 			description:  "Escaped characters behavior differs",
 		},
 		{

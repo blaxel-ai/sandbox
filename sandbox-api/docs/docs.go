@@ -15,116 +15,6 @@ const docTemplate = `{
     "host": "{{.Host}}",
     "basePath": "{{.BasePath}}",
     "paths": {
-        "/": {
-            "get": {
-                "description": "Returns a welcome message with links to documentation",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "root"
-                ],
-                "summary": "Welcome message",
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/WelcomeResponse"
-                        }
-                    }
-                }
-            },
-            "put": {
-                "description": "Returns a welcome message with links to documentation",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "root"
-                ],
-                "summary": "Welcome message",
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/WelcomeResponse"
-                        }
-                    }
-                }
-            },
-            "post": {
-                "description": "Returns a welcome message with links to documentation",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "root"
-                ],
-                "summary": "Welcome message",
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/WelcomeResponse"
-                        }
-                    }
-                }
-            },
-            "delete": {
-                "description": "Returns a welcome message with links to documentation",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "root"
-                ],
-                "summary": "Welcome message",
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/WelcomeResponse"
-                        }
-                    }
-                }
-            },
-            "options": {
-                "description": "Returns a welcome message with links to documentation",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "root"
-                ],
-                "summary": "Welcome message",
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/WelcomeResponse"
-                        }
-                    }
-                }
-            },
-            "patch": {
-                "description": "Returns a welcome message with links to documentation",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "root"
-                ],
-                "summary": "Welcome message",
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/WelcomeResponse"
-                        }
-                    }
-                }
-            }
-        },
         "/codegen/fastapply/{path}": {
             "put": {
                 "description": "Uses the configured LLM provider (Relace or Morph) to apply a code edit to the original content.\n\nTo use this endpoint as an agent tool, follow these guidelines:\n\nUse this tool to make an edit to an existing file. This will be read by a less intelligent model, which will quickly apply the edit. You should make it clear what the edit is, while also minimizing the unchanged code you write.\n\nWhen writing the edit, you should specify each edit in sequence, with the special comment \"// ... existing code ...\" to represent unchanged code in between edited lines.\n\nExample format:\n// ... existing code ...\nFIRST_EDIT\n// ... existing code ...\nSECOND_EDIT\n// ... existing code ...\nTHIRD_EDIT\n// ... existing code ...\n\nYou should still bias towards repeating as few lines of the original file as possible to convey the change. But, each edit should contain minimally sufficient context of unchanged lines around the code you're editing to resolve ambiguity.\n\nDO NOT omit spans of pre-existing code (or comments) without using the \"// ... existing code ...\" comment to indicate its absence. If you omit the existing code comment, the model may inadvertently delete these lines.\n\nIf you plan on deleting a section, you must provide context before and after to delete it. If the initial code is \"Block 1\\nBlock 2\\nBlock 3\", and you want to remove Block 2, you would output \"// ... existing code ...\\nBlock 1\\nBlock 3\\n// ... existing code ...\".\n\nMake sure it is clear what the edit should be, and where it should be applied. Make edits to a file in a single edit_file call instead of multiple edit_file calls to the same file. The apply model can handle many distinct edits at once.",
@@ -249,6 +139,167 @@ const docTemplate = `{
                     },
                     "503": {
                         "description": "Service unavailable - Relace not configured",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/filesystem-content-search/{path}": {
+            "get": {
+                "description": "Searches for text content inside files using ripgrep. Returns matching lines with context.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "filesystem"
+                ],
+                "summary": "Search for text content in files",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Directory path to search in",
+                        "name": "path",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Text to search for",
+                        "name": "query",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "Case sensitive search (default: false)",
+                        "name": "caseSensitive",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Maximum number of results to return (default: 100)",
+                        "name": "maxResults",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "File pattern to include (e.g., *.go)",
+                        "name": "filePattern",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Comma-separated directory names to skip (default: node_modules,vendor,.git,dist,build,target,__pycache__,.venv,.next,coverage)",
+                        "name": "excludeDirs",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Content search results",
+                        "schema": {
+                            "$ref": "#/definitions/ContentSearchResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable entity",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/filesystem-find/{path}": {
+            "get": {
+                "description": "Finds files and directories using the find command.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "filesystem"
+                ],
+                "summary": "Find files and directories",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Path to search in (e.g., /home/user/projects)",
+                        "name": "path",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Type of search (file or directory)",
+                        "name": "type",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Comma-separated file patterns to include (e.g., *.go,*.js)",
+                        "name": "patterns",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Maximum number of results to return (default: 20). If set to 0, all results will be returned.",
+                        "name": "maxResults",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Comma-separated directory names to skip (default: node_modules,vendor,.git,dist,build,target,__pycache__,.venv,.next,coverage). Use empty string to skip no directories.",
+                        "name": "excludeDirs",
+                        "in": "query"
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "Exclude hidden files and directories (default: true)",
+                        "name": "excludeHidden",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Find results",
+                        "schema": {
+                            "$ref": "#/definitions/FindResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable entity",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
                         "schema": {
                             "$ref": "#/definitions/ErrorResponse"
                         }
@@ -551,6 +602,241 @@ const docTemplate = `{
                 }
             }
         },
+        "/filesystem-search/{path}": {
+            "get": {
+                "description": "Performs fuzzy search on filesystem paths using fuzzy matching algorithm. Optimized alternative to find and grep commands.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "filesystem"
+                ],
+                "summary": "Fuzzy search for files and directories",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Path to search in (e.g., /home/user/projects)",
+                        "name": "path",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Maximum number of results to return (default: 20)",
+                        "name": "maxResults",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Comma-separated file patterns to include (e.g., *.go,*.js)",
+                        "name": "patterns",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Comma-separated directory names to skip (default: node_modules,vendor,.git,dist,build,target,__pycache__,.venv,.next,coverage). Use empty string to skip no directories.",
+                        "name": "excludeDirs",
+                        "in": "query"
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "Exclude hidden files and directories (default: true)",
+                        "name": "excludeHidden",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Fuzzy search results",
+                        "schema": {
+                            "$ref": "#/definitions/FuzzySearchResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable entity",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/filesystem/tree/{path}": {
+            "get": {
+                "description": "Get a recursive directory tree structure starting from the specified path",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "filesystem"
+                ],
+                "summary": "Get directory tree",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Root directory path",
+                        "name": "path",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Directory tree",
+                        "schema": {
+                            "$ref": "#/definitions/Directory"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable entity",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "put": {
+                "description": "Create or update multiple files within a directory tree structure",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "filesystem"
+                ],
+                "summary": "Create or update directory tree",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Root directory path",
+                        "name": "path",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Map of file paths to content",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/TreeRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Updated directory tree",
+                        "schema": {
+                            "$ref": "#/definitions/Directory"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable entity",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "description": "Delete a directory tree recursively",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "filesystem"
+                ],
+                "summary": "Delete directory tree",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Root directory path",
+                        "name": "path",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "Delete directory recursively",
+                        "name": "recursive",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Directory deleted successfully",
+                        "schema": {
+                            "$ref": "#/definitions/SuccessResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable entity",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/filesystem/{path}": {
             "get": {
                 "description": "Get content of a file or listing of a directory. Use Accept header to control response format for files.",
@@ -719,544 +1005,21 @@ const docTemplate = `{
                 }
             }
         },
-        "/git/add/{path}": {
-            "post": {
-                "description": "Add files to the staging area",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "git"
-                ],
-                "summary": "Stage files",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Repository path",
-                        "name": "path",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "description": "Files to stage",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/GitAddRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "Files staged successfully",
-                        "schema": {
-                            "$ref": "#/definitions/SuccessResponse"
-                        }
-                    },
-                    "400": {
-                        "description": "Bad request",
-                        "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
-                        }
-                    },
-                    "422": {
-                        "description": "Unprocessable entity",
-                        "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal server error",
-                        "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
-                        }
-                    }
-                }
-            }
-        },
-        "/git/branch/{name}/{path}": {
-            "put": {
-                "description": "Switch to a different branch in a git repository",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "git"
-                ],
-                "summary": "Checkout a branch",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Branch name",
-                        "name": "name",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Repository path",
-                        "name": "path",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "Branch checked out successfully",
-                        "schema": {
-                            "$ref": "#/definitions/SuccessResponse"
-                        }
-                    },
-                    "400": {
-                        "description": "Bad request",
-                        "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
-                        }
-                    },
-                    "422": {
-                        "description": "Unprocessable entity",
-                        "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal server error",
-                        "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
-                        }
-                    }
-                }
-            },
-            "delete": {
-                "description": "Delete a branch from a git repository",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "git"
-                ],
-                "summary": "Delete a branch",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Branch name",
-                        "name": "name",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Repository path",
-                        "name": "path",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "Branch deleted successfully",
-                        "schema": {
-                            "$ref": "#/definitions/SuccessResponse"
-                        }
-                    },
-                    "400": {
-                        "description": "Bad request",
-                        "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
-                        }
-                    },
-                    "422": {
-                        "description": "Unprocessable entity",
-                        "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal server error",
-                        "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
-                        }
-                    }
-                }
-            }
-        },
-        "/git/branches/{path}": {
+        "/health": {
             "get": {
-                "description": "List all branches in a git repository",
+                "description": "Returns health status and system information including upgrade count and binary details\nAlso includes last upgrade attempt status with detailed error information if available",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
-                    "git"
+                    "system"
                 ],
-                "summary": "List branches",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Repository path",
-                        "name": "path",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
+                "summary": "Health check",
                 "responses": {
                     "200": {
-                        "description": "List of branches",
+                        "description": "Health status",
                         "schema": {
-                            "$ref": "#/definitions/GitBranchesResponse"
-                        }
-                    },
-                    "400": {
-                        "description": "Bad request",
-                        "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
-                        }
-                    },
-                    "422": {
-                        "description": "Unprocessable entity",
-                        "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal server error",
-                        "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
-                        }
-                    }
-                }
-            },
-            "post": {
-                "description": "Create a new branch in a git repository",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "git"
-                ],
-                "summary": "Create a new branch",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Repository path",
-                        "name": "path",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "description": "Branch name",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/GitBranchRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "Branch created successfully",
-                        "schema": {
-                            "$ref": "#/definitions/SuccessResponse"
-                        }
-                    },
-                    "400": {
-                        "description": "Bad request",
-                        "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
-                        }
-                    },
-                    "422": {
-                        "description": "Unprocessable entity",
-                        "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal server error",
-                        "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
-                        }
-                    }
-                }
-            }
-        },
-        "/git/clone": {
-            "post": {
-                "description": "Clone a git repository to the specified path",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "git"
-                ],
-                "summary": "Clone a git repository",
-                "parameters": [
-                    {
-                        "description": "Clone request",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/GitCloneRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "Repository cloned successfully",
-                        "schema": {
-                            "$ref": "#/definitions/GitCloneResponse"
-                        }
-                    },
-                    "400": {
-                        "description": "Bad request",
-                        "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
-                        }
-                    },
-                    "422": {
-                        "description": "Unprocessable entity",
-                        "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal server error",
-                        "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
-                        }
-                    }
-                }
-            }
-        },
-        "/git/commit/{path}": {
-            "post": {
-                "description": "Create a commit with staged changes",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "git"
-                ],
-                "summary": "Create a commit",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Repository path",
-                        "name": "path",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "description": "Commit details",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/GitCommitRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "Commit created successfully",
-                        "schema": {
-                            "$ref": "#/definitions/GitCommitResponse"
-                        }
-                    },
-                    "400": {
-                        "description": "Bad request",
-                        "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
-                        }
-                    },
-                    "422": {
-                        "description": "Unprocessable entity",
-                        "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal server error",
-                        "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
-                        }
-                    }
-                }
-            }
-        },
-        "/git/pull/{path}": {
-            "post": {
-                "description": "Pull commits from remote repository",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "git"
-                ],
-                "summary": "Pull commits",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Repository path",
-                        "name": "path",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "description": "Authentication credentials",
-                        "name": "request",
-                        "in": "body",
-                        "schema": {
-                            "$ref": "#/definitions/GitPushPullRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "Commits pulled successfully",
-                        "schema": {
-                            "$ref": "#/definitions/SuccessResponse"
-                        }
-                    },
-                    "400": {
-                        "description": "Bad request",
-                        "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
-                        }
-                    },
-                    "422": {
-                        "description": "Unprocessable entity",
-                        "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal server error",
-                        "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
-                        }
-                    }
-                }
-            }
-        },
-        "/git/push/{path}": {
-            "post": {
-                "description": "Push commits to remote repository",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "git"
-                ],
-                "summary": "Push commits",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Repository path",
-                        "name": "path",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "description": "Authentication credentials",
-                        "name": "request",
-                        "in": "body",
-                        "schema": {
-                            "$ref": "#/definitions/GitPushPullRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "Commits pushed successfully",
-                        "schema": {
-                            "$ref": "#/definitions/SuccessResponse"
-                        }
-                    },
-                    "400": {
-                        "description": "Bad request",
-                        "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
-                        }
-                    },
-                    "422": {
-                        "description": "Unprocessable entity",
-                        "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal server error",
-                        "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
-                        }
-                    }
-                }
-            }
-        },
-        "/git/status/{path}": {
-            "get": {
-                "description": "Get the status of a git repository",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "git"
-                ],
-                "summary": "Get repository status",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Repository path",
-                        "name": "path",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "Repository status",
-                        "schema": {
-                            "$ref": "#/definitions/GitStatusResponse"
-                        }
-                    },
-                    "400": {
-                        "description": "Bad request",
-                        "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
-                        }
-                    },
-                    "422": {
-                        "description": "Unprocessable entity",
-                        "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal server error",
-                        "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
+                            "$ref": "#/definitions/HealthResponse"
                         }
                     }
                 }
@@ -1448,12 +1211,13 @@ const docTemplate = `{
                 }
             },
             "post": {
-                "description": "Execute a command and return process information",
+                "description": "Execute a command and return process information. If Accept header is text/event-stream, streams logs in SSE format and returns the process response as a final event.",
                 "consumes": [
                     "application/json"
                 ],
                 "produces": [
-                    "application/json"
+                    "application/json",
+                    "text/event-stream"
                 ],
                 "tags": [
                     "process"
@@ -1731,6 +1495,45 @@ const docTemplate = `{
                 }
             }
         },
+        "/upgrade": {
+            "post": {
+                "description": "Triggers an upgrade of the sandbox-api process. Returns 200 immediately before upgrading.\nThe upgrade will: download the specified binary from GitHub releases, validate it, and restart.\nAll running processes will be preserved across the upgrade.\nAvailable versions: \"develop\" (default), \"main\", \"latest\", or specific tag like \"v1.0.0\"\nYou can also specify a custom baseUrl for forks (defaults to https://github.com/blaxel-ai/sandbox/releases)",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "system"
+                ],
+                "summary": "Upgrade the sandbox-api",
+                "parameters": [
+                    {
+                        "description": "Upgrade options",
+                        "name": "request",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/UpgradeRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Upgrade initiated",
+                        "schema": {
+                            "$ref": "#/definitions/SuccessResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/watch/filesystem/{path}": {
             "get": {
                 "description": "Streams the path of modified files (one per line) in the given directory. Closes when the client disconnects.",
@@ -1822,6 +1625,61 @@ const docTemplate = `{
                 "updatedContent": {
                     "type": "string",
                     "example": "function hello(world) {\n  console.log('Hello', world);\n}"
+                }
+            }
+        },
+        "ContentSearchMatch": {
+            "type": "object",
+            "required": [
+                "column",
+                "line",
+                "path",
+                "text"
+            ],
+            "properties": {
+                "column": {
+                    "type": "integer",
+                    "example": 10
+                },
+                "context": {
+                    "type": "string",
+                    "example": "previous line\ncurrent line\nnext line"
+                },
+                "line": {
+                    "type": "integer",
+                    "example": 42
+                },
+                "path": {
+                    "type": "string",
+                    "example": "src/main.go"
+                },
+                "text": {
+                    "type": "string",
+                    "example": "const searchText = 'example'"
+                }
+            }
+        },
+        "ContentSearchResponse": {
+            "type": "object",
+            "required": [
+                "matches",
+                "query",
+                "total"
+            ],
+            "properties": {
+                "matches": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/ContentSearchMatch"
+                    }
+                },
+                "query": {
+                    "type": "string",
+                    "example": "searchText"
+                },
+                "total": {
+                    "type": "integer",
+                    "example": 5
                 }
             }
         },
@@ -1958,162 +1816,148 @@ const docTemplate = `{
                 }
             }
         },
-        "GitAddRequest": {
-            "type": "object",
-            "required": [
-                "files"
-            ],
-            "properties": {
-                "files": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    },
-                    "example": [
-                        "file1.txt",
-                        "file2.txt"
-                    ]
-                }
-            }
-        },
-        "GitBranchRequest": {
-            "type": "object",
-            "required": [
-                "name"
-            ],
-            "properties": {
-                "name": {
-                    "type": "string",
-                    "example": "feature/new-feature"
-                }
-            }
-        },
-        "GitBranchesResponse": {
-            "type": "object",
-            "properties": {
-                "branches": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    },
-                    "example": [
-                        "main",
-                        "develop",
-                        "feature/new-feature"
-                    ]
-                }
-            }
-        },
-        "GitCloneRequest": {
+        "FindMatch": {
             "type": "object",
             "required": [
                 "path",
-                "url"
+                "type"
             ],
             "properties": {
-                "branch": {
-                    "type": "string",
-                    "example": "main"
-                },
-                "password": {
-                    "type": "string",
-                    "example": "personal_access_token"
-                },
                 "path": {
                     "type": "string",
-                    "example": "workspace/repo"
+                    "example": "src/main.go"
                 },
-                "url": {
+                "type": {
+                    "description": "\"file\" or \"directory\"",
                     "type": "string",
-                    "example": "https://github.com/user/repo.git"
-                },
-                "username": {
-                    "type": "string",
-                    "example": "git"
+                    "example": "file"
                 }
             }
         },
-        "GitCloneResponse": {
-            "type": "object",
-            "properties": {
-                "message": {
-                    "type": "string",
-                    "example": "Repository cloned successfully"
-                },
-                "path": {
-                    "type": "string",
-                    "example": "workspace/repo"
-                }
-            }
-        },
-        "GitCommitRequest": {
+        "FindResponse": {
             "type": "object",
             "required": [
-                "author",
-                "email",
-                "message"
+                "matches",
+                "total"
             ],
             "properties": {
-                "author": {
-                    "type": "string",
-                    "example": "John Doe"
+                "matches": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/FindMatch"
+                    }
                 },
-                "email": {
-                    "type": "string",
-                    "example": "john@example.com"
-                },
-                "message": {
-                    "type": "string",
-                    "example": "feat: add new feature"
-                }
-            }
-        },
-        "GitCommitResponse": {
-            "type": "object",
-            "properties": {
-                "commitHash": {
-                    "type": "string",
-                    "example": "abc123def456"
-                },
-                "message": {
-                    "type": "string",
-                    "example": "Commit created successfully"
-                }
-            }
-        },
-        "GitPushPullRequest": {
-            "type": "object",
-            "properties": {
-                "password": {
-                    "type": "string",
-                    "example": "personal_access_token"
-                },
-                "username": {
-                    "type": "string",
-                    "example": "git"
-                }
-            }
-        },
-        "GitStatusResponse": {
-            "type": "object",
-            "properties": {
-                "ahead": {
+                "total": {
                     "type": "integer",
-                    "example": 2
+                    "example": 5
+                }
+            }
+        },
+        "FuzzySearchMatch": {
+            "type": "object",
+            "required": [
+                "path",
+                "score",
+                "type"
+            ],
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "example": "src/main.go"
                 },
-                "behind": {
+                "score": {
+                    "type": "integer",
+                    "example": 100
+                },
+                "type": {
+                    "description": "\"file\" or \"directory\"",
+                    "type": "string",
+                    "example": "file"
+                }
+            }
+        },
+        "FuzzySearchResponse": {
+            "type": "object",
+            "required": [
+                "matches",
+                "total"
+            ],
+            "properties": {
+                "matches": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/FuzzySearchMatch"
+                    }
+                },
+                "total": {
+                    "type": "integer",
+                    "example": 5
+                }
+            }
+        },
+        "HealthResponse": {
+            "type": "object",
+            "required": [
+                "arch",
+                "buildTime",
+                "gitCommit",
+                "goVersion",
+                "lastUpgrade",
+                "os",
+                "startedAt",
+                "status",
+                "upgradeCount",
+                "uptime",
+                "uptimeSeconds",
+                "version"
+            ],
+            "properties": {
+                "arch": {
+                    "type": "string",
+                    "example": "amd64"
+                },
+                "buildTime": {
+                    "type": "string",
+                    "example": "2026-01-29T17:36:52Z"
+                },
+                "gitCommit": {
+                    "type": "string",
+                    "example": "abc123"
+                },
+                "goVersion": {
+                    "type": "string",
+                    "example": "go1.25.0"
+                },
+                "lastUpgrade": {
+                    "$ref": "#/definitions/UpgradeStatus"
+                },
+                "os": {
+                    "type": "string",
+                    "example": "linux"
+                },
+                "startedAt": {
+                    "type": "string",
+                    "example": "2026-01-29T18:45:49Z"
+                },
+                "status": {
+                    "type": "string",
+                    "example": "ok"
+                },
+                "upgradeCount": {
                     "type": "integer",
                     "example": 0
                 },
-                "currentBranch": {
+                "uptime": {
                     "type": "string",
-                    "example": "main"
+                    "example": "1h30m"
                 },
-                "fileStatus": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/git.FileStatus"
-                    }
+                "uptimeSeconds": {
+                    "type": "number",
+                    "example": 5400.5
+                },
+                "version": {
+                    "type": "string",
+                    "example": "v0.1.0"
                 }
             }
         },
@@ -2300,13 +2144,12 @@ const docTemplate = `{
                 "completedAt",
                 "exitCode",
                 "logs",
-                "maxRestarts",
                 "name",
                 "pid",
-                "restartCount",
-                "restartOnFailure",
                 "startedAt",
                 "status",
+                "stderr",
+                "stdout",
                 "workingDir"
             ],
             "properties": {
@@ -2360,6 +2203,14 @@ const docTemplate = `{
                         "completed"
                     ],
                     "example": "running"
+                },
+                "stderr": {
+                    "type": "string",
+                    "example": "stderr output"
+                },
+                "stdout": {
+                    "type": "string",
+                    "example": "stdout output"
                 },
                 "workingDir": {
                     "type": "string",
@@ -2431,20 +2282,86 @@ const docTemplate = `{
                 }
             }
         },
-        "WelcomeResponse": {
+        "TreeRequest": {
             "type": "object",
             "properties": {
-                "description": {
+                "files": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    },
+                    "example": {
+                        "\"dir/file2.txt\"": "\"content2\"}",
+                        "{\"file1.txt\"": "\"content1\""
+                    }
+                }
+            }
+        },
+        "UpgradeRequest": {
+            "type": "object",
+            "properties": {
+                "baseUrl": {
+                    "description": "Base URL for releases (useful for forks)",
                     "type": "string",
-                    "example": "This sandbox provides a full-featured environment for running code securely"
+                    "example": "https://github.com/blaxel-ai/sandbox/releases"
                 },
-                "documentation": {
+                "version": {
+                    "description": "Version to upgrade to: \"develop\", \"main\", \"latest\", or specific tag like \"v1.0.0\"",
                     "type": "string",
-                    "example": "https://docs.blaxel.ai/Sandboxes/Overview"
+                    "example": "develop"
+                }
+            }
+        },
+        "UpgradeStatus": {
+            "type": "object",
+            "required": [
+                "status",
+                "step",
+                "version"
+            ],
+            "properties": {
+                "binaryPath": {
+                    "description": "Path to downloaded binary",
+                    "type": "string",
+                    "example": "/tmp/sandbox-api-new"
                 },
-                "message": {
+                "bytesDownloaded": {
+                    "description": "Bytes downloaded",
+                    "type": "integer",
+                    "example": 25034936
+                },
+                "downloadUrl": {
+                    "description": "URL used for download",
                     "type": "string",
-                    "example": "Welcome to your Blaxel Sandbox"
+                    "example": "https://github.com/..."
+                },
+                "error": {
+                    "description": "Error message if failed",
+                    "type": "string",
+                    "example": "Failed to download binary"
+                },
+                "lastAttempt": {
+                    "description": "When the upgrade was attempted",
+                    "type": "string"
+                },
+                "status": {
+                    "description": "Current state (idle, running, completed, failed)",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/process.UpgradeState"
+                        }
+                    ],
+                    "example": "running"
+                },
+                "step": {
+                    "description": "Current/last step (none, starting, download, validate, replace, completed, skipped)",
+                    "type": "string",
+                    "example": "download"
+                },
+                "version": {
+                    "description": "Version being upgraded to",
+                    "type": "string",
+                    "example": "latest"
                 }
             }
         },
@@ -2494,21 +2411,32 @@ const docTemplate = `{
                 }
             }
         },
-        "git.FileStatus": {
-            "type": "object",
-            "properties": {
-                "name": {
-                    "type": "string"
-                },
-                "staging": {
-                    "description": "\"modified\", \"added\", \"deleted\", \"renamed\", \"untracked\"",
-                    "type": "string"
-                },
-                "worktree": {
-                    "description": "\"modified\", \"added\", \"deleted\", \"renamed\", \"untracked\"",
-                    "type": "string"
-                }
-            }
+        "process.UpgradeState": {
+            "type": "string",
+            "enum": [
+                "idle",
+                "running",
+                "completed",
+                "failed"
+            ],
+            "x-enum-comments": {
+                "UpgradeStateCompleted": "Upgrade completed successfully",
+                "UpgradeStateFailed": "Upgrade failed",
+                "UpgradeStateIdle": "No upgrade in progress",
+                "UpgradeStateRunning": "Upgrade is currently running"
+            },
+            "x-enum-descriptions": [
+                "No upgrade in progress",
+                "Upgrade is currently running",
+                "Upgrade completed successfully",
+                "Upgrade failed"
+            ],
+            "x-enum-varnames": [
+                "UpgradeStateIdle",
+                "UpgradeStateRunning",
+                "UpgradeStateCompleted",
+                "UpgradeStateFailed"
+            ]
         }
     },
     "securityDefinitions": {
@@ -2523,7 +2451,7 @@ const docTemplate = `{
 // SwaggerInfo holds exported Swagger Info so clients can modify it
 var SwaggerInfo = &swag.Spec{
 	Version:          "0.0.1",
-	Host:             "run.blaxel.ai/{workspace_id}/sandboxes/{sandbox_id}",
+	Host:             "sbx-{sandbox_id}-{workspace_id}.{region}.bl.run",
 	BasePath:         "",
 	Schemes:          []string{"https"},
 	Title:            "Sandbox API",

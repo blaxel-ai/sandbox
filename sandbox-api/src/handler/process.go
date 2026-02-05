@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -65,9 +67,11 @@ type ProcessResponse struct {
 	ExitCode         int     `json:"exitCode" example:"0" binding:"required"`
 	WorkingDir       string  `json:"workingDir" example:"/home/user" binding:"required"`
 	Logs             *string `json:"logs" example:"logs output" binding:"required"`
-	RestartOnFailure bool    `json:"restartOnFailure" example:"true" binding:"required"`
-	MaxRestarts      int     `json:"maxRestarts" example:"3" binding:"required"`
-	RestartCount     int     `json:"restartCount" example:"2" binding:"required"`
+	Stdout           *string `json:"stdout" example:"stdout output" binding:"required"`
+	Stderr           *string `json:"stderr" example:"stderr output" binding:"required"`
+	RestartOnFailure bool    `json:"restartOnFailure" example:"true"`
+	MaxRestarts      int     `json:"maxRestarts" example:"3"`
+	RestartCount     int     `json:"restartCount" example:"2"`
 } // @name ProcessResponse
 
 type ProcessResponseWithLogs struct {
@@ -83,7 +87,9 @@ type ProcessKillRequest struct {
 // ExecuteProcess executes a process
 func (h *ProcessHandler) ExecuteProcess(command string, workingDir string, name string, env map[string]string, waitForCompletion bool, timeout int, waitForPorts []int, restartOnFailure bool, maxRestarts int) (ProcessResponse, error) {
 	processInfo, err := h.processManager.ExecuteProcess(command, workingDir, name, env, waitForCompletion, timeout, waitForPorts, restartOnFailure, maxRestarts)
-	if err != nil {
+
+	// If processInfo is nil (process failed to start), return empty response with error
+	if processInfo == nil {
 		return ProcessResponse{}, err
 	}
 
@@ -92,6 +98,8 @@ func (h *ProcessHandler) ExecuteProcess(command string, workingDir string, name 
 		completedAt = processInfo.CompletedAt.Format("Mon, 02 Jan 2006 15:04:05 GMT")
 	}
 
+	// Return the process response even if there's an error (e.g., timeout)
+	// This allows callers to access process info for still-running processes
 	return ProcessResponse{
 		PID:              processInfo.PID,
 		Name:             processInfo.Name,
@@ -102,10 +110,12 @@ func (h *ProcessHandler) ExecuteProcess(command string, workingDir string, name 
 		ExitCode:         processInfo.ExitCode,
 		WorkingDir:       processInfo.WorkingDir,
 		Logs:             processInfo.Logs,
+		Stdout:           processInfo.Stdout,
+		Stderr:           processInfo.Stderr,
 		RestartOnFailure: processInfo.RestartOnFailure,
 		MaxRestarts:      processInfo.MaxRestarts,
 		RestartCount:     processInfo.RestartCount,
-	}, nil
+	}, err
 }
 
 // ListProcesses lists all running processes
@@ -118,6 +128,19 @@ func (h *ProcessHandler) ListProcesses() []ProcessResponse {
 			completedAt := p.CompletedAt.Format("Mon, 02 Jan 2006 15:04:05 GMT")
 			completedAtPtr = &completedAt
 		}
+
+		// Get logs from file if available
+		var logs, stdout, stderr *string
+		if output, err := h.processManager.GetProcessOutput(p.PID); err == nil {
+			logs = &output.Logs
+			stdout = &output.Stdout
+			stderr = &output.Stderr
+		} else {
+			logs = p.Logs
+			stdout = p.Stdout
+			stderr = p.Stderr
+		}
+
 		result = append(result, ProcessResponse{
 			PID:              p.PID,
 			Name:             p.Name,
@@ -127,7 +150,9 @@ func (h *ProcessHandler) ListProcesses() []ProcessResponse {
 			CompletedAt:      completedAtPtr,
 			ExitCode:         p.ExitCode,
 			WorkingDir:       p.WorkingDir,
-			Logs:             p.Logs,
+			Logs:             logs,
+			Stdout:           stdout,
+			Stderr:           stderr,
 			RestartOnFailure: p.RestartOnFailure,
 			MaxRestarts:      p.MaxRestarts,
 			RestartCount:     p.RestartCount,
@@ -147,6 +172,19 @@ func (h *ProcessHandler) GetProcess(identifier string) (ProcessResponse, error) 
 	if processInfo.CompletedAt != nil {
 		completedAt = processInfo.CompletedAt.Format("Mon, 02 Jan 2006 15:04:05 GMT")
 	}
+
+	// Get logs from file if available
+	var logs, stdout, stderr *string
+	if output, err := h.processManager.GetProcessOutput(identifier); err == nil {
+		logs = &output.Logs
+		stdout = &output.Stdout
+		stderr = &output.Stderr
+	} else {
+		logs = processInfo.Logs
+		stdout = processInfo.Stdout
+		stderr = processInfo.Stderr
+	}
+
 	return ProcessResponse{
 		PID:              processInfo.PID,
 		Name:             processInfo.Name,
@@ -156,7 +194,9 @@ func (h *ProcessHandler) GetProcess(identifier string) (ProcessResponse, error) 
 		CompletedAt:      &completedAt,
 		ExitCode:         processInfo.ExitCode,
 		WorkingDir:       processInfo.WorkingDir,
-		Logs:             processInfo.Logs,
+		Logs:             logs,
+		Stdout:           stdout,
+		Stderr:           stderr,
 		RestartOnFailure: processInfo.RestartOnFailure,
 		MaxRestarts:      processInfo.MaxRestarts,
 		RestartCount:     processInfo.RestartCount,
@@ -203,10 +243,11 @@ func (h *ProcessHandler) HandleListProcesses(c *gin.Context) {
 
 // HandleExecuteCommand handles POST requests to /process/
 // @Summary Execute a command
-// @Description Execute a command and return process information
+// @Description Execute a command and return process information. If Accept header is text/event-stream, streams logs in SSE format and returns the process response as a final event.
 // @Tags process
 // @Accept json
 // @Produce json
+// @Produce text/event-stream
 // @Param request body ProcessRequest true "Process execution request"
 // @Success 200 {object} ProcessResponse "Process information"
 // @Failure 400 {object} ErrorResponse "Invalid request"
@@ -214,6 +255,13 @@ func (h *ProcessHandler) HandleListProcesses(c *gin.Context) {
 // @Failure 500 {object} ErrorResponse "Internal server error"
 // @Router /process [post]
 func (h *ProcessHandler) HandleExecuteCommand(c *gin.Context) {
+	// Check if client wants SSE streaming
+	acceptHeader := c.GetHeader("Accept")
+	if strings.Contains(acceptHeader, "text/event-stream") {
+		h.handleExecuteCommandStream(c)
+		return
+	}
+
 	var req ProcessRequest
 	if err := h.BindJSON(c, &req); err != nil {
 		h.SendError(c, http.StatusBadRequest, err)
@@ -246,6 +294,127 @@ func (h *ProcessHandler) HandleExecuteCommand(c *gin.Context) {
 	}
 
 	h.SendJSON(c, http.StatusOK, processInfo)
+}
+
+// handleExecuteCommandStream handles streaming execution with JSON events
+// Events are streamed as newline-delimited JSON: {"type": "stdout|stderr|result|error|keepalive", "data": "..."}
+func (h *ProcessHandler) handleExecuteCommandStream(c *gin.Context) {
+	var req ProcessRequest
+	if err := h.BindJSON(c, &req); err != nil {
+		h.SendError(c, http.StatusBadRequest, err)
+		return
+	}
+
+	if req.WorkingDir != "" {
+		formattedWorkingDir, err := lib.FormatPath(req.WorkingDir)
+		if err != nil {
+			h.SendError(c, http.StatusBadRequest, err)
+			return
+		}
+		req.WorkingDir = formattedWorkingDir
+	}
+
+	// If a name is provided, check if a process with that name already exists
+	if req.Name != "" {
+		alreadyExists, err := h.GetProcess(req.Name)
+		if err == nil && alreadyExists.Status == string(constants.ProcessStatusRunning) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("process with name '%s' already exists and is running", req.Name)})
+			return
+		}
+	}
+
+	// Set headers for streaming JSON events
+	c.Writer.Header().Set("Content-Type", "application/x-ndjson")
+	c.Writer.Header().Set("Cache-Control", "no-cache")
+	c.Writer.Header().Set("Connection", "keep-alive")
+	c.Writer.Header().Set("X-Accel-Buffering", "no")
+	c.Writer.Flush()
+
+	// Create JSON stream writer
+	jw := &JSONStreamWriter{gin: c}
+
+	// Execute the process without waiting for completion (we'll handle waiting ourselves)
+	processInfo, err := h.ExecuteProcess(req.Command, req.WorkingDir, req.Name, req.Env, false, req.Timeout, req.WaitForPorts, req.RestartOnFailure, req.MaxRestarts)
+	if err != nil {
+		jw.WriteEvent("error", err.Error())
+		return
+	}
+
+	// Stream process output using JSON writer
+	err = h.StreamProcessOutput(processInfo.PID, jw)
+	if err != nil {
+		jw.WriteEvent("error", err.Error())
+		return
+	}
+
+	// Wait until the process is done or the client disconnects
+	proc, exists := h.processManager.GetProcessByIdentifier(processInfo.PID)
+	if !exists {
+		return
+	}
+
+	// Start keepalive ticker to prevent connection timeout
+	keepaliveTicker := time.NewTicker(5 * time.Second)
+	defer keepaliveTicker.Stop()
+
+	for {
+		select {
+		case <-c.Request.Context().Done():
+			h.RemoveLogWriter(processInfo.PID, jw)
+			return
+		case <-proc.Done:
+			// Process completed
+			goto done
+		case <-keepaliveTicker.C:
+			// Send keepalive message to prevent connection timeout
+			jw.WriteEvent("keepalive", "")
+		}
+	}
+done:
+
+	// Wait for tailLogFiles to complete its final reads
+	// The 150ms delay gives it time to flush all content to log writers
+	time.Sleep(150 * time.Millisecond)
+
+	// Detach the writer before reading final content
+	h.RemoveLogWriter(processInfo.PID, jw)
+
+	// Get final process info (now includes stdout, stderr, logs)
+	finalProcessInfo, err := h.GetProcess(processInfo.PID)
+	if err != nil {
+		jw.WriteEvent("error", err.Error())
+		return
+	}
+
+	// For very fast commands, streaming might not have sent anything
+	// Check if we need to send the final output (compare with what jw received)
+	if !jw.HasSentData() {
+		// No streaming data was sent, send the final output now
+		if finalProcessInfo.Stdout != nil && *finalProcessInfo.Stdout != "" {
+			lines := strings.Split(*finalProcessInfo.Stdout, "\n")
+			for _, line := range lines {
+				if line != "" {
+					jw.WriteEvent("stdout", line)
+				}
+			}
+		}
+		if finalProcessInfo.Stderr != nil && *finalProcessInfo.Stderr != "" {
+			lines := strings.Split(*finalProcessInfo.Stderr, "\n")
+			for _, line := range lines {
+				if line != "" {
+					jw.WriteEvent("stderr", line)
+				}
+			}
+		}
+	}
+
+	// Send final result as JSON event
+	resultJSON, err := json.Marshal(finalProcessInfo)
+	if err != nil {
+		jw.WriteEvent("error", err.Error())
+		return
+	}
+	jw.WriteEvent("result", string(resultJSON))
 }
 
 // HandleGetProcessLogs handles GET requests to /process/{identifier}/logs
@@ -311,11 +480,11 @@ func (h *ProcessHandler) HandleGetProcessLogsStream(c *gin.Context) {
 	}
 
 	// Wait until the process is done or the client disconnects
-	process, exists := h.processManager.GetProcessByIdentifier(identifier)
+	proc, exists := h.processManager.GetProcessByIdentifier(identifier)
 	if !exists {
 		return
 	}
-	for process.Status == constants.ProcessStatusRunning {
+	for proc.Status == constants.ProcessStatusRunning {
 		time.Sleep(200 * time.Millisecond)
 		// If client disconnects, break
 		select {
@@ -324,9 +493,27 @@ func (h *ProcessHandler) HandleGetProcessLogsStream(c *gin.Context) {
 			return
 		default:
 		}
+		// Refresh process status
+		proc, exists = h.processManager.GetProcessByIdentifier(identifier)
+		if !exists {
+			break
+		}
 	}
+
+	// Wait for tailLogFiles to complete its final reads
+	time.Sleep(150 * time.Millisecond)
+
 	// Detach the writer
 	h.RemoveLogWriter(identifier, rw)
+
+	// Send final content from combined log file (which has prefixed, ordered content)
+	// This ensures any content written at the very end (like stderr) is captured
+	// The combined log file preserves the interleaved order of stdout/stderr
+	if proc.LogFile != "" {
+		if content, err := os.ReadFile(proc.LogFile); err == nil && len(content) > 0 {
+			rw.Write(content)
+		}
+	}
 }
 
 // HandleStopProcess handles DELETE requests to /process/{identifier}
@@ -413,9 +600,10 @@ func (h *ProcessHandler) HandleGetProcess(c *gin.Context) {
 
 // ResponseWriter is a custom writer for SSE responses that also flushes after each write
 type ResponseWriter struct {
-	gin    *gin.Context
-	closed bool
-	mu     sync.Mutex // Protects the closed field
+	gin      *gin.Context
+	closed   bool
+	sentData bool // Track if any data was sent
+	mu       sync.Mutex
 }
 
 // Write writes data to the buffer and flushes to the client in a safe manner
@@ -434,6 +622,11 @@ func (w *ResponseWriter) Write(data []byte) (int, error) {
 	default:
 	}
 
+	// Track that we've sent data
+	if len(data) > 0 {
+		w.sentData = true
+	}
+
 	// Write data as-is (no SSE wrapping)
 	n, err := w.gin.Writer.Write(data)
 	if err != nil {
@@ -444,8 +637,91 @@ func (w *ResponseWriter) Write(data []byte) (int, error) {
 	return n, nil
 }
 
+// HasSentData returns true if any data was sent
+func (w *ResponseWriter) HasSentData() bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.sentData
+}
+
 // Close marks the writer as closed to prevent further writes
 func (w *ResponseWriter) Close() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.closed = true
+}
+
+// JSONStreamWriter wraps a writer and formats output as JSON events
+// Used by handleExecuteCommandStream for structured streaming output
+type JSONStreamWriter struct {
+	gin      *gin.Context
+	closed   bool
+	sentData bool // Track if any stdout/stderr data was sent
+	mu       sync.Mutex
+}
+
+// StreamEvent represents a JSON streaming event
+type StreamEvent struct {
+	Type string `json:"type"`
+	Data string `json:"data,omitempty"`
+}
+
+// IsJSONStreamWriter is a marker method to identify JSON stream writers
+func (w *JSONStreamWriter) IsJSONStreamWriter() bool {
+	return true
+}
+
+// WriteEvent writes a JSON event to the stream
+func (w *JSONStreamWriter) WriteEvent(eventType string, data string) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	if w.closed {
+		return 0, fmt.Errorf("writer closed")
+	}
+
+	select {
+	case <-w.gin.Request.Context().Done():
+		w.closed = true
+		return 0, fmt.Errorf("client connection closed")
+	default:
+	}
+
+	// Track if we've sent any stdout/stderr data
+	if eventType == "stdout" || eventType == "stderr" {
+		w.sentData = true
+	}
+
+	event := StreamEvent{Type: eventType, Data: data}
+	eventJSON, err := json.Marshal(event)
+	if err != nil {
+		return 0, err
+	}
+	eventJSON = append(eventJSON, '\n')
+
+	n, err := w.gin.Writer.Write(eventJSON)
+	if err != nil {
+		w.closed = true
+		return 0, err
+	}
+	w.gin.Writer.Flush()
+	return n, nil
+}
+
+// HasSentData returns true if any stdout/stderr data was sent
+func (w *JSONStreamWriter) HasSentData() bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.sentData
+}
+
+// Write implements io.Writer - writes raw data as stdout event
+func (w *JSONStreamWriter) Write(data []byte) (int, error) {
+	return w.WriteEvent("stdout", string(data))
+}
+
+// Close marks the writer as closed
+func (w *JSONStreamWriter) Close() {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.closed = true

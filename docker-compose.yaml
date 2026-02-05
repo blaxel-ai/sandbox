@@ -10,6 +10,7 @@ services:
     ports:
       - "8080:8080"
       - "3000:3000"
+      - "3010:3010"
 
   py-app:
     platform: linux/amd64
@@ -21,6 +22,7 @@ services:
     ports:
       - "8080:8080"
       - "8000:8000"
+      - "3010:3010"
 
   base-image:
     platform: linux/amd64
@@ -31,6 +33,7 @@ services:
       - .env
     ports:
       - "8080:8080"
+      - "3010:3010"
 
   expo:
     platform: linux/amd64
@@ -46,16 +49,29 @@ services:
       - "19002:19002"
       - "19006:19006"
       - "8081:8081"
+      - "3010:3010"
 
-  dev:
-    platform: linux/amd64
+  dev-slim:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: docker/slim.Dockerfile
     env_file:
       - .env
     ports:
       - "8080:8080"
+      - "3010:3010"
+
+  dev:
+    build:
+      context: .
+      dockerfile: docker/alpine.Dockerfile
+    env_file:
+      - .env
+    environment:
+      - SANDBOX_DEV_MODE=true
+    ports:
+      - "8080:8080"
+      - "3010:3010"
     volumes:
       - ./sandbox-api:/blaxel/sandbox-api
       - ./tmp:/blaxel/tmp

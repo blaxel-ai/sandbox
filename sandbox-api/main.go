@@ -12,6 +12,7 @@ import (
 
 	"github.com/blaxel-ai/sandbox-api/docs" // swagger generated docs
 	"github.com/blaxel-ai/sandbox-api/src/api"
+	"github.com/blaxel-ai/sandbox-api/src/handler/process"
 	"github.com/blaxel-ai/sandbox-api/src/mcp"
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
@@ -21,7 +22,7 @@ import (
 // @title           Sandbox API
 // @version         0.0.1
 // @description     API for manipulating filesystem, processes and network.
-// @host            run.blaxel.ai/{workspace_id}/sandboxes/{sandbox_id}
+// @host            sbx-{sandbox_id}-{workspace_id}.{region}.bl.run
 // @schemes         https
 // @securityDefinitions.apikey BearerAuth
 // @in header
@@ -58,6 +59,7 @@ func main() {
 		docs.SwaggerInfo.Schemes = []string{"http"}
 	}
 	gin.SetMode(gin.ReleaseMode)
+	disableRequestLogging := os.Getenv("DISABLE_REQUEST_LOGGING") == "true"
 	// Define command-line flags
 	port := flag.Int("port", 8080, "Port to listen on")
 	shortPort := flag.Int("p", 8080, "Port to listen on (shorthand)")
@@ -139,7 +141,14 @@ func main() {
 	}
 
 	// Set up the router with all our API routes
-	router := api.SetupRouter()
+	router := api.SetupRouter(disableRequestLogging)
+
+	// Try to recover process state from a previous instance (hot-reload support)
+	pm := process.GetProcessManager()
+	if err := pm.LoadState(); err != nil {
+		logrus.WithError(err).Warn("Failed to load process state from disk")
+	}
+
 	mcpServer, err := mcp.NewServer(router)
 	if err != nil {
 		logrus.Fatalf("Failed to create MCP server: %v", err)

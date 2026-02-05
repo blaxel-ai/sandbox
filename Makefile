@@ -1,3 +1,5 @@
+ARGS:= $(wordlist 2,$(words $(MAKECMDGOALS)),$(MAKECMDGOALS))
+
 dependencies:
 	cd sandbox-api && \
 		go install github.com/air-verse/air@latest && \
@@ -6,7 +8,7 @@ dependencies:
 
 
 api:
-	cd sandbox-api && air
+	cd sandbox-api && SANDBOX_LOG_DIR=./tmp/log air
 
 docker-build:
 	docker build -t blaxel/sandbox-api .
@@ -16,6 +18,16 @@ docker-run:
 
 test:
 	cd sandbox-api && go test -v ./...
+
+benchmark:
+	cd sandbox-api && go test -bench=. ./src/api
+
+codspeed:
+	@if ! command -v codspeed > /dev/null 2>&1; then \
+		echo "Installing CodSpeed runner..."; \
+		curl -fsSL https://github.com/CodSpeedHQ/runner/releases/latest/download/codspeed-runner-installer.sh | bash; \
+	fi
+	cd sandbox-api && codspeed run --skip-upload -- go test -bench=. ./src/api
 
 integration-test:
 	cd sandbox-api/integration-tests && ./run_tests.sh
@@ -77,3 +89,12 @@ e2e:
 mr_develop:
 	$(eval BRANCH_NAME := $(shell git rev-parse --abbrev-ref HEAD))
 	gh pr create --base develop --head $(BRANCH_NAME) --title "$(BRANCH_NAME)" --body "Merge request from $(BRANCH_NAME) to develop"
+
+tag:
+	git checkout main
+	git pull origin main
+	git tag -a v$(ARGS) -m "Release v$(ARGS)"
+	git push origin v$(ARGS)
+
+%:
+	@:

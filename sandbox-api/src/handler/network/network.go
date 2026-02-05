@@ -3,14 +3,13 @@ package network
 import (
 	"bufio"
 	"fmt"
+	"net"
 	"os/exec"
 	"runtime"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/sirupsen/logrus"
 )
 
 // PortInfo represents information about an open port
@@ -138,7 +137,6 @@ func (n *Network) startMonitoring() {
 				for pid := range n.monitoredPIDs {
 					oldPorts := n.portsByPID[pid]
 					if err := n.updatePortsForPID(pid); err != nil {
-						logrus.Errorf("Error updating ports for PID %d: %v\n", pid, err)
 						continue
 					}
 
@@ -200,6 +198,53 @@ func getOpenPortsForPID(pid int) ([]*PortInfo, error) {
 
 	// Fall back to netstat if ss fails
 	return getPortsUsingNetstat(pid)
+}
+
+// IsPortOpen checks if a specific port is open and listening
+func IsPortOpen(port int) bool {
+	if runtime.GOOS == "darwin" {
+		// On macOS, use lsof to check if port is listening
+		cmd := exec.Command("lsof", "-i", fmt.Sprintf(":%d", port), "-sTCP:LISTEN", "-n", "-P")
+		output, err := cmd.Output()
+		if err != nil {
+			// Fallback to direct connection attempt
+			return isPortOpenByConnect(port)
+		}
+		return len(strings.TrimSpace(string(output))) > 0
+	}
+
+	// On Linux, try ss first
+	cmd := exec.Command("ss", "-tlnp", fmt.Sprintf("sport = :%d", port))
+	output, err := cmd.Output()
+	if err == nil {
+		// ss always outputs a header line, so check if there's more than just the header
+		lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+		return len(lines) > 1
+	}
+
+	// Fall back to netstat if ss is not available
+	cmd = exec.Command("netstat", "-tlnp")
+	output, err = cmd.Output()
+	if err == nil {
+		// Check if the port appears in netstat output
+		portStr := fmt.Sprintf(":%d ", port)
+		return strings.Contains(string(output), portStr)
+	}
+
+	// Final fallback: try to connect directly to the port
+	// This works on minimal images without ss/netstat/lsof
+	return isPortOpenByConnect(port)
+}
+
+// isPortOpenByConnect checks if a port is open by attempting to connect to it
+// This is the most reliable method and works on any system without external dependencies
+func isPortOpenByConnect(port int) bool {
+	conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), 500*time.Millisecond)
+	if err != nil {
+		return false
+	}
+	conn.Close()
+	return true
 }
 
 // getPortsUsingSS uses the 'ss' command to get port information for a specific PID
@@ -291,8 +336,49 @@ func getPortsUsingSS(pid int) ([]*PortInfo, error) {
 	return portsInfo, nil
 }
 
+// getChildPIDs returns all child PIDs of a given parent PID (macOS)
+func getChildPIDs(parentPID int) []int {
+	// Use pgrep to find child processes
+	cmd := exec.Command("pgrep", "-P", strconv.Itoa(parentPID))
+	output, err := cmd.Output()
+	if err != nil {
+		return []int{}
+	}
+
+	var childPIDs []int
+	scanner := bufio.NewScanner(strings.NewReader(string(output)))
+	for scanner.Scan() {
+		if pid, err := strconv.Atoi(strings.TrimSpace(scanner.Text())); err == nil {
+			childPIDs = append(childPIDs, pid)
+			// Recursively get grandchildren
+			childPIDs = append(childPIDs, getChildPIDs(pid)...)
+		}
+	}
+	return childPIDs
+}
+
 // getPortsUsingLsof uses the 'lsof' command to get port information for a specific PID (macOS)
 func getPortsUsingLsof(pid int) ([]*PortInfo, error) {
+	// Get all PIDs to check (parent + all children)
+	pidsToCheck := []int{pid}
+	childPIDs := getChildPIDs(pid)
+	pidsToCheck = append(pidsToCheck, childPIDs...)
+
+	var allPorts []*PortInfo
+
+	for _, checkPID := range pidsToCheck {
+		ports, err := getPortsForSinglePID(checkPID)
+		if err != nil {
+			continue
+		}
+		allPorts = append(allPorts, ports...)
+	}
+
+	return allPorts, nil
+}
+
+// getPortsForSinglePID gets ports for a single PID using lsof
+func getPortsForSinglePID(pid int) ([]*PortInfo, error) {
 	// Run lsof command: lsof -iTCP -iUDP -n -P -a -p <pid>
 	cmd := exec.Command("lsof", "-iTCP", "-iUDP", "-n", "-P", "-a", "-p", strconv.Itoa(pid))
 	output, err := cmd.Output()
