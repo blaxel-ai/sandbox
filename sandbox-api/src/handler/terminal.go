@@ -74,6 +74,7 @@ func (h *TerminalHandler) HandleTerminalWS(c *gin.Context) {
 	}
 	shell := c.Query("shell")
 	workingDir := c.Query("workingDir")
+	sessionId := c.DefaultQuery("sessionId", "default")
 
 	// Upgrade HTTP connection to WebSocket
 	conn, err := h.upgrader.Upgrade(c.Writer, c.Request, nil)
@@ -83,8 +84,9 @@ func (h *TerminalHandler) HandleTerminalWS(c *gin.Context) {
 	}
 	defer conn.Close()
 
-	// Create terminal session
-	session, err := terminal.NewTerminalSession(shell, workingDir, nil, cols, rows)
+	// Get or reconnect to a persistent terminal session
+	manager := terminal.GetSessionManager()
+	ms, isNew, err := manager.GetOrCreate(sessionId, shell, workingDir, nil, cols, rows)
 	if err != nil {
 		logrus.Errorf("Failed to create terminal session: %v", err)
 		_ = conn.WriteJSON(TerminalMessage{
@@ -93,7 +95,26 @@ func (h *TerminalHandler) HandleTerminalWS(c *gin.Context) {
 		})
 		return
 	}
-	defer session.Close()
+
+	// Subscribe to terminal output
+	sub := ms.Subscribe()
+	defer ms.Unsubscribe(sub)
+
+	// Replay buffered output so the client sees the full terminal history.
+	// For a new session this is typically empty or just the initial prompt.
+	// For a reconnection this restores the terminal state.
+	buffered := ms.GetBuffer()
+	if len(buffered) > 0 {
+		_ = conn.WriteJSON(TerminalMessage{
+			Type: "output",
+			Data: string(buffered),
+		})
+	}
+
+	// On reconnection, resize to match the new client's dimensions
+	if !isNew && cols > 0 && rows > 0 {
+		_ = ms.Resize(cols, rows)
+	}
 
 	// Channel to signal when to stop, with sync.Once to prevent double-close panic
 	done := make(chan struct{})
@@ -104,24 +125,28 @@ func (h *TerminalHandler) HandleTerminalWS(c *gin.Context) {
 		})
 	}
 
-	// Read from PTY and send to WebSocket
+	// Read from subscriber channel and send to WebSocket
 	go func() {
-		buf := make([]byte, 4096)
 		for {
-			n, err := session.Read(buf)
-			if err != nil {
-				closeDone()
-				return
-			}
-			if n > 0 {
+			select {
+			case data, ok := <-sub.Ch:
+				if !ok {
+					closeDone()
+					return
+				}
 				msg := TerminalMessage{
 					Type: "output",
-					Data: string(buf[:n]),
+					Data: string(data),
 				}
 				if err := conn.WriteJSON(msg); err != nil {
 					closeDone()
 					return
 				}
+			case <-done:
+				return
+			case <-ms.Done():
+				closeDone()
+				return
 			}
 		}
 	}()
@@ -148,12 +173,12 @@ func (h *TerminalHandler) HandleTerminalWS(c *gin.Context) {
 
 		switch msg.Type {
 		case "input":
-			if _, err := session.Write([]byte(msg.Data)); err != nil {
+			if _, err := ms.Write([]byte(msg.Data)); err != nil {
 				logrus.Warnf("Failed to write to PTY: %v", err)
 			}
 		case "resize":
 			if msg.Cols > 0 && msg.Rows > 0 {
-				if err := session.Resize(msg.Cols, msg.Rows); err != nil {
+				if err := ms.Resize(msg.Cols, msg.Rows); err != nil {
 					logrus.Warnf("Failed to resize PTY: %v", err)
 				}
 			}
