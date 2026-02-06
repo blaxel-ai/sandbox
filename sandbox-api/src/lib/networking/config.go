@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 )
 
@@ -14,7 +15,6 @@ const (
 	// Default values
 	DefaultMTU        = 1420
 	DefaultListenPort = 51820
-	DefaultInterface  = "eth0"
 	DefaultWgName     = "wg0"
 )
 
@@ -38,20 +38,15 @@ type WireGuardConfig struct {
 	// ListenPort is the UDP port to listen on
 	ListenPort int `json:"listen_port,omitempty"`
 
-	// PrimaryInterface is the primary network interface (e.g., "eth0")
-	PrimaryInterface string `json:"primary_interface,omitempty"`
-
 	// InterfaceName is the name for the WireGuard interface (e.g., "wg0")
 	InterfaceName string `json:"interface_name,omitempty"`
 
 	// AllowedIPs is the list of IP ranges to route through the tunnel (defaults to "0.0.0.0/0")
 	AllowedIPs []string `json:"allowed_ips,omitempty"`
 
-	// PersistentKeepalive is the interval in seconds for keepalive packets (0 to disable)
-	PersistentKeepalive int `json:"persistent_keepalive,omitempty"`
-
-	// DNS servers to use (optional)
-	DNS []string `json:"dns,omitempty"`
+	// PersistentKeepalive is the interval in seconds for keepalive packets.
+	// nil means use default (25s), pointer to 0 explicitly disables keepalive.
+	PersistentKeepalive *int `json:"persistent_keepalive,omitempty"`
 
 	// RouteAll routes all traffic through the tunnel (sets up default route)
 	RouteAll bool `json:"route_all,omitempty"`
@@ -98,17 +93,15 @@ func (c *WireGuardConfig) ApplyDefaults() {
 	if c.ListenPort == 0 {
 		c.ListenPort = DefaultListenPort
 	}
-	if c.PrimaryInterface == "" {
-		c.PrimaryInterface = DefaultInterface
-	}
 	if c.InterfaceName == "" {
 		c.InterfaceName = DefaultWgName
 	}
 	if len(c.AllowedIPs) == 0 {
 		c.AllowedIPs = []string{"0.0.0.0/0"}
 	}
-	if c.PersistentKeepalive == 0 {
-		c.PersistentKeepalive = 25
+	if c.PersistentKeepalive == nil {
+		defaultKeepalive := 25
+		c.PersistentKeepalive = &defaultKeepalive
 	}
 }
 
@@ -117,20 +110,63 @@ func (c *WireGuardConfig) Validate() error {
 	if c.LocalIP == "" {
 		return fmt.Errorf("local_ip is required")
 	}
+	if _, _, err := net.ParseCIDR(c.LocalIP); err != nil {
+		return fmt.Errorf("local_ip must be in CIDR notation (e.g., 10.0.0.1/32): %w", err)
+	}
+
 	if c.PeerEndpoint == "" {
 		return fmt.Errorf("peer_endpoint is required")
 	}
+	if _, _, err := net.SplitHostPort(c.PeerEndpoint); err != nil {
+		return fmt.Errorf("peer_endpoint must be in host:port format (e.g., 1.2.3.4:51820): %w", err)
+	}
+
 	if c.PeerPublicKey == "" {
 		return fmt.Errorf("peer_public_key is required")
 	}
+	if err := validateWireGuardKey(c.PeerPublicKey); err != nil {
+		return fmt.Errorf("invalid peer_public_key: %w", err)
+	}
+
 	if c.PrivateKey == "" {
 		return fmt.Errorf("private_key is required")
+	}
+	if err := validateWireGuardKey(c.PrivateKey); err != nil {
+		return fmt.Errorf("invalid private_key: %w", err)
+	}
+
+	for _, ip := range c.AllowedIPs {
+		if _, _, err := net.ParseCIDR(ip); err != nil {
+			return fmt.Errorf("invalid allowed_ip %q: %w", ip, err)
+		}
+	}
+
+	if c.MTU < 68 || c.MTU > 65535 {
+		return fmt.Errorf("mtu must be between 68 and 65535, got %d", c.MTU)
+	}
+
+	return nil
+}
+
+// validateWireGuardKey checks that a key is valid base64-encoded 32-byte value
+func validateWireGuardKey(key string) error {
+	decoded, err := base64.StdEncoding.DecodeString(key)
+	if err != nil {
+		return fmt.Errorf("not valid base64: %w", err)
+	}
+	if len(decoded) != 32 {
+		return fmt.Errorf("expected 32 bytes, got %d", len(decoded))
 	}
 	return nil
 }
 
-// ToJSON returns the configuration as a JSON string (for debugging)
+// ToJSON returns the configuration as a JSON string for debugging.
+// The private key is redacted for security.
 func (c *WireGuardConfig) ToJSON() string {
-	data, _ := json.MarshalIndent(c, "", "  ")
+	redacted := *c
+	if redacted.PrivateKey != "" {
+		redacted.PrivateKey = "[REDACTED]"
+	}
+	data, _ := json.MarshalIndent(redacted, "", "  ")
 	return string(data)
 }

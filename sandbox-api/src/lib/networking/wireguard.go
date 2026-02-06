@@ -28,20 +28,33 @@ type WireGuardClient struct {
 	defaultIface string
 }
 
-// Global WireGuard client instance
+// Global WireGuard client instance protected by a mutex.
+// Using a mutex instead of sync.Once so that the entire initialization is guarded
+// and subsequent calls are safe no-ops without leaking resources.
 var (
-	wgClient     *WireGuardClient
-	wgClientOnce sync.Once
+	wgClient *WireGuardClient
+	wgMutex  sync.Mutex
 )
 
 // GetWireGuardClient returns the global WireGuard client instance
 func GetWireGuardClient() *WireGuardClient {
+	wgMutex.Lock()
+	defer wgMutex.Unlock()
 	return wgClient
 }
 
-// StartWireGuardFromEnv initializes and starts the WireGuard client if config is present in env
-// This should be called once at application startup
+// StartWireGuardFromEnv initializes and starts the WireGuard client if config is present in env.
+// This should be called once at application startup. It is safe to call multiple times;
+// subsequent calls are no-ops if a client is already running.
 func StartWireGuardFromEnv() error {
+	wgMutex.Lock()
+	defer wgMutex.Unlock()
+
+	if wgClient != nil {
+		logrus.Debug("WireGuard client already initialized, skipping")
+		return nil
+	}
+
 	config, err := LoadConfigFromEnv()
 	if err != nil {
 		return fmt.Errorf("failed to load WireGuard config: %w", err)
@@ -63,10 +76,52 @@ func StartWireGuardFromEnv() error {
 		return fmt.Errorf("failed to start WireGuard client: %w", err)
 	}
 
-	wgClientOnce.Do(func() {
-		wgClient = client
-	})
+	wgClient = client
+	return nil
+}
 
+// StopWireGuard stops the global WireGuard client and cleans up resources.
+// Returns an error if no client is running.
+func StopWireGuard() error {
+	wgMutex.Lock()
+	defer wgMutex.Unlock()
+
+	if wgClient == nil {
+		return fmt.Errorf("no WireGuard client is running")
+	}
+
+	if err := wgClient.Stop(); err != nil {
+		return fmt.Errorf("failed to stop WireGuard client: %w", err)
+	}
+	wgClient = nil
+	return nil
+}
+
+// UpdateWireGuardConfig stops the current WireGuard client (if any) and starts a new one
+// with the provided configuration.
+func UpdateWireGuardConfig(config *WireGuardConfig) error {
+	wgMutex.Lock()
+	defer wgMutex.Unlock()
+
+	// Stop existing client if running
+	if wgClient != nil {
+		logrus.Info("Stopping existing WireGuard client for config update")
+		if err := wgClient.Stop(); err != nil {
+			return fmt.Errorf("failed to stop existing WireGuard client: %w", err)
+		}
+		wgClient = nil
+	}
+
+	client, err := NewWireGuardClient(config)
+	if err != nil {
+		return fmt.Errorf("failed to create WireGuard client: %w", err)
+	}
+
+	if err := client.Start(); err != nil {
+		return fmt.Errorf("failed to start WireGuard client: %w", err)
+	}
+
+	wgClient = client
 	return nil
 }
 
@@ -112,7 +167,7 @@ func (w *WireGuardClient) Start() error {
 	// Get the real interface name (might differ from requested on some platforms)
 	realName, err := tunDev.Name()
 	if err != nil {
-		w.tunDevice.Close()
+		_ = w.tunDevice.Close()
 		return fmt.Errorf("failed to get TUN device name: %w", err)
 	}
 	logrus.WithField("tun_name", realName).Debug("Created TUN device")
@@ -130,7 +185,11 @@ func (w *WireGuardClient) Start() error {
 	w.device = device.NewDevice(tunDev, conn.NewDefaultBind(), logger)
 
 	// Build and apply IPC configuration
-	ipcConfig := w.buildIPCConfig(privateKey)
+	ipcConfig, err := w.buildIPCConfig(privateKey)
+	if err != nil {
+		w.device.Close()
+		return fmt.Errorf("failed to build IPC config: %w", err)
+	}
 	if err := w.device.IpcSet(ipcConfig); err != nil {
 		w.device.Close()
 		return fmt.Errorf("failed to configure WireGuard device: %w", err)
@@ -197,15 +256,23 @@ func (w *WireGuardClient) IsRunning() bool {
 }
 
 // buildIPCConfig creates the IPC configuration string for WireGuard
-func (w *WireGuardClient) buildIPCConfig(privateKey string) string {
+func (w *WireGuardClient) buildIPCConfig(privateKey string) (string, error) {
 	var config strings.Builder
 
 	// Interface configuration
-	config.WriteString(fmt.Sprintf("private_key=%s\n", hexEncode(privateKey)))
+	privHex, err := hexEncode(privateKey)
+	if err != nil {
+		return "", fmt.Errorf("failed to encode private key: %w", err)
+	}
+	config.WriteString(fmt.Sprintf("private_key=%s\n", privHex))
 	config.WriteString(fmt.Sprintf("listen_port=%d\n", w.config.ListenPort))
 
 	// Peer configuration
-	config.WriteString(fmt.Sprintf("public_key=%s\n", hexEncode(w.config.PeerPublicKey)))
+	pubHex, err := hexEncode(w.config.PeerPublicKey)
+	if err != nil {
+		return "", fmt.Errorf("failed to encode peer public key: %w", err)
+	}
+	config.WriteString(fmt.Sprintf("public_key=%s\n", pubHex))
 	config.WriteString(fmt.Sprintf("endpoint=%s\n", w.config.PeerEndpoint))
 
 	// Allowed IPs
@@ -214,11 +281,11 @@ func (w *WireGuardClient) buildIPCConfig(privateKey string) string {
 	}
 
 	// Persistent keepalive
-	if w.config.PersistentKeepalive > 0 {
-		config.WriteString(fmt.Sprintf("persistent_keepalive_interval=%d\n", w.config.PersistentKeepalive))
+	if w.config.PersistentKeepalive != nil && *w.config.PersistentKeepalive > 0 {
+		config.WriteString(fmt.Sprintf("persistent_keepalive_interval=%d\n", *w.config.PersistentKeepalive))
 	}
 
-	return config.String()
+	return config.String(), nil
 }
 
 // configureNetwork sets up the IP address and routing for the WireGuard interface using netlink
@@ -266,16 +333,20 @@ func (w *WireGuardClient) configureNetwork(interfaceName string) error {
 	return nil
 }
 
-// setupRoutes configures routing to send all traffic through the WireGuard tunnel using netlink
+// setupRoutes configures routing to send all traffic through the WireGuard tunnel.
+//
+// Uses the wg-quick approach: two half-default routes (0.0.0.0/1 and 128.0.0.0/1) that
+// are more specific than the existing 0.0.0.0/0 default route, so they take precedence
+// without needing to delete or modify the original default route. This avoids race
+// conditions with the container runtime or DHCP client re-adding routes.
 func (w *WireGuardClient) setupRoutes(wgLink netlink.Link) error {
-	// Extract peer IP from endpoint (remove port)
-	peerIPStr := strings.Split(w.config.PeerEndpoint, ":")[0]
-	peerIP := net.ParseIP(peerIPStr)
-	if peerIP == nil {
-		return fmt.Errorf("invalid peer IP: %s", peerIPStr)
+	// Parse peer endpoint IP (handles both IPv4 and IPv6 endpoints)
+	peerIP, err := parsePeerEndpoint(w.config.PeerEndpoint)
+	if err != nil {
+		return err
 	}
 
-	// Get current default gateway BEFORE we delete any routes
+	// Get current default gateway
 	defaultGW, defaultIface, err := getDefaultGateway()
 	if err != nil {
 		logrus.WithError(err).Warn("Could not detect default gateway, skipping route setup")
@@ -289,7 +360,7 @@ func (w *WireGuardClient) setupRoutes(wgLink netlink.Link) error {
 	logrus.WithFields(logrus.Fields{
 		"default_gw":    defaultGW.String(),
 		"default_iface": defaultIface,
-		"peer_ip":       peerIPStr,
+		"peer_ip":       peerIP.String(),
 	}).Info("Setting up routes")
 
 	// Get the primary interface link
@@ -298,11 +369,12 @@ func (w *WireGuardClient) setupRoutes(wgLink netlink.Link) error {
 		return fmt.Errorf("failed to find primary interface %s: %w", defaultIface, err)
 	}
 
-	// STEP 1: Add route to peer endpoint via original gateway (to maintain WireGuard connection)
+	// STEP 1: Add explicit route to peer endpoint via original gateway.
+	// This ensures WireGuard UDP traffic always uses the physical interface.
 	peerRoute := &netlink.Route{
 		Dst: &net.IPNet{
 			IP:   peerIP,
-			Mask: net.CIDRMask(32, 32),
+			Mask: peerHostMask(peerIP),
 		},
 		Gw:        defaultGW,
 		LinkIndex: primaryLink.Attrs().Index,
@@ -310,88 +382,30 @@ func (w *WireGuardClient) setupRoutes(wgLink netlink.Link) error {
 	if err := netlink.RouteAdd(peerRoute); err != nil {
 		logrus.WithError(err).Warn("Failed to add route to peer endpoint (may already exist)")
 	} else {
-		logrus.WithField("peer_ip", peerIPStr).Info("Added route to peer endpoint")
+		logrus.WithField("peer_ip", peerIP.String()).Info("Added route to peer endpoint")
 	}
 
-	// STEP 2: Delete ALL existing default routes FIRST
-	defaultDst := &net.IPNet{
-		IP:   net.IPv4zero,
-		Mask: net.CIDRMask(0, 32),
-	}
-
-	routes, err := netlink.RouteList(nil, syscall.AF_INET)
-	if err != nil {
-		return fmt.Errorf("failed to list routes: %w", err)
-	}
-
-	for _, route := range routes {
-		isDefault := route.Dst == nil ||
-			(route.Dst != nil && route.Dst.IP.Equal(net.IPv4zero) && route.Dst.Mask.String() == "00000000")
-
-		if isDefault {
-			linkName := "unknown"
-			if link, err := netlink.LinkByIndex(route.LinkIndex); err == nil {
-				linkName = link.Attrs().Name
-			}
-			logrus.WithField("interface", linkName).Info("Removing default route")
-
-			if err := netlink.RouteDel(&route); err != nil {
-				logrus.WithError(err).WithField("interface", linkName).Warn("Failed to remove default route")
-			} else {
-				logrus.WithField("interface", linkName).Info("Removed default route")
-			}
+	// STEP 2: Add two half-default routes via WireGuard interface.
+	// 0.0.0.0/1 and 128.0.0.0/1 together cover all IPv4 addresses and are more specific
+	// than the existing 0.0.0.0/0 default route, so they take priority automatically.
+	// This is the same approach used by wg-quick.
+	for _, cidr := range []string{"0.0.0.0/1", "128.0.0.0/1"} {
+		_, dst, _ := net.ParseCIDR(cidr)
+		route := &netlink.Route{
+			Dst:       dst,
+			LinkIndex: wgLink.Attrs().Index,
 		}
-	}
-
-	// STEP 3: Add new default route via WireGuard interface
-	newDefaultRoute := &netlink.Route{
-		Dst:       defaultDst,
-		LinkIndex: wgLink.Attrs().Index,
-	}
-	if err := netlink.RouteAdd(newDefaultRoute); err != nil {
-		return fmt.Errorf("failed to add WireGuard default route: %w", err)
-	}
-	logrus.Info("Added WireGuard default route")
-
-	// STEP 4: Delete eth0 default route again (platform may have re-added it)
-	// Do this AFTER adding wg0 route to ensure we always have a default route
-	if err := w.deleteDefaultRouteOnInterface(defaultIface); err != nil {
-		logrus.WithError(err).Warn("Failed to delete eth0 default route")
+		if err := netlink.RouteAdd(route); err != nil {
+			return fmt.Errorf("failed to add route %s via WireGuard: %w", cidr, err)
+		}
+		logrus.WithField("route", cidr).Info("Added WireGuard route")
 	}
 
 	logrus.Info("Routes configured successfully")
 	return nil
 }
 
-// deleteDefaultRouteOnInterface removes the default route on a specific interface
-func (w *WireGuardClient) deleteDefaultRouteOnInterface(ifaceName string) error {
-	link, err := netlink.LinkByName(ifaceName)
-	if err != nil {
-		return fmt.Errorf("failed to find interface %s: %w", ifaceName, err)
-	}
-
-	routes, err := netlink.RouteList(link, syscall.AF_INET)
-	if err != nil {
-		return fmt.Errorf("failed to list routes for %s: %w", ifaceName, err)
-	}
-
-	for _, route := range routes {
-		isDefault := route.Dst == nil ||
-			(route.Dst != nil && route.Dst.IP.Equal(net.IPv4zero) && route.Dst.Mask.String() == "00000000")
-
-		if isDefault {
-			logrus.WithField("interface", ifaceName).Info("Removing default route from interface")
-			if err := netlink.RouteDel(&route); err != nil {
-				return fmt.Errorf("failed to delete default route: %w", err)
-			}
-			logrus.WithField("interface", ifaceName).Info("Removed default route from interface")
-		}
-	}
-
-	return nil
-}
-
-// removeRoutes removes the routes set up by setupRoutes using netlink
+// removeRoutes removes the routes set up by setupRoutes
 func (w *WireGuardClient) removeRoutes() {
 	if w.defaultGW == nil {
 		return
@@ -409,59 +423,70 @@ func (w *WireGuardClient) removeRoutes() {
 		return
 	}
 
-	// Default route destination (0.0.0.0/0)
-	defaultDst := &net.IPNet{
-		IP:   net.IPv4zero,
-		Mask: net.CIDRMask(0, 32),
+	// Remove the two half-default routes
+	for _, cidr := range []string{"0.0.0.0/1", "128.0.0.0/1"} {
+		_, dst, _ := net.ParseCIDR(cidr)
+		route := &netlink.Route{
+			Dst:       dst,
+			LinkIndex: wgLink.Attrs().Index,
+		}
+		if err := netlink.RouteDel(route); err != nil {
+			logrus.WithError(err).Warnf("Failed to remove WireGuard route %s", cidr)
+		}
 	}
 
-	// Remove WireGuard default route
-	wgDefaultRoute := &netlink.Route{
-		Dst:       defaultDst,
-		LinkIndex: wgLink.Attrs().Index,
-	}
-	if err := netlink.RouteDel(wgDefaultRoute); err != nil {
-		logrus.WithError(err).Warn("Failed to remove WireGuard default route")
+	// Remove peer endpoint route
+	peerIP, err := parsePeerEndpoint(w.config.PeerEndpoint)
+	if err != nil {
+		logrus.WithError(err).Warn("Failed to parse peer endpoint for route cleanup")
+		return
 	}
 
-	// Get primary interface
 	primaryLink, err := netlink.LinkByName(w.defaultIface)
 	if err != nil {
 		logrus.WithError(err).Warn("Failed to find primary interface for route cleanup")
 		return
 	}
 
-	// Remove peer endpoint route
-	peerIPStr := strings.Split(w.config.PeerEndpoint, ":")[0]
-	peerIP := net.ParseIP(peerIPStr)
-	if peerIP != nil {
-		peerRoute := &netlink.Route{
-			Dst: &net.IPNet{
-				IP:   peerIP,
-				Mask: net.CIDRMask(32, 32),
-			},
-			Gw:        w.defaultGW,
-			LinkIndex: primaryLink.Attrs().Index,
-		}
-		if err := netlink.RouteDel(peerRoute); err != nil {
-			logrus.WithError(err).Warn("Failed to remove peer endpoint route")
-		}
-	}
-
-	// Restore original default route
-	originalDefaultRoute := &netlink.Route{
-		Dst:       defaultDst,
+	peerRoute := &netlink.Route{
+		Dst: &net.IPNet{
+			IP:   peerIP,
+			Mask: peerHostMask(peerIP),
+		},
 		Gw:        w.defaultGW,
 		LinkIndex: primaryLink.Attrs().Index,
 	}
-	if err := netlink.RouteAdd(originalDefaultRoute); err != nil {
-		logrus.WithError(err).Warn("Failed to restore original default route")
+	if err := netlink.RouteDel(peerRoute); err != nil {
+		logrus.WithError(err).Warn("Failed to remove peer endpoint route")
 	}
 
 	logrus.Info("Routes cleaned up")
 }
 
-// derivePublicKey derives a public key from a private key
+// parsePeerEndpoint extracts the host IP from a peer endpoint string.
+// Handles both IPv4 (1.2.3.4:51820) and IPv6 ([2001:db8::1]:51820) formats.
+func parsePeerEndpoint(endpoint string) (net.IP, error) {
+	host, _, err := net.SplitHostPort(endpoint)
+	if err != nil {
+		return nil, fmt.Errorf("invalid peer endpoint %q: %w", endpoint, err)
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return nil, fmt.Errorf("invalid IP in peer endpoint: %s", host)
+	}
+	return ip, nil
+}
+
+// peerHostMask returns the appropriate host mask for an IP address
+// (/32 for IPv4, /128 for IPv6)
+func peerHostMask(ip net.IP) net.IPMask {
+	if ip.To4() != nil {
+		return net.CIDRMask(32, 32)
+	}
+	return net.CIDRMask(128, 128)
+}
+
+// derivePublicKey derives a Curve25519 public key from a base64-encoded private key
 func derivePublicKey(privateKeyBase64 string) (string, error) {
 	privateBytes, err := base64.StdEncoding.DecodeString(privateKeyBase64)
 	if err != nil {
@@ -472,20 +497,27 @@ func derivePublicKey(privateKeyBase64 string) (string, error) {
 		return "", fmt.Errorf("invalid private key length: expected 32, got %d", len(privateBytes))
 	}
 
-	var private, public [32]byte
-	copy(private[:], privateBytes)
-	curve25519.ScalarBaseMult(&public, &private)
+	publicBytes, err := curve25519.X25519(privateBytes, curve25519.Basepoint)
+	if err != nil {
+		return "", fmt.Errorf("failed to compute public key: %w", err)
+	}
 
-	return base64.StdEncoding.EncodeToString(public[:]), nil
+	return base64.StdEncoding.EncodeToString(publicBytes), nil
 }
 
 // hexEncode converts a base64-encoded key to hex encoding (required by WireGuard IPC)
-func hexEncode(base64Key string) string {
+func hexEncode(base64Key string) (string, error) {
 	keyBytes, err := base64.StdEncoding.DecodeString(base64Key)
 	if err != nil {
-		return ""
+		return "", fmt.Errorf("failed to decode base64 key: %w", err)
 	}
-	return fmt.Sprintf("%x", keyBytes)
+	return fmt.Sprintf("%x", keyBytes), nil
+}
+
+// isDefaultRoute checks if a netlink route is a default route (0.0.0.0/0)
+func isDefaultRoute(route netlink.Route) bool {
+	return route.Dst == nil ||
+		(route.Dst != nil && route.Dst.IP.Equal(net.IPv4zero) && route.Dst.Mask.String() == "00000000")
 }
 
 // getDefaultGateway returns the default gateway IP and interface name using netlink
@@ -496,31 +528,26 @@ func getDefaultGateway() (net.IP, string, error) {
 	}
 
 	for _, route := range routes {
-		// Default route can be represented as:
-		// 1. Dst == nil (common representation)
-		// 2. Dst == 0.0.0.0/0 (some container environments)
-		isDefault := route.Dst == nil ||
-			(route.Dst != nil && route.Dst.IP.Equal(net.IPv4zero) && route.Dst.Mask.String() == "00000000")
-
-		if isDefault && route.Gw != nil {
-			// Get interface name
-			link, err := netlink.LinkByIndex(route.LinkIndex)
-			if err != nil {
-				logrus.WithError(err).WithField("link_index", route.LinkIndex).Debug("Failed to get link by index")
-				continue
-			}
-			logrus.WithFields(logrus.Fields{
-				"gateway":   route.Gw.String(),
-				"interface": link.Attrs().Name,
-			}).Debug("Found default gateway")
-			return route.Gw, link.Attrs().Name, nil
+		if !isDefaultRoute(route) || route.Gw == nil {
+			continue
 		}
+		// Get interface name
+		link, err := netlink.LinkByIndex(route.LinkIndex)
+		if err != nil {
+			logrus.WithError(err).WithField("link_index", route.LinkIndex).Debug("Failed to get link by index")
+			continue
+		}
+		logrus.WithFields(logrus.Fields{
+			"gateway":   route.Gw.String(),
+			"interface": link.Attrs().Name,
+		}).Debug("Found default gateway")
+		return route.Gw, link.Attrs().Name, nil
 	}
 
 	return nil, "", fmt.Errorf("default gateway not found")
 }
 
-// GetStatus returns the current status of the WireGuard client
+// GetStatus returns the current status of the WireGuard client including operational metrics
 func (w *WireGuardClient) GetStatus() map[string]interface{} {
 	w.mutex.Lock()
 	defer w.mutex.Unlock()
@@ -535,5 +562,31 @@ func (w *WireGuardClient) GetStatus() map[string]interface{} {
 		"listen_port":   w.config.ListenPort,
 	}
 
+	// Query operational stats from the WireGuard device via IPC
+	if w.device != nil && w.running {
+		ipcOutput, err := w.device.IpcGet()
+		if err == nil {
+			for k, v := range parseIPCStats(ipcOutput) {
+				status[k] = v
+			}
+		}
+	}
+
 	return status
+}
+
+// parseIPCStats extracts operational metrics from WireGuard IPC output
+func parseIPCStats(ipcOutput string) map[string]string {
+	stats := make(map[string]string)
+	for _, line := range strings.Split(ipcOutput, "\n") {
+		parts := strings.SplitN(line, "=", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		switch parts[0] {
+		case "rx_bytes", "tx_bytes", "last_handshake_time_sec", "last_handshake_time_nsec":
+			stats[parts[0]] = parts[1]
+		}
+	}
+	return stats
 }

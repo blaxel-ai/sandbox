@@ -1185,6 +1185,90 @@ const docTemplate = `{
                 }
             }
         },
+        "/network/tunnel": {
+            "delete": {
+                "description": "Stop the network tunnel and restore the original network configuration.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "network"
+                ],
+                "summary": "Disconnect tunnel",
+                "responses": {
+                    "200": {
+                        "description": "Tunnel disconnected",
+                        "schema": {
+                            "$ref": "#/definitions/SuccessResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "No tunnel is running",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Failed to stop tunnel",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/network/tunnel/config": {
+            "put": {
+                "description": "Apply a new tunnel configuration on the fly. The existing tunnel is torn down and a new one is established. This endpoint is write-only; there is no corresponding GET to read the config back.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "network"
+                ],
+                "summary": "Update tunnel configuration",
+                "parameters": [
+                    {
+                        "description": "Base64-encoded tunnel configuration",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/TunnelConfigRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Configuration applied",
+                        "schema": {
+                            "$ref": "#/definitions/SuccessResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request body",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "Invalid tunnel configuration",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Failed to apply configuration",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/process": {
             "get": {
                 "description": "Get a list of all running and completed processes",
@@ -2297,6 +2381,19 @@ const docTemplate = `{
                 }
             }
         },
+        "TunnelConfigRequest": {
+            "type": "object",
+            "required": [
+                "config"
+            ],
+            "properties": {
+                "config": {
+                    "description": "Base64-encoded tunnel config JSON",
+                    "type": "string",
+                    "example": "eyJsb2NhbF9pcCI6ICIxMC4wLjAuMS8zMiIsIC4uLn0="
+                }
+            }
+        },
         "UpgradeRequest": {
             "type": "object",
             "properties": {
@@ -2425,12 +2522,6 @@ const docTemplate = `{
                 "UpgradeStateIdle": "No upgrade in progress",
                 "UpgradeStateRunning": "Upgrade is currently running"
             },
-            "x-enum-descriptions": [
-                "No upgrade in progress",
-                "Upgrade is currently running",
-                "Upgrade completed successfully",
-                "Upgrade failed"
-            ],
             "x-enum-varnames": [
                 "UpgradeStateIdle",
                 "UpgradeStateRunning",
