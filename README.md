@@ -10,6 +10,7 @@ Sandbox Hub is a collection of development environment templates for creating se
 
 ## Table of Contents
 
+
 - [Templates](#templates)
 - [Prerequisites](#prerequisites)
 - [Installation](#installation)
