@@ -296,6 +296,100 @@ func TestMCPClientConcurrentCalls(t *testing.T) {
 	}
 }
 
+// TestMCPClientDuplicateResponseBug tests for the duplicate response bug reported by Anthropic
+// Bug: Server sends duplicate response for ID 2 instead of responding to ID 3
+func TestMCPClientDuplicateResponseBug(t *testing.T) {
+	_, session := setupMCPClient(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// Test with 50 concurrent requests to stress test the system
+	const numCalls = 50
+	type result struct {
+		id    int
+		err   error
+		took  time.Duration
+		isErr bool
+	}
+	results := make(chan result, numCalls)
+
+	// Launch all requests simultaneously
+	startTime := time.Now()
+	for i := 0; i < numCalls; i++ {
+		go func(id int) {
+			callStart := time.Now()
+			callResult, err := session.CallTool(ctx, &mcp.CallToolParams{
+				Name:      "processesList",
+				Arguments: map[string]any{},
+			})
+
+			took := time.Since(callStart)
+
+			if err != nil {
+				t.Logf("Call %d failed after %v: %v", id, took, err)
+				results <- result{id: id, err: err, took: took}
+				return
+			}
+
+			if callResult.IsError {
+				t.Logf("Call %d returned error after %v", id, took)
+				results <- result{id: id, isErr: true, took: took}
+				return
+			}
+
+			t.Logf("Call %d succeeded after %v", id, took)
+			results <- result{id: id, err: nil, took: took}
+		}(i)
+	}
+
+	// Collect all results with detailed tracking
+	successCount := 0
+	timeoutCount := 0
+	errorCount := 0
+	var slowestCall time.Duration
+
+	for i := 0; i < numCalls; i++ {
+		select {
+		case res := <-results:
+			if res.took > slowestCall {
+				slowestCall = res.took
+			}
+			if res.err != nil {
+				if res.err.Error() == "context deadline exceeded" {
+					timeoutCount++
+				}
+				errorCount++
+				t.Errorf("Call %d failed: %v (took %v)", res.id, res.err, res.took)
+			} else if res.isErr {
+				errorCount++
+				t.Errorf("Call %d returned error result (took %v)", res.id, res.took)
+			} else {
+				successCount++
+			}
+		case <-time.After(30 * time.Second):
+			timeoutCount++
+			t.Errorf("Timeout waiting for call %d", i)
+		}
+	}
+
+	totalTime := time.Since(startTime)
+	t.Logf("\n=== Concurrent Request Test Results ===")
+	t.Logf("Total calls: %d", numCalls)
+	t.Logf("Successful: %d", successCount)
+	t.Logf("Errors: %d", errorCount)
+	t.Logf("Timeouts: %d", timeoutCount)
+	t.Logf("Total time: %v", totalTime)
+	t.Logf("Slowest call: %v", slowestCall)
+
+	// If we see timeouts, it's likely the duplicate response bug
+	if timeoutCount > 0 {
+		t.Errorf("DUPLICATE RESPONSE BUG DETECTED: %d requests timed out, likely due to missing responses", timeoutCount)
+	}
+
+	assert.Equal(t, numCalls, successCount, "All concurrent calls should succeed")
+	assert.Equal(t, 0, timeoutCount, "No calls should timeout (indicates duplicate response bug)")
+}
+
 // TestMCPClientToolInputValidation tests that tools validate their inputs
 func TestMCPClientToolInputValidation(t *testing.T) {
 	_, session := setupMCPClient(t)

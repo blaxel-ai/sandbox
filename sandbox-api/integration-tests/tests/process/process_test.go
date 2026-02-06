@@ -1161,6 +1161,91 @@ HTTPServer(('', %d), H).serve_forever()
 	t.Log("Test passed: HTTP server started successfully and port was immediately callable after waitForPorts returned")
 }
 
+// TestProcessTimeoutWithWaitForCompletion tests that when a process times out with waitForCompletion,
+// the API returns an error but the process continues running and can be retrieved
+func TestProcessTimeoutWithWaitForCompletion(t *testing.T) {
+	t.Log("=== Testing process timeout with waitForCompletion ===")
+
+	processName := fmt.Sprintf("test-timeout-%d", time.Now().UnixNano())
+
+	// Start a long-running process with a short timeout
+	processRequest := map[string]interface{}{
+		"name":              processName,
+		"command":           "sleep 30", // Will run longer than the timeout
+		"cwd":               "/",
+		"waitForCompletion": true,
+		"timeout":           1, // Short timeout to trigger the timeout behavior
+	}
+
+	t.Log("Starting process with short timeout...")
+	startTime := time.Now()
+	resp, err := common.MakeRequestWithTimeout(http.MethodPost, "/process", processRequest, 10*time.Second)
+	elapsed := time.Since(startTime)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	t.Logf("Response received after %v", elapsed)
+
+	// Verify the timeout actually triggered - response should come back in ~3 seconds, not 30
+	assert.Less(t, elapsed, 2*time.Second, "Response should return within 4 seconds (timeout is 3s)")
+	assert.GreaterOrEqual(t, elapsed, 1*time.Second, "Response should take at least 3 seconds (the timeout duration)")
+
+	// The request should return 422 (Unprocessable Entity) on timeout
+	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, "Should return 422 on timeout")
+
+	var errorResponse map[string]interface{}
+	err = json.NewDecoder(resp.Body).Decode(&errorResponse)
+	require.NoError(t, err)
+
+	t.Logf("Error response: %+v", errorResponse)
+
+	// Verify error message indicates timeout
+	require.Contains(t, errorResponse, "error", "Response should contain error")
+	errorMsg := errorResponse["error"].(string)
+	assert.Contains(t, errorMsg, "timed out", "Error message should mention timeout")
+
+	// The process should still be running even though the API returned an error
+	// We can retrieve it by name
+	t.Log("Verifying process is still accessible and running...")
+	resp, err = common.MakeRequest(http.MethodGet, "/process/"+processName, nil)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var processDetails map[string]interface{}
+	err = json.NewDecoder(resp.Body).Decode(&processDetails)
+	require.NoError(t, err)
+
+	assert.Equal(t, "running", processDetails["status"], "Process should still be running after timeout error")
+	assert.Equal(t, processName, processDetails["name"], "Process name should match")
+
+	pid := processDetails["pid"].(string)
+	t.Logf("Process PID: %s, Status: %s", pid, processDetails["status"])
+
+	// Cleanup: kill the process
+	t.Log("Cleaning up: killing process...")
+	resp, err = common.MakeRequest(http.MethodDelete, "/process/"+processName+"/kill", nil)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	// Wait for cleanup
+	time.Sleep(500 * time.Millisecond)
+
+	// Verify process is killed
+	resp, err = common.MakeRequest(http.MethodGet, "/process/"+processName, nil)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	err = json.NewDecoder(resp.Body).Decode(&processDetails)
+	require.NoError(t, err)
+
+	assert.Equal(t, "killed", processDetails["status"], "Process should be killed after cleanup")
+	t.Log("✓ Test passed: Process timeout returns error but process continues running and is accessible")
+}
+
 // makeRequestWithHeaders makes an HTTP request with custom headers
 func makeRequestWithHeaders(method, path string, body interface{}, headers map[string]string) (*http.Response, error) {
 	var bodyReader io.Reader

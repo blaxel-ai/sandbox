@@ -177,6 +177,14 @@ func (pm *ProcessManager) ExecuteProcess(
 			pid = receivedPID // Update pid to the received PID
 			break
 		case <-ctx.Done():
+			// Process timed out but is still running - return process info along with error
+			// so the caller can still access the running process
+			processInfo, exists := pm.GetProcessByIdentifier(pid)
+			if exists {
+				logs := processInfo.logs.String()
+				processInfo.Logs = &logs
+				return processInfo, fmt.Errorf("process timed out after %d seconds", timeout)
+			}
 			return nil, fmt.Errorf("process timed out after %d seconds", timeout)
 		}
 	}
@@ -187,12 +195,21 @@ func (pm *ProcessManager) ExecuteProcess(
 		return nil, fmt.Errorf("process creation failed because process does not exist")
 	}
 	if waitForCompletion {
-		logs := processInfo.logs.String()
-		processInfo.Logs = &logs
-		stdout := processInfo.stdout.String()
-		processInfo.Stdout = &stdout
-		stderr := processInfo.stderr.String()
-		processInfo.Stderr = &stderr
+		// Read logs from file if available (more reliable than in-memory)
+		output, err := pm.GetProcessOutput(pid)
+		if err == nil {
+			processInfo.Logs = &output.Logs
+			processInfo.Stdout = &output.Stdout
+			processInfo.Stderr = &output.Stderr
+		} else {
+			// Fall back to in-memory
+			logs := processInfo.logs.String()
+			processInfo.Logs = &logs
+			stdout := processInfo.stdout.String()
+			processInfo.Stdout = &stdout
+			stderr := processInfo.stderr.String()
+			processInfo.Stderr = &stderr
+		}
 	}
 	return processInfo, nil
 }

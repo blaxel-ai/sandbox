@@ -5,6 +5,8 @@ on:
     branches:
       - main
       - develop
+    tags:
+      - 'v*'
   workflow_dispatch:
     inputs:
       sandbox:
@@ -25,7 +27,7 @@ env:
   REGISTRY: ghcr.io
   IMAGE_NAME: blaxel-ai/sandbox
   TAG: ${{ github.sha }}
-  BL_ENV: ${{ github.ref_name == 'main' && 'prod' || 'dev' }}
+  BL_ENV: ${{ github.ref_name == 'develop' && 'dev' || 'prod' }}
   DEV_IMAGE_BUCKET: controlplane-dev-build-images-eu-west-1-37df18
   PROD_IMAGE_BUCKET: controlplane-prod-build-images-us-west-2-466b17
 
@@ -45,24 +47,93 @@ jobs:
         run: |
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
             echo "sandbox-api=true" >> $GITHUB_OUTPUT
+          elif [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            echo "sandbox-api=true" >> $GITHUB_OUTPUT
           elif git diff --name-only HEAD^ HEAD | grep -q "sandbox-api/"; then
             echo "sandbox-api=true" >> $GITHUB_OUTPUT
           else
             echo "sandbox-api=false" >> $GITHUB_OUTPUT
           fi
 
-  sandbox-api:
+  sandbox-api-build:
     needs: check-changes
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
-    # Only run if there are changes to sandbox-api or if workflow is manually triggered
     if: needs.check-changes.outputs.sandbox-api-changed == 'true'
-
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - linux/amd64
+          - linux/arm64
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Set platform pair
+        id: platform
+        run: |
+          platform=${{ matrix.platform }}
+          echo "pair=${platform//\//-}" >> $GITHUB_OUTPUT
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: ./sandbox-api
+          file: ./sandbox-api/Dockerfile
+          platforms: ${{ matrix.platform }}
+          labels: ${{ steps.meta.outputs.labels }}
+          outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=${{ steps.platform.outputs.pair }}
+          cache-to: type=gha,scope=${{ steps.platform.outputs.pair }},mode=max
+
+      - name: Export digest
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+
+      - name: Upload digest
+        uses: actions/upload-artifact@v4
+        with:
+          name: digests-${{ steps.platform.outputs.pair }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  sandbox-api:
+    needs: [check-changes, sandbox-api-build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    if: needs.check-changes.outputs.sandbox-api-changed == 'true'
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digests-*
+          merge-multiple: true
 
       - name: Log in to Container Registry
         uses: docker/login-action@v3
@@ -78,29 +149,25 @@ jobs:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
             type=ref,event=branch
-            type=sha,prefix={{branch}}-
-            type=raw,value=latest,enable=${{ github.ref_name == 'main' }}
+            type=sha,prefix={{branch}}-,enable=${{ !startsWith(github.ref, 'refs/tags/') }}
+            type=raw,value=preview,enable=${{ github.ref_name == 'main' }}
             type=raw,value=develop,enable=${{ github.ref_name == 'develop' }}
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/') }}
+            type=semver,pattern={{version}}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build and push Docker image
-        uses: docker/build-push-action@v5
-        with:
-          context: ./sandbox-api
-          file: ./sandbox-api/Dockerfile
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+      - name: Create manifest list and push
+        working-directory: /tmp/digests
+        run: |
+          docker buildx imagetools create $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf '${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@sha256:%s ' *)
   generate-matrix:
     needs: [check-changes, sandbox-api]
     runs-on: ubuntu-latest
-    # Run if sandbox-api was skipped or completed successfully
-    if: always() && (needs.check-changes.result == 'success')
+    # Run if sandbox-api was skipped or completed successfully, skip on main (preview only builds sandbox-api)
+    if: always() && (needs.check-changes.result == 'success') && github.ref_name != 'main'
     outputs:
       sandboxes: ${{ steps.retrieve-sandbox.outputs.sandboxes }}
     steps:
@@ -125,6 +192,13 @@ jobs:
 
           if [[ ! -z "${{ inputs.sandbox }}" ]]; then
             echo "sandboxes=[\"${{ inputs.sandbox }}\"]" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # On tag push, build all sandboxes
+          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            echo "Tag push detected, building all Sandboxes"
+            echo "sandboxes=$all_sandboxes" >> $GITHUB_OUTPUT
             exit 0
           fi
 
@@ -166,9 +240,10 @@ jobs:
     needs:
       - generate-matrix
       - sandbox-api
-    # Run after sandbox-api completes (if it runs) or is skipped
-    if: always() && needs.generate-matrix.outputs.sandboxes != '[]' && (needs.sandbox-api.result == 'success' || needs.sandbox-api.result == 'skipped')
+    # Run after sandbox-api completes (if it runs) or is skipped, skip on main (preview only builds sandbox-api)
+    if: always() && github.ref_name != 'main' && needs.generate-matrix.outputs.sandboxes != '[]' && (needs.sandbox-api.result == 'success' || needs.sandbox-api.result == 'skipped')
     strategy:
+      fail-fast: false
       matrix:
         sandbox: ${{ fromJson(needs.generate-matrix.outputs.sandboxes )}}
     permissions:
@@ -195,9 +270,10 @@ jobs:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-${{ matrix.sandbox }}
           tags: |
             type=ref,event=branch
-            type=sha,prefix={{branch}}-
-            type=raw,value=latest,enable=${{ github.ref_name == 'main' }}
+            type=sha,prefix={{branch}}-,enable=${{ !startsWith(github.ref, 'refs/tags/') }}
             type=raw,value=develop,enable=${{ github.ref_name == 'develop' }}
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/') }}
+            type=semver,pattern={{version}}
 
       - name: Build and push sandbox image
         uses: docker/build-push-action@v5
@@ -209,7 +285,7 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
-            SANDBOX_VERSION=${{ github.ref_name == 'main' && 'latest' || github.ref_name == 'develop' && 'develop' || 'latest' }}
+            SANDBOX_VERSION=${{ startsWith(github.ref, 'refs/tags/') && 'latest' || github.ref_name == 'develop' && 'develop' || 'latest' }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -217,33 +293,43 @@ jobs:
     runs-on: codebuild-sandbox-${{ github.run_id }}-${{ github.run_attempt }}
     environment: |-
       ${{
-        github.ref_name == 'main' && 'prod'
-      || github.ref_name == 'develop' && 'dev'
-      || 'dev'
+        github.ref_name == 'develop' && 'dev'
+      || 'prod'
       }}
     env:
       BL_API_URL: ${{ vars.BL_API_URL }}
       BL_ADMIN_USERNAME: ${{ secrets.BL_ADMIN_USERNAME }}
       BL_ADMIN_PASSWORD: ${{ secrets.BL_ADMIN_PASSWORD }}
     needs: [generate-matrix, build-ghcr-hub]
-    if: always() && needs.generate-matrix.outputs.sandboxes != '[]' && needs.build-ghcr-hub.result == 'success'
+    # Skip on main (preview only builds sandbox-api)
+    if: always() && github.ref_name != 'main' && needs.generate-matrix.outputs.sandboxes != '[]' && needs.build-ghcr-hub.result == 'success'
     strategy:
+      fail-fast: false
       matrix:
         sandbox: ${{ fromJson(needs.generate-matrix.outputs.sandboxes )}}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-      - name: Set short SHA
-        id: short-sha
-        run: echo "sha_short=$(git rev-parse --short ${{ github.sha }})" >> $GITHUB_OUTPUT
+      - name: Set image tag
+        id: image-tag
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            # For tags, strip the 'v' prefix to match semver Docker tag
+            VERSION="${{ github.ref_name }}"
+            echo "tag=${VERSION#v}" >> $GITHUB_OUTPUT
+          else
+            # For branches, use branch-sha format
+            SHA_SHORT=$(git rev-parse --short ${{ github.sha }})
+            echo "tag=${{ github.ref_name }}-${SHA_SHORT}" >> $GITHUB_OUTPUT
+          fi
       - name: Build sandbox image
         env:
           SANDBOX_NAME: ${{ matrix.sandbox }}
-          IMAGE_TAG: ${{ github.ref_name }}-${{ steps.short-sha.outputs.sha_short }}
+          IMAGE_TAG: ${{ steps.image-tag.outputs.tag }}
           BL_TYPE: sandbox
           BL_ENV: ${{ env.BL_ENV }}
           SRC_REGISTRY: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-${{ matrix.sandbox }}
-          BASE_IMAGE_TAG: ${{ github.ref_name }}-${{ steps.short-sha.outputs.sha_short }}
+          BASE_IMAGE_TAG: ${{ steps.image-tag.outputs.tag }}
           BUILD_ID: ${{ github.run_id }}-${{ github.run_attempt }}
           LOG_LEVEL: debug
           IMAGE_BUCKET_MK3: ${{ env.BL_ENV == 'prod' && env.PROD_IMAGE_BUCKET || env.DEV_IMAGE_BUCKET }}

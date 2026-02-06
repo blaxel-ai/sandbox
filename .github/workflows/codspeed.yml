@@ -4,9 +4,8 @@ on:
   push:
     branches:
       - main
-  pull_request:
-    branches:
-      - main
+    paths:
+      - 'sandbox-api/**'
 
 permissions: # optional for public repositories
   contents: read # required for actions/checkout
@@ -21,6 +20,7 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version: '1.25'
+          cache-dependency-path: sandbox-api/go.sum
 
       - name: Run benchmarks
         uses: CodSpeedHQ/action@v4
