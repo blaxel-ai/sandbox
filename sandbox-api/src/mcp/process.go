@@ -26,10 +26,11 @@ type ProcessExecuteInput struct {
 	WorkingDir        *string           `json:"workingDir,omitempty" jsonschema:"The working directory for the command (default: /)"`
 	Env               map[string]string `json:"env,omitempty" jsonschema:"Environment variables to set for the command"`
 	WaitForCompletion *bool             `json:"waitForCompletion,omitempty" jsonschema:"Whether to wait for the command to complete before returning"`
-	Timeout           *int              `json:"timeout,omitempty" jsonschema:"Timeout in seconds for the command (default: 30)"`
+	Timeout           *int              `json:"timeout,omitempty" jsonschema:"Timeout in seconds. When keepAlive is true, defaults to 600s. Set to 0 for infinite."`
 	WaitForPorts      []int             `json:"waitForPorts,omitempty" jsonschema:"List of ports to wait for before returning"`
 	RestartOnFailure  *bool             `json:"restartOnFailure,omitempty" jsonschema:"Whether to restart the process on failure (default: false)"`
 	MaxRestarts       *int              `json:"maxRestarts,omitempty" jsonschema:"Maximum number of restarts (default: 0)"`
+	KeepAlive         *bool             `json:"keepAlive,omitempty" jsonschema:"Disable scale-to-zero while process runs. Default timeout 600s. Set timeout to 0 for infinite."`
 }
 
 // ProcessExecuteOutput is the output for processExecute tool
@@ -112,6 +113,17 @@ func (s *Server) registerProcessTools() error {
 			maxRestarts = *input.MaxRestarts
 		}
 
+		keepAlive := false
+		if input.KeepAlive != nil {
+			keepAlive = *input.KeepAlive
+		}
+
+		// Set default timeout for keepAlive if not specified (default: 600s = 10 minutes)
+		// Timeout of 0 means infinite (no auto-kill)
+		if keepAlive && input.Timeout == nil {
+			timeout = 600 // Default 10 minutes for keepAlive
+		}
+
 		// Cap the effective timeout for waitForCompletion to prevent proxy timeouts
 		effectiveTimeout := timeout
 		originalTimeoutExceeded := false
@@ -130,6 +142,7 @@ func (s *Server) registerProcessTools() error {
 			waitForPorts,
 			restartOnFailure,
 			maxRestarts,
+			keepAlive,
 		)
 
 		// Check if this is a timeout error due to the capped timeout (CloudFront workaround)
