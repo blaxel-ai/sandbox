@@ -22,6 +22,7 @@ func (pm *ProcessManager) ExecuteProcess(
 	waitForPorts []int,
 	restartOnFailure bool,
 	maxRestarts int,
+	keepAlive bool,
 ) (*ProcessInfo, error) {
 	portCh := make(chan int)
 	completionCh := make(chan string)
@@ -77,9 +78,9 @@ func (pm *ProcessManager) ExecuteProcess(
 	var pid string
 	var err error
 	if name != "" {
-		pid, err = pm.StartProcessWithName(command, workingDir, name, env, restartOnFailure, maxRestarts, callback)
+		pid, err = pm.StartProcessWithName(command, workingDir, name, env, restartOnFailure, maxRestarts, keepAlive, timeout, callback)
 	} else {
-		pid, err = pm.StartProcess(command, workingDir, env, restartOnFailure, maxRestarts, callback)
+		pid, err = pm.StartProcess(command, workingDir, env, restartOnFailure, maxRestarts, keepAlive, timeout, callback)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to start process: %w", err)
