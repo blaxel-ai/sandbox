@@ -334,11 +334,7 @@ func (w *WireGuardClient) configureNetwork(interfaceName string) error {
 }
 
 // setupRoutes configures routing to send all traffic through the WireGuard tunnel.
-//
-// Uses the wg-quick approach: two half-default routes (0.0.0.0/1 and 128.0.0.0/1) that
-// are more specific than the existing 0.0.0.0/0 default route, so they take precedence
-// without needing to delete or modify the original default route. This avoids race
-// conditions with the container runtime or DHCP client re-adding routes.
+// This replaces the default route to go through wg0 instead of the physical interface.
 func (w *WireGuardClient) setupRoutes(wgLink netlink.Link) error {
 	// Parse peer endpoint IP (handles both IPv4 and IPv6 endpoints)
 	peerIP, err := parsePeerEndpoint(w.config.PeerEndpoint)
@@ -385,27 +381,33 @@ func (w *WireGuardClient) setupRoutes(wgLink netlink.Link) error {
 		logrus.WithField("peer_ip", peerIP.String()).Info("Added route to peer endpoint")
 	}
 
-	// STEP 2: Add two half-default routes via WireGuard interface.
-	// 0.0.0.0/1 and 128.0.0.0/1 together cover all IPv4 addresses and are more specific
-	// than the existing 0.0.0.0/0 default route, so they take priority automatically.
-	// This is the same approach used by wg-quick.
-	for _, cidr := range []string{"0.0.0.0/1", "128.0.0.0/1"} {
-		_, dst, _ := net.ParseCIDR(cidr)
-		route := &netlink.Route{
-			Dst:       dst,
-			LinkIndex: wgLink.Attrs().Index,
-		}
-		if err := netlink.RouteAdd(route); err != nil {
-			return fmt.Errorf("failed to add route %s via WireGuard: %w", cidr, err)
-		}
-		logrus.WithField("route", cidr).Info("Added WireGuard route")
+	// STEP 2: Delete the existing default route via the physical interface
+	defaultRoute := &netlink.Route{
+		Dst:       nil, // nil means default route (0.0.0.0/0)
+		Gw:        defaultGW,
+		LinkIndex: primaryLink.Attrs().Index,
 	}
+	if err := netlink.RouteDel(defaultRoute); err != nil {
+		logrus.WithError(err).Warn("Failed to delete original default route (may not exist)")
+	} else {
+		logrus.Info("Deleted original default route")
+	}
+
+	// STEP 3: Add new default route via WireGuard interface
+	wgDefaultRoute := &netlink.Route{
+		Dst:       nil, // nil means default route (0.0.0.0/0)
+		LinkIndex: wgLink.Attrs().Index,
+	}
+	if err := netlink.RouteAdd(wgDefaultRoute); err != nil {
+		return fmt.Errorf("failed to add default route via WireGuard: %w", err)
+	}
+	logrus.Info("Added default route via WireGuard")
 
 	logrus.Info("Routes configured successfully")
 	return nil
 }
 
-// removeRoutes removes the routes set up by setupRoutes
+// removeRoutes removes the routes set up by setupRoutes and restores the original default route
 func (w *WireGuardClient) removeRoutes() {
 	if w.defaultGW == nil {
 		return
@@ -423,28 +425,39 @@ func (w *WireGuardClient) removeRoutes() {
 		return
 	}
 
-	// Remove the two half-default routes
-	for _, cidr := range []string{"0.0.0.0/1", "128.0.0.0/1"} {
-		_, dst, _ := net.ParseCIDR(cidr)
-		route := &netlink.Route{
-			Dst:       dst,
-			LinkIndex: wgLink.Attrs().Index,
-		}
-		if err := netlink.RouteDel(route); err != nil {
-			logrus.WithError(err).Warnf("Failed to remove WireGuard route %s", cidr)
-		}
+	// Remove the WireGuard default route
+	wgDefaultRoute := &netlink.Route{
+		Dst:       nil, // nil means default route (0.0.0.0/0)
+		LinkIndex: wgLink.Attrs().Index,
+	}
+	if err := netlink.RouteDel(wgDefaultRoute); err != nil {
+		logrus.WithError(err).Warn("Failed to remove WireGuard default route")
+	} else {
+		logrus.Info("Removed WireGuard default route")
+	}
+
+	// Restore the original default route via physical interface
+	primaryLink, err := netlink.LinkByName(w.defaultIface)
+	if err != nil {
+		logrus.WithError(err).Warn("Failed to find primary interface for route restoration")
+		return
+	}
+
+	defaultRoute := &netlink.Route{
+		Dst:       nil, // nil means default route (0.0.0.0/0)
+		Gw:        w.defaultGW,
+		LinkIndex: primaryLink.Attrs().Index,
+	}
+	if err := netlink.RouteAdd(defaultRoute); err != nil {
+		logrus.WithError(err).Warn("Failed to restore original default route")
+	} else {
+		logrus.Info("Restored original default route")
 	}
 
 	// Remove peer endpoint route
 	peerIP, err := parsePeerEndpoint(w.config.PeerEndpoint)
 	if err != nil {
 		logrus.WithError(err).Warn("Failed to parse peer endpoint for route cleanup")
-		return
-	}
-
-	primaryLink, err := netlink.LinkByName(w.defaultIface)
-	if err != nil {
-		logrus.WithError(err).Warn("Failed to find primary interface for route cleanup")
 		return
 	}
 
