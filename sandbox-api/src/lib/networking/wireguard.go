@@ -382,8 +382,9 @@ func (w *WireGuardClient) setupRoutes(wgLink netlink.Link) error {
 	}
 
 	// STEP 2: Delete the existing default route via the physical interface
+	_, defaultDst, _ := net.ParseCIDR("0.0.0.0/0")
 	defaultRoute := &netlink.Route{
-		Dst:       nil, // nil means default route (0.0.0.0/0)
+		Dst:       defaultDst,
 		Gw:        defaultGW,
 		LinkIndex: primaryLink.Attrs().Index,
 	}
@@ -395,7 +396,7 @@ func (w *WireGuardClient) setupRoutes(wgLink netlink.Link) error {
 
 	// STEP 3: Add new default route via WireGuard interface
 	wgDefaultRoute := &netlink.Route{
-		Dst:       nil, // nil means default route (0.0.0.0/0)
+		Dst:       defaultDst,
 		LinkIndex: wgLink.Attrs().Index,
 	}
 	if err := netlink.RouteAdd(wgDefaultRoute); err != nil {
@@ -426,8 +427,9 @@ func (w *WireGuardClient) removeRoutes() {
 	}
 
 	// Remove the WireGuard default route
+	_, defaultDst, _ := net.ParseCIDR("0.0.0.0/0")
 	wgDefaultRoute := &netlink.Route{
-		Dst:       nil, // nil means default route (0.0.0.0/0)
+		Dst:       defaultDst,
 		LinkIndex: wgLink.Attrs().Index,
 	}
 	if err := netlink.RouteDel(wgDefaultRoute); err != nil {
@@ -443,8 +445,9 @@ func (w *WireGuardClient) removeRoutes() {
 		return
 	}
 
+	_, defaultDst2, _ := net.ParseCIDR("0.0.0.0/0")
 	defaultRoute := &netlink.Route{
-		Dst:       nil, // nil means default route (0.0.0.0/0)
+		Dst:       defaultDst2,
 		Gw:        w.defaultGW,
 		LinkIndex: primaryLink.Attrs().Index,
 	}
