@@ -1001,6 +1001,69 @@ paths:
       summary: Get open ports for a process
       tags:
         - network
+  /network/tunnel:
+    delete:
+      description: Stop the network tunnel and restore the original network configuration.
+      responses:
+        "200":
+          description: Tunnel disconnected
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "400":
+          description: No tunnel is running
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Failed to stop tunnel
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+      summary: Disconnect tunnel
+      tags:
+        - network
+  /network/tunnel/config:
+    put:
+      description: Apply a new tunnel configuration on the fly. The existing tunnel is torn down and a new one is established. This endpoint is write-only; there is no corresponding GET to read the config back.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TunnelConfigRequest"
+        description: Base64-encoded tunnel configuration
+        required: true
+      responses:
+        "200":
+          description: Configuration applied
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "400":
+          description: Invalid request body
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Invalid tunnel configuration
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Failed to apply configuration
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+      summary: Update tunnel configuration
+      tags:
+        - network
   /process:
     get:
       description: Get a list of all running and completed processes
@@ -1862,6 +1925,15 @@ components:
             "{\"file1.txt\"": '"content1"'
           type: object
       type: object
+    TunnelConfigRequest:
+      properties:
+        config:
+          description: Base64-encoded tunnel config JSON
+          example: eyJsb2NhbF9pcCI6ICIxMC4wLjAuMS8zMiIsIC4uLn0=
+          type: string
+      required:
+        - config
+      type: object
     UpgradeRequest:
       properties:
         baseUrl:
@@ -1956,11 +2028,6 @@ components:
         UpgradeStateFailed: Upgrade failed
         UpgradeStateIdle: No upgrade in progress
         UpgradeStateRunning: Upgrade is currently running
-      x-enum-descriptions:
-        - No upgrade in progress
-        - Upgrade is currently running
-        - Upgrade completed successfully
-        - Upgrade failed
       x-enum-varnames:
         - UpgradeStateIdle
         - UpgradeStateRunning

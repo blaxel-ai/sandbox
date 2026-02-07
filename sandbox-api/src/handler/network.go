@@ -10,6 +10,7 @@ import (
 	"github.com/sirupsen/logrus"
 
 	"github.com/blaxel-ai/sandbox-api/src/handler/network"
+	networking "github.com/blaxel-ai/sandbox-api/src/lib/networking"
 )
 
 // NetworkHandler handles network operations
@@ -30,6 +31,12 @@ func NewNetworkHandler() *NetworkHandler {
 type PortMonitorRequest struct {
 	Callback string `json:"callback" example:"http://localhost:3000/callback"` // URL to call when a new port is detected
 } // @name PortMonitorRequest
+
+// TunnelConfigRequest is the request body for updating the network tunnel configuration.
+// The config field is a base64-encoded JSON matching the tunnel config schema.
+type TunnelConfigRequest struct {
+	Config string `json:"config" binding:"required" example:"eyJsb2NhbF9pcCI6ICIxMC4wLjAuMS8zMiIsIC4uLn0="` // Base64-encoded tunnel config JSON
+} // @name TunnelConfigRequest
 
 // GetPortsForPID gets the ports for a process
 func (h *NetworkHandler) GetPortsForPID(pid int) ([]*network.PortInfo, error) {
@@ -166,4 +173,55 @@ func (h *NetworkHandler) HandleStopMonitoringPorts(c *gin.Context) {
 	h.UnregisterPortOpenCallback(pid)
 
 	h.SendSuccess(c, "Port monitoring stopped")
+}
+
+// HandleUpdateTunnelConfig handles PUT requests to /network/tunnel/config
+// @Summary Update tunnel configuration
+// @Description Apply a new tunnel configuration on the fly. The existing tunnel is torn down and a new one is established. This endpoint is write-only; there is no corresponding GET to read the config back.
+// @Tags network
+// @Accept json
+// @Produce json
+// @Param request body TunnelConfigRequest true "Base64-encoded tunnel configuration"
+// @Success 200 {object} SuccessResponse "Configuration applied"
+// @Failure 400 {object} ErrorResponse "Invalid request body"
+// @Failure 422 {object} ErrorResponse "Invalid tunnel configuration"
+// @Failure 500 {object} ErrorResponse "Failed to apply configuration"
+// @Router /network/tunnel/config [put]
+func (h *NetworkHandler) HandleUpdateTunnelConfig(c *gin.Context) {
+	var req TunnelConfigRequest
+	if err := h.BindJSON(c, &req); err != nil {
+		h.SendError(c, http.StatusBadRequest, err)
+		return
+	}
+
+	config, err := networking.ParseBase64Config(req.Config)
+	if err != nil {
+		h.SendError(c, http.StatusUnprocessableEntity, fmt.Errorf("invalid tunnel config: %w", err))
+		return
+	}
+
+	if err := networking.UpdateWireGuardConfig(config); err != nil {
+		h.SendError(c, http.StatusInternalServerError, fmt.Errorf("failed to apply tunnel config: %w", err))
+		return
+	}
+
+	h.SendSuccess(c, "Tunnel configuration updated successfully")
+}
+
+// HandleDisconnectTunnel handles DELETE requests to /network/tunnel
+// @Summary Disconnect tunnel
+// @Description Stop the network tunnel and restore the original network configuration.
+// @Tags network
+// @Produce json
+// @Success 200 {object} SuccessResponse "Tunnel disconnected"
+// @Failure 400 {object} ErrorResponse "No tunnel is running"
+// @Failure 500 {object} ErrorResponse "Failed to stop tunnel"
+// @Router /network/tunnel [delete]
+func (h *NetworkHandler) HandleDisconnectTunnel(c *gin.Context) {
+	if err := networking.StopWireGuard(); err != nil {
+		h.SendError(c, http.StatusBadRequest, err)
+		return
+	}
+
+	h.SendSuccess(c, "Tunnel disconnected")
 }

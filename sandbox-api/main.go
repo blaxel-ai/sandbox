@@ -7,13 +7,16 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/blaxel-ai/sandbox-api/docs" // swagger generated docs
 	"github.com/blaxel-ai/sandbox-api/src/api"
-	"github.com/blaxel-ai/sandbox-api/src/lib/blaxel"
 	"github.com/blaxel-ai/sandbox-api/src/handler/process"
+	"github.com/blaxel-ai/sandbox-api/src/lib/blaxel"
+	"github.com/blaxel-ai/sandbox-api/src/lib/networking"
 	"github.com/blaxel-ai/sandbox-api/src/mcp"
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
@@ -43,6 +46,12 @@ func main() {
 	// the counter would be left in a bad state - this resets it to 0
 	if err := blaxel.ScaleReset(); err != nil {
 		logrus.Warnf("Failed to reset scale-to-zero counter on startup: %v", err)
+	}
+
+	// Initialize WireGuard client if configuration is present
+	if err := networking.StartWireGuardFromEnv(); err != nil {
+		logrus.Warnf("Failed to start WireGuard client: %v", err)
+		// Continue anyway - WireGuard is optional
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -180,7 +189,33 @@ func main() {
 		MaxHeaderBytes:    1 << 20,          // 1 MB max header size
 	}
 
-	if err := server.ListenAndServe(); err != nil {
+	// Set up signal handling for graceful shutdown
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+
+	go func() {
+		sig := <-sigCh
+		logrus.Infof("Received signal %v, shutting down...", sig)
+
+		// Shutdown HTTP server gracefully with a timeout
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer shutdownCancel()
+		if err := server.Shutdown(shutdownCtx); err != nil {
+			logrus.WithError(err).Warn("Failed to shutdown HTTP server gracefully")
+		}
+
+		// Stop WireGuard client and clean up routes
+		if err := networking.StopWireGuard(); err != nil {
+			logrus.WithError(err).Debug("WireGuard shutdown")
+		}
+
+		// Cancel the main context (stops background command if any)
+		cancel()
+	}()
+
+	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		logrus.Fatalf("Failed to start server: %v", err)
 	}
+
+	logrus.Info("Server stopped")
 }
