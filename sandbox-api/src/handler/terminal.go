@@ -74,6 +74,7 @@ func (h *TerminalHandler) HandleTerminalWS(c *gin.Context) {
 	}
 	shell := c.Query("shell")
 	workingDir := c.Query("workingDir")
+	sessionId := c.DefaultQuery("sessionId", "default")
 
 	// Upgrade HTTP connection to WebSocket
 	conn, err := h.upgrader.Upgrade(c.Writer, c.Request, nil)
@@ -81,19 +82,38 @@ func (h *TerminalHandler) HandleTerminalWS(c *gin.Context) {
 		logrus.Errorf("Failed to upgrade WebSocket: %v", err)
 		return
 	}
-	defer conn.Close()
 
-	// Create terminal session
-	session, err := terminal.NewTerminalSession(shell, workingDir, nil, cols, rows)
+	// Get or reconnect to a persistent terminal session
+	manager := terminal.GetSessionManager()
+	ms, isNew, err := manager.GetOrCreate(sessionId, shell, workingDir, nil, cols, rows)
 	if err != nil {
 		logrus.Errorf("Failed to create terminal session: %v", err)
 		_ = conn.WriteJSON(TerminalMessage{
 			Type: "error",
 			Data: err.Error(),
 		})
+		conn.Close()
 		return
 	}
-	defer session.Close()
+
+	// Subscribe to terminal output
+	sub := ms.Subscribe()
+
+	// Replay buffered output so the client sees the full terminal history.
+	// For a new session this is typically empty or just the initial prompt.
+	// For a reconnection this restores the terminal state.
+	buffered := ms.GetBuffer()
+	if len(buffered) > 0 {
+		_ = conn.WriteJSON(TerminalMessage{
+			Type: "output",
+			Data: string(buffered),
+		})
+	}
+
+	// On reconnection, resize to match the new client's dimensions
+	if !isNew && cols > 0 && rows > 0 {
+		_ = ms.Resize(cols, rows)
+	}
 
 	// Channel to signal when to stop, with sync.Once to prevent double-close panic
 	done := make(chan struct{})
@@ -104,26 +124,51 @@ func (h *TerminalHandler) HandleTerminalWS(c *gin.Context) {
 		})
 	}
 
-	// Read from PTY and send to WebSocket
+	// WaitGroup ensures the output goroutine finishes writing before we
+	// close the WebSocket connection. gorilla/websocket does not support
+	// concurrent writes, so conn.Close() must not race with WriteJSON.
+	var wg sync.WaitGroup
+	wg.Add(1)
+
+	// Read from subscriber channel and send to WebSocket
 	go func() {
-		buf := make([]byte, 4096)
-		for {
-			n, err := session.Read(buf)
-			if err != nil {
-				closeDone()
-				return
+		defer wg.Done()
+		defer func() {
+			if r := recover(); r != nil {
+				logrus.Errorf("Terminal WS output goroutine panic: %v", r)
 			}
-			if n > 0 {
-				msg := TerminalMessage{
-					Type: "output",
-					Data: string(buf[:n]),
-				}
-				if err := conn.WriteJSON(msg); err != nil {
-					closeDone()
+			closeDone()
+		}()
+
+		for {
+			select {
+			case data, ok := <-sub.Ch:
+				if !ok {
 					return
 				}
+				msg := TerminalMessage{
+					Type: "output",
+					Data: string(data),
+				}
+				if err := conn.WriteJSON(msg); err != nil {
+					return
+				}
+			case <-done:
+				return
+			case <-ms.Done():
+				return
 			}
 		}
+	}()
+
+	// Cleanup in correct order: stop goroutine -> wait for last write ->
+	// close connection -> unsubscribe.  Using a single defer guarantees
+	// this ordering regardless of which return path is taken.
+	defer func() {
+		closeDone()
+		wg.Wait()
+		conn.Close()
+		ms.Unsubscribe(sub)
 	}()
 
 	// Read from WebSocket and write to PTY
@@ -136,7 +181,6 @@ func (h *TerminalHandler) HandleTerminalWS(c *gin.Context) {
 
 		_, message, err := conn.ReadMessage()
 		if err != nil {
-			closeDone()
 			return
 		}
 
@@ -148,12 +192,12 @@ func (h *TerminalHandler) HandleTerminalWS(c *gin.Context) {
 
 		switch msg.Type {
 		case "input":
-			if _, err := session.Write([]byte(msg.Data)); err != nil {
+			if _, err := ms.Write([]byte(msg.Data)); err != nil {
 				logrus.Warnf("Failed to write to PTY: %v", err)
 			}
 		case "resize":
 			if msg.Cols > 0 && msg.Rows > 0 {
-				if err := session.Resize(msg.Cols, msg.Rows); err != nil {
+				if err := ms.Resize(msg.Cols, msg.Rows); err != nil {
 					logrus.Warnf("Failed to resize PTY: %v", err)
 				}
 			}
