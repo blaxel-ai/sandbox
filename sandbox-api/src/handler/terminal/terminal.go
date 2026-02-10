@@ -210,6 +210,11 @@ func (t *TerminalSession) IsClosed() bool {
 // Background jobs (started with &) may have different PGIDs but share the same SID.
 // This walks /proc to find every process in the session and sends SIGKILL.
 // Falls back to process-group kill on non-Linux systems where /proc is unavailable.
+//
+// Note: there is a theoretical TOCTOU window between reading /proc/<pid>/stat and
+// sending the kill signal during which a PID could be reused. In practice the window
+// is microseconds and the default Linux PID space (32768+) makes collisions
+// negligible. We mitigate further by skipping our own process and kernel threads.
 func killSessionProcesses(sessionID int) {
 	entries, err := os.ReadDir("/proc")
 	if err != nil {
@@ -218,9 +223,11 @@ func killSessionProcesses(sessionID int) {
 		return
 	}
 
+	ownPid := os.Getpid()
+
 	for _, entry := range entries {
 		pid, err := strconv.Atoi(entry.Name())
-		if err != nil || pid <= 1 {
+		if err != nil || pid <= 1 || pid == ownPid {
 			continue
 		}
 
@@ -243,6 +250,13 @@ func killSessionProcesses(sessionID int) {
 		if len(fields) < 4 {
 			continue
 		}
+
+		// Skip kernel threads (parented by PID 0 or kthreadd PID 2)
+		ppid, _ := strconv.Atoi(fields[1])
+		if ppid == 0 || ppid == 2 {
+			continue
+		}
+
 		sid, err := strconv.Atoi(fields[3])
 		if err != nil {
 			continue
