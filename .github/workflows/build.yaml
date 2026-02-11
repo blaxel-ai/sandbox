@@ -78,6 +78,16 @@ jobs:
           platform=${{ matrix.platform }}
           echo "pair=${platform//\//-}" >> $GITHUB_OUTPUT
 
+      - name: Set version
+        id: version
+        run: |
+          VERSION="${{ github.ref_name }}"
+          # Strip 'v' prefix for tags (v0.2.0 -> 0.2.0)
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            VERSION="${VERSION#v}"
+          fi
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+
       - name: Log in to Container Registry
         uses: docker/login-action@v3
         with:
@@ -102,6 +112,9 @@ jobs:
           file: ./sandbox-api/Dockerfile
           platforms: ${{ matrix.platform }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ steps.version.outputs.version }}
+            GIT_COMMIT=${{ github.sha }}
           outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true
           cache-from: type=gha,scope=${{ steps.platform.outputs.pair }}
           cache-to: type=gha,scope=${{ steps.platform.outputs.pair }},mode=max
@@ -166,8 +179,8 @@ jobs:
   generate-matrix:
     needs: [check-changes, sandbox-api]
     runs-on: ubuntu-latest
-    # Run if sandbox-api was skipped or completed successfully, skip on main (preview only builds sandbox-api)
-    if: always() && (needs.check-changes.result == 'success') && github.ref_name != 'main'
+    # Run if sandbox-api was skipped or completed successfully, skip on main unless 'all' is selected
+    if: always() && (needs.check-changes.result == 'success') && (github.ref_name != 'main' || inputs.sandbox == 'all')
     outputs:
       sandboxes: ${{ steps.retrieve-sandbox.outputs.sandboxes }}
     steps:
@@ -240,8 +253,8 @@ jobs:
     needs:
       - generate-matrix
       - sandbox-api
-    # Run after sandbox-api completes (if it runs) or is skipped, skip on main (preview only builds sandbox-api)
-    if: always() && github.ref_name != 'main' && needs.generate-matrix.outputs.sandboxes != '[]' && (needs.sandbox-api.result == 'success' || needs.sandbox-api.result == 'skipped')
+    # Run after sandbox-api completes (if it runs) or is skipped, skip on main unless 'all' is selected
+    if: always() && (github.ref_name != 'main' || inputs.sandbox == 'all') && needs.generate-matrix.outputs.sandboxes != '[]' && (needs.sandbox-api.result == 'success' || needs.sandbox-api.result == 'skipped')
     strategy:
       fail-fast: false
       matrix:
@@ -301,8 +314,8 @@ jobs:
       BL_ADMIN_USERNAME: ${{ secrets.BL_ADMIN_USERNAME }}
       BL_ADMIN_PASSWORD: ${{ secrets.BL_ADMIN_PASSWORD }}
     needs: [generate-matrix, build-ghcr-hub]
-    # Skip on main (preview only builds sandbox-api)
-    if: always() && github.ref_name != 'main' && needs.generate-matrix.outputs.sandboxes != '[]' && needs.build-ghcr-hub.result == 'success'
+    # Skip on main unless 'all' is selected
+    if: always() && (github.ref_name != 'main' || inputs.sandbox == 'all') && needs.generate-matrix.outputs.sandboxes != '[]' && needs.build-ghcr-hub.result == 'success'
     strategy:
       fail-fast: false
       matrix:
