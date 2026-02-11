@@ -20,6 +20,10 @@ const (
 
 	// sessionIdleTimeout is how long a session with no connected clients stays alive.
 	sessionIdleTimeout = 10 * time.Minute
+
+	// ansiReset resets all terminal text attributes. Prepended to buffer replays
+	// to avoid inheriting stale formatting from truncated escape sequences.
+	ansiReset = "\x1b[0m"
 )
 
 // Subscriber represents a connected WebSocket client receiving terminal output.
@@ -35,20 +39,26 @@ type ManagedSession struct {
 	ID      string
 	Session *TerminalSession
 
-	// Output ring buffer (protected by bufMu)
+	// Output ring buffer and dead flag (both protected by bufMu).
+	// dead is guarded by bufMu so that appendBuffer and markDead are
+	// mutually exclusive — the buffer is guaranteed to be in its final
+	// state once dead == true.
 	bufMu  sync.Mutex
 	buffer []byte
+	dead   bool
 
 	// Subscribers (protected by subMu)
 	subMu       sync.RWMutex
 	subscribers map[*Subscriber]struct{}
 
 	// Lifecycle
-	dead         bool
-	doneCh       chan struct{}
-	closeOnce    sync.Once
-	lastActivity time.Time // updated on disconnect and on output
+	doneCh    chan struct{}
+	closeOnce sync.Once
+
+	// Last activity timestamp (protected by activityMu).
+	// Separate from bufMu to avoid nested locks.
 	activityMu   sync.Mutex
+	lastActivity time.Time
 }
 
 func newManagedSession(id string, session *TerminalSession) *ManagedSession {
@@ -70,15 +80,18 @@ func newManagedSession(id string, session *TerminalSession) *ManagedSession {
 // still hold the PTY slave fd open, which would otherwise keep readLoop alive
 // and leave the terminal in a stuck state.
 func (ms *ManagedSession) watchShellExit() {
+	defer func() {
+		if r := recover(); r != nil {
+			logrus.Errorf("watchShellExit panic in session %s: %v", ms.ID, r)
+		}
+	}()
+
 	select {
 	case <-ms.Session.ShellDone():
 		logrus.Infof("Shell process exited for session %s, closing session", ms.ID)
-		// Close the underlying session (kills the process group, closes PTY)
 		ms.Session.Close()
-		// Mark managed session as dead so frontend can reconnect to a new session
 		ms.markDead()
 	case <-ms.doneCh:
-		// Session already closing from another path, nothing to do
 	}
 }
 
@@ -86,11 +99,18 @@ func (ms *ManagedSession) watchShellExit() {
 // It runs for the entire lifetime of the session. When the PTY returns an error
 // (shell exited), it marks the session as dead.
 func (ms *ManagedSession) readLoop() {
+	defer func() {
+		if r := recover(); r != nil {
+			logrus.Errorf("readLoop panic in session %s: %v", ms.ID, r)
+		}
+		// Always mark dead on exit, whether from PTY error or panic.
+		ms.markDead()
+	}()
+
 	buf := make([]byte, 4096)
 	for {
 		n, err := ms.Session.Read(buf)
 		if err != nil {
-			ms.markDead()
 			return
 		}
 		if n > 0 {
@@ -102,6 +122,8 @@ func (ms *ManagedSession) readLoop() {
 	}
 }
 
+// markDead atomically sets the dead flag and closes doneCh.
+// Safe to call from multiple goroutines — only the first call takes effect.
 func (ms *ManagedSession) markDead() {
 	ms.closeOnce.Do(func() {
 		ms.bufMu.Lock()
@@ -111,24 +133,55 @@ func (ms *ManagedSession) markDead() {
 	})
 }
 
+// appendBuffer adds data to the ring buffer. No-op if the session is already dead,
+// guaranteeing the buffer is immutable once dead == true.
 func (ms *ManagedSession) appendBuffer(data []byte) {
 	ms.bufMu.Lock()
-	defer ms.bufMu.Unlock()
+	if ms.dead {
+		ms.bufMu.Unlock()
+		return
+	}
 	ms.buffer = append(ms.buffer, data...)
 	if len(ms.buffer) > maxBufferSize {
-		ms.buffer = ms.buffer[len(ms.buffer)-maxBufferSize:]
+		excess := len(ms.buffer) - maxBufferSize
+		// Find the nearest newline after the truncation point so we start
+		// at a line boundary. This avoids cutting inside ANSI escape
+		// sequences, which would corrupt terminal state on replay.
+		cutPoint := excess
+		limit := excess + 256
+		if limit > len(ms.buffer) {
+			limit = len(ms.buffer)
+		}
+		for i := excess; i < limit; i++ {
+			if ms.buffer[i] == '\n' {
+				cutPoint = i + 1
+				break
+			}
+		}
+		ms.buffer = ms.buffer[cutPoint:]
 	}
+	ms.bufMu.Unlock()
+
+	// Update activity outside bufMu to avoid nested locks.
 	ms.activityMu.Lock()
 	ms.lastActivity = time.Now()
 	ms.activityMu.Unlock()
 }
 
-// GetBuffer returns a copy of the current output buffer.
+// GetBuffer returns a copy of the current output buffer, prepended with an
+// ANSI reset sequence. The reset ensures that any text-attribute state lost
+// during ring-buffer truncation (e.g. a color escape that was pruned) does
+// not leak into the replayed content.
 func (ms *ManagedSession) GetBuffer() []byte {
 	ms.bufMu.Lock()
 	defer ms.bufMu.Unlock()
-	result := make([]byte, len(ms.buffer))
-	copy(result, ms.buffer)
+	if len(ms.buffer) == 0 {
+		return nil
+	}
+	reset := []byte(ansiReset)
+	result := make([]byte, len(reset)+len(ms.buffer))
+	copy(result, reset)
+	copy(result[len(reset):], ms.buffer)
 	return result
 }
 
@@ -167,7 +220,7 @@ func (ms *ManagedSession) Unsubscribe(sub *Subscriber) {
 	delete(ms.subscribers, sub)
 	ms.subMu.Unlock()
 
-	// Signal subscriber goroutine to stop
+	// Signal subscriber goroutine to stop (idempotent via select).
 	select {
 	case <-sub.done:
 	default:

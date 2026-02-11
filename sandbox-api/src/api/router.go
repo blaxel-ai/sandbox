@@ -21,7 +21,8 @@ import (
 
 // SetupRouter configures all the routes for the Sandbox API
 // If disableRequestLogging is true, the logrus middleware will be skipped
-func SetupRouter(disableRequestLogging bool) *gin.Engine {
+// If enableProcessingTime is true, the Server-Timing header middleware will be added
+func SetupRouter(disableRequestLogging bool, enableProcessingTime bool) *gin.Engine {
 	// Initialize the router
 	r := gin.New()
 
@@ -33,6 +34,11 @@ func SetupRouter(disableRequestLogging bool) *gin.Engine {
 
 	// Add middleware to prevent caching
 	r.Use(noCacheMiddleware())
+
+	// Add processing time middleware if enabled
+	if enableProcessingTime {
+		r.Use(processingTimeMiddleware())
+	}
 
 	// Add logrus middleware unless disabled
 	if !disableRequestLogging {

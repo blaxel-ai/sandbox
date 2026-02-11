@@ -46,13 +46,18 @@ if [ -z "$DEPOT_PROJECT_ID" ]; then
     exit 1
 fi
 
-if [ -z "$LAMBDA_FUNCTION_NAME" ]; then
-    echo "Error: LAMBDA_FUNCTION_NAME environment variable is required"
+if [ -z "$BATCH_JOB_QUEUE" ]; then
+    echo "Error: BATCH_JOB_QUEUE environment variable is required"
     exit 1
 fi
 
-if [ -z "$LAMBDA_REGION" ]; then
-    echo "Error: LAMBDA_REGION environment variable is required"
+if [ -z "$BATCH_JOB_DEFINITION" ]; then
+    echo "Error: BATCH_JOB_DEFINITION environment variable is required"
+    exit 1
+fi
+
+if [ -z "$BATCH_REGION" ]; then
+    echo "Error: BATCH_REGION environment variable is required"
     exit 1
 fi
 
@@ -88,63 +93,102 @@ echo "BL Environment: $BL_ENV"
 echo "BL Type: $BL_TYPE"
 echo "Build ID: $BUILD_ID"
 echo "Base Image Tag: $BASE_IMAGE_TAG"
-echo "Lambda Function: $LAMBDA_FUNCTION_NAME"
-echo "Lambda Region: $LAMBDA_REGION"
+echo "Batch Job Queue: $BATCH_JOB_QUEUE"
+echo "Batch Job Definition: $BATCH_JOB_DEFINITION"
+echo "Batch Region: $BATCH_REGION"
 
-# Build the JSON payload
-PAYLOAD=$(cat <<EOF
-{
-  "otel_enabled": false,
-  "bl_env": "$BL_ENV",
-  "output_s3": "s3://$IMAGE_BUCKET_MK3/blaxel/sbx/$SANDBOX_NAME/$IMAGE_TAG",
-  "no_optimize": false,
-  "depot_token": "$DEPOT_TOKEN",
-  "bl_build_id": "$BUILD_ID",
-  "bl_type": "$BL_TYPE",
-  "bl_generation": "mk3",
-  "log_level": "$LOG_LEVEL",
-  "depot_project_id": "$DEPOT_PROJECT_ID",
-  "image": "$SRC_REGISTRY:$BASE_IMAGE_TAG"
-}
-EOF
-)
+OUTPUT_S3="s3://$IMAGE_BUCKET_MK3/blaxel/sbx/$SANDBOX_NAME/$IMAGE_TAG"
+echo "Target S3 location: $OUTPUT_S3"
 
-echo "Target S3 location: s3://$IMAGE_BUCKET_MK3/blaxel/sbx/$SANDBOX_NAME/$IMAGE_TAG"
+# Build container overrides with environment variables and command for the Batch job.
+# Pass --image as CLI arg since metamorph may not read IMAGE env var (INPUT_S3 flow works, IMAGE flow fails).
+IMAGE_REF="$SRC_REGISTRY:$BASE_IMAGE_TAG"
+CONTAINER_OVERRIDES=$(jq -n \
+  --arg image "$IMAGE_REF" \
+  --arg otel_enabled "false" \
+  --arg bl_env "$BL_ENV" \
+  --arg output_s3 "$OUTPUT_S3" \
+  --arg no_optimize "false" \
+  --arg depot_token "$DEPOT_TOKEN" \
+  --arg bl_build_id "$BUILD_ID" \
+  --arg bl_type "$BL_TYPE" \
+  --arg bl_generation "mk3" \
+  --arg log_level "$LOG_LEVEL" \
+  --arg depot_project_id "$DEPOT_PROJECT_ID" \
+  '{
+    command: ["--image", $image],
+    environment: [
+      {name: "OTEL_ENABLED", value: $otel_enabled},
+      {name: "BL_ENV", value: $bl_env},
+      {name: "OUTPUT_S3", value: $output_s3},
+      {name: "NO_OPTIMIZE", value: $no_optimize},
+      {name: "DEPOT_TOKEN", value: $depot_token},
+      {name: "BL_BUILD_ID", value: $bl_build_id},
+      {name: "BL_TYPE", value: $bl_type},
+      {name: "BL_GENERATION", value: $bl_generation},
+      {name: "LOG_LEVEL", value: $log_level},
+      {name: "DEPOT_PROJECT_ID", value: $depot_project_id},
+      {name: "IMAGE", value: $image}
+    ]
+  }')
 
-# Invoke Lambda and capture response
-echo "Invoking Lambda function..."
-aws lambda invoke \
-  --function-name "$LAMBDA_FUNCTION_NAME" \
-  --region "$LAMBDA_REGION" \
-  --payload "$PAYLOAD" \
-  --cli-binary-format raw-in-base64-out \
-  --log-type Tail \
-  --no-cli-pager \
-  --cli-read-timeout 900 \
-  --cli-connect-timeout 60 \
-  /tmp/response.json
+JOB_NAME="mk3-build-${SANDBOX_NAME}-${IMAGE_TAG//[^a-zA-Z0-9-]/-}-$(date +%s)"
 
-# Check response
-if [ ! -f /tmp/response.json ]; then
-    echo "Error: No response from Lambda"
+echo "Submitting Batch job..."
+JOB_SUBMIT=$(aws batch submit-job \
+  --job-name "$JOB_NAME" \
+  --job-queue "$BATCH_JOB_QUEUE" \
+  --job-definition "$BATCH_JOB_DEFINITION" \
+  --region "$BATCH_REGION" \
+  --container-overrides "$CONTAINER_OVERRIDES" \
+  --output json)
+
+JOB_ID=$(echo "$JOB_SUBMIT" | jq -r '.jobId')
+if [ -z "$JOB_ID" ] || [ "$JOB_ID" = "null" ]; then
+    echo "Error: Failed to submit Batch job"
+    echo "$JOB_SUBMIT" | jq '.'
     exit 1
 fi
 
-echo "Lambda response received, parsing..."
+echo "Batch job submitted: $JOB_ID"
+echo "Waiting for job to complete..."
 
-# Display the full response for debugging
-cat /tmp/response.json | jq '.'
+# Poll for job completion
+MAX_ATTEMPTS=180
+POLL_INTERVAL=10
+for attempt in $(seq 1 $MAX_ATTEMPTS); do
+    JOB_STATUS=$(aws batch describe-jobs \
+      --jobs "$JOB_ID" \
+      --region "$BATCH_REGION" \
+      --query 'jobs[0].status' \
+      --output text)
 
-# Check if the build was successful
-BUILD_SUCCESS=$(jq -r '.success // false' /tmp/response.json 2>/dev/null)
-if [ "$BUILD_SUCCESS" != "true" ]; then
-    echo "Build failed"
-    MESSAGE=$(jq -r '.message // "No message provided"' /tmp/response.json)
-    echo "Error: $MESSAGE"
-    exit 1
-fi
+    echo "  Attempt $attempt/$MAX_ATTEMPTS: Job status $JOB_STATUS"
 
-echo "Build completed successfully"
+    case "$JOB_STATUS" in
+        SUCCEEDED)
+            echo "Build completed successfully"
+            break
+            ;;
+        FAILED)
+            echo "Build failed"
+            aws batch describe-jobs --jobs "$JOB_ID" --region "$BATCH_REGION" | jq '.jobs[0] | {status, statusReason, container: .container}'
+            exit 1
+            ;;
+        SUBMITTED|PENDING|RUNNABLE|STARTING|RUNNING)
+            sleep $POLL_INTERVAL
+            ;;
+        *)
+            echo "Unknown job status: $JOB_STATUS"
+            exit 1
+            ;;
+    esac
+
+    if [ $attempt -eq $MAX_ATTEMPTS ]; then
+        echo "Error: Job did not complete within timeout"
+        exit 1
+    fi
+done
 
 # Update image registry after successful build
 echo "Updating image registry..."
@@ -174,7 +218,7 @@ API_PAYLOAD=$(jq -n \
   --arg tag "$IMAGE_TAG" \
   --arg registry_type "$REGISTRY_TYPE" \
   --arg original "sbx/$SANDBOX_NAME:$IMAGE_TAG" \
-  --arg region "$LAMBDA_REGION" \
+  --arg region "$BATCH_REGION" \
   --arg bucket "$IMAGE_BUCKET_MK3" \
   '{
     registry: $registry,

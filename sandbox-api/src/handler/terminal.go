@@ -82,7 +82,6 @@ func (h *TerminalHandler) HandleTerminalWS(c *gin.Context) {
 		logrus.Errorf("Failed to upgrade WebSocket: %v", err)
 		return
 	}
-	defer conn.Close()
 
 	// Get or reconnect to a persistent terminal session
 	manager := terminal.GetSessionManager()
@@ -93,12 +92,12 @@ func (h *TerminalHandler) HandleTerminalWS(c *gin.Context) {
 			Type: "error",
 			Data: err.Error(),
 		})
+		conn.Close()
 		return
 	}
 
 	// Subscribe to terminal output
 	sub := ms.Subscribe()
-	defer ms.Unsubscribe(sub)
 
 	// Replay buffered output so the client sees the full terminal history.
 	// For a new session this is typically empty or just the initial prompt.
@@ -125,13 +124,26 @@ func (h *TerminalHandler) HandleTerminalWS(c *gin.Context) {
 		})
 	}
 
+	// WaitGroup ensures the output goroutine finishes writing before we
+	// close the WebSocket connection. gorilla/websocket does not support
+	// concurrent writes, so conn.Close() must not race with WriteJSON.
+	var wg sync.WaitGroup
+	wg.Add(1)
+
 	// Read from subscriber channel and send to WebSocket
 	go func() {
+		defer wg.Done()
+		defer func() {
+			if r := recover(); r != nil {
+				logrus.Errorf("Terminal WS output goroutine panic: %v", r)
+			}
+			closeDone()
+		}()
+
 		for {
 			select {
 			case data, ok := <-sub.Ch:
 				if !ok {
-					closeDone()
 					return
 				}
 				msg := TerminalMessage{
@@ -139,16 +151,24 @@ func (h *TerminalHandler) HandleTerminalWS(c *gin.Context) {
 					Data: string(data),
 				}
 				if err := conn.WriteJSON(msg); err != nil {
-					closeDone()
 					return
 				}
 			case <-done:
 				return
 			case <-ms.Done():
-				closeDone()
 				return
 			}
 		}
+	}()
+
+	// Cleanup in correct order: stop goroutine -> wait for last write ->
+	// close connection -> unsubscribe.  Using a single defer guarantees
+	// this ordering regardless of which return path is taken.
+	defer func() {
+		closeDone()
+		wg.Wait()
+		conn.Close()
+		ms.Unsubscribe(sub)
 	}()
 
 	// Read from WebSocket and write to PTY
@@ -161,7 +181,6 @@ func (h *TerminalHandler) HandleTerminalWS(c *gin.Context) {
 
 		_, message, err := conn.ReadMessage()
 		if err != nil {
-			closeDone()
 			return
 		}
 
