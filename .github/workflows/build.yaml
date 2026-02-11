@@ -347,8 +347,9 @@ jobs:
           LOG_LEVEL: debug
           IMAGE_BUCKET_MK3: ${{ env.BL_ENV == 'prod' && env.PROD_IMAGE_BUCKET || env.DEV_IMAGE_BUCKET }}
           DEPOT_PROJECT_ID: ${{ env.BL_ENV == 'prod' && secrets.DEPOT_PROJECT_ID_PROD || secrets.DEPOT_PROJECT_ID_DEV }}
-          LAMBDA_FUNCTION_NAME: controlplane-${{ env.BL_ENV }}-metamorph
-          LAMBDA_REGION: ${{ env.BL_ENV == 'prod' && (vars.LAMBDA_REGION_PROD || 'us-west-2') || (vars.LAMBDA_REGION_DEV || 'eu-west-1') }}
+          BATCH_JOB_QUEUE: ${{ env.BL_ENV == 'prod' && (vars.BATCH_JOB_QUEUE_PROD || 'controlplane-prod-build') || (vars.BATCH_JOB_QUEUE_DEV || 'controlplane-dev-build') }}
+          BATCH_JOB_DEFINITION: ${{ env.BL_ENV == 'prod' && (vars.BATCH_JOB_DEFINITION_PROD || 'controlplane-prod-build') || (vars.BATCH_JOB_DEFINITION_DEV || 'controlplane-dev-build') }}
+          BATCH_REGION: ${{ env.BL_ENV == 'prod' && (vars.BATCH_REGION_PROD || 'us-west-2') || (vars.BATCH_REGION_DEV || 'eu-west-1') }}
           DEPOT_TOKEN: ${{ env.BL_ENV == 'prod' && secrets.DEPOT_TOKEN_PROD || secrets.DEPOT_TOKEN_DEV }}
         run: |
           chmod +x ./scripts/mk3-build.sh
