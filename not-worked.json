@@ -1,0 +1,137 @@
+{
+  "attempts": [
+    {
+      "container": {
+        "taskArn": "arn:aws:ecs:eu-west-1:869935112768:task/controlplane-dev-fargate-spot_Batch_93bb9434-f040-32ba-ae22-d1edb8470c0d/3b95417f4eb24ab8b0371e1a278b2233",
+        "exitCode": 1,
+        "logStreamName": "controlplane-dev-build/default/3b95417f4eb24ab8b0371e1a278b2233",
+        "networkInterfaces": [
+          {
+            "attachmentId": "ef39eb0d-4796-4cff-9d0a-99f53d9bb1a1",
+            "privateIpv4Address": "10.0.1.178"
+          }
+        ]
+      },
+      "startedAt": 1770846564404,
+      "stoppedAt": 1770846587782,
+      "statusReason": "Essential container in task exited"
+    }
+  ],
+  "container": {
+    "image": "869935112768.dkr.ecr.eu-west-1.amazonaws.com/controlplane-dev-metamorph:batch-0.0.30-arm64",
+    "command": [],
+    "jobRoleArn": "arn:aws:iam::869935112768:role/controlplane-dev-eu-west-1-batch-job-build",
+    "executionRoleArn": "arn:aws:iam::869935112768:role/controlplane-dev-eu-west-1-batch-exec-build",
+    "volumes": [],
+    "environment": [
+      {
+        "name": "BL_TYPE",
+        "value": "sandbox"
+      },
+      {
+        "name": "BL_ENV",
+        "value": "dev"
+      },
+      {
+        "name": "IMAGE",
+        "value": "ghcr.io/blaxel-ai/sandbox-base-image:develop-abc1234"
+      },
+      {
+        "name": "DEPOT_PROJECT_ID",
+        "value": "sj40wbd3c3"
+      },
+      {
+        "name": "NO_OPTIMIZE",
+        "value": "false"
+      },
+      {
+        "name": "OUTPUT_S3",
+        "value": "s3://controlplane-dev-build-images-eu-west-1-37df18/blaxel/sbx/base-image/develop-abc1234"
+      },
+      {
+        "name": "BL_BUILD_ID",
+        "value": "12345-1"
+      },
+      {
+        "name": "BL_GENERATION",
+        "value": "mk3"
+      },
+      {
+        "name": "DEPOT_TOKEN",
+        "value": "depot-token"
+      },
+      {
+        "name": "OTEL_ENABLED",
+        "value": "false"
+      },
+      {
+        "name": "LOG_LEVEL",
+        "value": "debug"
+      }
+    ],
+    "mountPoints": [],
+    "ulimits": [],
+    "exitCode": 1,
+    "taskArn": "arn:aws:ecs:eu-west-1:869935112768:task/controlplane-dev-fargate-spot_Batch_93bb9434-f040-32ba-ae22-d1edb8470c0d/3b95417f4eb24ab8b0371e1a278b2233",
+    "logStreamName": "controlplane-dev-build/default/3b95417f4eb24ab8b0371e1a278b2233",
+    "networkInterfaces": [
+      {
+        "attachmentId": "ef39eb0d-4796-4cff-9d0a-99f53d9bb1a1",
+        "privateIpv4Address": "10.0.1.178"
+      }
+    ],
+    "resourceRequirements": [
+      {
+        "value": "4",
+        "type": "VCPU"
+      },
+      {
+        "value": "10240",
+        "type": "MEMORY"
+      }
+    ],
+    "secrets": [
+      {
+        "name": "METAMORPH_SECRET",
+        "valueFrom": "arn:aws:secretsmanager:eu-west-1:869935112768:secret:controlplane-dev-metamorph-RC6kl6"
+      }
+    ],
+    "networkConfiguration": {
+      "assignPublicIp": "ENABLED"
+    },
+    "fargatePlatformConfiguration": {
+      "platformVersion": "LATEST"
+    },
+    "ephemeralStorage": {
+      "sizeInGiB": 100
+    },
+    "runtimePlatform": {
+      "operatingSystemFamily": "LINUX",
+      "cpuArchitecture": "ARM64"
+    }
+  },
+  "createdAt": 1770846538765,
+  "dependsOn": [],
+  "eksAttempts": [],
+  "jobArn": "arn:aws:batch:eu-west-1:869935112768:job/fa441051-85cd-4a11-a37a-f9eeaeafe593",
+  "jobDefinition": "arn:aws:batch:eu-west-1:869935112768:job-definition/controlplane-dev-build:15",
+  "jobId": "fa441051-85cd-4a11-a37a-f9eeaeafe593",
+  "jobName": "mk3-build-base-image-develop-abc1234-1770846537",
+  "jobQueue": "arn:aws:batch:eu-west-1:869935112768:job-queue/controlplane-dev-build",
+  "parameters": {},
+  "platformCapabilities": [
+    "FARGATE"
+  ],
+  "retryStrategy": {
+    "attempts": 1,
+    "evaluateOnExit": []
+  },
+  "startedAt": 1770846564404,
+  "status": "FAILED",
+  "statusReason": "Essential container in task exited",
+  "stoppedAt": 1770846587782,
+  "tags": {},
+  "timeout": {
+    "attemptDurationSeconds": 1800
+  }
+}

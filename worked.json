@@ -1,0 +1,153 @@
+{
+  "attempts": [
+    {
+      "container": {
+        "taskArn": "arn:aws:ecs:eu-west-1:869935112768:task/controlplane-dev-fargate-spot_Batch_93bb9434-f040-32ba-ae22-d1edb8470c0d/ba2191129e934a298f56a50c372fa18e",
+        "exitCode": 0,
+        "logStreamName": "controlplane-dev-build/default/ba2191129e934a298f56a50c372fa18e",
+        "networkInterfaces": [
+          {
+            "attachmentId": "cd85a182-d919-4ab8-a498-f7d463eeefd7",
+            "privateIpv4Address": "10.0.2.216"
+          }
+        ]
+      },
+      "startedAt": 1770825191519,
+      "stoppedAt": 1770825324871,
+      "statusReason": "Essential container in task exited"
+    }
+  ],
+  "container": {
+    "image": "869935112768.dkr.ecr.eu-west-1.amazonaws.com/controlplane-dev-metamorph:batch-0.0.30-arm64",
+    "command": [],
+    "jobRoleArn": "arn:aws:iam::869935112768:role/controlplane-dev-eu-west-1-batch-job-build",
+    "executionRoleArn": "arn:aws:iam::869935112768:role/controlplane-dev-eu-west-1-batch-exec-build",
+    "volumes": [],
+    "environment": [
+      {
+        "name": "INPUT_S3",
+        "value": "s3://controlplane-dev-build-sources-eu-west-1-37df18/mk3/dev/thomas-dev-2/2026-02-11 15:52:42/sandbox/nextjs-dev-6/source.zip"
+      },
+      {
+        "name": "BL_WORKSPACE",
+        "value": "thomas-dev-2"
+      },
+      {
+        "name": "BL_TYPE",
+        "value": "sandbox"
+      },
+      {
+        "name": "BL_ENV",
+        "value": "dev"
+      },
+      {
+        "name": "DEPOT_PROJECT_ID",
+        "value": "7w7v4c45hr"
+      },
+      {
+        "name": "BL_GENERATION",
+        "value": "mk3"
+      },
+      {
+        "name": "BL_BUILD_ID",
+        "value": "2026-02-11 15:52:42"
+      },
+      {
+        "name": "BL_NAME",
+        "value": "nextjs-dev-6"
+      },
+      {
+        "name": "OTEL_ENABLED",
+        "value": "true"
+      },
+      {
+        "name": "OUTPUT_S3",
+        "value": "s3://controlplane-dev-build-images-eu-west-1-37df18/thomas-dev-2/sandbox/nextjs-dev-6/wvdmrxqhp5ct"
+      },
+      {
+        "name": "DEPOT_TOKEN",
+        "value": "depot-token"
+      },
+      {
+        "name": "MANAGED_BY_AWS",
+        "value": "STARTED_BY_STEP_FUNCTIONS"
+      },
+      {
+        "name": "LOG_LEVEL",
+        "value": "info"
+      },
+      {
+        "name": "BL_TAG",
+        "value": "wvdmrxqhp5ct"
+      },
+      {
+        "name": "OTEL_EXPORTER_OTLP_ENDPOINT",
+        "value": "https://otlp.us-central1.gcp.dev.beamlit.net:2053"
+      }
+    ],
+    "mountPoints": [],
+    "ulimits": [],
+    "exitCode": 0,
+    "taskArn": "arn:aws:ecs:eu-west-1:869935112768:task/controlplane-dev-fargate-spot_Batch_93bb9434-f040-32ba-ae22-d1edb8470c0d/ba2191129e934a298f56a50c372fa18e",
+    "logStreamName": "controlplane-dev-build/default/ba2191129e934a298f56a50c372fa18e",
+    "networkInterfaces": [
+      {
+        "attachmentId": "cd85a182-d919-4ab8-a498-f7d463eeefd7",
+        "privateIpv4Address": "10.0.2.216"
+      }
+    ],
+    "resourceRequirements": [
+      {
+        "value": "4",
+        "type": "VCPU"
+      },
+      {
+        "value": "10240",
+        "type": "MEMORY"
+      }
+    ],
+    "secrets": [
+      {
+        "name": "METAMORPH_SECRET",
+        "valueFrom": "arn:aws:secretsmanager:eu-west-1:869935112768:secret:controlplane-dev-metamorph-RC6kl6"
+      }
+    ],
+    "networkConfiguration": {
+      "assignPublicIp": "ENABLED"
+    },
+    "fargatePlatformConfiguration": {
+      "platformVersion": "LATEST"
+    },
+    "ephemeralStorage": {
+      "sizeInGiB": 100
+    },
+    "runtimePlatform": {
+      "operatingSystemFamily": "LINUX",
+      "cpuArchitecture": "ARM64"
+    }
+  },
+  "createdAt": 1770825169733,
+  "dependsOn": [],
+  "eksAttempts": [],
+  "jobArn": "arn:aws:batch:eu-west-1:869935112768:job/1b3a690f-b17f-4926-bada-571f876d98a4",
+  "jobDefinition": "arn:aws:batch:eu-west-1:869935112768:job-definition/controlplane-dev-build:15",
+  "jobId": "1b3a690f-b17f-4926-bada-571f876d98a4",
+  "jobName": "controlplane-dev-build",
+  "jobQueue": "arn:aws:batch:eu-west-1:869935112768:job-queue/controlplane-dev-build",
+  "parameters": {},
+  "platformCapabilities": [
+    "FARGATE"
+  ],
+  "retryStrategy": {
+    "attempts": 1,
+    "evaluateOnExit": []
+  },
+  "startedAt": 1770825191519,
+  "status": "SUCCEEDED",
+  "statusReason": "Essential container in task exited",
+  "stoppedAt": 1770825324871,
+  "tags": {},
+  "timeout": {
+    "attemptDurationSeconds": 1800
+  }
+}

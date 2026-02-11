@@ -1,0 +1,68 @@
+2026-02-11T21:49:24.369Z
+🧹 Cleaning entire /tmp contents (best-effort)...
+2
+2026-02-11T21:49:24.382Z
+✅ /tmp cleanup complete
+3
+2026-02-11T21:49:24.383Z
+💾 /tmp usage at startup - Directory size: 4.00 KB
+4
+2026-02-11T21:49:24.383Z
+🔍 Environment Variables Check:
+5
+2026-02-11T21:49:24.383Z
+OUTPUT_S3: Some("s3://controlplane-dev-build-images-eu-west-1-37df18/blaxel/sbx/base-image/develop-abc1234")
+6
+2026-02-11T21:49:24.383Z
+BL_GENERATION: Some("mk3")
+7
+2026-02-11T21:49:24.383Z
+BL_ENV: Some("dev")
+8
+2026-02-11T21:49:24.383Z
+BL_TAG: None
+9
+2026-02-11T21:49:24.383Z
+🔧 CLI Arguments Check:
+10
+2026-02-11T21:49:24.383Z
+--bl-generation: None
+11
+2026-02-11T21:49:24.383Z
+--bl-env: None
+12
+2026-02-11T21:49:24.383Z
+--bl-tag: None
+13
+2026-02-11T21:49:24.383Z
+Loading secrets from METAMORPH_SECRET environment variable
+14
+2026-02-11T21:49:24.383Z
+Successfully loaded OTEL basic auth from METAMORPH_SECRET
+15
+2026-02-11T21:49:24.383Z
+🔑 Auth token loaded (first 5 chars): ZmNuW
+16
+2026-02-11T21:49:24.383Z
+🔧 Final Configuration:
+17
+2026-02-11T21:49:24.383Z
+push_to: 0 registries configured
+18
+2026-02-11T21:49:24.383Z
+output_s3: configured
+19
+2026-02-11T21:49:24.383Z
+bl_generation: mk3
+20
+2026-02-11T21:49:24.383Z
+Error: No input source provided. Please specify one of:
+21
+2026-02-11T21:49:24.383Z
+--image <IMAGE> (or set IMAGE environment variable)
+22
+2026-02-11T21:49:24.383Z
+--input <PATH> (or set INPUT environment variable)
+23
+2026-02-11T21:49:24.383Z
+--input-s3 <S3_URL> (or set INPUT_S3 environment variable)
