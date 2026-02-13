@@ -1057,6 +1057,26 @@ const docTemplate = `{
                 }
             }
         },
+        "/health": {
+            "get": {
+                "description": "Returns health status and system information including upgrade count and binary details\nAlso includes last upgrade attempt status with detailed error information if available",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "system"
+                ],
+                "summary": "Health check",
+                "responses": {
+                    "200": {
+                        "description": "Health status",
+                        "schema": {
+                            "$ref": "#/definitions/HealthResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/network/process/{pid}/monitor": {
             "post": {
                 "description": "Start monitoring for new ports opened by a process",
@@ -1527,6 +1547,45 @@ const docTemplate = `{
                 }
             }
         },
+        "/upgrade": {
+            "post": {
+                "description": "Triggers an upgrade of the sandbox-api process. Returns 200 immediately before upgrading.\nThe upgrade will: download the specified binary from GitHub releases, validate it, and restart.\nAll running processes will be preserved across the upgrade.\nAvailable versions: \"develop\" (default), \"main\", \"latest\", or specific tag like \"v1.0.0\"\nYou can also specify a custom baseUrl for forks (defaults to https://github.com/blaxel-ai/sandbox/releases)",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "system"
+                ],
+                "summary": "Upgrade the sandbox-api",
+                "parameters": [
+                    {
+                        "description": "Upgrade options",
+                        "name": "request",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/UpgradeRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Upgrade initiated",
+                        "schema": {
+                            "$ref": "#/definitions/SuccessResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/watch/filesystem/{path}": {
             "get": {
                 "description": "Streams the path of modified files (one per line) in the given directory. Closes when the client disconnects.",
@@ -1634,6 +1693,12 @@ const docTemplate = `{
         },
         "ContentSearchMatch": {
             "type": "object",
+            "required": [
+                "column",
+                "line",
+                "path",
+                "text"
+            ],
             "properties": {
                 "column": {
                     "type": "integer",
@@ -1659,6 +1724,11 @@ const docTemplate = `{
         },
         "ContentSearchResponse": {
             "type": "object",
+            "required": [
+                "matches",
+                "query",
+                "total"
+            ],
             "properties": {
                 "matches": {
                     "type": "array",
@@ -1902,6 +1972,10 @@ const docTemplate = `{
         },
         "FindMatch": {
             "type": "object",
+            "required": [
+                "path",
+                "type"
+            ],
             "properties": {
                 "path": {
                     "type": "string",
@@ -1916,6 +1990,10 @@ const docTemplate = `{
         },
         "FindResponse": {
             "type": "object",
+            "required": [
+                "matches",
+                "total"
+            ],
             "properties": {
                 "matches": {
                     "type": "array",
@@ -1931,6 +2009,11 @@ const docTemplate = `{
         },
         "FuzzySearchMatch": {
             "type": "object",
+            "required": [
+                "path",
+                "score",
+                "type"
+            ],
             "properties": {
                 "path": {
                     "type": "string",
@@ -1949,6 +2032,10 @@ const docTemplate = `{
         },
         "FuzzySearchResponse": {
             "type": "object",
+            "required": [
+                "matches",
+                "total"
+            ],
             "properties": {
                 "matches": {
                     "type": "array",
@@ -1959,6 +2046,72 @@ const docTemplate = `{
                 "total": {
                     "type": "integer",
                     "example": 5
+                }
+            }
+        },
+        "HealthResponse": {
+            "type": "object",
+            "required": [
+                "arch",
+                "buildTime",
+                "gitCommit",
+                "goVersion",
+                "lastUpgrade",
+                "os",
+                "startedAt",
+                "status",
+                "upgradeCount",
+                "uptime",
+                "uptimeSeconds",
+                "version"
+            ],
+            "properties": {
+                "arch": {
+                    "type": "string",
+                    "example": "amd64"
+                },
+                "buildTime": {
+                    "type": "string",
+                    "example": "2026-01-29T17:36:52Z"
+                },
+                "gitCommit": {
+                    "type": "string",
+                    "example": "abc123"
+                },
+                "goVersion": {
+                    "type": "string",
+                    "example": "go1.25.0"
+                },
+                "lastUpgrade": {
+                    "$ref": "#/definitions/UpgradeStatus"
+                },
+                "os": {
+                    "type": "string",
+                    "example": "linux"
+                },
+                "startedAt": {
+                    "type": "string",
+                    "example": "2026-01-29T18:45:49Z"
+                },
+                "status": {
+                    "type": "string",
+                    "example": "ok"
+                },
+                "upgradeCount": {
+                    "type": "integer",
+                    "example": 0
+                },
+                "uptime": {
+                    "type": "string",
+                    "example": "1h30m"
+                },
+                "uptimeSeconds": {
+                    "type": "number",
+                    "example": 5400.5
+                },
+                "version": {
+                    "type": "string",
+                    "example": "v0.1.0"
                 }
             }
         },
@@ -2298,6 +2451,74 @@ const docTemplate = `{
                 }
             }
         },
+        "UpgradeRequest": {
+            "type": "object",
+            "properties": {
+                "baseUrl": {
+                    "description": "Base URL for releases (useful for forks)",
+                    "type": "string",
+                    "example": "https://github.com/blaxel-ai/sandbox/releases"
+                },
+                "version": {
+                    "description": "Version to upgrade to: \"develop\", \"main\", \"latest\", or specific tag like \"v1.0.0\"",
+                    "type": "string",
+                    "example": "develop"
+                }
+            }
+        },
+        "UpgradeStatus": {
+            "type": "object",
+            "required": [
+                "status",
+                "step",
+                "version"
+            ],
+            "properties": {
+                "binaryPath": {
+                    "description": "Path to downloaded binary",
+                    "type": "string",
+                    "example": "/tmp/sandbox-api-new"
+                },
+                "bytesDownloaded": {
+                    "description": "Bytes downloaded",
+                    "type": "integer",
+                    "example": 25034936
+                },
+                "downloadUrl": {
+                    "description": "URL used for download",
+                    "type": "string",
+                    "example": "https://github.com/..."
+                },
+                "error": {
+                    "description": "Error message if failed",
+                    "type": "string",
+                    "example": "Failed to download binary"
+                },
+                "lastAttempt": {
+                    "description": "When the upgrade was attempted",
+                    "type": "string"
+                },
+                "status": {
+                    "description": "Current state (idle, running, completed, failed)",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/process.UpgradeState"
+                        }
+                    ],
+                    "example": "running"
+                },
+                "step": {
+                    "description": "Current/last step (none, starting, download, validate, replace, completed, skipped)",
+                    "type": "string",
+                    "example": "download"
+                },
+                "version": {
+                    "description": "Version being upgraded to",
+                    "type": "string",
+                    "example": "latest"
+                }
+            }
+        },
         "filesystem.MultipartUpload": {
             "type": "object",
             "properties": {
@@ -2343,6 +2564,33 @@ const docTemplate = `{
                     "type": "string"
                 }
             }
+        },
+        "process.UpgradeState": {
+            "type": "string",
+            "enum": [
+                "idle",
+                "running",
+                "completed",
+                "failed"
+            ],
+            "x-enum-comments": {
+                "UpgradeStateCompleted": "Upgrade completed successfully",
+                "UpgradeStateFailed": "Upgrade failed",
+                "UpgradeStateIdle": "No upgrade in progress",
+                "UpgradeStateRunning": "Upgrade is currently running"
+            },
+            "x-enum-descriptions": [
+                "No upgrade in progress",
+                "Upgrade is currently running",
+                "Upgrade completed successfully",
+                "Upgrade failed"
+            ],
+            "x-enum-varnames": [
+                "UpgradeStateIdle",
+                "UpgradeStateRunning",
+                "UpgradeStateCompleted",
+                "UpgradeStateFailed"
+            ]
         }
     },
     "securityDefinitions": {

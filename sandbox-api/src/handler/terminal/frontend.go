@@ -116,7 +116,8 @@ func GetTerminalHTML() string {
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         const urlParams = new URLSearchParams(window.location.search);
         const token = urlParams.get('token');
-        let wsUrl = protocol + '//' + window.location.host + '/terminal/ws?cols=' + term.cols + '&rows=' + term.rows;
+        const sessionId = urlParams.get('sessionId') || 'default';
+        let wsUrl = protocol + '//' + window.location.host + '/terminal/ws?cols=' + term.cols + '&rows=' + term.rows + '&sessionId=' + encodeURIComponent(sessionId);
         if (token) {
             wsUrl += '&token=' + encodeURIComponent(token);
         }
@@ -131,6 +132,9 @@ func GetTerminalHTML() string {
 
             ws.onopen = function() {
                 setStatus('connected', 'Connected');
+                // Reset terminal on every connect so the server's buffer replay
+                // restores the full terminal state without duplicating old content.
+                term.reset();
                 reconnectAttempts = 0;
                 term.focus();
             };

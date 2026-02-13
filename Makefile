@@ -1,3 +1,5 @@
+ARGS:= $(wordlist 2,$(words $(MAKECMDGOALS)),$(MAKECMDGOALS))
+
 dependencies:
 	cd sandbox-api && \
 		go install github.com/air-verse/air@latest && \
@@ -6,7 +8,7 @@ dependencies:
 
 
 api:
-	cd sandbox-api && air
+	cd sandbox-api && SANDBOX_LOG_DIR=./tmp/log air
 
 docker-build:
 	docker build -t blaxel/sandbox-api .
@@ -90,3 +92,12 @@ e2e:
 mr_develop:
 	$(eval BRANCH_NAME := $(shell git rev-parse --abbrev-ref HEAD))
 	gh pr create --base develop --head $(BRANCH_NAME) --title "$(BRANCH_NAME)" --body "Merge request from $(BRANCH_NAME) to develop"
+
+tag:
+	git checkout main
+	git pull origin main
+	git tag -a v$(ARGS) -m "Release v$(ARGS)"
+	git push origin v$(ARGS)
+
+%:
+	@:

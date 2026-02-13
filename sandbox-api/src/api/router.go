@@ -21,7 +21,8 @@ import (
 
 // SetupRouter configures all the routes for the Sandbox API
 // If disableRequestLogging is true, the logrus middleware will be skipped
-func SetupRouter(disableRequestLogging bool) *gin.Engine {
+// If enableProcessingTime is true, the Server-Timing header middleware will be added
+func SetupRouter(disableRequestLogging bool, enableProcessingTime bool) *gin.Engine {
 	// Initialize the router
 	r := gin.New()
 
@@ -33,6 +34,11 @@ func SetupRouter(disableRequestLogging bool) *gin.Engine {
 
 	// Add middleware to prevent caching
 	r.Use(noCacheMiddleware())
+
+	// Add processing time middleware if enabled
+	if enableProcessingTime {
+		r.Use(processingTimeMiddleware())
+	}
 
 	// Add logrus middleware unless disabled
 	if !disableRequestLogging {
@@ -51,6 +57,7 @@ func SetupRouter(disableRequestLogging bool) *gin.Engine {
 	processHandler := handler.NewProcessHandler()
 	networkHandler := handler.NewNetworkHandler()
 	codegenHandler := handler.NewCodegenHandler(fsHandler)
+	systemHandler := handler.NewSystemHandler()
 	deployHandler := handler.NewDeployHandler()
 
 	// Check if terminal is disabled via environment variable
@@ -175,10 +182,10 @@ func SetupRouter(disableRequestLogging bool) *gin.Engine {
 		logrus.Info("Terminal endpoint disabled via DISABLE_TERMINAL environment variable")
 	}
 
-	// Health check route
-	r.GET("/health", func(c *gin.Context) {
-		c.JSON(200, gin.H{"status": "ok"})
-	})
+	// System routes
+	r.POST("/upgrade", systemHandler.HandleUpgrade)
+	r.HEAD("/upgrade", head)
+	r.GET("/health", systemHandler.HandleHealth)
 	r.HEAD("/health", head)
 
 	// Root welcome endpoint - handles all HTTP methods
