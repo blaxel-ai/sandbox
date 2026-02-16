@@ -22,6 +22,7 @@ on:
           - py-app
           - ts-app
           - vite
+          - docker
 
 env:
   REGISTRY: ghcr.io
@@ -323,6 +324,14 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+      - name: Install jq
+        run: |
+          if ! command -v jq &> /dev/null; then
+            echo "jq not found, installing..."
+            apt-get update && apt-get install -y jq || yum install -y jq
+          else
+            echo "jq is already installed"
+          fi
       - name: Set image tag
         id: image-tag
         run: |
