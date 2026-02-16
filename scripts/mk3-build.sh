@@ -104,7 +104,7 @@ echo "Target S3 location: $OUTPUT_S3"
 NO_SLIM="false"
 TEMPLATE_FILE="hub/$SANDBOX_NAME/template.json"
 if [ -f "$TEMPLATE_FILE" ]; then
-    BUILD_SLIM=$(jq -r '.build.slim // empty' "$TEMPLATE_FILE")
+    BUILD_SLIM=$(jq -r 'if .build.slim == false then "false" else "true" end' "$TEMPLATE_FILE")
     if [ "$BUILD_SLIM" = "false" ]; then
         NO_SLIM="true"
         echo "Template has build.slim=false, setting NO_SLIM=true"
