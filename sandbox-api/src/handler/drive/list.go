@@ -36,24 +36,24 @@ func ListMounts() ([]MountInfo, error) {
 		}
 
 		// Check if this is a FUSE mount from blfs
-		// Format: wfs:{source} {mount_point} fuse.wfs {options} 0 0
-		// Example: wfs:/buckets/drv-myname-ws123/subfolder /mnt/data fuse.wfs rw,nosuid,nodev,relatime,user_id=0,group_id=0 0 0
+		// Format: seaweedfs:{source} {mount_point} fuse {options} 0 0
+		// Example: seaweedfs:/buckets/agd-myname-ws123/subfolder /mnt/data fuse rw,nosuid,nodev,relatime,user_id=0,group_id=0 0 0
+		source := fields[0]      // e.g., "seaweedfs:/buckets/agd-myname-ws123/subfolder"
+		mountPath := fields[1]   // e.g., "/mnt/data"
 		fsType := fields[2]
-		if !strings.HasPrefix(fsType, "fuse.wfs") && !strings.HasPrefix(fsType, "fuse.blfs") {
+
+		// Only check FUSE mounts with seaweedfs source
+		if !strings.HasPrefix(fsType, "fuse") {
 			continue
 		}
-
-		// Extract mount information
-		source := fields[0]      // e.g., "wfs:/buckets/drv-myname-ws123/subfolder"
-		mountPath := fields[1]   // e.g., "/mnt/data"
 
 		// Parse the source to extract drive info
-		// Expected format: wfs:/buckets/{infrastructureId}{drivePath}
-		if !strings.HasPrefix(source, "wfs:") {
+		// Expected format: seaweedfs:/buckets/{infrastructureId}{drivePath}
+		if !strings.HasPrefix(source, "seaweedfs:") {
 			continue
 		}
 
-		sourcePath := strings.TrimPrefix(source, "wfs:")
+		sourcePath := strings.TrimPrefix(source, "seaweedfs:")
 		if !strings.HasPrefix(sourcePath, "/buckets/") {
 			continue
 		}
