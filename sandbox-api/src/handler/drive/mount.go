@@ -142,8 +142,36 @@ func getFilerAddress() (string, error) {
 	return "", fmt.Errorf("no valid nameserver found in /etc/resolv.conf")
 }
 
-// isMountPoint checks if a directory is a mount point by comparing device IDs
+// isMountPoint checks if a directory is a mount point by checking /proc/mounts
 func isMountPoint(path string) bool {
+	// Clean the path for comparison
+	cleanPath := filepath.Clean(path)
+	
+	// Read /proc/mounts
+	file, err := os.Open("/proc/mounts")
+	if err != nil {
+		logrus.WithError(err).Warn("Failed to open /proc/mounts, falling back to device ID check")
+		return isMountPointByDeviceID(path)
+	}
+	defer file.Close()
+
+	// Check if the path appears in /proc/mounts
+	lines := strings.Split(string(mustReadAll(file)), "\n")
+	for _, line := range lines {
+		fields := strings.Fields(line)
+		if len(fields) >= 2 {
+			mountPath := fields[1]
+			if mountPath == cleanPath {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+// isMountPointByDeviceID checks if a directory is a mount point by comparing device IDs (fallback)
+func isMountPointByDeviceID(path string) bool {
 	// Get stat of the path
 	pathStat, err := os.Stat(path)
 	if err != nil {
@@ -158,12 +186,19 @@ func isMountPoint(path string) bool {
 	}
 
 	// If device IDs are different, it's a mount point
-	// Note: this is a simplified check and may not work in all cases
-	// For a more robust check, we could parse /proc/mounts
 	pathDev := pathStat.Sys()
 	parentDev := parentStat.Sys()
 
 	return fmt.Sprintf("%v", pathDev) != fmt.Sprintf("%v", parentDev)
+}
+
+// mustReadAll reads all data from a reader, panicking on error (for internal use only)
+func mustReadAll(file *os.File) []byte {
+	data, err := os.ReadFile(file.Name())
+	if err != nil {
+		return []byte{}
+	}
+	return data
 }
 
 // CheckBlfsAvailable checks if the blfs binary is available
