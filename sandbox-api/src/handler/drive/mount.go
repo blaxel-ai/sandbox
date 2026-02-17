@@ -12,22 +12,25 @@ import (
 )
 
 const (
-	blfsPath = "/usr/local/bin/blfs"
+	blfsPath      = "/usr/local/bin/blfs"
 	authTokenPath = "/var/run/secrets/blaxel.dev/identity/token"
-	pollInterval = 100 * time.Millisecond
-	mountTimeout = 30 * time.Second
+	pollInterval  = 100 * time.Millisecond
+	mountTimeout  = 30 * time.Second
 )
 
 // MountDrive mounts a drive using the blfs binary
-// driveName: name of the drive resource (used to lookup infrastructure ID from env)
+// driveName: name of the drive resource
 // mountPath: local path where the drive will be mounted
 // drivePath: subpath within the drive to mount (defaults to "/")
 func MountDrive(driveName, mountPath, drivePath string) error {
-	// Resolve infrastructure ID from environment variables
-	infrastructureId, err := getInfrastructureId(driveName)
-	if err != nil {
-		return fmt.Errorf("failed to resolve infrastructure ID: %w", err)
+	// Get workspace ID from environment
+	workspaceID := os.Getenv("WORKSPACE_ID")
+	if workspaceID == "" {
+		return fmt.Errorf("WORKSPACE_ID environment variable not set")
 	}
+
+	// Construct infrastructure ID: agd-{driveName}-{workspaceID}
+	infrastructureId := fmt.Sprintf("agd-%s-%s", driveName, workspaceID)
 
 	// Get filer address
 	filerAddress, err := getFilerAddress()
@@ -108,21 +111,6 @@ func MountDrive(driveName, mountPath, drivePath string) error {
 		logrus.WithError(err).Warn("Failed to kill blfs mount process after timeout")
 	}
 	return fmt.Errorf("timeout waiting for mount point to be ready after %s", mountTimeout)
-}
-
-// getInfrastructureId resolves the infrastructure ID from environment variables
-// Looks for BL_DRIVE_{UPPER_NAME}_NAME environment variable
-func getInfrastructureId(driveName string) (string, error) {
-	// Convert drive name to uppercase and replace dashes with underscores
-	upperName := strings.ToUpper(strings.ReplaceAll(driveName, "-", "_"))
-	envKey := fmt.Sprintf("BL_DRIVE_%s_NAME", upperName)
-
-	infrastructureId := os.Getenv(envKey)
-	if infrastructureId == "" {
-		return "", fmt.Errorf("infrastructure ID not found for drive %s (env var: %s)", driveName, envKey)
-	}
-
-	return infrastructureId, nil
 }
 
 // getFilerAddress reads the filer address from /etc/resolv.conf
