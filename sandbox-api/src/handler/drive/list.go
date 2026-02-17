@@ -27,7 +27,17 @@ func ListMounts() ([]MountInfo, error) {
 	}
 	defer file.Close()
 
+	// First pass: log all mounts for debugging
 	scanner := bufio.NewScanner(file)
+	allLines := []string{}
+	for scanner.Scan() {
+		allLines = append(allLines, scanner.Text())
+	}
+	logrus.WithField("mount_count", len(allLines)).Debug("Total mounts in /proc/mounts")
+	
+	// Reset to beginning of file
+	file.Seek(0, 0)
+	scanner = bufio.NewScanner(file)
 	for scanner.Scan() {
 		line := scanner.Text()
 		fields := strings.Fields(line)
@@ -36,41 +46,45 @@ func ListMounts() ([]MountInfo, error) {
 		}
 
 		// Check if this is a FUSE mount from blfs
-		// Format: seaweedfs:{source} {mount_point} fuse {options} 0 0
-		// Example: seaweedfs:/buckets/agd-myname-ws123/subfolder /mnt/data fuse rw,nosuid,nodev,relatime,user_id=0,group_id=0 0 0
-		source := fields[0]      // e.g., "seaweedfs:/buckets/agd-myname-ws123/subfolder"
-		mountPath := fields[1]   // e.g., "/mnt/data"
+		// Format: {filer_ip}:{port}:/buckets/{infrastructureId}{drivePath} {mount_point} fuse.seaweedfs {options} 0 0
+		// Example: 172.16.37.66:8080:/buckets/agd-my-super-drive-hydpwa/ /mnt/test fuse.seaweedfs rw,nosuid,nodev,relatime,user_id=0,group_id=0 0 0
+		source := fields[0]      // e.g., "172.16.37.66:8080:/buckets/agd-my-super-drive-hydpwa/"
+		mountPath := fields[1]   // e.g., "/mnt/test"
 		fsType := fields[2]
 
-		// Only check FUSE mounts with seaweedfs source
-		if !strings.HasPrefix(fsType, "fuse") {
+		// Only check fuse.seaweedfs mounts
+		if fsType != "fuse.seaweedfs" {
 			continue
 		}
 
 		// Parse the source to extract drive info
-		// Expected format: seaweedfs:/buckets/{infrastructureId}{drivePath}
-		if !strings.HasPrefix(source, "seaweedfs:") {
+		// Expected format: {filer_ip}:{port}:/buckets/{infrastructureId}{drivePath}
+		// We need to find the part after the last ":" which should be the path
+		lastColonIdx := strings.LastIndex(source, ":")
+		if lastColonIdx == -1 {
 			continue
 		}
 
-		sourcePath := strings.TrimPrefix(source, "seaweedfs:")
+		sourcePath := source[lastColonIdx+1:]
 		if !strings.HasPrefix(sourcePath, "/buckets/") {
 			continue
 		}
 
 		// Extract infrastructure ID and drive path
 		pathAfterBuckets := strings.TrimPrefix(sourcePath, "/buckets/")
+		// Remove trailing slash for consistent parsing
+		pathAfterBuckets = strings.TrimSuffix(pathAfterBuckets, "/")
 		parts := strings.SplitN(pathAfterBuckets, "/", 2)
 		
 		infrastructureId := parts[0]
 		drivePath := "/"
-		if len(parts) > 1 {
+		if len(parts) > 1 && parts[1] != "" {
 			drivePath = "/" + parts[1]
 		}
 
 		// Try to resolve drive name from infrastructure ID
-		// Look through environment variables for BL_DRIVE_*_NAME matching this infrastructure ID
-		driveName := resolveDriveName(infrastructureId)
+		// Infrastructure ID format: agd-{driveName}-{workspaceID}
+		driveName := extractDriveNameFromInfraId(infrastructureId)
 		if driveName == "" {
 			driveName = infrastructureId // Fallback to infrastructure ID
 		}
@@ -88,6 +102,34 @@ func ListMounts() ([]MountInfo, error) {
 
 	logrus.WithField("count", len(mounts)).Debug("Listed mounted drives")
 	return mounts, nil
+}
+
+// extractDriveNameFromInfraId extracts the drive name from the infrastructure ID
+// Infrastructure ID format: agd-{driveName}-{workspaceID}
+// Example: agd-my-super-drive-hydpwa -> my-super-drive
+func extractDriveNameFromInfraId(infrastructureId string) string {
+	// Remove the agd- prefix
+	if !strings.HasPrefix(infrastructureId, "agd-") {
+		return ""
+	}
+	
+	withoutPrefix := strings.TrimPrefix(infrastructureId, "agd-")
+	
+	// Get workspace ID from environment
+	workspaceID := strings.ToLower(os.Getenv("BL_WORKSPACE_ID"))
+	if workspaceID == "" {
+		// If we can't get workspace ID, return the whole thing without prefix
+		return withoutPrefix
+	}
+	
+	// Remove the workspace ID suffix
+	if strings.HasSuffix(withoutPrefix, "-"+workspaceID) {
+		driveName := strings.TrimSuffix(withoutPrefix, "-"+workspaceID)
+		return driveName
+	}
+	
+	// Fallback to returning without prefix
+	return withoutPrefix
 }
 
 // resolveDriveName tries to find the drive name from environment variables
