@@ -58,6 +58,7 @@ func SetupRouter(disableRequestLogging bool, enableProcessingTime bool) *gin.Eng
 	networkHandler := handler.NewNetworkHandler()
 	codegenHandler := handler.NewCodegenHandler(fsHandler)
 	systemHandler := handler.NewSystemHandler()
+	driveHandler := handler.NewDriveHandler()
 
 	// Check if terminal is disabled via environment variable
 	disableTerminal := os.Getenv("DISABLE_TERMINAL") == "true" || os.Getenv("DISABLE_TERMINAL") == "1"
@@ -186,6 +187,16 @@ func SetupRouter(disableRequestLogging bool, enableProcessingTime bool) *gin.Eng
 	r.HEAD("/upgrade", head)
 	r.GET("/health", systemHandler.HandleHealth)
 	r.HEAD("/health", head)
+
+	// Drive routes (for mounting/unmounting agent drives)
+	r.POST("/drives/attach", driveHandler.AttachDrive)
+	r.HEAD("/drives/attach", head)
+	r.POST("/drives/detach", driveHandler.DetachDrive)
+	r.HEAD("/drives/detach", head)
+	r.GET("/drives/mounts", driveHandler.ListMounts)
+	r.HEAD("/drives/mounts", head)
+	r.GET("/drives/health", driveHandler.HealthCheck)
+	r.HEAD("/drives/health", head)
 
 	// Root welcome endpoint - handles all HTTP methods
 	r.GET("/", baseHandler.HandleWelcome)
