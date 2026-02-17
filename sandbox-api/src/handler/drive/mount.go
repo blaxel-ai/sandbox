@@ -24,9 +24,9 @@ const (
 // drivePath: subpath within the drive to mount (defaults to "/")
 func MountDrive(driveName, mountPath, drivePath string) error {
 	// Get workspace ID from environment
-	workspaceID := os.Getenv("WORKSPACE_ID")
+	workspaceID := strings.ToLower(os.Getenv("BL_WORKSPACE_ID"))
 	if workspaceID == "" {
-		return fmt.Errorf("WORKSPACE_ID environment variable not set")
+		return fmt.Errorf("BL_WORKSPACE_ID environment variable not set")
 	}
 
 	// Construct infrastructure ID: agd-{driveName}-{workspaceID}
