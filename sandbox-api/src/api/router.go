@@ -189,14 +189,39 @@ func SetupRouter(disableRequestLogging bool, enableProcessingTime bool) *gin.Eng
 	r.HEAD("/health", head)
 
 	// Drive routes (for mounting/unmounting agent drives)
-	r.POST("/drives/attach", driveHandler.AttachDrive)
-	r.HEAD("/drives/attach", head)
-	r.POST("/drives/detach", driveHandler.DetachDrive)
-	r.HEAD("/drives/detach", head)
-	r.GET("/drives/mounts", driveHandler.ListMounts)
-	r.HEAD("/drives/mounts", head)
-	r.GET("/drives/health", driveHandler.HealthCheck)
-	r.HEAD("/drives/health", head)
+	// REST API convention:
+	// - GET /drives -> list all mounted drives
+	// - POST /drives -> attach/mount a drive
+	// - DELETE /drives/{mountPath} -> detach/unmount a drive
+	r.GET("/drives", driveHandler.ListMounts)
+	r.HEAD("/drives", head)
+	r.POST("/drives", driveHandler.AttachDrive)
+	
+	// Custom middleware to handle DELETE /drives/*mountPath
+	r.Use(func(c *gin.Context) {
+		path := c.Request.URL.Path
+		method := c.Request.Method
+
+		// Check if this is a DELETE request to /drives/*
+		if method == "DELETE" && strings.HasPrefix(path, "/drives/") {
+			// Extract the mount path after "/drives/"
+			mountPath := strings.TrimPrefix(path, "/drives")
+			
+			// Ensure mountPath starts with /
+			if !strings.HasPrefix(mountPath, "/") {
+				mountPath = "/" + mountPath
+			}
+			
+			// Set the mount path in the context
+			c.Set("mountPath", mountPath)
+			
+			// Call the detach handler
+			driveHandler.DetachDrive(c)
+			c.Abort()
+			return
+		}
+		c.Next()
+	})
 
 	// Root welcome endpoint - handles all HTTP methods
 	r.GET("/", baseHandler.HandleWelcome)

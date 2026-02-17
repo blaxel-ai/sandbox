@@ -36,11 +36,6 @@ type AttachDriveResponse struct {
 	DrivePath string `json:"drivePath"`
 }
 
-// DetachDriveRequest represents the request body for detaching a drive
-type DetachDriveRequest struct {
-	MountPath string `json:"mountPath" binding:"required"`
-}
-
 // DetachDriveResponse represents the response for a successful drive detachment
 type DetachDriveResponse struct {
 	Success   bool   `json:"success"`
@@ -134,42 +129,43 @@ func (h *DriveHandler) AttachDrive(c *gin.Context) {
 // @Summary      Detach a drive from a local path
 // @Description  Unmounts a previously mounted drive from the specified local path
 // @Tags         drive
-// @Accept       json
 // @Produce      json
-// @Param        request body DetachDriveRequest true "Drive detachment parameters"
+// @Param        mountPath path string true "Mount path to detach (e.g., /mnt/test or mnt/test)"
 // @Success      200 {object} DetachDriveResponse
 // @Failure      400 {object} ErrorResponse
 // @Failure      500 {object} ErrorResponse
 // @Security     BearerAuth
-// @Router       /drives/detach [post]
+// @Router       /drives/{mountPath} [delete]
 func (h *DriveHandler) DetachDrive(c *gin.Context) {
-	var req DetachDriveRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		logrus.WithError(err).Error("Failed to bind JSON for drive detachment")
+	// Get mount path from context (set by middleware)
+	mountPathRaw, exists := c.Get("mountPath")
+	if !exists {
 		c.JSON(http.StatusBadRequest, ErrorResponse{
-			Error: fmt.Sprintf("Invalid request body: %v", err),
+			Error: "Mount path not provided",
 		})
 		return
 	}
 
-	logrus.WithField("mount_path", req.MountPath).Info("Detaching drive")
+	mountPath := mountPathRaw.(string)
+
+	logrus.WithField("mount_path", mountPath).Info("Detaching drive")
 
 	// Unmount the drive
-	err := drive.UnmountDrive(req.MountPath)
+	err := drive.UnmountDrive(mountPath)
 	if err != nil {
-		logrus.WithError(err).WithField("mount_path", req.MountPath).Error("Failed to unmount drive")
+		logrus.WithError(err).WithField("mount_path", mountPath).Error("Failed to unmount drive")
 		c.JSON(http.StatusInternalServerError, ErrorResponse{
 			Error: fmt.Sprintf("Failed to unmount drive: %v", err),
 		})
 		return
 	}
 
-	logrus.WithField("mount_path", req.MountPath).Info("Drive detached successfully")
+	logrus.WithField("mount_path", mountPath).Info("Drive detached successfully")
 
 	c.JSON(http.StatusOK, DetachDriveResponse{
 		Success:   true,
 		Message:   "Drive unmounted successfully",
-		MountPath: req.MountPath,
+		MountPath: mountPath,
 	})
 }
 
@@ -211,26 +207,3 @@ func (h *DriveHandler) ListMounts(c *gin.Context) {
 	c.JSON(http.StatusOK, response)
 }
 
-// HealthCheck godoc
-// @Summary      Check drive mounting health
-// @Description  Returns the health status of the drive mounting service
-// @Tags         drive
-// @Produce      json
-// @Success      200 {object} map[string]interface{}
-// @Security     BearerAuth
-// @Router       /drives/health [get]
-func (h *DriveHandler) HealthCheck(c *gin.Context) {
-	// Check if blfs binary is available
-	available := drive.CheckBlfsAvailable()
-	
-	status := "healthy"
-	if !available {
-		status = "unhealthy"
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"status":         status,
-		"blfs_available": available,
-		"message":        fmt.Sprintf("Drive mounting service is %s", status),
-	})
-}
