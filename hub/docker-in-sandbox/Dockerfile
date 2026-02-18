@@ -26,9 +26,9 @@ WORKDIR /app
 
 COPY --from=ghcr.io/blaxel-ai/sandbox:latest /sandbox-api /usr/local/bin/sandbox-api
 
-COPY hub/docker/example /app/example
+COPY hub/docker-in-sandbox/example /app/example
 
-COPY hub/docker/entrypoint.sh /entrypoint.sh
+COPY hub/docker-in-sandbox/entrypoint.sh /entrypoint.sh
 
 RUN chmod +x /entrypoint.sh
 
