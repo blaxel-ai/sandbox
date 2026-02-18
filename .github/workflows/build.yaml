@@ -22,7 +22,7 @@ on:
           - py-app
           - ts-app
           - vite
-          - docker
+          - docker-in-sandbox
 
 env:
   REGISTRY: ghcr.io
