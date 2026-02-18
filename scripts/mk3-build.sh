@@ -100,6 +100,17 @@ echo "Batch Region: $BATCH_REGION"
 OUTPUT_S3="s3://$IMAGE_BUCKET_MK3/blaxel/sbx/$SANDBOX_NAME/$IMAGE_TAG"
 echo "Target S3 location: $OUTPUT_S3"
 
+# Check if template.json has build.slim set to false
+NO_SLIM="false"
+TEMPLATE_FILE="hub/$SANDBOX_NAME/template.json"
+if [ -f "$TEMPLATE_FILE" ]; then
+    BUILD_SLIM=$(jq -r 'if .build.slim == false then "false" else "true" end' "$TEMPLATE_FILE")
+    if [ "$BUILD_SLIM" = "false" ]; then
+        NO_SLIM="true"
+        echo "Template has build.slim=false, setting NO_SLIM=true"
+    fi
+fi
+
 # Build container overrides with environment variables and command for the Batch job.
 # Pass --image as CLI arg since metamorph may not read IMAGE env var (INPUT_S3 flow works, IMAGE flow fails).
 IMAGE_REF="$SRC_REGISTRY:$BASE_IMAGE_TAG"
@@ -115,6 +126,7 @@ CONTAINER_OVERRIDES=$(jq -n \
   --arg bl_generation "mk3" \
   --arg log_level "$LOG_LEVEL" \
   --arg depot_project_id "$DEPOT_PROJECT_ID" \
+  --arg no_slim "$NO_SLIM" \
   '{
     command: ["--image", $image],
     environment: [
@@ -128,7 +140,8 @@ CONTAINER_OVERRIDES=$(jq -n \
       {name: "BL_GENERATION", value: $bl_generation},
       {name: "LOG_LEVEL", value: $log_level},
       {name: "DEPOT_PROJECT_ID", value: $depot_project_id},
-      {name: "IMAGE", value: $image}
+      {name: "IMAGE", value: $image},
+      {name: "NO_SLIM", value: $no_slim}
     ]
   }')
 

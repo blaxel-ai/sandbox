@@ -1,0 +1,22 @@
+{
+  "name": "docker",
+  "displayName": "Docker",
+  "categories": ["docker"],
+  "description": "A development environment for Docker with essential development tools.",
+  "icon": "https://avatars.githubusercontent.com/u/5429470?s=200&v=4",
+  "longDescription": "The Docker micro VM provides a comprehensive development environment for building Docker applications. It includes the Docker CLI, development server, and all necessary tools for cross-platform mobile development. Features hot reloading, over-the-air updates, and access to native device features through Expo's managed workflow. Perfect for developing iOS and Android applications with a single codebase.",
+  "url": "https://github.com/docker",
+  "memory": 8192,
+  "ports": [
+    {
+      "name": "notes-api",
+      "target": 3000,
+      "protocol": "HTTP"
+    }
+  ],
+  "build": {
+    "slim": false
+  },
+  "enterprise": false,
+  "coming_soon": false
+}
