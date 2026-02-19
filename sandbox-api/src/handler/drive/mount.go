@@ -29,8 +29,8 @@ func MountDrive(driveName, mountPath, drivePath string) error {
 		return fmt.Errorf("BL_WORKSPACE_ID environment variable not set")
 	}
 
-	// Construct infrastructure ID: agd-{driveName}-{workspaceID}
-	infrastructureId := fmt.Sprintf("agd-%s-%s", driveName, workspaceID)
+	// Construct infrastructure ID: drv-{driveName}-{workspaceID}
+	infrastructureId := fmt.Sprintf("drv-%s-%s", driveName, workspaceID)
 
 	// Get filer address
 	filerAddress, err := getFilerAddress()
@@ -146,7 +146,7 @@ func getFilerAddress() (string, error) {
 func isMountPoint(path string) bool {
 	// Clean the path for comparison
 	cleanPath := filepath.Clean(path)
-	
+
 	// Read /proc/mounts
 	file, err := os.Open("/proc/mounts")
 	if err != nil {
