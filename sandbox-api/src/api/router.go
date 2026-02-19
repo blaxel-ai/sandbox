@@ -160,6 +160,10 @@ func SetupRouter(disableRequestLogging bool, enableProcessingTime bool) *gin.Eng
 	r.POST("/network/process/:pid/monitor", networkHandler.HandleMonitorPorts)
 	r.DELETE("/network/process/:pid/monitor", networkHandler.HandleStopMonitoringPorts)
 
+	// Tunnel routes (write-only, no GET to prevent config/key leakage)
+	r.PUT("/network/tunnel/config", networkHandler.HandleUpdateTunnelConfig)
+	r.DELETE("/network/tunnel", networkHandler.HandleDisconnectTunnel)
+
 	// Codegen routes
 	r.PUT("/codegen/fastapply/*path", codegenHandler.HandleFastApply)
 	r.GET("/codegen/reranking/*path", codegenHandler.HandleReranking)
