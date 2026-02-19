@@ -1,3 +1,5 @@
+//go:build linux
+
 package networking
 
 import (
@@ -26,6 +28,7 @@ type WireGuardClient struct {
 	mutex        sync.Mutex
 	defaultGW    net.IP
 	defaultIface string
+	stopMonitor  chan struct{}
 }
 
 // Global WireGuard client instance protected by a mutex.
@@ -228,6 +231,12 @@ func (w *WireGuardClient) Stop() error {
 
 	logrus.Info("Stopping WireGuard client")
 
+	// Stop route monitor if running
+	if w.stopMonitor != nil {
+		close(w.stopMonitor)
+		w.stopMonitor = nil
+	}
+
 	// Remove routes before shutting down
 	if w.config.RouteAll {
 		w.removeRoutes()
@@ -328,6 +337,10 @@ func (w *WireGuardClient) configureNetwork(interfaceName string) error {
 		if err := w.setupRoutes(link); err != nil {
 			return fmt.Errorf("failed to set up routes: %w", err)
 		}
+
+		// Start route monitor to handle snapshot resume scenarios
+		w.stopMonitor = make(chan struct{})
+		go w.monitorRoutes(link)
 	}
 
 	return nil
