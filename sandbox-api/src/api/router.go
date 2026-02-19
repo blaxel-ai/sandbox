@@ -186,12 +186,12 @@ func SetupRouter(disableRequestLogging bool, enableProcessingTime bool) *gin.Eng
 
 	// Drive routes (for mounting/unmounting agent drives)
 	// REST API convention:
-	// - GET /drives -> list all mounted drives
-	// - POST /drives -> attach/mount a drive
+	// - GET /drives/mount -> list all mounted drives
+	// - POST /drives/mount -> attach/mount a drive
 	// - DELETE /drives/{mountPath} -> detach/unmount a drive
-	r.GET("/drives", driveHandler.ListMounts)
-	r.HEAD("/drives", head)
-	r.POST("/drives", driveHandler.AttachDrive)
+	r.GET("/drives/mount", driveHandler.ListMounts)
+	r.POST("/drives/mount", driveHandler.AttachDrive)
+	r.HEAD("/drives/mount", head)
 	
 	// Custom middleware to handle DELETE /drives/*mountPath
 	r.Use(func(c *gin.Context) {
