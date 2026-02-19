@@ -40,10 +40,11 @@ func main() {
 	// Load .env file
 	_ = godotenv.Load()
 
-	// Initialize WireGuard client if configuration is present
+	// Initialize WireGuard client if configuration is present.
+	// If config is provided but initialization fails, the sandbox will have no egress
+	// (no outbound internet connectivity), but inbound connections will still work.
 	if err := networking.StartWireGuardFromEnv(); err != nil {
-		logrus.Warnf("Failed to start WireGuard client: %v", err)
-		// Continue anyway - WireGuard is optional
+		logrus.WithError(err).Warn("WireGuard initialization failed - the sandbox will NOT have outbound internet connectivity (no egress). Inbound connections to the sandbox will still work. You can check the tunnel status via the /network/tunnel endpoints.")
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())

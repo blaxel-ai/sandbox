@@ -34,6 +34,13 @@ type PortMonitorRequest struct {
 
 // TunnelConfigRequest is the request body for updating the network tunnel configuration.
 // The config field is a base64-encoded JSON matching the tunnel config schema.
+//
+// To generate the base64 config:
+//
+//	echo -n '{"local_ip":"10.0.0.1/32","peer_endpoint":"1.2.3.4:51820","peer_public_key":"<base64-key>","private_key":"<base64-key>"}' | base64
+//
+// Optional fields: mtu (default 1420), listen_port (default 51820), interface_name (default "wg0"),
+// allowed_ips (default ["0.0.0.0/0"]), persistent_keepalive (default 25, 0 to disable), route_all (default false).
 type TunnelConfigRequest struct {
 	Config string `json:"config" binding:"required" example:"eyJsb2NhbF9pcCI6ICIxMC4wLjAuMS8zMiIsIC4uLn0="` // Base64-encoded tunnel config JSON
 } // @name TunnelConfigRequest
@@ -210,7 +217,7 @@ func (h *NetworkHandler) HandleUpdateTunnelConfig(c *gin.Context) {
 
 // HandleDisconnectTunnel handles DELETE requests to /network/tunnel
 // @Summary Disconnect tunnel
-// @Description Stop the network tunnel and restore the original network configuration.
+// @Description Stop the network tunnel and restore the original network configuration. WARNING: After disconnecting, the sandbox will lose all outbound internet connectivity (no egress). Inbound connections to the sandbox will still work. Use PUT /network/tunnel/config to re-establish the tunnel.
 // @Tags network
 // @Produce json
 // @Success 200 {object} SuccessResponse "Tunnel disconnected"

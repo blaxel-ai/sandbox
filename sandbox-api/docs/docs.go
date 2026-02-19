@@ -1187,7 +1187,7 @@ const docTemplate = `{
         },
         "/network/tunnel": {
             "delete": {
-                "description": "Stop the network tunnel and restore the original network configuration.",
+                "description": "Stop the network tunnel and restore the original network configuration. WARNING: After disconnecting, the sandbox will lose all outbound internet connectivity (no egress). Inbound connections to the sandbox will still work. Use PUT /network/tunnel/config to re-establish the tunnel.",
                 "produces": [
                     "application/json"
                 ],
