@@ -1,0 +1,13 @@
+{
+  "name": "benchmark",
+  "displayName": "Benchmark",
+  "categories": [
+    "minimal", "optimization"
+  ],
+  "description": "A development environment for benchmarking the performance of the sandbox.",
+  "longDescription": "A development environment for benchmarking the performance of the sandbox.",
+  "url": "https://github.com/blaxel-ai/sandbox",
+  "icon": "https://github.com/firecracker-microvm",
+  "memory": 2048,
+  "hidden": true
+}
