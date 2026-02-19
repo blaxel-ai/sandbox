@@ -34,7 +34,7 @@ func ListMounts() ([]MountInfo, error) {
 		allLines = append(allLines, scanner.Text())
 	}
 	logrus.WithField("mount_count", len(allLines)).Debug("Total mounts in /proc/mounts")
-	
+
 	// Reset to beginning of file
 	file.Seek(0, 0)
 	scanner = bufio.NewScanner(file)
@@ -47,9 +47,9 @@ func ListMounts() ([]MountInfo, error) {
 
 		// Check if this is a FUSE mount from blfs
 		// Format: {filer_ip}:{port}:/buckets/{infrastructureId}{drivePath} {mount_point} fuse.seaweedfs {options} 0 0
-		// Example: 172.16.37.66:8080:/buckets/agd-my-super-drive-hydpwa/ /mnt/test fuse.seaweedfs rw,nosuid,nodev,relatime,user_id=0,group_id=0 0 0
-		source := fields[0]      // e.g., "172.16.37.66:8080:/buckets/agd-my-super-drive-hydpwa/"
-		mountPath := fields[1]   // e.g., "/mnt/test"
+		// Example: 172.16.37.66:8080:/buckets/drv-my-super-drive-hydpwa/ /mnt/test fuse.seaweedfs rw,nosuid,nodev,relatime,user_id=0,group_id=0 0 0
+		source := fields[0]    // e.g., "172.16.37.66:8080:/buckets/drv-my-super-drive-hydpwa/"
+		mountPath := fields[1] // e.g., "/mnt/test"
 		fsType := fields[2]
 
 		// Only check fuse.seaweedfs mounts
@@ -75,7 +75,7 @@ func ListMounts() ([]MountInfo, error) {
 		// Remove trailing slash for consistent parsing
 		pathAfterBuckets = strings.TrimSuffix(pathAfterBuckets, "/")
 		parts := strings.SplitN(pathAfterBuckets, "/", 2)
-		
+
 		infrastructureId := parts[0]
 		drivePath := "/"
 		if len(parts) > 1 && parts[1] != "" {
@@ -83,7 +83,7 @@ func ListMounts() ([]MountInfo, error) {
 		}
 
 		// Try to resolve drive name from infrastructure ID
-		// Infrastructure ID format: agd-{driveName}-{workspaceID}
+		// Infrastructure ID format: drv-{driveName}-{workspaceID}
 		driveName := extractDriveNameFromInfraId(infrastructureId)
 		if driveName == "" {
 			driveName = infrastructureId // Fallback to infrastructure ID
@@ -105,29 +105,29 @@ func ListMounts() ([]MountInfo, error) {
 }
 
 // extractDriveNameFromInfraId extracts the drive name from the infrastructure ID
-// Infrastructure ID format: agd-{driveName}-{workspaceID}
-// Example: agd-my-super-drive-hydpwa -> my-super-drive
+// Infrastructure ID format: drv-{driveName}-{workspaceID}
+// Example: drv-my-super-drive-hydpwa -> my-super-drive
 func extractDriveNameFromInfraId(infrastructureId string) string {
-	// Remove the agd- prefix
-	if !strings.HasPrefix(infrastructureId, "agd-") {
+	// Remove the drv- prefix
+	if !strings.HasPrefix(infrastructureId, "drv-") {
 		return ""
 	}
-	
-	withoutPrefix := strings.TrimPrefix(infrastructureId, "agd-")
-	
+
+	withoutPrefix := strings.TrimPrefix(infrastructureId, "drv-")
+
 	// Get workspace ID from environment
 	workspaceID := strings.ToLower(os.Getenv("BL_WORKSPACE_ID"))
 	if workspaceID == "" {
 		// If we can't get workspace ID, return the whole thing without prefix
 		return withoutPrefix
 	}
-	
+
 	// Remove the workspace ID suffix
 	if strings.HasSuffix(withoutPrefix, "-"+workspaceID) {
 		driveName := strings.TrimSuffix(withoutPrefix, "-"+workspaceID)
 		return driveName
 	}
-	
+
 	// Fallback to returning without prefix
 	return withoutPrefix
 }
@@ -155,7 +155,7 @@ func resolveDriveName(infrastructureId string) string {
 			// BL_DRIVE_{UPPER_NAME}_NAME -> {UPPER_NAME}
 			drivePart := strings.TrimPrefix(key, "BL_DRIVE_")
 			drivePart = strings.TrimSuffix(drivePart, "_NAME")
-			
+
 			// Convert back from UPPER_CASE to lower-case with dashes
 			driveName := strings.ToLower(strings.ReplaceAll(drivePart, "_", "-"))
 			return driveName
