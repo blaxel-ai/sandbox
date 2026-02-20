@@ -58,6 +58,7 @@ func SetupRouter(disableRequestLogging bool, enableProcessingTime bool) *gin.Eng
 	networkHandler := handler.NewNetworkHandler()
 	codegenHandler := handler.NewCodegenHandler(fsHandler)
 	systemHandler := handler.NewSystemHandler()
+	driveHandler := handler.NewDriveHandler()
 
 	// Check if terminal is disabled via environment variable
 	disableTerminal := os.Getenv("DISABLE_TERMINAL") == "true" || os.Getenv("DISABLE_TERMINAL") == "1"
@@ -186,6 +187,41 @@ func SetupRouter(disableRequestLogging bool, enableProcessingTime bool) *gin.Eng
 	r.HEAD("/upgrade", head)
 	r.GET("/health", systemHandler.HandleHealth)
 	r.HEAD("/health", head)
+
+	// Drive routes (for mounting/unmounting agent drives)
+	// REST API convention:
+	// - GET /drives/mount -> list all mounted drives
+	// - POST /drives/mount -> attach/mount a drive
+	// - DELETE /drives/{mountPath} -> detach/unmount a drive
+	r.GET("/drives/mount", driveHandler.ListMounts)
+	r.POST("/drives/mount", driveHandler.AttachDrive)
+	r.HEAD("/drives/mount", head)
+	
+	// Custom middleware to handle DELETE /drives/*mountPath
+	r.Use(func(c *gin.Context) {
+		path := c.Request.URL.Path
+		method := c.Request.Method
+
+		// Check if this is a DELETE request to /drives/*
+		if method == "DELETE" && strings.HasPrefix(path, "/drives/") {
+			// Extract the mount path after "/drives/"
+			mountPath := strings.TrimPrefix(path, "/drives")
+			
+			// Ensure mountPath starts with /
+			if !strings.HasPrefix(mountPath, "/") {
+				mountPath = "/" + mountPath
+			}
+			
+			// Set the mount path in the context
+			c.Set("mountPath", mountPath)
+			
+			// Call the detach handler
+			driveHandler.DetachDrive(c)
+			c.Abort()
+			return
+		}
+		c.Next()
+	})
 
 	// Root welcome endpoint - handles all HTTP methods
 	r.GET("/", baseHandler.HandleWelcome)
