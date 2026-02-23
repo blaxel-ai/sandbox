@@ -13,11 +13,19 @@ import (
 )
 
 const (
-	blfsPath      = "/usr/local/bin/blfs"
-	authTokenPath = "/var/run/secrets/blaxel.dev/identity/token"
-	pollInterval  = 100 * time.Millisecond
-	mountTimeout  = 30 * time.Second
+	blfsPath     = "/usr/local/bin/blfs"
+	pollInterval = 100 * time.Millisecond
+	mountTimeout = 30 * time.Second
 )
+
+// getAuthTokenPath returns the path to the identity token based on BL_ENV.
+// Default is prod (blaxel.ai); use blaxel.dev when BL_ENV is "dev".
+func getAuthTokenPath() string {
+	if os.Getenv("BL_ENV") == "dev" {
+		return "/var/run/secrets/blaxel.dev/identity/token"
+	}
+	return "/var/run/secrets/blaxel.ai/identity/token"
+}
 
 // MountDrive mounts a drive using the blfs binary
 // driveName: name of the drive resource
@@ -70,7 +78,7 @@ func MountDrive(driveName, mountPath, drivePath string) error {
 		"-writebackCache=true",
 		"-asyncDio=true",
 		"-cacheSymlink=true",
-		fmt.Sprintf("-auth.tokenFile=%s", authTokenPath),
+		fmt.Sprintf("-auth.tokenFile=%s", getAuthTokenPath()),
 		fmt.Sprintf("-filer.path=%s", filerPath),
 		fmt.Sprintf("-dir=%s", mountPath),
 		"-volumeServerAccess=filerProxy",
