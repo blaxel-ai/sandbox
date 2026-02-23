@@ -185,14 +185,14 @@ func SetupRouter(disableRequestLogging bool, enableProcessingTime bool) *gin.Eng
 	r.HEAD("/health", head)
 
 	// Drive routes (for mounting/unmounting agent drives)
-	// REST API: GET /drives/mount list, POST /drives/mount attach, DELETE /drives/*mountPath detach
+	// GET /drives/mount list, POST /drives/mount attach, DELETE /drives/mount/*mountPath detach
 	r.GET("/drives/mount", driveHandler.ListMounts)
 	r.POST("/drives/mount", driveHandler.AttachDrive)
 	r.HEAD("/drives/mount", head)
-	r.DELETE("/drives/*mountPath", func(c *gin.Context) {
+	r.DELETE("/drives/mount/*mountPath", func(c *gin.Context) {
 		mountPath := c.Param("mountPath")
 		if mountPath == "" || mountPath == "/" {
-			c.JSON(http.StatusBadRequest, handler.ErrorResponse{Error: "Mount path is required (e.g. /mnt/mydrive)"})
+			c.JSON(http.StatusBadRequest, handler.ErrorResponse{Error: "Mount path is required (must start with /)"})
 			return
 		}
 		if !strings.HasPrefix(mountPath, "/") {

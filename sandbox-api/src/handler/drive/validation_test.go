@@ -31,18 +31,34 @@ func TestValidateDriveName(t *testing.T) {
 	}
 }
 
+func TestNormalizeMountPath(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"", ""},
+		{"/", "/"},
+		{"/mnt/data", "/mnt/data"},
+		{"mnt/data", "/mnt/data"},
+		{"foo", "/foo"},
+	}
+	for _, tt := range tests {
+		got := NormalizeMountPath(tt.input)
+		if got != tt.want {
+			t.Errorf("NormalizeMountPath(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
 func TestValidateMountPath(t *testing.T) {
 	tests := []struct {
 		name     string
 		input    string
 		wantErr  bool
 	}{
-		{"allowed /mnt", "/mnt", false},
-		{"allowed under /mnt", "/mnt/data", false},
-		{"allowed nested", "/mnt/foo/bar", false},
-		{"forbidden /etc", "/etc", true},
-		{"forbidden /root", "/root", true},
-		{"forbidden /var/run/secrets", "/var/run/secrets", true},
+		{"absolute path", "/mnt/data", false},
+		{"root", "/", false},
+		{"nested", "/foo/bar/baz", false},
 		{"path traversal", "/mnt/../etc", true},
 		{"empty", "", true},
 	}

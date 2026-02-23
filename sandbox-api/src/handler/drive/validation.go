@@ -2,14 +2,9 @@ package drive
 
 import (
 	"fmt"
-	"path/filepath"
 	"regexp"
 	"strings"
 )
-
-// AllowedMountBase is the only directory prefix under which drives may be mounted.
-// This prevents path traversal (e.g. mounting over /etc, /root, /var/run).
-const AllowedMountBase = "/mnt"
 
 // driveNameRegex allows only safe characters for drive names: alphanumeric, hyphen, underscore.
 // Prevents injection into infrastructure IDs and command arguments.
@@ -34,7 +29,16 @@ func ValidateDriveName(driveName string) error {
 	return nil
 }
 
-// ValidateMountPath ensures mountPath is under AllowedMountBase and contains no path traversal.
+// NormalizeMountPath ensures mountPath has a leading / (added if missing).
+func NormalizeMountPath(mountPath string) string {
+	if mountPath == "" || strings.HasPrefix(mountPath, "/") {
+		return mountPath
+	}
+	return "/" + mountPath
+}
+
+// ValidateMountPath ensures mountPath is non-empty, has no path traversal, and length is within limit.
+// Call NormalizeMountPath first if the path may lack a leading /.
 func ValidateMountPath(mountPath string) error {
 	if mountPath == "" {
 		return fmt.Errorf("mount path is required")
@@ -42,17 +46,8 @@ func ValidateMountPath(mountPath string) error {
 	if len(mountPath) > maxMountPathLen {
 		return fmt.Errorf("mount path too long (max %d)", maxMountPathLen)
 	}
-	clean := filepath.Clean(mountPath)
-	if strings.Contains(clean, "..") {
+	if strings.Contains(mountPath, "..") {
 		return fmt.Errorf("mount path must not contain '..'")
-	}
-	abs, err := filepath.Abs(clean)
-	if err != nil {
-		return fmt.Errorf("invalid mount path: %w", err)
-	}
-	base := filepath.Clean(AllowedMountBase)
-	if abs != base && !strings.HasPrefix(abs, base+string(filepath.Separator)) {
-		return fmt.Errorf("mount path must be under %s", AllowedMountBase)
 	}
 	return nil
 }

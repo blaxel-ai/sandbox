@@ -24,6 +24,7 @@ const (
 // mountPath: local path where the drive will be mounted
 // drivePath: subpath within the drive to mount (defaults to "/")
 func MountDrive(driveName, mountPath, drivePath string) error {
+	mountPath = NormalizeMountPath(mountPath)
 	if err := ValidateDriveName(driveName); err != nil {
 		return fmt.Errorf("invalid drive name: %w", err)
 	}
