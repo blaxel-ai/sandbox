@@ -131,36 +131,3 @@ func extractDriveNameFromInfraId(infrastructureId string) string {
 	// Fallback to returning without prefix
 	return withoutPrefix
 }
-
-// resolveDriveName tries to find the drive name from environment variables
-// by looking for BL_DRIVE_*_NAME that matches the infrastructure ID
-func resolveDriveName(infrastructureId string) string {
-	environ := os.Environ()
-	for _, env := range environ {
-		if !strings.HasPrefix(env, "BL_DRIVE_") {
-			continue
-		}
-
-		parts := strings.SplitN(env, "=", 2)
-		if len(parts) != 2 {
-			continue
-		}
-
-		key := parts[0]
-		value := parts[1]
-
-		// Check if this is a _NAME env var and if the value matches our infrastructure ID
-		if strings.HasSuffix(key, "_NAME") && value == infrastructureId {
-			// Extract the drive name from the env key
-			// BL_DRIVE_{UPPER_NAME}_NAME -> {UPPER_NAME}
-			drivePart := strings.TrimPrefix(key, "BL_DRIVE_")
-			drivePart = strings.TrimSuffix(drivePart, "_NAME")
-
-			// Convert back from UPPER_CASE to lower-case with dashes
-			driveName := strings.ToLower(strings.ReplaceAll(drivePart, "_", "-"))
-			return driveName
-		}
-	}
-
-	return ""
-}
