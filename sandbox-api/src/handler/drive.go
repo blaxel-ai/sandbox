@@ -82,6 +82,20 @@ func (h *DriveHandler) AttachDrive(c *gin.Context) {
 		req.DrivePath = "/"
 	}
 
+	// Validate drive name and mount path (security: path traversal and injection)
+	if err := drive.ValidateDriveName(req.DriveName); err != nil {
+		c.JSON(http.StatusBadRequest, ErrorResponse{
+			Error: err.Error(),
+		})
+		return
+	}
+	if err := drive.ValidateMountPath(req.MountPath); err != nil {
+		c.JSON(http.StatusBadRequest, ErrorResponse{
+			Error: err.Error(),
+		})
+		return
+	}
+
 	// Validate drive path starts with /
 	if !strings.HasPrefix(req.DrivePath, "/") {
 		c.JSON(http.StatusBadRequest, ErrorResponse{

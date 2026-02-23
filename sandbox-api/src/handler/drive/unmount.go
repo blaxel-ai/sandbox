@@ -15,6 +15,9 @@ const (
 
 // UnmountDrive unmounts a drive from the specified mount path
 func UnmountDrive(mountPath string) error {
+	if err := ValidateMountPath(mountPath); err != nil {
+		return fmt.Errorf("invalid mount path: %w", err)
+	}
 	// Check if the path exists
 	if _, err := os.Stat(mountPath); err != nil {
 		if os.IsNotExist(err) {

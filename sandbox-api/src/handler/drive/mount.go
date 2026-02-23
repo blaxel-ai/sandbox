@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/sirupsen/logrus"
@@ -23,6 +24,13 @@ const (
 // mountPath: local path where the drive will be mounted
 // drivePath: subpath within the drive to mount (defaults to "/")
 func MountDrive(driveName, mountPath, drivePath string) error {
+	if err := ValidateDriveName(driveName); err != nil {
+		return fmt.Errorf("invalid drive name: %w", err)
+	}
+	if err := ValidateMountPath(mountPath); err != nil {
+		return fmt.Errorf("invalid mount path: %w", err)
+	}
+
 	// Get workspace ID from environment
 	workspaceID := strings.ToLower(os.Getenv("BL_WORKSPACE_ID"))
 	if workspaceID == "" {
@@ -106,9 +114,13 @@ func MountDrive(driveName, mountPath, drivePath string) error {
 		time.Sleep(pollInterval)
 	}
 
-	// Timeout - kill the process and return error
+	// Timeout - kill the process, reap it, and try to clean up any partial mount
 	if err := cmd.Process.Kill(); err != nil {
 		logrus.WithError(err).Warn("Failed to kill blfs mount process after timeout")
+	}
+	_ = cmd.Wait() // Reap the process to avoid zombie
+	if isMountPoint(mountPath) {
+		_ = UnmountDrive(mountPath) // Best-effort cleanup of partial mount
 	}
 	return fmt.Errorf("timeout waiting for mount point to be ready after %s", mountTimeout)
 }
@@ -172,24 +184,21 @@ func isMountPoint(path string) bool {
 
 // isMountPointByDeviceID checks if a directory is a mount point by comparing device IDs (fallback)
 func isMountPointByDeviceID(path string) bool {
-	// Get stat of the path
 	pathStat, err := os.Stat(path)
 	if err != nil {
 		return false
 	}
-
-	// Get stat of the parent directory
 	parentPath := filepath.Dir(path)
 	parentStat, err := os.Stat(parentPath)
 	if err != nil {
 		return false
 	}
-
-	// If device IDs are different, it's a mount point
-	pathDev := pathStat.Sys()
-	parentDev := parentStat.Sys()
-
-	return fmt.Sprintf("%v", pathDev) != fmt.Sprintf("%v", parentDev)
+	pathSys, ok1 := pathStat.Sys().(*syscall.Stat_t)
+	parentSys, ok2 := parentStat.Sys().(*syscall.Stat_t)
+	if !ok1 || !ok2 {
+		return false
+	}
+	return pathSys.Dev != parentSys.Dev
 }
 
 // mustReadAll reads all data from a reader, panicking on error (for internal use only)
