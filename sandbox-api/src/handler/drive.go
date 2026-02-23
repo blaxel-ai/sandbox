@@ -82,6 +82,8 @@ func (h *DriveHandler) AttachDrive(c *gin.Context) {
 		req.DrivePath = "/"
 	}
 
+	req.MountPath = drive.NormalizeMountPath(req.MountPath)
+
 	// Validate drive name and mount path (security: path traversal and injection)
 	if err := drive.ValidateDriveName(req.DriveName); err != nil {
 		c.JSON(http.StatusBadRequest, ErrorResponse{
@@ -144,12 +146,12 @@ func (h *DriveHandler) AttachDrive(c *gin.Context) {
 // @Description  Unmounts a previously mounted drive from the specified local path
 // @Tags         drive
 // @Produce      json
-// @Param        mountPath path string true "Mount path to detach (e.g., /mnt/test or mnt/test)"
+// @Param        mountPath path string true "Mount path to detach (must start with /, e.g. /mnt/test)"
 // @Success      200 {object} DetachDriveResponse
 // @Failure      400 {object} ErrorResponse
 // @Failure      500 {object} ErrorResponse
 // @Security     BearerAuth
-// @Router       /drives/{mountPath} [delete]
+// @Router       /drives/mount/{mountPath} [delete]
 func (h *DriveHandler) DetachDrive(c *gin.Context) {
 	// Get mount path from context (set by middleware)
 	mountPathRaw, exists := c.Get("mountPath")
