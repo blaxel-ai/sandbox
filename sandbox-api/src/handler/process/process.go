@@ -85,6 +85,7 @@ type ProcessInfo struct {
 	StdoutFile       string                  `json:"-"` // Path to stdout log file
 	StderrFile       string                  `json:"-"` // Path to stderr log file
 	Done             chan struct{}
+	tailDone         chan struct{}           // Closed when tailLogFiles finishes its final reads
 	stdout           *strings.Builder
 	stderr           *strings.Builder
 	logs             *strings.Builder
@@ -250,6 +251,7 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 		StdoutFile:       stdoutPath,
 		StderrFile:       stderrPath,
 		Done:             make(chan struct{}),
+		tailDone:         make(chan struct{}),
 		stdout:           stdout,
 		stderr:           stderr,
 		logs:             logs,
@@ -354,6 +356,10 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 			// Increment restart count
 			process.RestartCount++
 
+			// Let the current tailLogFiles goroutine finish before restarting
+			close(process.Done)
+			<-process.tailDone
+
 			// Small delay before restart to avoid rapid restart loops
 			time.Sleep(1 * time.Second)
 
@@ -366,24 +372,26 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 				process.stdout.WriteString(errorMsg)
 				process.logs.WriteString(errorMsg)
 
-				// Clean up resources
+				// Signal tailLogFiles to do final reads, then wait for it to finish
+				close(process.Done)
+				<-process.tailDone
+
 				process.logLock.Lock()
-				process.logWriters = nil // Clear all log writers
+				process.logWriters = nil
 				process.logLock.Unlock()
 
-				// Signal that the process is done
-				close(process.Done)
 				callback(process)
 			}
 			// If restart succeeds, the callback will be called when that process completes
 		} else {
-			// Clean up resources
+			// Signal tailLogFiles to do final reads, then wait for it to finish
+			close(process.Done)
+			<-process.tailDone
+
 			process.logLock.Lock()
-			process.logWriters = nil // Clear all log writers
+			process.logWriters = nil
 			process.logLock.Unlock()
 
-			// Signal that the process is done
-			close(process.Done)
 			callback(process)
 		}
 	}()
@@ -423,23 +431,28 @@ func (pm *ProcessManager) tailLogFiles(proc *ProcessInfo) {
 	for {
 		select {
 		case <-proc.Done:
-			// Do final reads
-			pm.readAndBroadcast(stdoutFile, stdoutBuf, proc, "stdout", combinedFile)
-			pm.readAndBroadcast(stderrFile, stderrBuf, proc, "stderr", combinedFile)
+			// Drain all remaining data from both files before returning.
+			// Loop until both files return 0 bytes to handle data larger than the buffer.
+			for {
+				n1 := pm.readAndBroadcast(stdoutFile, stdoutBuf, proc, "stdout", combinedFile)
+				n2 := pm.readAndBroadcast(stderrFile, stderrBuf, proc, "stderr", combinedFile)
+				if n1 == 0 && n2 == 0 {
+					break
+				}
+			}
+			close(proc.tailDone)
 			return
 		default:
-			// Read from stdout file
 			pm.readAndBroadcast(stdoutFile, stdoutBuf, proc, "stdout", combinedFile)
-			// Read from stderr file
 			pm.readAndBroadcast(stderrFile, stderrBuf, proc, "stderr", combinedFile)
-			// Small sleep to avoid busy loop
 			time.Sleep(50 * time.Millisecond)
 		}
 	}
 }
 
-// readAndBroadcast reads from a file and broadcasts to log writers
-func (pm *ProcessManager) readAndBroadcast(file *os.File, buf []byte, proc *ProcessInfo, streamType string, combinedFile *os.File) {
+// readAndBroadcast reads from a file and broadcasts to log writers.
+// Returns the number of bytes read.
+func (pm *ProcessManager) readAndBroadcast(file *os.File, buf []byte, proc *ProcessInfo, streamType string, combinedFile *os.File) int {
 	n, err := file.Read(buf)
 	if n > 0 {
 		data := buf[:n]
@@ -452,7 +465,6 @@ func (pm *ProcessManager) readAndBroadcast(file *os.File, buf []byte, proc *Proc
 		proc.logs.Write(data)
 		// Write prefixed content to combined log file (preserves interleaved order)
 		if combinedFile != nil {
-			// Write each line with prefix
 			lines := strings.SplitAfter(string(data), "\n")
 			for _, line := range lines {
 				if line != "" {
@@ -469,6 +481,7 @@ func (pm *ProcessManager) readAndBroadcast(file *os.File, buf []byte, proc *Proc
 	if err != nil && err != io.EOF {
 		// Real error, but we'll keep trying
 	}
+	return n
 }
 
 // restartProcess restarts a failed process with the same configuration
@@ -536,6 +549,8 @@ func (pm *ProcessManager) restartProcess(oldProcess *ProcessInfo, callback func(
 	oldProcess.StartedAt = time.Now()
 	oldProcess.CompletedAt = nil
 	oldProcess.ExitCode = 0
+	oldProcess.Done = make(chan struct{})
+	oldProcess.tailDone = make(chan struct{})
 
 	// Start the process
 	if err := cmd.Start(); err != nil {
@@ -628,6 +643,10 @@ func (pm *ProcessManager) restartProcess(oldProcess *ProcessInfo, callback func(
 			// Increment restart count
 			oldProcess.RestartCount++
 
+			// Let the current tailLogFiles goroutine finish before restarting
+			close(oldProcess.Done)
+			<-oldProcess.tailDone
+
 			// Small delay before restart to avoid rapid restart loops
 			time.Sleep(1 * time.Second)
 
@@ -640,24 +659,26 @@ func (pm *ProcessManager) restartProcess(oldProcess *ProcessInfo, callback func(
 				oldProcess.stdout.WriteString(errorMsg)
 				oldProcess.logs.WriteString(errorMsg)
 
-				// Clean up resources
+				// Signal tailLogFiles to do final reads, then wait for it to finish
+				close(oldProcess.Done)
+				<-oldProcess.tailDone
+
 				oldProcess.logLock.Lock()
 				oldProcess.logWriters = nil
 				oldProcess.logLock.Unlock()
 
-				// Signal that the process is done
-				close(oldProcess.Done)
 				callback(oldProcess)
 			}
 			// If restart succeeds, the callback will be called when that process completes
 		} else {
-			// Clean up resources
+			// Signal tailLogFiles to do final reads, then wait for it to finish
+			close(oldProcess.Done)
+			<-oldProcess.tailDone
+
 			oldProcess.logLock.Lock()
 			oldProcess.logWriters = nil
 			oldProcess.logLock.Unlock()
 
-			// Signal that the process is done
-			close(oldProcess.Done)
 			callback(oldProcess)
 		}
 	}()
