@@ -376,6 +376,125 @@ collectLoop:
 	assert.GreaterOrEqual(t, count, 5, "should receive at least 5 tick lines from stream")
 }
 
+func TestProcessStreamLogsNoDuplication(t *testing.T) {
+	t.Log("=== Testing that log streaming does not duplicate output after process completes ===")
+
+	t.Run("short-lived process with multiple lines", func(t *testing.T) {
+		processRequest := map[string]interface{}{
+			"command": "for i in $(seq 1 5); do echo uniqueline_$i; sleep 0.05; done",
+			"cwd":     "/",
+		}
+
+		resp, err := common.MakeRequest(http.MethodPost, "/process", processRequest)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+		var processResponse map[string]interface{}
+		err = json.NewDecoder(resp.Body).Decode(&processResponse)
+		require.NoError(t, err)
+
+		require.Contains(t, processResponse, "pid")
+		pid := processResponse["pid"].(string)
+
+		streamResp, err := common.MakeRequestWithTimeout(http.MethodGet, "/process/"+pid+"/logs/stream", nil, 15*time.Second)
+		require.NoError(t, err)
+		defer streamResp.Body.Close()
+
+		assert.Equal(t, http.StatusOK, streamResp.StatusCode)
+
+		body, err := io.ReadAll(streamResp.Body)
+		require.NoError(t, err)
+
+		allOutput := string(body)
+		t.Logf("Total streamed bytes: %d", len(body))
+
+		for i := 1; i <= 5; i++ {
+			marker := fmt.Sprintf("uniqueline_%d", i)
+			occurrences := strings.Count(allOutput, marker)
+			assert.Equal(t, 1, occurrences,
+				"expected marker %q to appear exactly once in streamed output, got %d times", marker, occurrences)
+		}
+	})
+
+	t.Run("process with stdout and stderr", func(t *testing.T) {
+		processRequest := map[string]interface{}{
+			"command": "echo 'STDOUT_MARKER_123' && echo 'STDERR_MARKER_456' >&2 && sleep 0.1",
+			"cwd":     "/",
+		}
+
+		resp, err := common.MakeRequest(http.MethodPost, "/process", processRequest)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+		var processResponse map[string]interface{}
+		err = json.NewDecoder(resp.Body).Decode(&processResponse)
+		require.NoError(t, err)
+
+		require.Contains(t, processResponse, "pid")
+		pid := processResponse["pid"].(string)
+
+		streamResp, err := common.MakeRequestWithTimeout(http.MethodGet, "/process/"+pid+"/logs/stream", nil, 15*time.Second)
+		require.NoError(t, err)
+		defer streamResp.Body.Close()
+
+		assert.Equal(t, http.StatusOK, streamResp.StatusCode)
+
+		body, err := io.ReadAll(streamResp.Body)
+		require.NoError(t, err)
+
+		allOutput := string(body)
+		t.Logf("Total streamed bytes: %d", len(body))
+
+		stdoutCount := strings.Count(allOutput, "STDOUT_MARKER_123")
+		stderrCount := strings.Count(allOutput, "STDERR_MARKER_456")
+
+		assert.Equal(t, 1, stdoutCount,
+			"expected STDOUT_MARKER_123 exactly once, got %d times", stdoutCount)
+		assert.Equal(t, 1, stderrCount,
+			"expected STDERR_MARKER_456 exactly once, got %d times", stderrCount)
+	})
+
+	t.Run("fast command no duplication", func(t *testing.T) {
+		processRequest := map[string]interface{}{
+			"command": "echo 'FAST_CMD_MARKER'",
+			"cwd":     "/",
+		}
+
+		resp, err := common.MakeRequest(http.MethodPost, "/process", processRequest)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+		var processResponse map[string]interface{}
+		err = json.NewDecoder(resp.Body).Decode(&processResponse)
+		require.NoError(t, err)
+
+		require.Contains(t, processResponse, "pid")
+		pid := processResponse["pid"].(string)
+
+		streamResp, err := common.MakeRequestWithTimeout(http.MethodGet, "/process/"+pid+"/logs/stream", nil, 15*time.Second)
+		require.NoError(t, err)
+		defer streamResp.Body.Close()
+
+		assert.Equal(t, http.StatusOK, streamResp.StatusCode)
+
+		body, err := io.ReadAll(streamResp.Body)
+		require.NoError(t, err)
+
+		allOutput := string(body)
+		t.Logf("Total streamed bytes: %d", len(body))
+
+		count := strings.Count(allOutput, "FAST_CMD_MARKER")
+		assert.Equal(t, 1, count,
+			"expected FAST_CMD_MARKER exactly once, got %d times", count)
+	})
+}
+
 func TestProcessKillWithChildProcesses(t *testing.T) {
 	// Test similar to the TypeScript example: start a dev-like process, stream logs, then kill
 	// This test runs twice to verify that ports are properly freed after killing
