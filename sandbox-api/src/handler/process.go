@@ -525,10 +525,9 @@ func (h *ProcessHandler) HandleGetProcessLogsStream(c *gin.Context) {
 	// Detach the writer
 	h.RemoveLogWriter(identifier, rw)
 
-	// Send final content from combined log file (which has prefixed, ordered content)
-	// This ensures any content written at the very end (like stderr) is captured
-	// The combined log file preserves the interleaved order of stdout/stderr
-	if proc.LogFile != "" {
+	// For very fast commands, streaming might not have sent anything.
+	// Only re-send from the log file if nothing was streamed, to avoid duplicating output.
+	if !rw.HasSentData() && proc.LogFile != "" {
 		if content, err := os.ReadFile(proc.LogFile); err == nil && len(content) > 0 {
 			rw.Write(content)
 		}

@@ -60,6 +60,7 @@ func StartWireGuardFromEnv() error {
 
 	config, err := LoadConfigFromEnv()
 	if err != nil {
+		logrus.WithError(err).Error("WireGuard configuration was provided but could not be loaded")
 		return fmt.Errorf("failed to load WireGuard config: %w", err)
 	}
 
@@ -68,18 +69,26 @@ func StartWireGuardFromEnv() error {
 		return nil
 	}
 
-	logrus.Info("WireGuard configuration found, initializing client...")
+	logrus.WithFields(logrus.Fields{
+		"interface":     config.InterfaceName,
+		"peer_endpoint": config.PeerEndpoint,
+		"local_ip":      config.LocalIP,
+		"route_all":     config.RouteAll,
+	}).Info("WireGuard configuration found, initializing client...")
 
 	client, err := NewWireGuardClient(config)
 	if err != nil {
+		logrus.WithError(err).Error("Failed to create WireGuard client")
 		return fmt.Errorf("failed to create WireGuard client: %w", err)
 	}
 
 	if err := client.Start(); err != nil {
+		logrus.WithError(err).Error("Failed to start WireGuard client")
 		return fmt.Errorf("failed to start WireGuard client: %w", err)
 	}
 
 	wgClient = client
+	logrus.Info("WireGuard client initialized successfully - outbound internet connectivity is available")
 	return nil
 }
 
@@ -97,6 +106,7 @@ func StopWireGuard() error {
 		return fmt.Errorf("failed to stop WireGuard client: %w", err)
 	}
 	wgClient = nil
+	logrus.Warn("WireGuard tunnel disconnected - outbound internet connectivity is no longer available (no egress)")
 	return nil
 }
 
