@@ -58,6 +58,7 @@ func SetupRouter(disableRequestLogging bool, enableProcessingTime bool) *gin.Eng
 	networkHandler := handler.NewNetworkHandler()
 	codegenHandler := handler.NewCodegenHandler(fsHandler)
 	systemHandler := handler.NewSystemHandler()
+	driveHandler := handler.NewDriveHandler()
 
 	// Check if terminal is disabled via environment variable
 	disableTerminal := os.Getenv("DISABLE_TERMINAL") == "true" || os.Getenv("DISABLE_TERMINAL") == "1"
@@ -186,6 +187,24 @@ func SetupRouter(disableRequestLogging bool, enableProcessingTime bool) *gin.Eng
 	r.HEAD("/upgrade", head)
 	r.GET("/health", systemHandler.HandleHealth)
 	r.HEAD("/health", head)
+
+	// Drive routes (for mounting/unmounting agent drives)
+	// GET /drives/mount list, POST /drives/mount attach, DELETE /drives/mount/*mountPath detach
+	r.GET("/drives/mount", driveHandler.ListMounts)
+	r.POST("/drives/mount", driveHandler.AttachDrive)
+	r.HEAD("/drives/mount", head)
+	r.DELETE("/drives/mount/*mountPath", func(c *gin.Context) {
+		mountPath := c.Param("mountPath")
+		if mountPath == "" || mountPath == "/" {
+			c.JSON(http.StatusBadRequest, handler.ErrorResponse{Error: "Mount path is required (must start with /)"})
+			return
+		}
+		if !strings.HasPrefix(mountPath, "/") {
+			mountPath = "/" + mountPath
+		}
+		c.Set("mountPath", mountPath)
+		driveHandler.DetachDrive(c)
+	})
 
 	// Root welcome endpoint - handles all HTTP methods
 	r.GET("/", baseHandler.HandleWelcome)
