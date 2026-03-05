@@ -1,6 +1,7 @@
 // Sample Puppeteer test to verify the LightPanda browser is working correctly.
-// Run: node /home/sample-test.js
-// Requires: npm i -g puppeteer-core
+// Run from a Node.js environment (not inside the container — no Node.js included):
+//   npm install puppeteer-core
+//   node sample-test.js
 const puppeteer = require("puppeteer-core");
 const assert = require("assert");
 
