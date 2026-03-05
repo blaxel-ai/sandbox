@@ -16,13 +16,18 @@ on:
         options:
           - all
           - base-image
+          - chromium
+          - cua-xfce
+          - docker-in-sandbox
           - expo
           - nextjs
           - node
+          - playwright-chromium
+          - playwright-firefox
           - py-app
           - ts-app
           - vite
-          - docker-in-sandbox
+          - xfce-vnc
 
 env:
   REGISTRY: ghcr.io
