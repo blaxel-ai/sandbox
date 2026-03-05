@@ -15,7 +15,9 @@ on:
         default: ""
         options:
           - all
+          - astro
           - base-image
+          - docker-in-sandbox
           - chromium
           - cua-xfce
           - docker-in-sandbox

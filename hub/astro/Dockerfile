@@ -13,17 +13,16 @@ WORKDIR /blaxel
 
 COPY --from=sandbox-api /sandbox-api /usr/local/bin/sandbox-api
 
-# Start with a fresh Next.js project
 RUN mkdir -p /blaxel/app
 
-RUN npx create-next-app@latest /blaxel/app --use-npm --typescript --eslint --tailwind --src-dir --app --import-alias "@/*" --no-git --yes --no-turbopack
+RUN npx create-astro@latest /blaxel/app --template basics --no-install --no-git --yes \
+  && cd /blaxel/app && npm install
 
-COPY /hub/nextjs/next.config.ts /blaxel/app/next.config.ts
+COPY /hub/astro/astro.config.mjs /blaxel/app/astro.config.mjs
 
-COPY /hub/nextjs/entrypoint.sh /entrypoint.sh
+COPY /hub/astro/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
-# Expose ports for Next.js dev server
-EXPOSE 3000
+EXPOSE 4321
 
 ENTRYPOINT ["/entrypoint.sh"]
