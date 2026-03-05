@@ -42,5 +42,5 @@ echo "Starting nginx proxy..."
 nginx -g "daemon off;" &
 NGINX_PID=$!
 
-wait -n $SANDBOX_API_PID $CHROME_PID $NGINX_PID
+wait $SANDBOX_API_PID $CHROME_PID $NGINX_PID
 exit $?
