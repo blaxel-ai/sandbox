@@ -37,7 +37,7 @@ curl http://localhost:8080/process \
   -d '{
     "name": "dev-server",
     "workingDir": "/blaxel/app",
-    "command": "npx expo start --web --port 8081 --no-dev-client",
+    "command": "npx expo start --web --port 8081",
     "waitForCompletion": false,
     "restartOnFailure": true,
     "maxRestarts": 25

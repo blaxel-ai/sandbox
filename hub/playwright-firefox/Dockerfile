@@ -14,9 +14,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Clean npm cache and install Playwright with explicit dependencies
 RUN npm cache clean --force && \
-    npm i -g playwright@1.53.0 playwright-core@1.53.0 && \
+    npm i -g playwright@1.58.2 playwright-core@1.58.2 && \
     npm i -g happy-eyeballs && \
     playwright install --with-deps firefox
+
+RUN npm init -y && npm i playwright-core@1.58.2
 
 COPY --from=sandbox-api /sandbox-api /usr/local/bin/sandbox-api
 
