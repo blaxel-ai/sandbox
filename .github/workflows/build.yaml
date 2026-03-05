@@ -17,13 +17,19 @@ on:
           - all
           - astro
           - base-image
+          - chromium
+          - cua-xfce
           - docker-in-sandbox
           - expo
+          - lightpanda
           - nextjs
           - node
+          - playwright-chromium
+          - playwright-firefox
           - py-app
           - ts-app
           - vite
+          - xfce-vnc
 
 env:
   REGISTRY: ghcr.io

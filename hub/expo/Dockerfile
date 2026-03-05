@@ -31,7 +31,7 @@ RUN sed -i "s|'http://' + manifest2.extra.expoGo.debuggerHost|'https://' + manif
     node_modules/expo-asset/build/AssetSources.js
 
 # Pre-warm Metro bundler cache by starting the dev server briefly
-RUN timeout 120 npx expo start --web --port 8081 --no-dev-client 2>/dev/null || true
+RUN timeout 60 npx expo start --web --port 8081 2>/dev/null || true
 
 ENV HOME=/blaxel
 ENV PATH="/usr/local/bin:$PATH"
