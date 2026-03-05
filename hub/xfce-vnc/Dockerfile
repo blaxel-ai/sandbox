@@ -13,11 +13,9 @@ RUN mkdir -p /var/run/dbus && \
     touch /var/run/dbus/system_bus_socket && \
     chmod 666 /var/run/dbus/system_bus_socket
 
-# Add supervisor config for sandbox-api
+# Replace supervisor config to remove the CUA computer-server and add sandbox-api
+COPY hub/xfce-vnc/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 COPY hub/xfce-vnc/sandbox-api.conf /etc/supervisor/conf.d/sandbox-api.conf
-
-# Remove the CUA computer-server from supervisor if present
-RUN rm -f /etc/supervisor/conf.d/computer-server.conf 2>/dev/null || true
 
 # Copy custom entrypoint
 COPY hub/xfce-vnc/entrypoint.sh /entrypoint.sh

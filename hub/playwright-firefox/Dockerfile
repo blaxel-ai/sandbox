@@ -20,7 +20,7 @@ RUN npm cache clean --force && \
 
 COPY --from=sandbox-api /sandbox-api /usr/local/bin/sandbox-api
 
-EXPOSE 8080
+EXPOSE 8080 8081
 
 COPY hub/playwright-firefox/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
