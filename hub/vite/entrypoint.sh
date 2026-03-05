@@ -37,7 +37,7 @@ curl http://localhost:8080/process \
   -d '{
     "name": "dev-server",
     "workingDir": "/blaxel/app",
-    "command": "npm run dev",
+    "command": "npm run dev -- --port 5173",
     "waitForCompletion": false,
     "restartOnFailure": true,
     "maxRestarts": 25
