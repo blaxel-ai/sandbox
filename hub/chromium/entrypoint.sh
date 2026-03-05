@@ -20,7 +20,7 @@ chromium-browser \
   `# === MEMORY & SHARED RESOURCES ===` \
   --disable-dev-shm-usage \
   --memory-pressure-off \
-  --max_old_space_size=4096 \
+  --js-flags="--max-old-space-size=4096" \
   `# === REMOTE DEBUGGING CONFIGURATION ===` \
   --remote-allow-origins=* \
   --allow-insecure-localhost \
@@ -42,5 +42,9 @@ echo "Starting nginx proxy..."
 nginx -g "daemon off;" &
 NGINX_PID=$!
 
-wait -n $SANDBOX_API_PID $CHROME_PID $NGINX_PID
-exit $?
+# Exit when any process dies
+trap 'kill $SANDBOX_API_PID $CHROME_PID $NGINX_PID 2>/dev/null' EXIT
+while kill -0 $SANDBOX_API_PID 2>/dev/null && kill -0 $CHROME_PID 2>/dev/null && kill -0 $NGINX_PID 2>/dev/null; do
+    sleep 1
+done
+exit 1

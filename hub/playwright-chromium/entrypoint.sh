@@ -1,8 +1,13 @@
 #!/bin/sh
 
-# Start Playwright server in the background
+/usr/local/bin/sandbox-api &
+SANDBOX_API_PID=$!
+
 /usr/local/bin/playwright run-server --port 8081 --host 0.0.0.0 &
 PLAYWRIGHT_PID=$!
 
-# Start sandbox-api in the foreground
-/usr/local/bin/sandbox-api
+trap 'kill $SANDBOX_API_PID $PLAYWRIGHT_PID 2>/dev/null' EXIT
+while kill -0 $SANDBOX_API_PID 2>/dev/null && kill -0 $PLAYWRIGHT_PID 2>/dev/null; do
+    sleep 1
+done
+exit 1
