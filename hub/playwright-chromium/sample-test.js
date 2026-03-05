@@ -1,6 +1,7 @@
 // Sample Playwright test to verify the browser is working correctly.
 // Run: node /home/playwright/sample-test.js
 const { chromium } = require("playwright-core");
+const assert = require("assert");
 
 (async () => {
   console.log("Connecting to Playwright server...");
@@ -13,10 +14,7 @@ const { chromium } = require("playwright-core");
     await page1.goto("https://example.com");
     const title1 = await page1.title();
     console.log("Title:", title1);
-    console.assert(
-      title1.includes("Example Domain"),
-      "Expected title to contain 'Example Domain'"
-    );
+    assert(title1.includes("Example Domain"), `Expected title to contain 'Example Domain', got: ${title1}`);
     console.log("PASS: example.com loaded successfully");
     await page1.close();
 
@@ -26,10 +24,7 @@ const { chromium } = require("playwright-core");
     await page2.goto("https://en.wikipedia.org/wiki/Main_Page");
     const title2 = await page2.title();
     console.log("Title:", title2);
-    console.assert(
-      title2.includes("Wikipedia"),
-      "Expected title to contain 'Wikipedia'"
-    );
+    assert(title2.includes("Wikipedia"), `Expected title to contain 'Wikipedia', got: ${title2}`);
     const heading = await page2.textContent("#mp-welcome");
     console.log("Welcome heading found:", heading ? "yes" : "no");
     console.log("PASS: Wikipedia loaded successfully");
