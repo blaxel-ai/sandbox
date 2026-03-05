@@ -485,7 +485,7 @@ func (pm *ProcessManager) readAndBroadcast(file *os.File, buf []byte, proc *Proc
 		// Log each line separately for clean telemetry ingestion
 		logLines := strings.SplitAfter(string(data), "\n")
 		for _, line := range logLines {
-			trimmed := strings.TrimRight(line, "\n")
+			trimmed := strings.TrimSuffix(line, "\n")
 			if trimmed == "" {
 				continue
 			}
