@@ -1,7 +1,7 @@
 {
   "name": "cua-xfce",
   "displayName": "CUA XFCE Desktop",
-  "categories": ["desktop", "vnc", "ai"],
+  "categories": ["computer-use"],
   "description": "A full XFCE desktop environment with VNC/noVNC access and CUA computer-server API for AI-driven computer use.",
   "longDescription": "The CUA XFCE Desktop sandbox provides a complete XFCE desktop environment accessible via VNC and noVNC (HTML5 browser client). It includes the CUA computer-server API for AI-driven computer use automation, enabling agents to interact with the desktop through screenshots, mouse, and keyboard actions. Managed by supervisord for reliable multi-service orchestration.",
   "url": "https://github.com/trycua/cua",
