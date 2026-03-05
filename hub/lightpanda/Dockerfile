@@ -5,8 +5,7 @@ FROM lightpanda/browser:latest
 
 COPY --from=sandbox-api /sandbox-api /usr/local/bin/sandbox-api
 
-COPY hub/lightpanda/entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+COPY --chmod=+x hub/lightpanda/entrypoint.sh /entrypoint.sh
 
 EXPOSE 8080 8081
 
