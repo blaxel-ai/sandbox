@@ -20,6 +20,7 @@ on:
           - cua-xfce
           - docker-in-sandbox
           - expo
+          - lightpanda
           - nextjs
           - node
           - playwright-chromium
