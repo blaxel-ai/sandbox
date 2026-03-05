@@ -6,7 +6,7 @@
   "longDescription": "The Playwright Chromium sandbox provides a complete Playwright server environment with the Chromium browser pre-installed. It enables automated browser testing, web scraping, and browser automation through Playwright's WebSocket-based protocol. Ideal for running end-to-end tests, generating screenshots, and automating web interactions with Chromium.",
   "url": "https://playwright.dev",
   "icon": "https://playwright.dev/img/playwright-logo.svg",
-  "memory": 8192,
+  "memory": 4096,
   "ports": [
     {
       "name": "sandbox-api",
