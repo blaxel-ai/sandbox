@@ -2,7 +2,6 @@
   "name": "vibekit-opencode",
   "displayName": "VibeKit OpenCode",
   "categories": [
-    "ai"
   ],
   "description": "A development environment for building AI-powered applications with OpenCode integration using VibeKit SDK.",
   "longDescription": "VibeKit provides a complete SDK and UI components for building conversational AI applications powered by OpenCode models. This sandbox includes the VibeKit OpenCode runtime environment with pre-configured development tools, hot reloading, and all necessary dependencies for creating interactive AI chat interfaces and code generation applications. Perfect for developing open-source AI-powered code assistants, intelligent development tools, and code-focused conversational interfaces with modern React components.",
