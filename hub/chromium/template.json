@@ -1,0 +1,24 @@
+{
+  "name": "chromium",
+  "displayName": "Chromium",
+  "categories": ["browser"],
+  "description": "A headless Chromium browser environment with Chrome DevTools Protocol access via nginx proxy.",
+  "longDescription": "The Chromium sandbox provides a headless Chromium browser with Chrome DevTools Protocol (CDP) access through an nginx reverse proxy. It supports remote debugging, browser automation via CDP WebSocket connections, and URL rewriting for seamless access in both internal and external network configurations. Ideal for web scraping, automated testing, and browser-based automation workflows.",
+  "url": "https://www.chromium.org",
+  "icon": "https://www.chromium.org/chromium-projects/logo",
+  "memory": 4096,
+  "ports": [
+    {
+      "name": "sandbox-api",
+      "target": 8080,
+      "protocol": "HTTP"
+    },
+    {
+      "name": "chrome-cdp",
+      "target": 8081,
+      "protocol": "HTTP"
+    }
+  ],
+  "enterprise": false,
+  "coming_soon": false
+}

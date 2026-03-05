@@ -1,0 +1,24 @@
+{
+  "name": "playwright-firefox",
+  "displayName": "Playwright Firefox",
+  "categories": ["browser", "testing"],
+  "description": "A Playwright server environment with Firefox browser for automated browser testing and web scraping.",
+  "longDescription": "The Playwright Firefox sandbox provides a complete Playwright server environment with the Firefox browser pre-installed. It enables automated browser testing, web scraping, and browser automation through Playwright's WebSocket-based protocol. Ideal for running end-to-end tests, generating screenshots, and automating web interactions with Firefox.",
+  "url": "https://playwright.dev",
+  "icon": "https://playwright.dev/img/playwright-logo.svg",
+  "memory": 8192,
+  "ports": [
+    {
+      "name": "sandbox-api",
+      "target": 8080,
+      "protocol": "HTTP"
+    },
+    {
+      "name": "playwright",
+      "target": 8081,
+      "protocol": "HTTP"
+    }
+  ],
+  "enterprise": false,
+  "coming_soon": false
+}
