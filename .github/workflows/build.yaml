@@ -17,6 +17,8 @@ on:
           - all
           - astro
           - base-image
+          - chromium
+          - cua-xfce
           - docker-in-sandbox
           - chromium
           - cua-xfce
