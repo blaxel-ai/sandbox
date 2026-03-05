@@ -1,7 +1,7 @@
 {
   "name": "node",
   "displayName": "Node",
-  "categories": ["nodejs"],
+  "categories": ["backend"],
   "description": "A development environment for Node.js applications with essential development tools.",
   "longDescription": "The Node micro VM provides a complete development environment for building Node.js applications. It includes Node.js runtime, npm package manager, and essential development tools. Perfect for developing modern web applications, APIs, and server-side applications with type safety and modern JavaScript features.",
   "url": "https://nodejs.org/en",

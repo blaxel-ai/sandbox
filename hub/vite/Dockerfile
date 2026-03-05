@@ -3,11 +3,13 @@ FROM ghcr.io/blaxel-ai/sandbox:${SANDBOX_VERSION} AS sandbox-api
 
 FROM node:22-alpine
 
-COPY --from=sandbox-api /sandbox-api /usr/local/bin/sandbox-api
-
 RUN apk update && apk add --no-cache \
   git \
+  curl \
+  netcat-openbsd \
   && rm -rf /var/cache/apk/*
+
+COPY --from=sandbox-api /sandbox-api /usr/local/bin/sandbox-api
 
 WORKDIR /blaxel
 
@@ -20,6 +22,9 @@ RUN cd app && npm install
 
 COPY /hub/vite/src/vite.config.ts /blaxel/app/vite.config.ts
 
+COPY /hub/vite/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
 EXPOSE 5173
 
-ENTRYPOINT ["/usr/local/bin/sandbox-api"]
+ENTRYPOINT ["/entrypoint.sh"]

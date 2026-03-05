@@ -2,7 +2,7 @@
   "name": "benchmark",
   "displayName": "Benchmark",
   "categories": [
-    "minimal", "optimization"
+    "devops"
   ],
   "description": "A development environment for benchmarking the performance of the sandbox.",
   "longDescription": "A development environment for benchmarking the performance of the sandbox.",

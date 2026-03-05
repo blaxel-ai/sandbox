@@ -15,14 +15,15 @@ on:
         default: ""
         options:
           - all
+          - astro
           - base-image
+          - docker-in-sandbox
           - expo
           - nextjs
           - node
           - py-app
           - ts-app
           - vite
-          - docker-in-sandbox
 
 env:
   REGISTRY: ghcr.io
