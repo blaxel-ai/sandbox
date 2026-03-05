@@ -20,7 +20,7 @@ chromium-browser \
   `# === MEMORY & SHARED RESOURCES ===` \
   --disable-dev-shm-usage \
   --memory-pressure-off \
-  --max_old_space_size=4096 \
+  --js-flags="--max-old-space-size=4096" \
   `# === REMOTE DEBUGGING CONFIGURATION ===` \
   --remote-allow-origins=* \
   --allow-insecure-localhost \
