@@ -25,6 +25,10 @@ EXPOSE 8080 8081
 COPY hub/playwright-chromium/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
+# Sample test script to verify Playwright is working
+# Usage: node /home/playwright/sample-test.js
+COPY hub/playwright-chromium/sample-test.js /home/playwright/sample-test.js
+
 ENV PLAYWRIGHT_BROWSERS_PATH=/home/playwright/.cache/ms-playwright
 
 ENTRYPOINT ["/entrypoint.sh"]
