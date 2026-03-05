@@ -1,11 +1,11 @@
 {
   "name": "lightpanda",
-  "displayName": "LightPanda",
+  "displayName": "Lightpanda",
   "categories": ["browser"],
   "description": "A lightweight browser environment with Chrome DevTools Protocol support for fast web automation.",
-  "longDescription": "The LightPanda sandbox provides a lightweight browser optimized for automation tasks with Chrome DevTools Protocol (CDP) compatibility. It offers minimal resource usage while maintaining compatibility with standard browser automation libraries like Puppeteer. Ideal for web scraping, automated testing, PDF generation, and data extraction workflows.",
+  "longDescription": "The Lightpanda sandbox provides a lightweight browser optimized for automation tasks with Chrome DevTools Protocol (CDP) compatibility. It offers minimal resource usage while maintaining compatibility with standard browser automation libraries like Puppeteer. Ideal for web scraping, automated testing, PDF generation, and data extraction workflows.",
   "url": "https://www.lightpanda.io",
-  "icon": "https://avatars.githubusercontent.com/u/140837949?s=200&v=4",
+  "icon": "https://avatars.githubusercontent.com/u/145980012?s=200&v=4",
   "memory": 1024,
   "ports": [
     {
