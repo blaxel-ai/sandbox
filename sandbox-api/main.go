@@ -14,6 +14,7 @@ import (
 
 	"github.com/blaxel-ai/sandbox-api/docs" // swagger generated docs
 	"github.com/blaxel-ai/sandbox-api/src/api"
+	"github.com/blaxel-ai/sandbox-api/src/handler/filesystem"
 	"github.com/blaxel-ai/sandbox-api/src/handler/process"
 	"github.com/blaxel-ai/sandbox-api/src/lib/networking"
 	"github.com/blaxel-ai/sandbox-api/src/mcp"
@@ -151,6 +152,16 @@ func main() {
 		}()
 	}
 
+	// === VirtioFS workarounds (ENG-1990) ===
+	// Configure git to avoid the link()+unlink() pattern on virtiofs mounts
+	// where unlink() does not decrement st_nlink for files with hard links.
+	filesystem.ConfigureGitForVirtioFS()
+
+	// Start background cleaner that periodically removes orphaned files
+	// from lost+found directories on virtiofs mounts.
+	virtiofsStop := make(chan struct{})
+	filesystem.StartLostFoundCleaner(30*time.Second, virtiofsStop)
+
 	// Set up the router with all our API routes
 	router := api.SetupRouter(disableRequestLogging, enableProcessingTime)
 
@@ -202,6 +213,9 @@ func main() {
 		if err := networking.StopWireGuard(); err != nil {
 			logrus.WithError(err).Debug("WireGuard shutdown")
 		}
+
+		// Stop virtiofs lost+found cleaner
+		close(virtiofsStop)
 
 		// Cancel the main context (stops background command if any)
 		cancel()

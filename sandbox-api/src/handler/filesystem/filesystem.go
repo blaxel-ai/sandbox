@@ -412,7 +412,9 @@ func (fs *Filesystem) ListDirectory(path string) (*Directory, error) {
 	return dir, nil
 }
 
-// DeleteFile deletes a file at the given path
+// DeleteFile deletes a file at the given path.
+// On virtiofs mounts, this uses VirtioFSAwareUnlink to handle the nlink
+// cache staleness bug (ENG-1990) by cleaning up orphaned lost+found entries.
 func (fs *Filesystem) DeleteFile(path string) error {
 	absPath, err := fs.GetAbsolutePath(path)
 	if err != nil {
@@ -428,10 +430,12 @@ func (fs *Filesystem) DeleteFile(path string) error {
 		return errors.New("path points to a directory, not a file")
 	}
 
-	return os.Remove(absPath)
+	return VirtioFSAwareUnlink(absPath)
 }
 
-// DeleteDirectory deletes a directory at the given path
+// DeleteDirectory deletes a directory at the given path.
+// On virtiofs mounts with recursive=true, this uses VirtioFSAwareRemoveAll
+// to clean up orphaned lost+found entries after removal (ENG-1990).
 func (fs *Filesystem) DeleteDirectory(path string, recursive bool) error {
 	absPath, err := fs.GetAbsolutePath(path)
 	if err != nil {
@@ -448,7 +452,7 @@ func (fs *Filesystem) DeleteDirectory(path string, recursive bool) error {
 	}
 
 	if recursive {
-		return os.RemoveAll(absPath)
+		return VirtioFSAwareRemoveAll(absPath)
 	}
 	return os.Remove(absPath) // This will fail if directory is not empty
 }
