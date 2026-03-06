@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/blaxel-ai/sandbox-api/src/handler/constants"
+	"github.com/sirupsen/logrus"
 )
 
 // StreamEvent represents a streaming event sent to JSON log writers
@@ -470,6 +471,28 @@ func (pm *ProcessManager) readAndBroadcast(file *os.File, buf []byte, proc *Proc
 				if line != "" {
 					combinedFile.WriteString(streamType + ":" + line)
 				}
+			}
+		}
+		// Export process logs to stdout for telemetry collection.
+		// Uses structured log attributes so the telemetry collector can
+		// distinguish process logs from access logs.
+		logEntry := logrus.WithFields(logrus.Fields{
+			"source":      "process",
+			"processName": proc.Name,
+			"processPid":  proc.PID,
+			"stream":      streamType,
+		})
+		// Log each line separately for clean telemetry ingestion
+		logLines := strings.SplitAfter(string(data), "\n")
+		for _, line := range logLines {
+			trimmed := strings.TrimSuffix(line, "\n")
+			if trimmed == "" {
+				continue
+			}
+			if streamType == "stderr" {
+				logEntry.Error(trimmed)
+			} else {
+				logEntry.Info(trimmed)
 			}
 		}
 		// Send to log writers for streaming
