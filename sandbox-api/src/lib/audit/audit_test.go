@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -95,7 +96,7 @@ func TestLogEvent_EmitsAuditFields(t *testing.T) {
 	logrus.SetOutput(&buf)
 	logrus.SetFormatter(&logrus.JSONFormatter{})
 	defer func() {
-		logrus.SetOutput(nil)
+		logrus.SetOutput(os.Stderr)
 		logrus.SetFormatter(&logrus.TextFormatter{})
 	}()
 
@@ -131,7 +132,7 @@ func TestLogEventDirect_EmitsAuditFields(t *testing.T) {
 	logrus.SetOutput(&buf)
 	logrus.SetFormatter(&logrus.JSONFormatter{})
 	defer func() {
-		logrus.SetOutput(nil)
+		logrus.SetOutput(os.Stderr)
 		logrus.SetFormatter(&logrus.TextFormatter{})
 	}()
 
