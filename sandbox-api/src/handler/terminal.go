@@ -10,6 +10,7 @@ import (
 	"github.com/sirupsen/logrus"
 
 	"github.com/blaxel-ai/sandbox-api/src/handler/terminal"
+	"github.com/blaxel-ai/sandbox-api/src/lib/audit"
 )
 
 var (
@@ -75,6 +76,15 @@ func (h *TerminalHandler) HandleTerminalWS(c *gin.Context) {
 	shell := c.Query("shell")
 	workingDir := c.Query("workingDir")
 	sessionId := c.DefaultQuery("sessionId", "default")
+
+	// Capture identity before WebSocket upgrade (headers available only on HTTP request)
+	id := audit.GetIdentity(c)
+
+	audit.LogEvent(c, "terminal_connect", logrus.Fields{
+		"session_id":  sessionId,
+		"shell":       shell,
+		"working_dir": workingDir,
+	})
 
 	// Upgrade HTTP connection to WebSocket
 	conn, err := h.upgrader.Upgrade(c.Writer, c.Request, nil)
@@ -165,6 +175,9 @@ func (h *TerminalHandler) HandleTerminalWS(c *gin.Context) {
 	// close connection -> unsubscribe.  Using a single defer guarantees
 	// this ordering regardless of which return path is taken.
 	defer func() {
+		audit.LogEventDirect(id, "terminal_disconnect", logrus.Fields{
+			"session_id": sessionId,
+		})
 		closeDone()
 		wg.Wait()
 		conn.Close()
