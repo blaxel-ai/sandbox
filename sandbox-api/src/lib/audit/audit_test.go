@@ -115,8 +115,8 @@ func TestLogEvent_EmitsAuditFields(t *testing.T) {
 	output := buf.String()
 	// Verify key fields are present in the JSON output
 	for _, expected := range []string{
-		`"blaxel_source":"audit"`,
-		`"user_id":"user-456"`,
+				`"source":"audit"`,
+				`"user_id":"user-456"`,
 		`"request_id":"req-xyz"`,
 		`"action":"test_action"`,
 		`"extra_key":"extra_value"`,
@@ -149,8 +149,8 @@ func TestLogEventDirect_EmitsAuditFields(t *testing.T) {
 
 	output := buf.String()
 	for _, expected := range []string{
-		`"blaxel_source":"audit"`,
-		`"user_id":"user-789"`,
+				`"source":"audit"`,
+				`"user_id":"user-789"`,
 		`"subject_type":"service"`,
 		`"auth_method":"bearer_token"`,
 		`"request_id":"req-direct"`,
