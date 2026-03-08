@@ -69,11 +69,11 @@ func GetIdentity(c *gin.Context) Identity {
 // baseFields returns the common logrus fields for all audit log entries.
 func (id Identity) baseFields() logrus.Fields {
 	return logrus.Fields{
-		"source": "audit",
-		"user_id":       id.UserID,
-		"subject_type":  id.SubjectType,
-		"auth_method":   id.AuthMethod,
-		"request_id":    id.RequestID,
+		"source":       "audit",
+		"user_id":      id.UserID,
+		"subject_type": id.SubjectType,
+		"auth_method":  id.AuthMethod,
+		"request_id":   id.RequestID,
 	}
 }
 
