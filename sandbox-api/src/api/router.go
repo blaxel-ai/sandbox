@@ -359,16 +359,18 @@ func logrusMiddleware() gin.HandlerFunc {
 			return
 		}
 
+		entry := logrus.WithField("source", "access")
+
 		if len(c.Errors) > 0 {
-			logrus.Error(c.Errors.ByType(gin.ErrorTypePrivate).String())
+			entry.Error(c.Errors.ByType(gin.ErrorTypePrivate).String())
 		} else {
 			msg := fmt.Sprintf("%s %s %d %d %dms", c.Request.Method, sanitizedPath, statusCode, dataLength, latency)
 			if statusCode >= http.StatusInternalServerError {
-				logrus.Error(msg)
+				entry.Error(msg)
 			} else if statusCode >= http.StatusBadRequest {
-				logrus.Error(msg)
+				entry.Error(msg)
 			} else {
-				logrus.Info(msg)
+				entry.Info(msg)
 			}
 		}
 	}
