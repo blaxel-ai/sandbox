@@ -1,5 +1,5 @@
 // Package audit provides audit logging for sandbox access events.
-// Audit logs are emitted with blaxel_source="audit" to distinguish them
+// Audit logs are emitted with source="audit" to distinguish them
 // from process logs (source="process") and HTTP access logs in SigNoz.
 package audit
 
@@ -69,11 +69,11 @@ func GetIdentity(c *gin.Context) Identity {
 // baseFields returns the common logrus fields for all audit log entries.
 func (id Identity) baseFields() logrus.Fields {
 	return logrus.Fields{
-		"blaxel_source": "audit",
-		"user_id":       id.UserID,
-		"subject_type":  id.SubjectType,
-		"auth_method":   id.AuthMethod,
-		"request_id":    id.RequestID,
+		"source":       "audit",
+		"user_id":      id.UserID,
+		"subject_type": id.SubjectType,
+		"auth_method":  id.AuthMethod,
+		"request_id":   id.RequestID,
 	}
 }
 
