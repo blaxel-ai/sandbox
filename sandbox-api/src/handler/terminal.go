@@ -3,6 +3,7 @@ package handler
 import (
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/gin-gonic/gin"
@@ -52,6 +53,48 @@ type TerminalMessage struct {
 	Data string `json:"data,omitempty"`
 	Cols uint16 `json:"cols,omitempty"`
 	Rows uint16 `json:"rows,omitempty"`
+}
+
+// terminalCommandBuffer reconstructs typed commands from raw PTY input bytes.
+// It handles backspace and ANSI escape sequences so the audited command matches
+// what the shell actually executes, not the raw keystroke stream.
+type terminalCommandBuffer struct {
+	buf      strings.Builder
+	inEscape bool
+}
+
+// feed processes raw PTY input and returns any completed commands (submitted via Enter).
+func (cb *terminalCommandBuffer) feed(data []byte) []string {
+	var commands []string
+	for _, b := range data {
+		if cb.inEscape {
+			// ANSI escape sequences end with a letter or '~'
+			if (b >= 'A' && b <= 'Z') || (b >= 'a' && b <= 'z') || b == '~' {
+				cb.inEscape = false
+			}
+			continue
+		}
+		switch b {
+		case 0x1b: // ESC — start of ANSI escape sequence
+			cb.inEscape = true
+		case 0x7f, 0x08: // DEL / Backspace
+			s := cb.buf.String()
+			if len(s) > 0 {
+				cb.buf.Reset()
+				cb.buf.WriteString(s[:len(s)-1])
+			}
+		case '\r', '\n': // Enter — flush current command
+			if cmd := strings.TrimSpace(cb.buf.String()); cmd != "" {
+				commands = append(commands, cmd)
+			}
+			cb.buf.Reset()
+		default:
+			if b >= 0x20 { // printable ASCII / UTF-8 continuation bytes
+				cb.buf.WriteByte(b)
+			}
+		}
+	}
+	return commands
 }
 
 func (h *TerminalHandler) HandleTerminalPage(c *gin.Context) {
@@ -184,6 +227,9 @@ func (h *TerminalHandler) HandleTerminalWS(c *gin.Context) {
 		ms.Unsubscribe(sub)
 	}()
 
+	// cmdBuf tracks the line currently being typed to reconstruct commands for audit logs.
+	var cmdBuf terminalCommandBuffer
+
 	// Read from WebSocket and write to PTY
 	for {
 		select {
@@ -205,7 +251,14 @@ func (h *TerminalHandler) HandleTerminalWS(c *gin.Context) {
 
 		switch msg.Type {
 		case "input":
-			if _, err := ms.Write([]byte(msg.Data)); err != nil {
+			data := []byte(msg.Data)
+			for _, cmd := range cmdBuf.feed(data) {
+				audit.LogEventDirect(id, "terminal_command", logrus.Fields{
+					"session_id": sessionId,
+					"command":    cmd,
+				})
+			}
+			if _, err := ms.Write(data); err != nil {
 				logrus.Warnf("Failed to write to PTY: %v", err)
 			}
 		case "resize":
