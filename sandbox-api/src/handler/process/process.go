@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/blaxel-ai/sandbox-api/src/handler/constants"
+	"github.com/blaxel-ai/sandbox-api/src/lib/blaxel"
 	"github.com/sirupsen/logrus"
 )
 
@@ -82,6 +83,8 @@ type ProcessInfo struct {
 	RestartOnFailure bool                    `json:"restartOnFailure"`
 	MaxRestarts      int                     `json:"maxRestarts"`
 	RestartCount     int                     `json:"restartCount"`
+	KeepAlive        bool                    `json:"keepAlive"`
+	Timeout          int                     `json:"-"` // Internal: timeout in seconds for keepAlive processes
 	LogFile          string                  `json:"-"` // Path to combined log file
 	StdoutFile       string                  `json:"-"` // Path to stdout log file
 	StderrFile       string                  `json:"-"` // Path to stderr log file
@@ -92,6 +95,7 @@ type ProcessInfo struct {
 	logs             *strings.Builder
 	logWriters       []io.Writer
 	logLock          sync.RWMutex
+	stopTimeout      chan struct{}          // Channel to signal timeout goroutine to stop
 }
 
 // ProcessLogDir is the directory where process logs are stored
@@ -138,12 +142,12 @@ func GetProcessManager() *ProcessManager {
 	return processManager
 }
 
-func (pm *ProcessManager) StartProcess(command string, workingDir string, env map[string]string, restartOnFailure bool, maxRestarts int, callback func(process *ProcessInfo)) (string, error) {
+func (pm *ProcessManager) StartProcess(command string, workingDir string, env map[string]string, restartOnFailure bool, maxRestarts int, keepAlive bool, timeout int, callback func(process *ProcessInfo)) (string, error) {
 	name := GenerateRandomName(8)
-	return pm.StartProcessWithName(command, workingDir, name, env, restartOnFailure, maxRestarts, callback)
+	return pm.StartProcessWithName(command, workingDir, name, env, restartOnFailure, maxRestarts, keepAlive, timeout, callback)
 }
 
-func (pm *ProcessManager) StartProcessWithName(command string, workingDir string, name string, env map[string]string, restartOnFailure bool, maxRestarts int, callback func(process *ProcessInfo)) (string, error) {
+func (pm *ProcessManager) StartProcessWithName(command string, workingDir string, name string, env map[string]string, restartOnFailure bool, maxRestarts int, keepAlive bool, timeout int, callback func(process *ProcessInfo)) (string, error) {
 	// Always use shell to execute commands
 	// This ensures shell built-ins (cd, export, alias) work properly
 	// Use SHELL and SHELL_ARGS environment variables if set
@@ -248,6 +252,8 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 		RestartOnFailure: restartOnFailure,
 		MaxRestarts:      maxRestarts,
 		RestartCount:     0,
+		KeepAlive:        keepAlive,
+		Timeout:          timeout,
 		LogFile:          combinedPath,
 		StdoutFile:       stdoutPath,
 		StderrFile:       stderrPath,
@@ -257,6 +263,7 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 		stderr:           stderr,
 		logs:             logs,
 		logWriters:       make([]io.Writer, 0),
+		stopTimeout:      make(chan struct{}),
 	}
 
 	// Redirect stdout/stderr directly to files
@@ -281,6 +288,20 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 	stdoutFile.Close()
 	stderrFile.Close()
 
+
+	// If keepAlive is enabled, disable scale-to-zero and log the event
+	if keepAlive {
+		if err := blaxel.ScaleDisable(); err != nil {
+			logrus.Warnf("Failed to disable scale-to-zero for process %s: %v", process.PID, err)
+		}
+		// Log keepAlive start with timeout info
+		if timeout > 0 {
+			logrus.Infof("[KeepAlive] Started process %s (name: %s, command: %s) with timeout %ds", process.PID, name, command, timeout)
+		} else {
+			logrus.Infof("[KeepAlive] Started process %s (name: %s, command: %s) with infinite timeout", process.PID, name, command)
+		}
+	}
+
 	// Store process in memory
 	pm.mu.Lock()
 	pm.processes[process.PID] = process
@@ -288,6 +309,28 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 
 	// Start file tailer for real-time log streaming
 	go pm.tailLogFiles(process)
+	// If keepAlive is enabled with a timeout > 0, start a goroutine to kill the process after timeout
+	// Timeout of 0 means infinite (no auto-kill)
+	if keepAlive && timeout > 0 {
+		go func() {
+			timer := time.NewTimer(time.Duration(timeout) * time.Second)
+			defer timer.Stop()
+			select {
+			case <-timer.C:
+				// Timeout expired, kill the process
+				logrus.Infof("[KeepAlive] Timeout expired for process %s after %d seconds, killing process", process.PID, timeout)
+				_ = pm.KillProcess(process.PID)
+			case <-process.stopTimeout:
+				// Process completed before timeout
+			}
+		}()
+	} else if keepAlive {
+		// For infinite timeout, start a goroutine that just waits for completion
+		go func() {
+			<-process.stopTimeout
+		}()
+	}
+
 
 	// Monitor process completion
 	go func() {
@@ -326,6 +369,16 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 		pm.mu.Lock()
 		pm.processes[process.PID] = process
 		pm.mu.Unlock()
+
+		// Signal the timeout goroutine to stop (if any)
+		if process.stopTimeout != nil {
+			select {
+			case <-process.stopTimeout:
+				// Already closed
+			default:
+				close(process.stopTimeout)
+			}
+		}
 
 		// Check if we should restart on failure
 		if process.Status == StatusFailed && process.RestartOnFailure && process.RestartCount < process.MaxRestarts {
@@ -373,6 +426,14 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 				process.stdout.WriteString(errorMsg)
 				process.logs.WriteString(errorMsg)
 
+				// If keepAlive was enabled, re-enable scale-to-zero now that process truly ended
+				if process.KeepAlive {
+					logrus.Infof("[KeepAlive] Stopped process %s (name: %s, status: %s, exit_code: %d) - restart failed", process.PID, process.Name, process.Status, process.ExitCode)
+					if err := blaxel.ScaleEnable(); err != nil {
+						logrus.Warnf("Failed to enable scale-to-zero for process %s: %v", process.PID, err)
+					}
+				}
+
 				// Signal tailLogFiles to do final reads, then wait for it to finish
 				close(process.Done)
 				<-process.tailDone
@@ -385,6 +446,14 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 			}
 			// If restart succeeds, the callback will be called when that process completes
 		} else {
+			// If keepAlive was enabled, re-enable scale-to-zero now that process ended
+			if process.KeepAlive {
+				logrus.Infof("[KeepAlive] Stopped process %s (name: %s, status: %s, exit_code: %d)", process.PID, process.Name, process.Status, process.ExitCode)
+				if err := blaxel.ScaleEnable(); err != nil {
+					logrus.Warnf("Failed to enable scale-to-zero for process %s: %v", process.PID, err)
+				}
+			}
+
 			// Signal tailLogFiles to do final reads, then wait for it to finish
 			close(process.Done)
 			<-process.tailDone
@@ -572,6 +641,7 @@ func (pm *ProcessManager) restartProcess(oldProcess *ProcessInfo, callback func(
 	oldProcess.StartedAt = time.Now()
 	oldProcess.CompletedAt = nil
 	oldProcess.ExitCode = 0
+	oldProcess.stopTimeout = make(chan struct{})
 	oldProcess.Done = make(chan struct{})
 	oldProcess.tailDone = make(chan struct{})
 
@@ -597,6 +667,26 @@ func (pm *ProcessManager) restartProcess(oldProcess *ProcessInfo, callback func(
 
 	// Start file tailer for real-time log streaming
 	go pm.tailLogFiles(oldProcess)
+	// If keepAlive is enabled, start timeout goroutine for the restarted process
+	if oldProcess.KeepAlive && oldProcess.Timeout > 0 {
+		go func() {
+			timer := time.NewTimer(time.Duration(oldProcess.Timeout) * time.Second)
+			defer timer.Stop()
+			select {
+			case <-timer.C:
+				// Timeout expired, kill the process
+				logrus.Infof("[KeepAlive] Timeout expired for process %s after %d seconds, killing process", oldProcess.PID, oldProcess.Timeout)
+				_ = pm.KillProcess(oldProcess.PID)
+			case <-oldProcess.stopTimeout:
+				// Process completed before timeout
+			}
+		}()
+	} else if oldProcess.KeepAlive {
+		// For infinite timeout, start a goroutine that just waits for completion
+		go func() {
+			<-oldProcess.stopTimeout
+		}()
+	}
 
 	// Monitor the restarted process
 	go func() {
@@ -635,6 +725,16 @@ func (pm *ProcessManager) restartProcess(oldProcess *ProcessInfo, callback func(
 		pm.mu.Lock()
 		pm.processes[oldProcess.PID] = oldProcess
 		pm.mu.Unlock()
+
+		// Signal the timeout goroutine to stop (if any)
+		if oldProcess.stopTimeout != nil {
+			select {
+			case <-oldProcess.stopTimeout:
+				// Already closed
+			default:
+				close(oldProcess.stopTimeout)
+			}
+		}
 
 		// Check if we should restart again on failure
 		if oldProcess.Status == StatusFailed && oldProcess.RestartOnFailure && oldProcess.RestartCount < oldProcess.MaxRestarts {
@@ -682,6 +782,15 @@ func (pm *ProcessManager) restartProcess(oldProcess *ProcessInfo, callback func(
 				oldProcess.stdout.WriteString(errorMsg)
 				oldProcess.logs.WriteString(errorMsg)
 
+				// If keepAlive was enabled, re-enable scale-to-zero now that process truly ended
+				if oldProcess.KeepAlive {
+					logrus.Infof("[KeepAlive] Stopped process %s (name: %s, status: %s, exit_code: %d) - restart failed", oldProcess.PID, oldProcess.Name, oldProcess.Status, oldProcess.ExitCode)
+					if err := blaxel.ScaleEnable(); err != nil {
+						logrus.Warnf("Failed to enable scale-to-zero for process %s: %v", oldProcess.PID, err)
+					}
+				}
+
+				// Clean up resources
 				// Signal tailLogFiles to do final reads, then wait for it to finish
 				close(oldProcess.Done)
 				<-oldProcess.tailDone
@@ -694,6 +803,15 @@ func (pm *ProcessManager) restartProcess(oldProcess *ProcessInfo, callback func(
 			}
 			// If restart succeeds, the callback will be called when that process completes
 		} else {
+			// If keepAlive was enabled, re-enable scale-to-zero now that process ended
+			if oldProcess.KeepAlive {
+				logrus.Infof("[KeepAlive] Stopped process %s (name: %s, status: %s, exit_code: %d)", oldProcess.PID, oldProcess.Name, oldProcess.Status, oldProcess.ExitCode)
+				if err := blaxel.ScaleEnable(); err != nil {
+					logrus.Warnf("Failed to enable scale-to-zero for process %s: %v", oldProcess.PID, err)
+				}
+			}
+
+			// Clean up resources
 			// Signal tailLogFiles to do final reads, then wait for it to finish
 			close(oldProcess.Done)
 			<-oldProcess.tailDone
@@ -877,6 +995,29 @@ func (pm *ProcessManager) KillProcess(identifier string) error {
 
 	// Remove the process from memory
 	process.Status = StatusKilled
+
+	// Handle keepAlive cleanup - re-enable scale-to-zero if this was a keepAlive process
+	if process.KeepAlive {
+		// Signal the timeout goroutine to stop (if any)
+		if process.stopTimeout != nil {
+			select {
+			case <-process.stopTimeout:
+				// Already closed
+			default:
+				close(process.stopTimeout)
+			}
+		}
+
+		// Re-enable scale-to-zero
+		if err := blaxel.ScaleEnable(); err != nil {
+			logrus.Warnf("[KeepAlive] Failed to enable scale-to-zero after killing process %s: %v", process.PID, err)
+		}
+		logrus.Infof("[KeepAlive] Stopped process %s (name: %s, status: killed, exit_code: -1)", process.PID, process.Name)
+
+		// Mark keepAlive as handled so completion callback doesn't try to decrement again
+		process.KeepAlive = false
+	}
+
 	return nil
 }
 
