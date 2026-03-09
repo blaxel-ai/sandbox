@@ -33,7 +33,9 @@ import (
 // @name Authorization
 // @BasePath        /
 func main() {
-	logrus.SetFormatter(&logrus.JSONFormatter{})
+	logrus.SetFormatter(&logrus.TextFormatter{
+		DisableColors: true,
+	})
 	logrus.SetLevel(logrus.DebugLevel)
 
 	// Load .env file
