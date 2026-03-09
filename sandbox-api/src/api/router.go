@@ -17,6 +17,7 @@ import (
 
 	_ "github.com/blaxel-ai/sandbox-api/docs" // Import generated docs
 	"github.com/blaxel-ai/sandbox-api/src/handler"
+	"github.com/blaxel-ai/sandbox-api/src/lib/audit"
 )
 
 // SetupRouter configures all the routes for the Sandbox API
@@ -31,6 +32,9 @@ func SetupRouter(disableRequestLogging bool, enableProcessingTime bool) *gin.Eng
 
 	// Add middleware for CORS
 	r.Use(corsMiddleware())
+
+	// Add middleware to extract user identity from X-Blaxel-* headers
+	r.Use(audit.IdentityMiddleware())
 
 	// Add middleware to prevent caching
 	r.Use(noCacheMiddleware())
@@ -355,16 +359,18 @@ func logrusMiddleware() gin.HandlerFunc {
 			return
 		}
 
+		entry := logrus.WithField("source", "access")
+
 		if len(c.Errors) > 0 {
-			logrus.Error(c.Errors.ByType(gin.ErrorTypePrivate).String())
+			entry.Error(c.Errors.ByType(gin.ErrorTypePrivate).String())
 		} else {
 			msg := fmt.Sprintf("%s %s %d %d %dms", c.Request.Method, sanitizedPath, statusCode, dataLength, latency)
 			if statusCode >= http.StatusInternalServerError {
-				logrus.Error(msg)
+				entry.Error(msg)
 			} else if statusCode >= http.StatusBadRequest {
-				logrus.Error(msg)
+				entry.Error(msg)
 			} else {
-				logrus.Info(msg)
+				entry.Info(msg)
 			}
 		}
 	}
