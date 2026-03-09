@@ -15,13 +15,21 @@ on:
         default: ""
         options:
           - all
+          - astro
           - base-image
+          - chromium
+          - cua-xfce
+          - docker-in-sandbox
           - expo
+          - lightpanda
           - nextjs
           - node
+          - playwright-chromium
+          - playwright-firefox
           - py-app
           - ts-app
           - vite
+          - xfce-vnc
 
 env:
   REGISTRY: ghcr.io
@@ -62,27 +70,14 @@ jobs:
       contents: read
       packages: write
     if: needs.check-changes.outputs.sandbox-api-changed == 'true'
-    strategy:
-      fail-fast: false
-      matrix:
-        platform:
-          - linux/amd64
-          - linux/arm64
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
-      - name: Set platform pair
-        id: platform
-        run: |
-          platform=${{ matrix.platform }}
-          echo "pair=${platform//\//-}" >> $GITHUB_OUTPUT
 
       - name: Set version
         id: version
         run: |
           VERSION="${{ github.ref_name }}"
-          # Strip 'v' prefix for tags (v0.2.0 -> 0.2.0)
           if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
             VERSION="${VERSION#v}"
           fi
@@ -110,14 +105,14 @@ jobs:
         with:
           context: ./sandbox-api
           file: ./sandbox-api/Dockerfile
-          platforms: ${{ matrix.platform }}
+          platforms: linux/amd64
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             VERSION=${{ steps.version.outputs.version }}
             GIT_COMMIT=${{ github.sha }}
           outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true
-          cache-from: type=gha,scope=${{ steps.platform.outputs.pair }}
-          cache-to: type=gha,scope=${{ steps.platform.outputs.pair }},mode=max
+          cache-from: type=gha,scope=linux-amd64
+          cache-to: type=gha,scope=linux-amd64,mode=max
 
       - name: Export digest
         run: |
@@ -128,7 +123,73 @@ jobs:
       - name: Upload digest
         uses: actions/upload-artifact@v4
         with:
-          name: digests-${{ steps.platform.outputs.pair }}
+          name: digests-linux-amd64
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  sandbox-api-build-arm64:
+    needs: check-changes
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    if: needs.check-changes.outputs.sandbox-api-changed == 'true'
+    continue-on-error: true
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set version
+        id: version
+        run: |
+          VERSION="${{ github.ref_name }}"
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            VERSION="${VERSION#v}"
+          fi
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: ./sandbox-api
+          file: ./sandbox-api/Dockerfile
+          platforms: linux/arm64
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ steps.version.outputs.version }}
+            GIT_COMMIT=${{ github.sha }}
+          outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=linux-arm64
+          cache-to: type=gha,scope=linux-arm64,mode=max
+
+      - name: Export digest
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+
+      - name: Upload digest
+        uses: actions/upload-artifact@v4
+        with:
+          name: digests-linux-arm64
           path: /tmp/digests/*
           if-no-files-found: error
           retention-days: 1
@@ -323,6 +384,14 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+      - name: Install jq
+        run: |
+          if ! command -v jq &> /dev/null; then
+            echo "jq not found, installing..."
+            apt-get update && apt-get install -y jq || yum install -y jq
+          else
+            echo "jq is already installed"
+          fi
       - name: Set image tag
         id: image-tag
         run: |
@@ -347,8 +416,9 @@ jobs:
           LOG_LEVEL: debug
           IMAGE_BUCKET_MK3: ${{ env.BL_ENV == 'prod' && env.PROD_IMAGE_BUCKET || env.DEV_IMAGE_BUCKET }}
           DEPOT_PROJECT_ID: ${{ env.BL_ENV == 'prod' && secrets.DEPOT_PROJECT_ID_PROD || secrets.DEPOT_PROJECT_ID_DEV }}
-          LAMBDA_FUNCTION_NAME: controlplane-${{ env.BL_ENV }}-metamorph
-          LAMBDA_REGION: ${{ env.BL_ENV == 'prod' && (vars.LAMBDA_REGION_PROD || 'us-west-2') || (vars.LAMBDA_REGION_DEV || 'eu-west-1') }}
+          BATCH_JOB_QUEUE: ${{ env.BL_ENV == 'prod' && (vars.BATCH_JOB_QUEUE_PROD || 'controlplane-prod-build') || (vars.BATCH_JOB_QUEUE_DEV || 'controlplane-dev-build') }}
+          BATCH_JOB_DEFINITION: ${{ env.BL_ENV == 'prod' && (vars.BATCH_JOB_DEFINITION_PROD || 'controlplane-prod-build') || (vars.BATCH_JOB_DEFINITION_DEV || 'controlplane-dev-build') }}
+          BATCH_REGION: ${{ env.BL_ENV == 'prod' && (vars.BATCH_REGION_PROD || 'us-west-2') || (vars.BATCH_REGION_DEV || 'eu-west-1') }}
           DEPOT_TOKEN: ${{ env.BL_ENV == 'prod' && secrets.DEPOT_TOKEN_PROD || secrets.DEPOT_TOKEN_DEV }}
         run: |
           chmod +x ./scripts/mk3-build.sh
