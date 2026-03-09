@@ -20,9 +20,6 @@ on:
           - chromium
           - cua-xfce
           - docker-in-sandbox
-          - chromium
-          - cua-xfce
-          - docker-in-sandbox
           - expo
           - lightpanda
           - nextjs
