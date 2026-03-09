@@ -87,7 +87,7 @@ func LogEvent(c *gin.Context, action string, extra logrus.Fields) {
 	for k, v := range extra {
 		fields[k] = v
 	}
-	logrus.WithFields(fields).Info("audit")
+	logrus.WithFields(fields).Info("audit event")
 }
 
 // LogEventDirect emits an audit log entry using an Identity directly,
@@ -99,7 +99,7 @@ func LogEventDirect(id Identity, action string, extra logrus.Fields) {
 	for k, v := range extra {
 		fields[k] = v
 	}
-	logrus.WithFields(fields).Info("audit")
+	logrus.WithFields(fields).Info("audit event")
 }
 
 func getStringFromContext(c *gin.Context, key string) string {
