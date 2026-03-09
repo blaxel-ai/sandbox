@@ -1187,11 +1187,7 @@ const docTemplate = `{
         },
         "/network/tunnel": {
             "delete": {
-<<<<<<< HEAD
-                "description": "Stop the network tunnel and restore the original network configuration.",
-=======
                 "description": "Stop the network tunnel and restore the original network configuration. WARNING: After disconnecting, the sandbox will lose all outbound internet connectivity (no egress). Inbound connections to the sandbox will still work. Use PUT /network/tunnel/config to re-establish the tunnel.",
->>>>>>> cploujoux/fix-stream-logs-deuplicate-logs
                 "produces": [
                     "application/json"
                 ],
@@ -2189,11 +2185,6 @@ const docTemplate = `{
                         "{\"PORT\"": " \"3000\"}"
                     }
                 },
-                "keepAlive": {
-                    "description": "Disable scale-to-zero while process runs. Default timeout is 600s (10 minutes). Set timeout to 0 for infinite.",
-                    "type": "boolean",
-                    "example": false
-                },
                 "maxRestarts": {
                     "type": "integer",
                     "example": 3
@@ -2207,7 +2198,6 @@ const docTemplate = `{
                     "example": true
                 },
                 "timeout": {
-                    "description": "Timeout in seconds. When keepAlive is true, defaults to 600s (10 minutes). Set to 0 for infinite (no auto-kill).",
                     "type": "integer",
                     "example": 30
                 },
@@ -2258,11 +2248,6 @@ const docTemplate = `{
                 "exitCode": {
                     "type": "integer",
                     "example": 0
-                },
-                "keepAlive": {
-                    "description": "Whether scale-to-zero is disabled for this process",
-                    "type": "boolean",
-                    "example": false
                 },
                 "logs": {
                     "type": "string",
