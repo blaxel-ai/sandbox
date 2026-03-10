@@ -289,9 +289,8 @@ func (h *ProcessHandler) HandleExecuteCommand(c *gin.Context) {
 	}
 
 	audit.LogEvent(c, "process_exec", logrus.Fields{
-		"command":     req.Command,
-		"name":        req.Name,
-		"working_dir": req.WorkingDir,
+		"command":    req.Command,
+		"workingDir": req.WorkingDir,
 	})
 
 	// Execute the process
@@ -332,9 +331,8 @@ func (h *ProcessHandler) handleExecuteCommandStream(c *gin.Context) {
 	}
 
 	audit.LogEvent(c, "process_exec_stream", logrus.Fields{
-		"command":     req.Command,
-		"name":        req.Name,
-		"working_dir": req.WorkingDir,
+		"command":    req.Command,
+		"workingDir": req.WorkingDir,
 	})
 
 	// Set headers for streaming JSON events
@@ -451,7 +449,7 @@ func (h *ProcessHandler) HandleGetProcessLogs(c *gin.Context) {
 	}
 
 	audit.LogEvent(c, "process_logs_access", logrus.Fields{
-		"process_identifier": identifier,
+		"processIdentifier": identifier,
 	})
 
 	logs, err := h.GetProcessOutput(identifier)
@@ -482,7 +480,7 @@ func (h *ProcessHandler) HandleGetProcessLogsStream(c *gin.Context) {
 	}
 
 	audit.LogEvent(c, "process_logs_stream", logrus.Fields{
-		"process_identifier": identifier,
+		"processIdentifier": identifier,
 	})
 
 	// Set headers for streaming
@@ -557,7 +555,7 @@ func (h *ProcessHandler) HandleStopProcess(c *gin.Context) {
 	}
 
 	audit.LogEvent(c, "process_stop", logrus.Fields{
-		"process_identifier": identifier,
+		"processIdentifier": identifier,
 	})
 
 	err = h.StopProcess(identifier)
@@ -589,7 +587,7 @@ func (h *ProcessHandler) HandleKillProcess(c *gin.Context) {
 	}
 
 	audit.LogEvent(c, "process_kill", logrus.Fields{
-		"process_identifier": identifier,
+		"processIdentifier": identifier,
 	})
 
 	err = h.KillProcess(identifier)
