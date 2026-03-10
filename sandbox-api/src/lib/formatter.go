@@ -8,10 +8,11 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-// unquotedAuditFieldRe matches msg= or command= followed by an unquoted value
-// (no leading double-quote). Logrus quotes multi-word values automatically but
-// leaves single-word values unquoted; this regex catches the single-word case.
-var unquotedAuditFieldRe = regexp.MustCompile(`\b(msg|command)=([^"\s]\S*)`)
+// unquotedAuditFieldRe matches top-level msg= or command= fields followed by
+// an unquoted value. The lookbehind-like anchor (^ or space) ensures we only
+// match at the field level, not inside an already-quoted msg value where
+// "command=foo" could appear as part of the message text.
+var unquotedAuditFieldRe = regexp.MustCompile(`(?:^| )(msg|command)=([^"\s]\S*)`)
 
 // QuotedMsgFormatter wraps logrus.TextFormatter and always quotes the msg and
 // command field values, making the log format predictable for regex-based
@@ -27,7 +28,13 @@ func (f *QuotedMsgFormatter) Format(entry *logrus.Entry) ([]byte, error) {
 	}
 	return unquotedAuditFieldRe.ReplaceAllFunc(b, func(match []byte) []byte {
 		s := string(match)
+		// Preserve leading space if present (the anchor captures it).
+		prefix := ""
+		if s[0] == ' ' {
+			prefix = " "
+			s = s[1:]
+		}
 		eqIdx := strings.IndexByte(s, '=')
-		return []byte(s[:eqIdx+1] + strconv.Quote(s[eqIdx+1:]))
+		return []byte(prefix + s[:eqIdx+1] + strconv.Quote(s[eqIdx+1:]))
 	}), nil
 }

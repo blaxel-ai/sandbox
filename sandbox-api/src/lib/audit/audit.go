@@ -5,6 +5,7 @@ package audit
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -95,12 +96,10 @@ func (id Identity) baseFields() logrus.Fields {
 // sanitize strips newlines and carriage returns to prevent log injection.
 var newlineReplacer = strings.NewReplacer("\n", "\\n", "\r", "\\r")
 
-// buildMessage builds a descriptive audit message that includes the action
-// and identity fields. Extra fields are intentionally excluded from the
-// message to avoid conflicts with QuotedMsgFormatter (which rewrites
-// unquoted command= values) and to prevent log injection from user-controlled
-// values. Extra fields remain available as structured log attributes.
-func buildMessage(id Identity, action string) string {
+// buildMessage builds a descriptive audit message that includes the action,
+// identity fields, and extra fields so that the log msg is self-contained.
+// All values are sanitized to prevent log injection (newlines stripped).
+func buildMessage(id Identity, action string, extra logrus.Fields) string {
 	parts := []string{newlineReplacer.Replace(action)}
 
 	if id.UserID != "" {
@@ -114,6 +113,16 @@ func buildMessage(id Identity, action string) string {
 	}
 	if id.RequestID != "" {
 		parts = append(parts, fmt.Sprintf("rid=%s", newlineReplacer.Replace(id.RequestID)))
+	}
+
+	// Sort extra keys for deterministic output.
+	keys := make([]string, 0, len(extra))
+	for k := range extra {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		parts = append(parts, fmt.Sprintf("%s=%s", k, newlineReplacer.Replace(fmt.Sprintf("%v", extra[k]))))
 	}
 
 	return strings.Join(parts, " ")
@@ -130,7 +139,7 @@ func LogEvent(c *gin.Context, action string, extra logrus.Fields) {
 	for k, v := range extra {
 		fields[k] = v
 	}
-	logrus.WithFields(fields).Info(buildMessage(id, action))
+	logrus.WithFields(fields).Info(buildMessage(id, action, extra))
 }
 
 // LogEventDirect emits an audit log entry using an Identity directly,
@@ -142,7 +151,7 @@ func LogEventDirect(id Identity, action string, extra logrus.Fields) {
 	for k, v := range extra {
 		fields[k] = v
 	}
-	logrus.WithFields(fields).Info(buildMessage(id, action))
+	logrus.WithFields(fields).Info(buildMessage(id, action, extra))
 }
 
 func getStringFromContext(c *gin.Context, key string) string {

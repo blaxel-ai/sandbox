@@ -171,7 +171,7 @@ func TestLogEventDirect_EmitsAuditFields(t *testing.T) {
 			t.Errorf("expected log output to contain %s, got: %s", expected, output)
 		}
 	}
-	// Verify the message contains identity fields but NOT extra fields
+	// Verify the message contains identity AND extra fields
 	if bytes.Contains([]byte(output), []byte(`"msg":"audit event"`)) {
 		t.Errorf("expected msg to contain field details, not generic 'audit event', got: %s", output)
 	}
@@ -181,15 +181,12 @@ func TestLogEventDirect_EmitsAuditFields(t *testing.T) {
 		"subType=service",
 		"authMethod=bearer_token",
 		"rid=req-direct",
+		"sessionId=sess-1",
 	}
 	for _, s := range expectedInMsg {
 		if !bytes.Contains([]byte(output), []byte(s)) {
 			t.Errorf("expected msg to contain '%s', got: %s", s, output)
 		}
-	}
-	// Extra fields must NOT appear in the msg (they remain as structured attributes)
-	if bytes.Contains([]byte(output), []byte(`"msg":"terminal_disconnect subId=user-789 subType=service authMethod=bearer_token rid=req-direct sessionId=sess-1"`)) {
-		t.Errorf("extra fields should not appear in msg, got: %s", output)
 	}
 }
 
@@ -249,7 +246,7 @@ func TestBuildMessage_SanitizesNewlines(t *testing.T) {
 		UserID:    "user\n{\"fake\":\"inject\"}",
 		RequestID: "req-123",
 	}
-	msg := buildMessage(id, "test_action")
+	msg := buildMessage(id, "test_action", logrus.Fields{"cmd": "ls"})
 	if bytes.Contains([]byte(msg), []byte("\n")) {
 		t.Errorf("msg should not contain raw newlines, got: %s", msg)
 	}
