@@ -448,9 +448,7 @@ func (h *ProcessHandler) HandleGetProcessLogs(c *gin.Context) {
 		return
 	}
 
-	audit.LogEvent(c, "process_logs_access", logrus.Fields{
-		"processIdentifier": identifier,
-	})
+	audit.LogEvent(c, "process_logs_access", logrus.Fields{})
 
 	logs, err := h.GetProcessOutput(identifier)
 	if err != nil {
@@ -479,9 +477,7 @@ func (h *ProcessHandler) HandleGetProcessLogsStream(c *gin.Context) {
 		return
 	}
 
-	audit.LogEvent(c, "process_logs_stream", logrus.Fields{
-		"processIdentifier": identifier,
-	})
+	audit.LogEvent(c, "process_logs_stream", logrus.Fields{})
 
 	// Set headers for streaming
 	c.Writer.Header().Set("Content-Type", "text/plain; charset=utf-8")
@@ -554,9 +550,7 @@ func (h *ProcessHandler) HandleStopProcess(c *gin.Context) {
 		return
 	}
 
-	audit.LogEvent(c, "process_stop", logrus.Fields{
-		"processIdentifier": identifier,
-	})
+	audit.LogEvent(c, "process_stop", logrus.Fields{})
 
 	err = h.StopProcess(identifier)
 	if err != nil {
@@ -586,9 +580,7 @@ func (h *ProcessHandler) HandleKillProcess(c *gin.Context) {
 		return
 	}
 
-	audit.LogEvent(c, "process_kill", logrus.Fields{
-		"processIdentifier": identifier,
-	})
+	audit.LogEvent(c, "process_kill", logrus.Fields{})
 
 	err = h.KillProcess(identifier)
 	if err != nil {

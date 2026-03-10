@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -14,12 +15,11 @@ import (
 // Fields are ordered alphabetically to match logrus TextFormatter output.
 //
 // Full regex (copy-paste ready):
-// time="(?P<time>[^"]+)" level=(?P<level>\w+) msg="(?P<msg>[^"]+)"(?: action=(?P<blaxel_action>[^\s]*))?(?: authMethod=(?P<blaxel_auth_method>[^\s]*))?(?: command=(?P<blaxel_command>[^\s]*))?(?: processIdentifier=(?P<blaxel_process_identifier>[^\s]*))?(?: processName=(?P<blaxel_pname>[^\s]*))?(?: processPid=(?P<blaxel_pid>[^\s]*))?(?: rid=(?P<blaxel_rid>[^\s]*))?(?: sessionId=(?P<blaxel_session_id>[^\s]*))?(?: shell=(?P<blaxel_shell>[^\s]*))?(?: source=(?P<blaxel_source>[^\s]*))?(?: stream=(?P<blaxel_stream>[^\s]*))?(?: subId=(?P<blaxel_sub_id>[^\s]*))?(?: subType=(?P<blaxel_sub_type>[^\s]*))?(?: workingDir=(?P<blaxel_working_dir>[^\s]*))?
-const logRegexp = `time="(?P<time>[^"]+)" level=(?P<level>\w+) msg="(?P<msg>[^"]+)"` +
+// time="(?P<time>[^"]+)" level=(?P<level>\w+) msg="(?P<msg>(?:[^"\\]|\\.)*)"(?: action=(?P<blaxel_action>[^\s]*))?(?: authMethod=(?P<blaxel_auth_method>[^\s]*))?(?: command="(?P<blaxel_command>[^"]*)")?(?: processName=(?P<blaxel_pname>[^\s]*))?(?: processPid=(?P<blaxel_pid>[^\s]*))?(?: rid=(?P<blaxel_rid>[^\s]*))?(?: sessionId=(?P<blaxel_session_id>[^\s]*))?(?: shell=(?P<blaxel_shell>[^\s]*))?(?: source=(?P<blaxel_source>[^\s]*))?(?: stream=(?P<blaxel_stream>[^\s]*))?(?: subId=(?P<blaxel_sub_id>[^\s]*))?(?: subType=(?P<blaxel_sub_type>[^\s]*))?(?: workingDir=(?P<blaxel_working_dir>"[^"]*"|[^\s]*))?
+const logRegexp = `time="(?P<time>[^"]+)" level=(?P<level>\w+) msg="(?P<msg>(?:[^"\\]|\\.)*)"` +
 	`(?: action=(?P<blaxel_action>[^\s]*))?` +
 	`(?: authMethod=(?P<blaxel_auth_method>[^\s]*))?` +
-	`(?: command=(?P<blaxel_command>[^\s]*))?` +
-	`(?: processIdentifier=(?P<blaxel_process_identifier>[^\s]*))?` +
+	`(?: command="(?P<blaxel_command>[^"]*)")?` +
 	`(?: processName=(?P<blaxel_pname>[^\s]*))?` +
 	`(?: processPid=(?P<blaxel_pid>[^\s]*))?` +
 	`(?: rid=(?P<blaxel_rid>[^\s]*))?` +
@@ -29,7 +29,7 @@ const logRegexp = `time="(?P<time>[^"]+)" level=(?P<level>\w+) msg="(?P<msg>[^"]
 	`(?: stream=(?P<blaxel_stream>[^\s]*))?` +
 	`(?: subId=(?P<blaxel_sub_id>[^\s]*))?` +
 	`(?: subType=(?P<blaxel_sub_type>[^\s]*))?` +
-	`(?: workingDir=(?P<blaxel_working_dir>[^\s]*))?`
+	`(?: workingDir=(?P<blaxel_working_dir>"[^"]*"|[^\s]*))?`
 
 func setupQuotedFormatter(buf *bytes.Buffer) func() {
 	logrus.SetOutput(buf)
@@ -172,6 +172,38 @@ func TestLogRegexp_AuditLog(t *testing.T) {
 				"blaxel_working_dir": "/workspace",
 			},
 		},
+		{
+			name: "multi-word command is fully captured",
+			msg:  "audit event",
+			fields: logrus.Fields{
+				"source":     "audit",
+				"subId":      "user-123",
+				"rid":        "req-abc",
+				"action":     "process_exec",
+				"command":    "npm run dev",
+				"workingDir": "/blaxel/app",
+			},
+			expected: map[string]string{
+				"msg":                "audit event",
+				"blaxel_action":     "process_exec",
+				"blaxel_command":    "npm run dev",
+				"blaxel_working_dir": "/blaxel/app",
+			},
+		},
+		{
+			name: "single-word command is captured",
+			msg:  "audit event",
+			fields: logrus.Fields{
+				"source":  "audit",
+				"rid":     "req-abc",
+				"action":  "process_exec",
+				"command": "ls",
+			},
+			expected: map[string]string{
+				"blaxel_action":  "process_exec",
+				"blaxel_command": "ls",
+			},
+		},
 	}
 
 	for _, tc := range cases {
@@ -244,6 +276,7 @@ func TestLogRegexp_ProcessLog(t *testing.T) {
 		{"full sentence msg stdout", "server listening on port 8080", "stdout"},
 		{"single word msg stderr", "error", "stderr"},
 		{"full sentence msg stderr", "failed to bind address already in use", "stderr"},
+		{"msg with escaped quotes stdout", ` Run "astro telemetry disable" to opt-out.`, "stdout"},
 	}
 
 	for _, tc := range cases {
@@ -261,8 +294,12 @@ func TestLogRegexp_ProcessLog(t *testing.T) {
 			if groups == nil {
 				t.Fatalf("regexp did not match process log line: %s", line)
 			}
-			if groups["msg"] != tc.msg {
-				t.Errorf("field msg: expected %q, got %q\n  line: %s", tc.msg, groups["msg"], line)
+			gotMsg, err := strconv.Unquote(`"` + groups["msg"] + `"`)
+			if err != nil {
+				gotMsg = groups["msg"]
+			}
+			if gotMsg != tc.msg {
+				t.Errorf("field msg: expected %q, got %q\n  line: %s", tc.msg, gotMsg, line)
 			}
 			if groups["blaxel_source"] != "process" {
 				t.Errorf("field source: expected %q, got %q\n  line: %s", "process", groups["blaxel_source"], line)
