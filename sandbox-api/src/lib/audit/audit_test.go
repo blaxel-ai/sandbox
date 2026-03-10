@@ -125,6 +125,16 @@ func TestLogEvent_EmitsAuditFields(t *testing.T) {
 			t.Errorf("expected log output to contain %s, got: %s", expected, output)
 		}
 	}
+	// Verify the message contains all fields instead of generic "audit event"
+	if bytes.Contains([]byte(output), []byte(`"msg":"audit event"`)) {
+		t.Errorf("expected msg to contain field details, not generic 'audit event', got: %s", output)
+	}
+	if !bytes.Contains([]byte(output), []byte(`test_action`)) {
+		t.Errorf("expected msg to contain the action, got: %s", output)
+	}
+	if !bytes.Contains([]byte(output), []byte(`subId=user-456`)) {
+		t.Errorf("expected msg to contain subId, got: %s", output)
+	}
 }
 
 func TestLogEventDirect_EmitsAuditFields(t *testing.T) {
@@ -159,6 +169,23 @@ func TestLogEventDirect_EmitsAuditFields(t *testing.T) {
 	} {
 		if !bytes.Contains([]byte(output), []byte(expected)) {
 			t.Errorf("expected log output to contain %s, got: %s", expected, output)
+		}
+	}
+	// Verify the message contains all identity and extra fields
+	if bytes.Contains([]byte(output), []byte(`"msg":"audit event"`)) {
+		t.Errorf("expected msg to contain field details, not generic 'audit event', got: %s", output)
+	}
+	expectedInMsg := []string{
+		"terminal_disconnect",
+		"subId=user-789",
+		"subType=service",
+		"authMethod=bearer_token",
+		"rid=req-direct",
+		"sessionId=sess-1",
+	}
+	for _, s := range expectedInMsg {
+		if !bytes.Contains([]byte(output), []byte(s)) {
+			t.Errorf("expected msg to contain '%s', got: %s", s, output)
 		}
 	}
 }

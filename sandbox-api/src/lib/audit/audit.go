@@ -4,6 +4,10 @@
 package audit
 
 import (
+	"fmt"
+	"sort"
+	"strings"
+
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
@@ -89,9 +93,41 @@ func (id Identity) baseFields() logrus.Fields {
 	}
 }
 
+// buildMessage builds a descriptive audit message that includes the action,
+// identity fields, and any extra fields so that the log msg is self-contained.
+func buildMessage(id Identity, action string, extra logrus.Fields) string {
+	parts := []string{action}
+
+	if id.UserID != "" {
+		parts = append(parts, fmt.Sprintf("subId=%s", id.UserID))
+	}
+	if id.SubjectType != "" {
+		parts = append(parts, fmt.Sprintf("subType=%s", id.SubjectType))
+	}
+	if id.AuthMethod != "" {
+		parts = append(parts, fmt.Sprintf("authMethod=%s", id.AuthMethod))
+	}
+	if id.RequestID != "" {
+		parts = append(parts, fmt.Sprintf("rid=%s", id.RequestID))
+	}
+
+	// Sort extra keys for deterministic output.
+	keys := make([]string, 0, len(extra))
+	for k := range extra {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		parts = append(parts, fmt.Sprintf("%s=%v", k, extra[k]))
+	}
+
+	return strings.Join(parts, " ")
+}
+
 // LogEvent emits an audit log entry for a sandbox access event.
 // The action describes what happened (e.g. "terminal_connect", "process_exec").
 // Extra fields are merged into the log entry for additional context.
+// The log message itself contains all fields for easy reading.
 func LogEvent(c *gin.Context, action string, extra logrus.Fields) {
 	id := GetIdentity(c)
 	fields := id.baseFields()
@@ -99,7 +135,7 @@ func LogEvent(c *gin.Context, action string, extra logrus.Fields) {
 	for k, v := range extra {
 		fields[k] = v
 	}
-	logrus.WithFields(fields).Info("audit event")
+	logrus.WithFields(fields).Info(buildMessage(id, action, extra))
 }
 
 // LogEventDirect emits an audit log entry using an Identity directly,
@@ -111,7 +147,7 @@ func LogEventDirect(id Identity, action string, extra logrus.Fields) {
 	for k, v := range extra {
 		fields[k] = v
 	}
-	logrus.WithFields(fields).Info("audit event")
+	logrus.WithFields(fields).Info(buildMessage(id, action, extra))
 }
 
 func getStringFromContext(c *gin.Context, key string) string {
