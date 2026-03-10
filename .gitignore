@@ -7,3 +7,4 @@ processes.db
 dist
 reports
 .claude/worktrees
+.claude/scheduled_*
