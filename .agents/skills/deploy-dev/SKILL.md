@@ -20,7 +20,7 @@ Using git commands directly:
 7. Push develop: `git push origin develop`
 8. Switch back to the feature branch: `git checkout <feature-branch>`
 
-> **If the merge fails** at any step (conflicts, push rejection, etc.), abort immediately. Do not attempt to resolve merge conflicts. Run `git merge --abort` if needed, switch back to the feature branch, and notify the user that the merge into `develop` failed and why. Do not proceed to deployment.
+> **If the merge fails** with conflicts, do NOT abort. Instead, resolve conflicts interactively: for each conflicting file, show the user both sides of the conflict and ask which version to keep (or how to combine them). Once the user has provided input for every conflict, stage the resolved files, complete the merge commit, and continue with the deployment. Only abort if the user explicitly asks to cancel.
 
 ## Step 2: Confirm deployment
 
