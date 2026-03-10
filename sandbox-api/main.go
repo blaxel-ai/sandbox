@@ -15,7 +15,6 @@ import (
 	"github.com/blaxel-ai/sandbox-api/docs" // swagger generated docs
 	"github.com/blaxel-ai/sandbox-api/src/api"
 	"github.com/blaxel-ai/sandbox-api/src/handler/process"
-	"github.com/blaxel-ai/sandbox-api/src/lib"
 	"github.com/blaxel-ai/sandbox-api/src/lib/networking"
 	"github.com/blaxel-ai/sandbox-api/src/mcp"
 	"github.com/gin-gonic/gin"
@@ -33,11 +32,7 @@ import (
 // @name Authorization
 // @BasePath        /
 func main() {
-	logrus.SetFormatter(&lib.QuotedMsgFormatter{
-		TextFormatter: logrus.TextFormatter{
-			DisableColors: true,
-		},
-	})
+	logrus.SetFormatter(&logrus.JSONFormatter{})
 	logrus.SetLevel(logrus.DebugLevel)
 
 	// Load .env file

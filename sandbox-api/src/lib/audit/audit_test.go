@@ -91,7 +91,6 @@ func TestIdentityMiddleware_EmptyHeaders(t *testing.T) {
 }
 
 func TestLogEvent_EmitsAuditFields(t *testing.T) {
-	// Capture logrus output
 	var buf bytes.Buffer
 	logrus.SetOutput(&buf)
 	logrus.SetFormatter(&logrus.JSONFormatter{})
@@ -113,10 +112,9 @@ func TestLogEvent_EmitsAuditFields(t *testing.T) {
 	})
 
 	output := buf.String()
-	// Verify key fields are present in the JSON output
 	for _, expected := range []string{
 		`"source":"audit"`,
-		`"subId":"user-456"`,
+		`"sub-id":"user-456"`,
 		`"rid":"req-xyz"`,
 		`"action":"test_action"`,
 		`"extra_key":"extra_value"`,
@@ -124,6 +122,15 @@ func TestLogEvent_EmitsAuditFields(t *testing.T) {
 		if !bytes.Contains([]byte(output), []byte(expected)) {
 			t.Errorf("expected log output to contain %s, got: %s", expected, output)
 		}
+	}
+	if bytes.Contains([]byte(output), []byte(`"msg":"audit event"`)) {
+		t.Errorf("expected msg to contain field details, not generic 'audit event', got: %s", output)
+	}
+	if !bytes.Contains([]byte(output), []byte(`type=test_action`)) {
+		t.Errorf("expected msg to contain type=test_action, got: %s", output)
+	}
+	if !bytes.Contains([]byte(output), []byte(`sub-id=user-456`)) {
+		t.Errorf("expected msg to contain sub-id, got: %s", output)
 	}
 }
 
@@ -144,21 +151,37 @@ func TestLogEventDirect_EmitsAuditFields(t *testing.T) {
 	}
 
 	LogEventDirect(id, "terminal_disconnect", logrus.Fields{
-		"sessionId": "sess-1",
+		"session-id": "sess-1",
 	})
 
 	output := buf.String()
 	for _, expected := range []string{
 		`"source":"audit"`,
-		`"subId":"user-789"`,
-		`"subType":"service"`,
-		`"authMethod":"bearer_token"`,
+		`"sub-id":"user-789"`,
+		`"sub-type":"service"`,
+		`"auth-method":"bearer_token"`,
 		`"rid":"req-direct"`,
 		`"action":"terminal_disconnect"`,
-		`"sessionId":"sess-1"`,
+		`"session-id":"sess-1"`,
 	} {
 		if !bytes.Contains([]byte(output), []byte(expected)) {
 			t.Errorf("expected log output to contain %s, got: %s", expected, output)
+		}
+	}
+	if bytes.Contains([]byte(output), []byte(`"msg":"audit event"`)) {
+		t.Errorf("expected msg to contain field details, not generic 'audit event', got: %s", output)
+	}
+	expectedInMsg := []string{
+		"type=terminal_disconnect",
+		"sub-id=user-789",
+		"sub-type=service",
+		"auth-method=bearer_token",
+		"rid=req-direct",
+		"session-id=sess-1",
+	}
+	for _, s := range expectedInMsg {
+		if !bytes.Contains([]byte(output), []byte(s)) {
+			t.Errorf("expected msg to contain '%s', got: %s", s, output)
 		}
 	}
 }
@@ -207,9 +230,50 @@ func TestGetIdentity_WithoutMiddleware(t *testing.T) {
 	req, _ := http.NewRequest("GET", "/test", nil)
 	c.Request = req
 
-	// Don't run middleware - all values should be empty
 	id := GetIdentity(c)
 	if id.UserID != "" || id.SubjectType != "" || id.AuthMethod != "" || id.RequestID != "" {
 		t.Errorf("expected all empty identity fields without middleware, got: %+v", id)
+	}
+}
+
+func TestBuildMessage_QuotesValuesWithSpaces(t *testing.T) {
+	id := Identity{
+		UserID:    "John Doe",
+		RequestID: "req-123",
+	}
+	msg := buildMessage(id, "test_action", logrus.Fields{"cmd": "echo hello world"})
+	if !bytes.Contains([]byte(msg), []byte(`sub-id="John Doe"`)) {
+		t.Errorf("expected double-quoted UserID, got: %s", msg)
+	}
+	if !bytes.Contains([]byte(msg), []byte(`cmd="echo hello world"`)) {
+		t.Errorf("expected double-quoted cmd, got: %s", msg)
+	}
+	if !bytes.Contains([]byte(msg), []byte("rid=req-123")) {
+		t.Errorf("expected unquoted RequestID (no spaces), got: %s", msg)
+	}
+	if !bytes.Contains([]byte(msg), []byte("type=test_action")) {
+		t.Errorf("expected type= prefix on action, got: %s", msg)
+	}
+}
+
+func TestBuildMessage_EscapesQuotesInValues(t *testing.T) {
+	id := Identity{RequestID: "req-123"}
+	msg := buildMessage(id, "process_exec", logrus.Fields{"cmd": `echo "hello world"`})
+	if !bytes.Contains([]byte(msg), []byte(`cmd="echo \"hello world\""`)) {
+		t.Errorf("expected escaped inner quotes, got: %s", msg)
+	}
+}
+
+func TestBuildMessage_SanitizesNewlines(t *testing.T) {
+	id := Identity{
+		UserID:    "user\n{\"fake\":\"inject\"}",
+		RequestID: "req-123",
+	}
+	msg := buildMessage(id, "test_action", logrus.Fields{"cmd": "ls"})
+	if bytes.Contains([]byte(msg), []byte("\n")) {
+		t.Errorf("msg should not contain raw newlines, got: %s", msg)
+	}
+	if !bytes.Contains([]byte(msg), []byte(`\n`)) {
+		t.Errorf("msg should contain escaped newline, got: %s", msg)
 	}
 }
