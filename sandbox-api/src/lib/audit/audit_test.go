@@ -171,7 +171,7 @@ func TestLogEventDirect_EmitsAuditFields(t *testing.T) {
 			t.Errorf("expected log output to contain %s, got: %s", expected, output)
 		}
 	}
-	// Verify the message contains all identity and extra fields
+	// Verify the message contains identity fields but NOT extra fields
 	if bytes.Contains([]byte(output), []byte(`"msg":"audit event"`)) {
 		t.Errorf("expected msg to contain field details, not generic 'audit event', got: %s", output)
 	}
@@ -181,12 +181,15 @@ func TestLogEventDirect_EmitsAuditFields(t *testing.T) {
 		"subType=service",
 		"authMethod=bearer_token",
 		"rid=req-direct",
-		"sessionId=sess-1",
 	}
 	for _, s := range expectedInMsg {
 		if !bytes.Contains([]byte(output), []byte(s)) {
 			t.Errorf("expected msg to contain '%s', got: %s", s, output)
 		}
+	}
+	// Extra fields must NOT appear in the msg (they remain as structured attributes)
+	if bytes.Contains([]byte(output), []byte(`"msg":"terminal_disconnect subId=user-789 subType=service authMethod=bearer_token rid=req-direct sessionId=sess-1"`)) {
+		t.Errorf("extra fields should not appear in msg, got: %s", output)
 	}
 }
 
@@ -238,5 +241,19 @@ func TestGetIdentity_WithoutMiddleware(t *testing.T) {
 	id := GetIdentity(c)
 	if id.UserID != "" || id.SubjectType != "" || id.AuthMethod != "" || id.RequestID != "" {
 		t.Errorf("expected all empty identity fields without middleware, got: %+v", id)
+	}
+}
+
+func TestBuildMessage_SanitizesNewlines(t *testing.T) {
+	id := Identity{
+		UserID:    "user\n{\"fake\":\"inject\"}",
+		RequestID: "req-123",
+	}
+	msg := buildMessage(id, "test_action")
+	if bytes.Contains([]byte(msg), []byte("\n")) {
+		t.Errorf("msg should not contain raw newlines, got: %s", msg)
+	}
+	if !bytes.Contains([]byte(msg), []byte(`\n`)) {
+		t.Errorf("msg should contain escaped newline, got: %s", msg)
 	}
 }
