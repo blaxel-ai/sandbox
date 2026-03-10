@@ -14,12 +14,11 @@ import (
 // Fields are ordered alphabetically to match logrus TextFormatter output.
 //
 // Full regex (copy-paste ready):
-// time="(?P<time>[^"]+)" level=(?P<level>\w+) msg="(?P<msg>[^"]+)"(?: action=(?P<blaxel_action>[^\s]*))?(?: authMethod=(?P<blaxel_auth_method>[^\s]*))?(?: command=(?P<blaxel_command>[^\s]*))?(?: processIdentifier=(?P<blaxel_process_identifier>[^\s]*))?(?: processName=(?P<blaxel_pname>[^\s]*))?(?: processPid=(?P<blaxel_pid>[^\s]*))?(?: rid=(?P<blaxel_rid>[^\s]*))?(?: sessionId=(?P<blaxel_session_id>[^\s]*))?(?: shell=(?P<blaxel_shell>[^\s]*))?(?: source=(?P<blaxel_source>[^\s]*))?(?: stream=(?P<blaxel_stream>[^\s]*))?(?: subId=(?P<blaxel_sub_id>[^\s]*))?(?: subType=(?P<blaxel_sub_type>[^\s]*))?(?: workingDir=(?P<blaxel_working_dir>[^\s]*))?
+// time="(?P<time>[^"]+)" level=(?P<level>\w+) msg="(?P<msg>[^"]+)"(?: action=(?P<blaxel_action>[^\s]*))?(?: authMethod=(?P<blaxel_auth_method>[^\s]*))?(?: command="(?P<blaxel_command>[^"]*)")?(?: processName=(?P<blaxel_pname>[^\s]*))?(?: processPid=(?P<blaxel_pid>[^\s]*))?(?: rid=(?P<blaxel_rid>[^\s]*))?(?: sessionId=(?P<blaxel_session_id>[^\s]*))?(?: shell=(?P<blaxel_shell>[^\s]*))?(?: source=(?P<blaxel_source>[^\s]*))?(?: stream=(?P<blaxel_stream>[^\s]*))?(?: subId=(?P<blaxel_sub_id>[^\s]*))?(?: subType=(?P<blaxel_sub_type>[^\s]*))?(?: workingDir=(?P<blaxel_working_dir>"[^"]*"|[^\s]*))?
 const logRegexp = `time="(?P<time>[^"]+)" level=(?P<level>\w+) msg="(?P<msg>[^"]+)"` +
 	`(?: action=(?P<blaxel_action>[^\s]*))?` +
 	`(?: authMethod=(?P<blaxel_auth_method>[^\s]*))?` +
-	`(?: command=(?P<blaxel_command>[^\s]*))?` +
-	`(?: processIdentifier=(?P<blaxel_process_identifier>[^\s]*))?` +
+	`(?: command="(?P<blaxel_command>[^"]*)")?` +
 	`(?: processName=(?P<blaxel_pname>[^\s]*))?` +
 	`(?: processPid=(?P<blaxel_pid>[^\s]*))?` +
 	`(?: rid=(?P<blaxel_rid>[^\s]*))?` +
@@ -29,7 +28,7 @@ const logRegexp = `time="(?P<time>[^"]+)" level=(?P<level>\w+) msg="(?P<msg>[^"]
 	`(?: stream=(?P<blaxel_stream>[^\s]*))?` +
 	`(?: subId=(?P<blaxel_sub_id>[^\s]*))?` +
 	`(?: subType=(?P<blaxel_sub_type>[^\s]*))?` +
-	`(?: workingDir=(?P<blaxel_working_dir>[^\s]*))?`
+	`(?: workingDir=(?P<blaxel_working_dir>"[^"]*"|[^\s]*))?`
 
 func setupQuotedFormatter(buf *bytes.Buffer) func() {
 	logrus.SetOutput(buf)
@@ -170,6 +169,38 @@ func TestLogRegexp_AuditLog(t *testing.T) {
 				"blaxel_rid":        "req-xyz",
 				"blaxel_action":     "process_exec",
 				"blaxel_working_dir": "/workspace",
+			},
+		},
+		{
+			name: "multi-word command is fully captured",
+			msg:  "audit event",
+			fields: logrus.Fields{
+				"source":     "audit",
+				"subId":      "user-123",
+				"rid":        "req-abc",
+				"action":     "process_exec",
+				"command":    "npm run dev",
+				"workingDir": "/blaxel/app",
+			},
+			expected: map[string]string{
+				"msg":                "audit event",
+				"blaxel_action":     "process_exec",
+				"blaxel_command":    "npm run dev",
+				"blaxel_working_dir": "/blaxel/app",
+			},
+		},
+		{
+			name: "single-word command is captured",
+			msg:  "audit event",
+			fields: logrus.Fields{
+				"source":  "audit",
+				"rid":     "req-abc",
+				"action":  "process_exec",
+				"command": "ls",
+			},
+			expected: map[string]string{
+				"blaxel_action":  "process_exec",
+				"blaxel_command": "ls",
 			},
 		},
 	}
