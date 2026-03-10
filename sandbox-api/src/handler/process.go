@@ -290,7 +290,6 @@ func (h *ProcessHandler) HandleExecuteCommand(c *gin.Context) {
 
 	audit.LogEvent(c, "process_exec", logrus.Fields{
 		"command":    req.Command,
-		"name":       req.Name,
 		"workingDir": req.WorkingDir,
 	})
 
@@ -333,7 +332,6 @@ func (h *ProcessHandler) handleExecuteCommandStream(c *gin.Context) {
 
 	audit.LogEvent(c, "process_exec_stream", logrus.Fields{
 		"command":    req.Command,
-		"name":       req.Name,
 		"workingDir": req.WorkingDir,
 	})
 

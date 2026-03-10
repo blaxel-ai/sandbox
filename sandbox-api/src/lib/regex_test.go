@@ -12,22 +12,24 @@ import (
 
 // logRegexp is the regex used by SigNoz to parse sandbox log lines.
 // Fields are ordered alphabetically to match logrus TextFormatter output.
+//
+// Full regex (copy-paste ready):
+// time="(?P<time>[^"]+)" level=(?P<level>\w+) msg="(?P<msg>[^"]+)"(?: action=(?P<blaxel_action>[^\s]*))?(?: authMethod=(?P<blaxel_auth_method>[^\s]*))?(?: command=(?P<blaxel_command>[^\s]*))?(?: processIdentifier=(?P<blaxel_process_identifier>[^\s]*))?(?: processName=(?P<blaxel_pname>[^\s]*))?(?: processPid=(?P<blaxel_pid>[^\s]*))?(?: rid=(?P<blaxel_rid>[^\s]*))?(?: sessionId=(?P<blaxel_session_id>[^\s]*))?(?: shell=(?P<blaxel_shell>[^\s]*))?(?: source=(?P<blaxel_source>[^\s]*))?(?: stream=(?P<blaxel_stream>[^\s]*))?(?: subId=(?P<blaxel_sub_id>[^\s]*))?(?: subType=(?P<blaxel_sub_type>[^\s]*))?(?: workingDir=(?P<blaxel_working_dir>[^\s]*))?
 const logRegexp = `time="(?P<time>[^"]+)" level=(?P<level>\w+) msg="(?P<msg>[^"]+)"` +
-	`(?: action=(?P<blaxel_action>[^\s]+))?` +
-	`(?: authMethod=(?P<blaxel_auth_method>[^\s]+))?` +
-	`(?: command=(?P<blaxel_command>[^\s]+))?` +
-	`(?: name=(?P<blaxel_name>[^\s]+))?` +
-	`(?: processIdentifier=(?P<blaxel_process_identifier>[^\s]+))?` +
-	`(?: processName=(?P<blaxel_pname>[^\s]+))?` +
-	`(?: processPid=(?P<blaxel_pid>[^\s]+))?` +
-	`(?: rid=(?P<blaxel_rid>[^\s]+))?` +
-	`(?: sessionId=(?P<blaxel_session_id>[^\s]+))?` +
-	`(?: shell=(?P<blaxel_shell>[^\s]+))?` +
-	`(?: source=(?P<blaxel_source>[^\s]+))?` +
-	`(?: stream=(?P<blaxel_stream>[^\s]+))?` +
-	`(?: subId=(?P<blaxel_sub_id>[^\s]+))?` +
-	`(?: subType=(?P<blaxel_sub_type>[^\s]+))?` +
-	`(?: workingDir=(?P<blaxel_working_dir>[^\s]+))?`
+	`(?: action=(?P<blaxel_action>[^\s]*))?` +
+	`(?: authMethod=(?P<blaxel_auth_method>[^\s]*))?` +
+	`(?: command=(?P<blaxel_command>[^\s]*))?` +
+	`(?: processIdentifier=(?P<blaxel_process_identifier>[^\s]*))?` +
+	`(?: processName=(?P<blaxel_pname>[^\s]*))?` +
+	`(?: processPid=(?P<blaxel_pid>[^\s]*))?` +
+	`(?: rid=(?P<blaxel_rid>[^\s]*))?` +
+	`(?: sessionId=(?P<blaxel_session_id>[^\s]*))?` +
+	`(?: shell=(?P<blaxel_shell>[^\s]*))?` +
+	`(?: source=(?P<blaxel_source>[^\s]*))?` +
+	`(?: stream=(?P<blaxel_stream>[^\s]*))?` +
+	`(?: subId=(?P<blaxel_sub_id>[^\s]*))?` +
+	`(?: subType=(?P<blaxel_sub_type>[^\s]*))?` +
+	`(?: workingDir=(?P<blaxel_working_dir>[^\s]*))?`
 
 func setupQuotedFormatter(buf *bytes.Buffer) func() {
 	logrus.SetOutput(buf)
@@ -124,6 +126,30 @@ func TestLogRegexp_AuditLog(t *testing.T) {
 			},
 		},
 		{
+			// Regression: empty-value fields (shell=, workingDir=) must not break
+			// parsing of subsequent fields like source=audit.
+			name: "empty value fields do not block source capture",
+			msg:  "audit event",
+			fields: logrus.Fields{
+				"source":     "audit",
+				"subId":      "user-789",
+				"subType":    "user",
+				"authMethod": "bearer_token",
+				"rid":        "req-abc",
+				"action":     "terminal_connect",
+				"sessionId":  "default",
+				"shell":      "",
+				"workingDir": "",
+			},
+			expected: map[string]string{
+				"msg":                "audit event",
+				"blaxel_source":     "audit",
+				"blaxel_sub_id":     "user-789",
+				"blaxel_action":     "terminal_connect",
+				"blaxel_rid":        "req-abc",
+			},
+		},
+		{
 			name: "full sentence msg",
 			msg:  "audit event logged successfully",
 			fields: logrus.Fields{
@@ -133,7 +159,6 @@ func TestLogRegexp_AuditLog(t *testing.T) {
 				"authMethod": "bearer_token",
 				"rid":        "req-xyz",
 				"action":     "process_exec",
-				"name":       "my-process",
 				"workingDir": "/workspace",
 			},
 			expected: map[string]string{
@@ -144,7 +169,6 @@ func TestLogRegexp_AuditLog(t *testing.T) {
 				"blaxel_auth_method": "bearer_token",
 				"blaxel_rid":        "req-xyz",
 				"blaxel_action":     "process_exec",
-				"blaxel_name":       "my-process",
 				"blaxel_working_dir": "/workspace",
 			},
 		},
