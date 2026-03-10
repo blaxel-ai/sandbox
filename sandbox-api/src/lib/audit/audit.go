@@ -96,23 +96,35 @@ func (id Identity) baseFields() logrus.Fields {
 // sanitize strips newlines and carriage returns to prevent log injection.
 var newlineReplacer = strings.NewReplacer("\n", "\\n", "\r", "\\r")
 
+// quoteValue wraps the value in double quotes if it contains spaces,
+// escaping any inner double quotes and backslashes.
+func quoteValue(v string) string {
+	if strings.Contains(v, " ") {
+		escaped := strings.ReplaceAll(v, `\`, `\\`)
+		escaped = strings.ReplaceAll(escaped, `"`, `\"`)
+		return `"` + escaped + `"`
+	}
+	return v
+}
+
 // buildMessage builds a descriptive audit message that includes the action,
 // identity fields, and extra fields so that the log msg is self-contained.
 // All values are sanitized to prevent log injection (newlines stripped).
+// Values containing spaces are wrapped in backticks for readability.
 func buildMessage(id Identity, action string, extra logrus.Fields) string {
-	parts := []string{newlineReplacer.Replace(action)}
+	parts := []string{fmt.Sprintf("type=%s", newlineReplacer.Replace(action))}
 
 	if id.UserID != "" {
-		parts = append(parts, fmt.Sprintf("blaxel-sub-id=%s", newlineReplacer.Replace(id.UserID)))
+		parts = append(parts, fmt.Sprintf("blaxel-sub-id=%s", quoteValue(newlineReplacer.Replace(id.UserID))))
 	}
 	if id.SubjectType != "" {
-		parts = append(parts, fmt.Sprintf("blaxel-sub-type=%s", newlineReplacer.Replace(id.SubjectType)))
+		parts = append(parts, fmt.Sprintf("blaxel-sub-type=%s", quoteValue(newlineReplacer.Replace(id.SubjectType))))
 	}
 	if id.AuthMethod != "" {
-		parts = append(parts, fmt.Sprintf("blaxel-auth-method=%s", newlineReplacer.Replace(id.AuthMethod)))
+		parts = append(parts, fmt.Sprintf("blaxel-auth-method=%s", quoteValue(newlineReplacer.Replace(id.AuthMethod))))
 	}
 	if id.RequestID != "" {
-		parts = append(parts, fmt.Sprintf("blaxel-rid=%s", newlineReplacer.Replace(id.RequestID)))
+		parts = append(parts, fmt.Sprintf("blaxel-rid=%s", quoteValue(newlineReplacer.Replace(id.RequestID))))
 	}
 
 	// Sort extra keys for deterministic output.
@@ -122,7 +134,7 @@ func buildMessage(id Identity, action string, extra logrus.Fields) string {
 	}
 	sort.Strings(keys)
 	for _, k := range keys {
-		parts = append(parts, fmt.Sprintf("%s=%s", k, newlineReplacer.Replace(fmt.Sprintf("%v", extra[k]))))
+		parts = append(parts, fmt.Sprintf("%s=%s", k, quoteValue(newlineReplacer.Replace(fmt.Sprintf("%v", extra[k])))))
 	}
 
 	return strings.Join(parts, " ")

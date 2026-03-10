@@ -126,8 +126,8 @@ func TestLogEvent_EmitsAuditFields(t *testing.T) {
 	if bytes.Contains([]byte(output), []byte(`"msg":"audit event"`)) {
 		t.Errorf("expected msg to contain field details, not generic 'audit event', got: %s", output)
 	}
-	if !bytes.Contains([]byte(output), []byte(`test_action`)) {
-		t.Errorf("expected msg to contain the action, got: %s", output)
+	if !bytes.Contains([]byte(output), []byte(`type=test_action`)) {
+		t.Errorf("expected msg to contain type=test_action, got: %s", output)
 	}
 	if !bytes.Contains([]byte(output), []byte(`blaxel-sub-id=user-456`)) {
 		t.Errorf("expected msg to contain blaxel-sub-id, got: %s", output)
@@ -172,7 +172,7 @@ func TestLogEventDirect_EmitsAuditFields(t *testing.T) {
 		t.Errorf("expected msg to contain field details, not generic 'audit event', got: %s", output)
 	}
 	expectedInMsg := []string{
-		"terminal_disconnect",
+		"type=terminal_disconnect",
 		"blaxel-sub-id=user-789",
 		"blaxel-sub-type=service",
 		"blaxel-auth-method=bearer_token",
@@ -233,6 +233,34 @@ func TestGetIdentity_WithoutMiddleware(t *testing.T) {
 	id := GetIdentity(c)
 	if id.UserID != "" || id.SubjectType != "" || id.AuthMethod != "" || id.RequestID != "" {
 		t.Errorf("expected all empty identity fields without middleware, got: %+v", id)
+	}
+}
+
+func TestBuildMessage_QuotesValuesWithSpaces(t *testing.T) {
+	id := Identity{
+		UserID:    "John Doe",
+		RequestID: "req-123",
+	}
+	msg := buildMessage(id, "test_action", logrus.Fields{"cmd": "echo hello world"})
+	if !bytes.Contains([]byte(msg), []byte(`blaxel-sub-id="John Doe"`)) {
+		t.Errorf("expected double-quoted UserID, got: %s", msg)
+	}
+	if !bytes.Contains([]byte(msg), []byte(`cmd="echo hello world"`)) {
+		t.Errorf("expected double-quoted cmd, got: %s", msg)
+	}
+	if !bytes.Contains([]byte(msg), []byte("blaxel-rid=req-123")) {
+		t.Errorf("expected unquoted RequestID (no spaces), got: %s", msg)
+	}
+	if !bytes.Contains([]byte(msg), []byte("type=test_action")) {
+		t.Errorf("expected type= prefix on action, got: %s", msg)
+	}
+}
+
+func TestBuildMessage_EscapesQuotesInValues(t *testing.T) {
+	id := Identity{RequestID: "req-123"}
+	msg := buildMessage(id, "process_exec", logrus.Fields{"cmd": `echo "hello world"`})
+	if !bytes.Contains([]byte(msg), []byte(`cmd="echo \"hello world\""`)) {
+		t.Errorf("expected escaped inner quotes, got: %s", msg)
 	}
 }
 
