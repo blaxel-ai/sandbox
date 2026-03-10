@@ -113,10 +113,10 @@ func TestLogEvent_EmitsAuditFields(t *testing.T) {
 
 	output := buf.String()
 	for _, expected := range []string{
-		`"blaxel-source":"audit"`,
-		`"blaxel-sub-id":"user-456"`,
-		`"blaxel-rid":"req-xyz"`,
-		`"blaxel-action":"test_action"`,
+		`"source":"audit"`,
+		`"sub-id":"user-456"`,
+		`"rid":"req-xyz"`,
+		`"action":"test_action"`,
 		`"extra_key":"extra_value"`,
 	} {
 		if !bytes.Contains([]byte(output), []byte(expected)) {
@@ -129,8 +129,8 @@ func TestLogEvent_EmitsAuditFields(t *testing.T) {
 	if !bytes.Contains([]byte(output), []byte(`type=test_action`)) {
 		t.Errorf("expected msg to contain type=test_action, got: %s", output)
 	}
-	if !bytes.Contains([]byte(output), []byte(`blaxel-sub-id=user-456`)) {
-		t.Errorf("expected msg to contain blaxel-sub-id, got: %s", output)
+	if !bytes.Contains([]byte(output), []byte(`sub-id=user-456`)) {
+		t.Errorf("expected msg to contain sub-id, got: %s", output)
 	}
 }
 
@@ -151,18 +151,18 @@ func TestLogEventDirect_EmitsAuditFields(t *testing.T) {
 	}
 
 	LogEventDirect(id, "terminal_disconnect", logrus.Fields{
-		"blaxel-session-id": "sess-1",
+		"session-id": "sess-1",
 	})
 
 	output := buf.String()
 	for _, expected := range []string{
-		`"blaxel-source":"audit"`,
-		`"blaxel-sub-id":"user-789"`,
-		`"blaxel-sub-type":"service"`,
-		`"blaxel-auth-method":"bearer_token"`,
-		`"blaxel-rid":"req-direct"`,
-		`"blaxel-action":"terminal_disconnect"`,
-		`"blaxel-session-id":"sess-1"`,
+		`"source":"audit"`,
+		`"sub-id":"user-789"`,
+		`"sub-type":"service"`,
+		`"auth-method":"bearer_token"`,
+		`"rid":"req-direct"`,
+		`"action":"terminal_disconnect"`,
+		`"session-id":"sess-1"`,
 	} {
 		if !bytes.Contains([]byte(output), []byte(expected)) {
 			t.Errorf("expected log output to contain %s, got: %s", expected, output)
@@ -173,11 +173,11 @@ func TestLogEventDirect_EmitsAuditFields(t *testing.T) {
 	}
 	expectedInMsg := []string{
 		"type=terminal_disconnect",
-		"blaxel-sub-id=user-789",
-		"blaxel-sub-type=service",
-		"blaxel-auth-method=bearer_token",
-		"blaxel-rid=req-direct",
-		"blaxel-session-id=sess-1",
+		"sub-id=user-789",
+		"sub-type=service",
+		"auth-method=bearer_token",
+		"rid=req-direct",
+		"session-id=sess-1",
 	}
 	for _, s := range expectedInMsg {
 		if !bytes.Contains([]byte(output), []byte(s)) {
@@ -242,13 +242,13 @@ func TestBuildMessage_QuotesValuesWithSpaces(t *testing.T) {
 		RequestID: "req-123",
 	}
 	msg := buildMessage(id, "test_action", logrus.Fields{"cmd": "echo hello world"})
-	if !bytes.Contains([]byte(msg), []byte(`blaxel-sub-id="John Doe"`)) {
+	if !bytes.Contains([]byte(msg), []byte(`sub-id="John Doe"`)) {
 		t.Errorf("expected double-quoted UserID, got: %s", msg)
 	}
 	if !bytes.Contains([]byte(msg), []byte(`cmd="echo hello world"`)) {
 		t.Errorf("expected double-quoted cmd, got: %s", msg)
 	}
-	if !bytes.Contains([]byte(msg), []byte("blaxel-rid=req-123")) {
+	if !bytes.Contains([]byte(msg), []byte("rid=req-123")) {
 		t.Errorf("expected unquoted RequestID (no spaces), got: %s", msg)
 	}
 	if !bytes.Contains([]byte(msg), []byte("type=test_action")) {

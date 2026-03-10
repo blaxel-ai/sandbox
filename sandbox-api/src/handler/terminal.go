@@ -168,9 +168,9 @@ func (h *TerminalHandler) HandleTerminalWS(c *gin.Context) {
 	id := audit.GetIdentity(c)
 
 	audit.LogEvent(c, "terminal_connect", logrus.Fields{
-		"blaxel-session-id":  sessionId,
-		"blaxel-shell":       shell,
-		"blaxel-working-dir": workingDir,
+		"session-id":  sessionId,
+		"shell":       shell,
+		"working-dir": workingDir,
 	})
 
 	// Upgrade HTTP connection to WebSocket
@@ -263,7 +263,7 @@ func (h *TerminalHandler) HandleTerminalWS(c *gin.Context) {
 	// this ordering regardless of which return path is taken.
 	defer func() {
 		audit.LogEventDirect(id, "terminal_disconnect", logrus.Fields{
-			"blaxel-session-id": sessionId,
+			"session-id": sessionId,
 		})
 		closeDone()
 		wg.Wait()
@@ -298,8 +298,8 @@ func (h *TerminalHandler) HandleTerminalWS(c *gin.Context) {
 			data := []byte(msg.Data)
 			for _, cmd := range cmdBuf.feed(data) {
 				audit.LogEventDirect(id, "terminal_command", logrus.Fields{
-					"blaxel-session-id": sessionId,
-					"blaxel-command":   cmd,
+					"session-id": sessionId,
+					"command":   cmd,
 				})
 			}
 			if _, err := ms.Write(data); err != nil {

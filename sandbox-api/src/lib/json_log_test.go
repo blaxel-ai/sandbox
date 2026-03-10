@@ -44,7 +44,7 @@ func assertField(t *testing.T, m map[string]interface{}, key, expected string) {
 }
 
 // TestJSONLog_AuditLog verifies JSON log output for audit events contains all
-// expected fields with blaxel- prefixed kebab-case keys.
+// expected fields with kebab-case keys.
 func TestJSONLog_AuditLog(t *testing.T) {
 	var buf bytes.Buffer
 	defer setupJSONFormatter(&buf)()
@@ -57,63 +57,63 @@ func TestJSONLog_AuditLog(t *testing.T) {
 	}{
 		{
 			name: "terminal connect with all fields",
-			msg:  "terminal_connect blaxel-sub-id=user-123 blaxel-sub-type=user",
+			msg:  "terminal_connect sub-id=user-123 sub-type=user",
 			fields: logrus.Fields{
-				"blaxel-source":      "audit",
-				"blaxel-sub-id":      "user-123",
-				"blaxel-sub-type":    "user",
-				"blaxel-auth-method": "api_key",
-				"blaxel-rid":         "req-abc",
-				"blaxel-action":      "terminal_connect",
-				"blaxel-session-id":  "sess-1",
-				"blaxel-shell":       "bash",
-				"blaxel-working-dir": "/home/user",
+				"source":      "audit",
+				"sub-id":      "user-123",
+				"sub-type":    "user",
+				"auth-method": "api_key",
+				"rid":         "req-abc",
+				"action":      "terminal_connect",
+				"session-id":  "sess-1",
+				"shell":       "bash",
+				"working-dir": "/home/user",
 			},
 			expected: map[string]string{
-				"blaxel-source":      "audit",
-				"blaxel-sub-id":      "user-123",
-				"blaxel-sub-type":    "user",
-				"blaxel-auth-method": "api_key",
-				"blaxel-rid":         "req-abc",
-				"blaxel-action":      "terminal_connect",
-				"blaxel-session-id":  "sess-1",
-				"blaxel-shell":       "bash",
-				"blaxel-working-dir": "/home/user",
+				"source":      "audit",
+				"sub-id":      "user-123",
+				"sub-type":    "user",
+				"auth-method": "api_key",
+				"rid":         "req-abc",
+				"action":      "terminal_connect",
+				"session-id":  "sess-1",
+				"shell":       "bash",
+				"working-dir": "/home/user",
 			},
 		},
 		{
 			name: "process exec with multi-word command",
-			msg:  "process_exec blaxel-sub-id=user-123 blaxel-rid=req-abc blaxel-command=npm run dev blaxel-working-dir=/blaxel/app",
+			msg:  "process_exec sub-id=user-123 rid=req-abc command=npm run dev working-dir=/blaxel/app",
 			fields: logrus.Fields{
-				"blaxel-source":      "audit",
-				"blaxel-sub-id":      "user-123",
-				"blaxel-rid":         "req-abc",
-				"blaxel-action":      "process_exec",
-				"blaxel-command":     "npm run dev",
-				"blaxel-working-dir": "/blaxel/app",
+				"source":      "audit",
+				"sub-id":      "user-123",
+				"rid":         "req-abc",
+				"action":      "process_exec",
+				"command":     "npm run dev",
+				"working-dir": "/blaxel/app",
 			},
 			expected: map[string]string{
-				"blaxel-source":      "audit",
-				"blaxel-action":      "process_exec",
-				"blaxel-command":     "npm run dev",
-				"blaxel-working-dir": "/blaxel/app",
+				"source":      "audit",
+				"action":      "process_exec",
+				"command":     "npm run dev",
+				"working-dir": "/blaxel/app",
 			},
 		},
 		{
 			name: "empty value fields are preserved",
-			msg:  "terminal_connect blaxel-sub-id=user-789",
+			msg:  "terminal_connect sub-id=user-789",
 			fields: logrus.Fields{
-				"blaxel-source":      "audit",
-				"blaxel-sub-id":      "user-789",
-				"blaxel-action":      "terminal_connect",
-				"blaxel-shell":       "",
-				"blaxel-working-dir": "",
+				"source":      "audit",
+				"sub-id":      "user-789",
+				"action":      "terminal_connect",
+				"shell":       "",
+				"working-dir": "",
 			},
 			expected: map[string]string{
-				"blaxel-source": "audit",
-				"blaxel-sub-id": "user-789",
-				"blaxel-action": "terminal_connect",
-				"blaxel-shell":  "",
+				"source": "audit",
+				"sub-id": "user-789",
+				"action": "terminal_connect",
+				"shell":  "",
 			},
 		},
 	}
@@ -149,11 +149,11 @@ func TestJSONLog_AccessLog(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			buf.Reset()
-			logrus.WithField("blaxel-source", "access").Info(tc.msg)
+			logrus.WithField("source", "access").Info(tc.msg)
 			m := parseJSON(t, buf.Bytes())
 
 			assertField(t, m, "msg", tc.msg)
-			assertField(t, m, "blaxel-source", "access")
+			assertField(t, m, "source", "access")
 		})
 	}
 }
@@ -180,18 +180,18 @@ func TestJSONLog_ProcessLog(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			buf.Reset()
 			logrus.WithFields(logrus.Fields{
-				"blaxel-source":       "process",
-				"blaxel-process-name": "my-server",
-				"blaxel-process-pid":  "42",
-				"blaxel-stream":       tc.stream,
+				"source":       "process",
+				"process-name": "my-server",
+				"process-pid":  "42",
+				"stream":       tc.stream,
 			}).Info(tc.msg)
 			m := parseJSON(t, buf.Bytes())
 
 			assertField(t, m, "msg", tc.msg)
-			assertField(t, m, "blaxel-source", "process")
-			assertField(t, m, "blaxel-process-name", "my-server")
-			assertField(t, m, "blaxel-process-pid", "42")
-			assertField(t, m, "blaxel-stream", tc.stream)
+			assertField(t, m, "source", "process")
+			assertField(t, m, "process-name", "my-server")
+			assertField(t, m, "process-pid", "42")
+			assertField(t, m, "stream", tc.stream)
 		})
 	}
 }

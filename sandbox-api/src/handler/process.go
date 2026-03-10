@@ -289,8 +289,8 @@ func (h *ProcessHandler) HandleExecuteCommand(c *gin.Context) {
 	}
 
 	audit.LogEvent(c, "process_exec", logrus.Fields{
-		"blaxel-command":     req.Command,
-		"blaxel-working-dir": req.WorkingDir,
+		"command":     req.Command,
+		"working-dir": req.WorkingDir,
 	})
 
 	// Execute the process
@@ -331,8 +331,8 @@ func (h *ProcessHandler) handleExecuteCommandStream(c *gin.Context) {
 	}
 
 	audit.LogEvent(c, "process_exec_stream", logrus.Fields{
-		"blaxel-command":     req.Command,
-		"blaxel-working-dir": req.WorkingDir,
+		"command":     req.Command,
+		"working-dir": req.WorkingDir,
 	})
 
 	// Set headers for streaming JSON events
