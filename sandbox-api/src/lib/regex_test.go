@@ -275,6 +275,7 @@ func TestLogRegexp_ProcessLog(t *testing.T) {
 		{"full sentence msg stdout", "server listening on port 8080", "stdout"},
 		{"single word msg stderr", "error", "stderr"},
 		{"full sentence msg stderr", "failed to bind address already in use", "stderr"},
+		{"leading spaces stdout", "  Run astro telemetry disable to opt-out.", "stdout"},
 	}
 
 	for _, tc := range cases {
