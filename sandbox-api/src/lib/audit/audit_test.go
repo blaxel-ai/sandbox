@@ -163,6 +163,44 @@ func TestLogEventDirect_EmitsAuditFields(t *testing.T) {
 	}
 }
 
+func TestIdentityMiddleware_FallbackHeaders(t *testing.T) {
+	c, _ := setupTestContext(map[string]string{
+		HeaderFallbackSubjectID:   "fallback-user",
+		HeaderFallbackSubjectType: "fallback-type",
+	})
+
+	handler := IdentityMiddleware()
+	handler(c)
+
+	id := GetIdentity(c)
+	if id.UserID != "fallback-user" {
+		t.Errorf("expected UserID 'fallback-user' from fallback header, got '%s'", id.UserID)
+	}
+	if id.SubjectType != "fallback-type" {
+		t.Errorf("expected SubjectType 'fallback-type' from fallback header, got '%s'", id.SubjectType)
+	}
+}
+
+func TestIdentityMiddleware_BlaxelHeadersPriority(t *testing.T) {
+	c, _ := setupTestContext(map[string]string{
+		HeaderSubjectID:           "blaxel-user",
+		HeaderSubjectType:         "blaxel-type",
+		HeaderFallbackSubjectID:   "fallback-user",
+		HeaderFallbackSubjectType: "fallback-type",
+	})
+
+	handler := IdentityMiddleware()
+	handler(c)
+
+	id := GetIdentity(c)
+	if id.UserID != "blaxel-user" {
+		t.Errorf("expected X-Blaxel-Subject-Id to take priority, got '%s'", id.UserID)
+	}
+	if id.SubjectType != "blaxel-type" {
+		t.Errorf("expected X-Blaxel-Subject-Type to take priority, got '%s'", id.SubjectType)
+	}
+}
+
 func TestGetIdentity_WithoutMiddleware(t *testing.T) {
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)

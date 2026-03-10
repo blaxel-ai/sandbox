@@ -10,11 +10,14 @@ import (
 )
 
 // Header names for identity context forwarded by the cluster-gateway.
+// X-Blaxel-* headers take priority over the generic X-Subject-* headers.
 const (
-	HeaderSubjectID   = "X-Blaxel-Subject-Id"
-	HeaderSubjectType = "X-Blaxel-Subject-Type"
-	HeaderAuthMethod  = "X-Blaxel-Auth-Method"
-	HeaderRequestID   = "X-Request-Id"
+	HeaderSubjectID        = "X-Blaxel-Subject-Id"
+	HeaderSubjectType      = "X-Blaxel-Subject-Type"
+	HeaderAuthMethod       = "X-Blaxel-Auth-Method"
+	HeaderRequestID        = "X-Request-Id"
+	HeaderFallbackSubjectID   = "X-Subject-Id"
+	HeaderFallbackSubjectType = "X-Subject-Type"
 )
 
 // Context keys used to store identity information in gin.Context.
@@ -25,13 +28,22 @@ const (
 	ContextKeyRequestID   = "audit_request_id"
 )
 
-// IdentityMiddleware extracts user identity and request ID from
-// X-Blaxel-* headers and stores them in the gin context for use
-// by audit logging throughout the request lifecycle.
+// headerWithFallback returns the value of the primary header, falling back
+// to the fallback header if the primary is empty.
+func headerWithFallback(c *gin.Context, primary, fallback string) string {
+	if v := c.GetHeader(primary); v != "" {
+		return v
+	}
+	return c.GetHeader(fallback)
+}
+
+// IdentityMiddleware extracts user identity and request ID from request headers
+// and stores them in the gin context for use by audit logging throughout the
+// request lifecycle. X-Blaxel-* headers take priority over X-Subject-* headers.
 func IdentityMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		userID := c.GetHeader(HeaderSubjectID)
-		subjectType := c.GetHeader(HeaderSubjectType)
+		userID := headerWithFallback(c, HeaderSubjectID, HeaderFallbackSubjectID)
+		subjectType := headerWithFallback(c, HeaderSubjectType, HeaderFallbackSubjectType)
 		authMethod := c.GetHeader(HeaderAuthMethod)
 		requestID := c.GetHeader(HeaderRequestID)
 
