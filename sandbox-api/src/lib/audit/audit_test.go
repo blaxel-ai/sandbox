@@ -116,8 +116,8 @@ func TestLogEvent_EmitsAuditFields(t *testing.T) {
 	// Verify key fields are present in the JSON output
 	for _, expected := range []string{
 		`"source":"audit"`,
-		`"user_id":"user-456"`,
-		`"request_id":"req-xyz"`,
+		`"subId":"user-456"`,
+		`"rid":"req-xyz"`,
 		`"action":"test_action"`,
 		`"extra_key":"extra_value"`,
 	} {
@@ -144,18 +144,18 @@ func TestLogEventDirect_EmitsAuditFields(t *testing.T) {
 	}
 
 	LogEventDirect(id, "terminal_disconnect", logrus.Fields{
-		"session_id": "sess-1",
+		"sessionId": "sess-1",
 	})
 
 	output := buf.String()
 	for _, expected := range []string{
 		`"source":"audit"`,
-		`"user_id":"user-789"`,
-		`"subject_type":"service"`,
-		`"auth_method":"bearer_token"`,
-		`"request_id":"req-direct"`,
+		`"subId":"user-789"`,
+		`"subType":"service"`,
+		`"authMethod":"bearer_token"`,
+		`"rid":"req-direct"`,
 		`"action":"terminal_disconnect"`,
-		`"session_id":"sess-1"`,
+		`"sessionId":"sess-1"`,
 	} {
 		if !bytes.Contains([]byte(output), []byte(expected)) {
 			t.Errorf("expected log output to contain %s, got: %s", expected, output)
