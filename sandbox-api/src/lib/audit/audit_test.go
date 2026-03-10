@@ -91,7 +91,6 @@ func TestIdentityMiddleware_EmptyHeaders(t *testing.T) {
 }
 
 func TestLogEvent_EmitsAuditFields(t *testing.T) {
-	// Capture logrus output
 	var buf bytes.Buffer
 	logrus.SetOutput(&buf)
 	logrus.SetFormatter(&logrus.JSONFormatter{})
@@ -113,27 +112,25 @@ func TestLogEvent_EmitsAuditFields(t *testing.T) {
 	})
 
 	output := buf.String()
-	// Verify key fields are present in the JSON output
 	for _, expected := range []string{
-		`"source":"audit"`,
-		`"subId":"user-456"`,
-		`"rid":"req-xyz"`,
-		`"action":"test_action"`,
+		`"blaxel-source":"audit"`,
+		`"blaxel-sub-id":"user-456"`,
+		`"blaxel-rid":"req-xyz"`,
+		`"blaxel-action":"test_action"`,
 		`"extra_key":"extra_value"`,
 	} {
 		if !bytes.Contains([]byte(output), []byte(expected)) {
 			t.Errorf("expected log output to contain %s, got: %s", expected, output)
 		}
 	}
-	// Verify the message contains all fields instead of generic "audit event"
 	if bytes.Contains([]byte(output), []byte(`"msg":"audit event"`)) {
 		t.Errorf("expected msg to contain field details, not generic 'audit event', got: %s", output)
 	}
 	if !bytes.Contains([]byte(output), []byte(`test_action`)) {
 		t.Errorf("expected msg to contain the action, got: %s", output)
 	}
-	if !bytes.Contains([]byte(output), []byte(`subId=user-456`)) {
-		t.Errorf("expected msg to contain subId, got: %s", output)
+	if !bytes.Contains([]byte(output), []byte(`blaxel-sub-id=user-456`)) {
+		t.Errorf("expected msg to contain blaxel-sub-id, got: %s", output)
 	}
 }
 
@@ -154,34 +151,33 @@ func TestLogEventDirect_EmitsAuditFields(t *testing.T) {
 	}
 
 	LogEventDirect(id, "terminal_disconnect", logrus.Fields{
-		"sessionId": "sess-1",
+		"blaxel-session-id": "sess-1",
 	})
 
 	output := buf.String()
 	for _, expected := range []string{
-		`"source":"audit"`,
-		`"subId":"user-789"`,
-		`"subType":"service"`,
-		`"authMethod":"bearer_token"`,
-		`"rid":"req-direct"`,
-		`"action":"terminal_disconnect"`,
-		`"sessionId":"sess-1"`,
+		`"blaxel-source":"audit"`,
+		`"blaxel-sub-id":"user-789"`,
+		`"blaxel-sub-type":"service"`,
+		`"blaxel-auth-method":"bearer_token"`,
+		`"blaxel-rid":"req-direct"`,
+		`"blaxel-action":"terminal_disconnect"`,
+		`"blaxel-session-id":"sess-1"`,
 	} {
 		if !bytes.Contains([]byte(output), []byte(expected)) {
 			t.Errorf("expected log output to contain %s, got: %s", expected, output)
 		}
 	}
-	// Verify the message contains identity AND extra fields
 	if bytes.Contains([]byte(output), []byte(`"msg":"audit event"`)) {
 		t.Errorf("expected msg to contain field details, not generic 'audit event', got: %s", output)
 	}
 	expectedInMsg := []string{
 		"terminal_disconnect",
-		"subId=user-789",
-		"subType=service",
-		"authMethod=bearer_token",
-		"rid=req-direct",
-		"sessionId=sess-1",
+		"blaxel-sub-id=user-789",
+		"blaxel-sub-type=service",
+		"blaxel-auth-method=bearer_token",
+		"blaxel-rid=req-direct",
+		"blaxel-session-id=sess-1",
 	}
 	for _, s := range expectedInMsg {
 		if !bytes.Contains([]byte(output), []byte(s)) {
@@ -234,7 +230,6 @@ func TestGetIdentity_WithoutMiddleware(t *testing.T) {
 	req, _ := http.NewRequest("GET", "/test", nil)
 	c.Request = req
 
-	// Don't run middleware - all values should be empty
 	id := GetIdentity(c)
 	if id.UserID != "" || id.SubjectType != "" || id.AuthMethod != "" || id.RequestID != "" {
 		t.Errorf("expected all empty identity fields without middleware, got: %+v", id)

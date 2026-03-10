@@ -85,11 +85,11 @@ func GetIdentity(c *gin.Context) Identity {
 // baseFields returns the common logrus fields for all audit log entries.
 func (id Identity) baseFields() logrus.Fields {
 	return logrus.Fields{
-		"source":    "audit",
-		"subId":     id.UserID,
-		"subType":   id.SubjectType,
-		"authMethod": id.AuthMethod,
-		"rid":       id.RequestID,
+		"blaxel-source":    "audit",
+		"blaxel-sub-id":     id.UserID,
+		"blaxel-sub-type":   id.SubjectType,
+		"blaxel-auth-method": id.AuthMethod,
+		"blaxel-rid":       id.RequestID,
 	}
 }
 
@@ -103,16 +103,16 @@ func buildMessage(id Identity, action string, extra logrus.Fields) string {
 	parts := []string{newlineReplacer.Replace(action)}
 
 	if id.UserID != "" {
-		parts = append(parts, fmt.Sprintf("subId=%s", newlineReplacer.Replace(id.UserID)))
+		parts = append(parts, fmt.Sprintf("blaxel-sub-id=%s", newlineReplacer.Replace(id.UserID)))
 	}
 	if id.SubjectType != "" {
-		parts = append(parts, fmt.Sprintf("subType=%s", newlineReplacer.Replace(id.SubjectType)))
+		parts = append(parts, fmt.Sprintf("blaxel-sub-type=%s", newlineReplacer.Replace(id.SubjectType)))
 	}
 	if id.AuthMethod != "" {
-		parts = append(parts, fmt.Sprintf("authMethod=%s", newlineReplacer.Replace(id.AuthMethod)))
+		parts = append(parts, fmt.Sprintf("blaxel-auth-method=%s", newlineReplacer.Replace(id.AuthMethod)))
 	}
 	if id.RequestID != "" {
-		parts = append(parts, fmt.Sprintf("rid=%s", newlineReplacer.Replace(id.RequestID)))
+		parts = append(parts, fmt.Sprintf("blaxel-rid=%s", newlineReplacer.Replace(id.RequestID)))
 	}
 
 	// Sort extra keys for deterministic output.
@@ -135,7 +135,7 @@ func buildMessage(id Identity, action string, extra logrus.Fields) string {
 func LogEvent(c *gin.Context, action string, extra logrus.Fields) {
 	id := GetIdentity(c)
 	fields := id.baseFields()
-	fields["action"] = action
+	fields["blaxel-action"] = action
 	for k, v := range extra {
 		fields[k] = v
 	}
@@ -147,7 +147,7 @@ func LogEvent(c *gin.Context, action string, extra logrus.Fields) {
 // WebSocket disconnections where the original context may be done.
 func LogEventDirect(id Identity, action string, extra logrus.Fields) {
 	fields := id.baseFields()
-	fields["action"] = action
+	fields["blaxel-action"] = action
 	for k, v := range extra {
 		fields[k] = v
 	}

@@ -477,10 +477,10 @@ func (pm *ProcessManager) readAndBroadcast(file *os.File, buf []byte, proc *Proc
 		// Uses structured log attributes so the telemetry collector can
 		// distinguish process logs from access logs.
 		logEntry := logrus.WithFields(logrus.Fields{
-			"source":      "process",
-			"processName": proc.Name,
-			"processPid":  proc.PID,
-			"stream":      streamType,
+			"blaxel-source":       "process",
+			"blaxel-process-name": proc.Name,
+			"blaxel-process-pid":  proc.PID,
+			"blaxel-stream":       streamType,
 		})
 		// Log each line separately for clean telemetry ingestion
 		logLines := strings.SplitAfter(string(data), "\n")

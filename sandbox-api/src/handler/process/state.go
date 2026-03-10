@@ -115,7 +115,7 @@ func (pm *ProcessManager) SaveState() error {
 			"pid":        proc.PID,
 			"name":       proc.Name,
 			"command":    proc.Command,
-			"processPid": proc.ProcessPid,
+			"blaxel-process-pid": proc.ProcessPid,
 			"status":     proc.Status,
 		}).Info("SaveState: saving process")
 	}
@@ -196,7 +196,7 @@ func (pm *ProcessManager) LoadState() error {
 			"pid":        procState.PID,
 			"name":       procState.Name,
 			"command":    procState.Command,
-			"processPid": procState.ProcessPid,
+			"blaxel-process-pid": procState.ProcessPid,
 			"status":     procState.Status,
 			"isRunning":  isRunning,
 		}).Info("LoadState: processing saved process")
@@ -267,7 +267,7 @@ func (pm *ProcessManager) LoadState() error {
 					"pid":        proc.PID,
 					"name":       proc.Name,
 					"command":    proc.Command,
-					"processPid": proc.ProcessPid,
+					"blaxel-process-pid": proc.ProcessPid,
 				}).Warn("Process command mismatch, marking as failed (PID may have been reused)")
 				proc.Status = StatusFailed
 				now := time.Now()
@@ -546,7 +546,7 @@ func (pm *ProcessManager) monitorAdoptedProcess(proc *ProcessInfo) {
 		"pid":        proc.PID,
 		"name":       proc.Name,
 		"command":    proc.Command,
-		"processPid": proc.ProcessPid,
+		"blaxel-process-pid": proc.ProcessPid,
 	}).Info("Starting monitoring for adopted process")
 
 	ticker := time.NewTicker(1 * time.Second)
@@ -563,7 +563,7 @@ func (pm *ProcessManager) monitorAdoptedProcess(proc *ProcessInfo) {
 				logrus.WithFields(logrus.Fields{
 					"pid":        proc.PID,
 					"name":       proc.Name,
-					"processPid": proc.ProcessPid,
+					"blaxel-process-pid": proc.ProcessPid,
 					"isRunning":  isRunning,
 					"checkCount": checkCount,
 				}).Debug("Monitoring adopted process")
@@ -600,7 +600,7 @@ func (pm *ProcessManager) monitorAdoptedProcess(proc *ProcessInfo) {
 					"pid":        proc.PID,
 					"name":       proc.Name,
 					"command":    proc.Command,
-					"processPid": proc.ProcessPid,
+					"blaxel-process-pid": proc.ProcessPid,
 					"checkCount": checkCount,
 				}).Info("Adopted process completed")
 

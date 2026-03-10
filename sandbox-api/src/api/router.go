@@ -359,7 +359,7 @@ func logrusMiddleware() gin.HandlerFunc {
 			return
 		}
 
-		entry := logrus.WithField("source", "access")
+		entry := logrus.WithField("blaxel-source", "access")
 
 		if len(c.Errors) > 0 {
 			entry.Error(c.Errors.ByType(gin.ErrorTypePrivate).String())
