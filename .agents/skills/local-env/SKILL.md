@@ -24,6 +24,11 @@ This installs:
 
 ## Start the Dev Server
 
+**Important:** Before starting, kill any existing process on port 8080:
+```bash
+lsof -ti :8080 | xargs kill -9 2>/dev/null || true
+```
+
 ```bash
 docker-compose up dev
 ```
@@ -61,6 +66,7 @@ curl http://localhost:8080/filesystem/~
 If you want to skip Docker and run air directly on the host:
 
 ```bash
+lsof -ti :8080 | xargs kill -9 2>/dev/null || true
 make api
 ```
 

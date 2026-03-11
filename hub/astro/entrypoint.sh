@@ -31,7 +31,7 @@ wait_for_port 8080
 
 # Execute curl command to start Astro dev server
 echo "Running Astro dev server..."
-curl http://localhost:8080/process \
+curl -s http://localhost:8080/process \
   -X POST \
   -H "Content-Type: application/json" \
   -d '{

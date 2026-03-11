@@ -4,17 +4,24 @@
 package audit
 
 import (
+	"fmt"
+	"sort"
+	"strings"
+
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
 )
 
 // Header names for identity context forwarded by the cluster-gateway.
+// X-Blaxel-* headers take priority over the generic X-Subject-* headers.
 const (
-	HeaderSubjectID   = "X-Blaxel-Subject-Id"
-	HeaderSubjectType = "X-Blaxel-Subject-Type"
-	HeaderAuthMethod  = "X-Blaxel-Auth-Method"
-	HeaderRequestID   = "X-Request-Id"
+	HeaderSubjectID        = "X-Blaxel-Subject-Id"
+	HeaderSubjectType      = "X-Blaxel-Subject-Type"
+	HeaderAuthMethod       = "X-Blaxel-Auth-Method"
+	HeaderRequestID        = "X-Request-Id"
+	HeaderFallbackSubjectID   = "X-Subject-Id"
+	HeaderFallbackSubjectType = "X-Subject-Type"
 )
 
 // Context keys used to store identity information in gin.Context.
@@ -25,13 +32,22 @@ const (
 	ContextKeyRequestID   = "audit_request_id"
 )
 
-// IdentityMiddleware extracts user identity and request ID from
-// X-Blaxel-* headers and stores them in the gin context for use
-// by audit logging throughout the request lifecycle.
+// headerWithFallback returns the value of the primary header, falling back
+// to the fallback header if the primary is empty.
+func headerWithFallback(c *gin.Context, primary, fallback string) string {
+	if v := c.GetHeader(primary); v != "" {
+		return v
+	}
+	return c.GetHeader(fallback)
+}
+
+// IdentityMiddleware extracts user identity and request ID from request headers
+// and stores them in the gin context for use by audit logging throughout the
+// request lifecycle. X-Blaxel-* headers take priority over X-Subject-* headers.
 func IdentityMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		userID := c.GetHeader(HeaderSubjectID)
-		subjectType := c.GetHeader(HeaderSubjectType)
+		userID := headerWithFallback(c, HeaderSubjectID, HeaderFallbackSubjectID)
+		subjectType := headerWithFallback(c, HeaderSubjectType, HeaderFallbackSubjectType)
 		authMethod := c.GetHeader(HeaderAuthMethod)
 		requestID := c.GetHeader(HeaderRequestID)
 
@@ -69,17 +85,65 @@ func GetIdentity(c *gin.Context) Identity {
 // baseFields returns the common logrus fields for all audit log entries.
 func (id Identity) baseFields() logrus.Fields {
 	return logrus.Fields{
-		"source":       "audit",
-		"user_id":      id.UserID,
-		"subject_type": id.SubjectType,
-		"auth_method":  id.AuthMethod,
-		"request_id":   id.RequestID,
+		"source":      "audit",
+		"sub-id":      id.UserID,
+		"sub-type":    id.SubjectType,
+		"auth-method": id.AuthMethod,
+		"rid":         id.RequestID,
 	}
+}
+
+// sanitize strips newlines and carriage returns to prevent log injection.
+var newlineReplacer = strings.NewReplacer("\n", "\\n", "\r", "\\r")
+
+// quoteValue wraps the value in double quotes if it contains spaces,
+// escaping any inner double quotes and backslashes.
+func quoteValue(v string) string {
+	if strings.Contains(v, " ") {
+		escaped := strings.ReplaceAll(v, `\`, `\\`)
+		escaped = strings.ReplaceAll(escaped, `"`, `\"`)
+		return `"` + escaped + `"`
+	}
+	return v
+}
+
+// buildMessage builds a descriptive audit message that includes the action,
+// identity fields, and extra fields so that the log msg is self-contained.
+// All values are sanitized to prevent log injection (newlines stripped).
+// Values containing spaces are wrapped in backticks for readability.
+func buildMessage(id Identity, action string, extra logrus.Fields) string {
+	parts := []string{fmt.Sprintf("type=%s", newlineReplacer.Replace(action))}
+
+	if id.UserID != "" {
+		parts = append(parts, fmt.Sprintf("sub-id=%s", quoteValue(newlineReplacer.Replace(id.UserID))))
+	}
+	if id.SubjectType != "" {
+		parts = append(parts, fmt.Sprintf("sub-type=%s", quoteValue(newlineReplacer.Replace(id.SubjectType))))
+	}
+	if id.AuthMethod != "" {
+		parts = append(parts, fmt.Sprintf("auth-method=%s", quoteValue(newlineReplacer.Replace(id.AuthMethod))))
+	}
+	if id.RequestID != "" {
+		parts = append(parts, fmt.Sprintf("rid=%s", quoteValue(newlineReplacer.Replace(id.RequestID))))
+	}
+
+	// Sort extra keys for deterministic output.
+	keys := make([]string, 0, len(extra))
+	for k := range extra {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		parts = append(parts, fmt.Sprintf("%s=%s", k, quoteValue(newlineReplacer.Replace(fmt.Sprintf("%v", extra[k])))))
+	}
+
+	return strings.Join(parts, " ")
 }
 
 // LogEvent emits an audit log entry for a sandbox access event.
 // The action describes what happened (e.g. "terminal_connect", "process_exec").
 // Extra fields are merged into the log entry for additional context.
+// The log message itself contains all fields for easy reading.
 func LogEvent(c *gin.Context, action string, extra logrus.Fields) {
 	id := GetIdentity(c)
 	fields := id.baseFields()
@@ -87,7 +151,7 @@ func LogEvent(c *gin.Context, action string, extra logrus.Fields) {
 	for k, v := range extra {
 		fields[k] = v
 	}
-	logrus.WithFields(fields).Info("audit event")
+	logrus.WithFields(fields).Info(buildMessage(id, action, extra))
 }
 
 // LogEventDirect emits an audit log entry using an Identity directly,
@@ -99,7 +163,7 @@ func LogEventDirect(id Identity, action string, extra logrus.Fields) {
 	for k, v := range extra {
 		fields[k] = v
 	}
-	logrus.WithFields(fields).Info("audit event")
+	logrus.WithFields(fields).Info(buildMessage(id, action, extra))
 }
 
 func getStringFromContext(c *gin.Context, key string) string {
