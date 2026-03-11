@@ -52,10 +52,11 @@ type ProcessRequest struct {
 	WorkingDir        string            `json:"workingDir" example:"/home/user"`
 	Env               map[string]string `json:"env" example:"{\"PORT\": \"3000\"}"`
 	WaitForCompletion bool              `json:"waitForCompletion" example:"false"`
-	Timeout           int               `json:"timeout" example:"30"`
+	Timeout           *int              `json:"timeout,omitempty" example:"30"`
 	WaitForPorts      []int             `json:"waitForPorts" example:"3000,8080"`
 	RestartOnFailure  bool              `json:"restartOnFailure" example:"true"`
 	MaxRestarts       int               `json:"maxRestarts" example:"3"`
+	KeepAlive         bool              `json:"keepAlive" example:"false"`
 } // @name ProcessRequest
 
 // ProcessResponse is the response body for a process
@@ -74,6 +75,7 @@ type ProcessResponse struct {
 	RestartOnFailure bool    `json:"restartOnFailure" example:"true"`
 	MaxRestarts      int     `json:"maxRestarts" example:"3"`
 	RestartCount     int     `json:"restartCount" example:"2"`
+	KeepAlive        bool    `json:"keepAlive" example:"false"`
 } // @name ProcessResponse
 
 type ProcessResponseWithLogs struct {
@@ -87,8 +89,8 @@ type ProcessKillRequest struct {
 } // @name ProcessKillRequest
 
 // ExecuteProcess executes a process
-func (h *ProcessHandler) ExecuteProcess(command string, workingDir string, name string, env map[string]string, waitForCompletion bool, timeout int, waitForPorts []int, restartOnFailure bool, maxRestarts int) (ProcessResponse, error) {
-	processInfo, err := h.processManager.ExecuteProcess(command, workingDir, name, env, waitForCompletion, timeout, waitForPorts, restartOnFailure, maxRestarts)
+func (h *ProcessHandler) ExecuteProcess(command string, workingDir string, name string, env map[string]string, waitForCompletion bool, timeout int, waitForPorts []int, restartOnFailure bool, maxRestarts int, keepAlive bool) (ProcessResponse, error) {
+	processInfo, err := h.processManager.ExecuteProcess(command, workingDir, name, env, waitForCompletion, timeout, waitForPorts, restartOnFailure, maxRestarts, keepAlive)
 
 	// If processInfo is nil (process failed to start), return empty response with error
 	if processInfo == nil {
@@ -117,6 +119,7 @@ func (h *ProcessHandler) ExecuteProcess(command string, workingDir string, name 
 		RestartOnFailure: processInfo.RestartOnFailure,
 		MaxRestarts:      processInfo.MaxRestarts,
 		RestartCount:     processInfo.RestartCount,
+		KeepAlive:        processInfo.KeepAlive,
 	}, err
 }
 
@@ -158,6 +161,7 @@ func (h *ProcessHandler) ListProcesses() []ProcessResponse {
 			RestartOnFailure: p.RestartOnFailure,
 			MaxRestarts:      p.MaxRestarts,
 			RestartCount:     p.RestartCount,
+			KeepAlive:        p.KeepAlive,
 		})
 	}
 	return result
@@ -202,6 +206,7 @@ func (h *ProcessHandler) GetProcess(identifier string) (ProcessResponse, error) 
 		RestartOnFailure: processInfo.RestartOnFailure,
 		MaxRestarts:      processInfo.MaxRestarts,
 		RestartCount:     processInfo.RestartCount,
+		KeepAlive:        processInfo.KeepAlive,
 	}, nil
 }
 
@@ -293,8 +298,18 @@ func (h *ProcessHandler) HandleExecuteCommand(c *gin.Context) {
 		"working-dir": req.WorkingDir,
 	})
 
+	// Timeout of 0 means infinite (no auto-kill)
+	// When keepAlive is true and timeout is not specified (nil) or negative, default to 600s
+	timeout := 0
+	if req.Timeout != nil {
+		timeout = *req.Timeout
+	}
+	if req.KeepAlive && (req.Timeout == nil || timeout < 0) {
+		timeout = 600 // Default 10 minutes
+	}
+
 	// Execute the process
-	processInfo, err := h.ExecuteProcess(req.Command, req.WorkingDir, req.Name, req.Env, req.WaitForCompletion, req.Timeout, req.WaitForPorts, req.RestartOnFailure, req.MaxRestarts)
+	processInfo, err := h.ExecuteProcess(req.Command, req.WorkingDir, req.Name, req.Env, req.WaitForCompletion, timeout, req.WaitForPorts, req.RestartOnFailure, req.MaxRestarts, req.KeepAlive)
 	if err != nil {
 		h.SendError(c, http.StatusUnprocessableEntity, err)
 		return
@@ -335,6 +350,16 @@ func (h *ProcessHandler) handleExecuteCommandStream(c *gin.Context) {
 		"working-dir": req.WorkingDir,
 	})
 
+	// Timeout of 0 means infinite (no auto-kill)
+	// When keepAlive is true and timeout is not specified (nil) or negative, default to 600s
+	timeout := 0
+	if req.Timeout != nil {
+		timeout = *req.Timeout
+	}
+	if req.KeepAlive && (req.Timeout == nil || timeout < 0) {
+		timeout = 600 // Default 10 minutes
+	}
+
 	// Set headers for streaming JSON events
 	c.Writer.Header().Set("Content-Type", "application/x-ndjson")
 	c.Writer.Header().Set("Cache-Control", "no-cache")
@@ -346,7 +371,7 @@ func (h *ProcessHandler) handleExecuteCommandStream(c *gin.Context) {
 	jw := &JSONStreamWriter{gin: c}
 
 	// Execute the process without waiting for completion (we'll handle waiting ourselves)
-	processInfo, err := h.ExecuteProcess(req.Command, req.WorkingDir, req.Name, req.Env, false, req.Timeout, req.WaitForPorts, req.RestartOnFailure, req.MaxRestarts)
+	processInfo, err := h.ExecuteProcess(req.Command, req.WorkingDir, req.Name, req.Env, false, timeout, req.WaitForPorts, req.RestartOnFailure, req.MaxRestarts, req.KeepAlive)
 	if err != nil {
 		jw.WriteEvent("error", err.Error())
 		return

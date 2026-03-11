@@ -2185,6 +2185,11 @@ const docTemplate = `{
                         "{\"PORT\"": " \"3000\"}"
                     }
                 },
+                "keepAlive": {
+                    "description": "Disable scale-to-zero while process runs. Default timeout is 600s (10 minutes). Set timeout to 0 for infinite.",
+                    "type": "boolean",
+                    "example": false
+                },
                 "maxRestarts": {
                     "type": "integer",
                     "example": 3
@@ -2198,6 +2203,7 @@ const docTemplate = `{
                     "example": true
                 },
                 "timeout": {
+                    "description": "Timeout in seconds. When keepAlive is true, defaults to 600s (10 minutes). Set to 0 for infinite (no auto-kill).",
                     "type": "integer",
                     "example": 30
                 },
@@ -2248,6 +2254,11 @@ const docTemplate = `{
                 "exitCode": {
                     "type": "integer",
                     "example": 0
+                },
+                "keepAlive": {
+                    "description": "Whether scale-to-zero is disabled for this process",
+                    "type": "boolean",
+                    "example": false
                 },
                 "logs": {
                     "type": "string",

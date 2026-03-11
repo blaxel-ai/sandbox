@@ -15,6 +15,7 @@ import (
 	"github.com/blaxel-ai/sandbox-api/docs" // swagger generated docs
 	"github.com/blaxel-ai/sandbox-api/src/api"
 	"github.com/blaxel-ai/sandbox-api/src/handler/process"
+	"github.com/blaxel-ai/sandbox-api/src/lib/blaxel"
 	"github.com/blaxel-ai/sandbox-api/src/lib/networking"
 	"github.com/blaxel-ai/sandbox-api/src/mcp"
 	"github.com/gin-gonic/gin"
@@ -43,6 +44,13 @@ func main() {
 	// (no outbound internet connectivity), but inbound connections will still work.
 	if err := networking.StartWireGuardFromEnv(); err != nil {
 		logrus.WithError(err).Warn("WireGuard initialization failed - the sandbox will NOT have outbound internet connectivity (no egress). Inbound connections to the sandbox will still work. You can check the tunnel status via the /network/tunnel endpoints.")
+	}
+
+	// Reset scale-to-zero counter on startup (crash recovery)
+	// If sandbox-api crashed while keepAlive processes were running,
+	// the counter would be left in a bad state - this resets it to 0
+	if err := blaxel.ScaleReset(); err != nil {
+		logrus.Warnf("Failed to reset scale-to-zero counter on startup: %v", err)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
