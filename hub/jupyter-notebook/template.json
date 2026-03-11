@@ -1,7 +1,7 @@
 {
   "name": "jupyter-notebook",
   "displayName": "Jupyter Notebook",
-  "categories": ["data-science", "python"],
+  "categories": ["data-science"],
   "description": "Interactive Python development environment with Jupyter Kernel Gateway for notebook execution",
   "longDescription": "Jupyter Notebook provides an interactive computing environment where you can create and share documents containing live code, equations, visualizations, and narrative text. This sandbox includes Jupyter Kernel Gateway, enabling remote kernel execution and RESTful access to Jupyter kernels.",
   "url": "https://jupyter.org",
