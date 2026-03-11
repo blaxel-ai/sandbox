@@ -52,7 +52,7 @@ type ProcessRequest struct {
 	WorkingDir        string            `json:"workingDir" example:"/home/user"`
 	Env               map[string]string `json:"env" example:"{\"PORT\": \"3000\"}"`
 	WaitForCompletion bool              `json:"waitForCompletion" example:"false"`
-	Timeout           int               `json:"timeout" example:"30"`
+	Timeout           *int              `json:"timeout,omitempty" example:"30"`
 	WaitForPorts      []int             `json:"waitForPorts" example:"3000,8080"`
 	RestartOnFailure  bool              `json:"restartOnFailure" example:"true"`
 	MaxRestarts       int               `json:"maxRestarts" example:"3"`
@@ -298,10 +298,13 @@ func (h *ProcessHandler) HandleExecuteCommand(c *gin.Context) {
 		"working-dir": req.WorkingDir,
 	})
 
-	// Set default timeout for keepAlive if not specified (default: 600s = 10 minutes)
 	// Timeout of 0 means infinite (no auto-kill)
-	timeout := req.Timeout
-	if req.KeepAlive && timeout < 0 {
+	// When keepAlive is true and timeout is not specified (nil) or negative, default to 600s
+	timeout := 0
+	if req.Timeout != nil {
+		timeout = *req.Timeout
+	}
+	if req.KeepAlive && (req.Timeout == nil || timeout < 0) {
 		timeout = 600 // Default 10 minutes
 	}
 
@@ -347,10 +350,13 @@ func (h *ProcessHandler) handleExecuteCommandStream(c *gin.Context) {
 		"working-dir": req.WorkingDir,
 	})
 
-	// Set default timeout for keepAlive if not specified (default: 600s = 10 minutes)
 	// Timeout of 0 means infinite (no auto-kill)
-	timeout := req.Timeout
-	if req.KeepAlive && timeout < 0 {
+	// When keepAlive is true and timeout is not specified (nil) or negative, default to 600s
+	timeout := 0
+	if req.Timeout != nil {
+		timeout = *req.Timeout
+	}
+	if req.KeepAlive && (req.Timeout == nil || timeout < 0) {
 		timeout = 600 // Default 10 minutes
 	}
 

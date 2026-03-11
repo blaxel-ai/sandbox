@@ -96,6 +96,7 @@ type ProcessInfo struct {
 	logWriters       []io.Writer
 	logLock          sync.RWMutex
 	stopTimeout      chan struct{} // Channel to signal timeout goroutine to stop
+	stopTimeoutOnce  sync.Once    // Protects stopTimeout channel from double-close
 }
 
 // ProcessLogDir is the directory where process logs are stored
@@ -370,12 +371,7 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 
 		// Signal the timeout goroutine to stop (if any)
 		if process.stopTimeout != nil {
-			select {
-			case <-process.stopTimeout:
-				// Already closed
-			default:
-				close(process.stopTimeout)
-			}
+			process.stopTimeoutOnce.Do(func() { close(process.stopTimeout) })
 		}
 
 		// Check if we should restart on failure
@@ -642,6 +638,7 @@ func (pm *ProcessManager) restartProcess(oldProcess *ProcessInfo, callback func(
 	oldProcess.CompletedAt = nil
 	oldProcess.ExitCode = 0
 	oldProcess.stopTimeout = make(chan struct{})
+	oldProcess.stopTimeoutOnce = sync.Once{}
 	oldProcess.Done = make(chan struct{})
 	oldProcess.tailDone = make(chan struct{})
 
@@ -728,12 +725,7 @@ func (pm *ProcessManager) restartProcess(oldProcess *ProcessInfo, callback func(
 
 		// Signal the timeout goroutine to stop (if any)
 		if oldProcess.stopTimeout != nil {
-			select {
-			case <-oldProcess.stopTimeout:
-				// Already closed
-			default:
-				close(oldProcess.stopTimeout)
-			}
+			oldProcess.stopTimeoutOnce.Do(func() { close(oldProcess.stopTimeout) })
 		}
 
 		// Check if we should restart again on failure
@@ -1000,12 +992,7 @@ func (pm *ProcessManager) KillProcess(identifier string) error {
 	if process.KeepAlive {
 		// Signal the timeout goroutine to stop (if any)
 		if process.stopTimeout != nil {
-			select {
-			case <-process.stopTimeout:
-				// Already closed
-			default:
-				close(process.stopTimeout)
-			}
+			process.stopTimeoutOnce.Do(func() { close(process.stopTimeout) })
 		}
 
 		// Re-enable scale-to-zero
