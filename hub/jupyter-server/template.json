@@ -1,7 +1,7 @@
 {
   "name": "jupyter-server",
   "displayName": "Jupyter Server",
-  "categories": ["data-science", "python"],
+  "categories": ["data-science"],
   "description": "Interactive Python development environment with Jupyter Server for notebook execution",
   "longDescription": "Jupyter Notebook provides an interactive computing environment where you can create and share documents containing live code, equations, visualizations, and narrative text. This sandbox includes Jupyter Server, enabling remote execution and RESTful access to Jupyter server.",
   "url": "https://jupyter.org",

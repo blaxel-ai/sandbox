@@ -10,10 +10,12 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/sirupsen/logrus"
 
 	"github.com/blaxel-ai/sandbox-api/src/handler/constants"
 	"github.com/blaxel-ai/sandbox-api/src/handler/process"
 	"github.com/blaxel-ai/sandbox-api/src/lib"
+	"github.com/blaxel-ai/sandbox-api/src/lib/audit"
 )
 
 var (
@@ -286,6 +288,11 @@ func (h *ProcessHandler) HandleExecuteCommand(c *gin.Context) {
 		}
 	}
 
+	audit.LogEvent(c, "process_exec", logrus.Fields{
+		"command":     req.Command,
+		"working-dir": req.WorkingDir,
+	})
+
 	// Execute the process
 	processInfo, err := h.ExecuteProcess(req.Command, req.WorkingDir, req.Name, req.Env, req.WaitForCompletion, req.Timeout, req.WaitForPorts, req.RestartOnFailure, req.MaxRestarts)
 	if err != nil {
@@ -322,6 +329,11 @@ func (h *ProcessHandler) handleExecuteCommandStream(c *gin.Context) {
 			return
 		}
 	}
+
+	audit.LogEvent(c, "process_exec_stream", logrus.Fields{
+		"command":     req.Command,
+		"working-dir": req.WorkingDir,
+	})
 
 	// Set headers for streaming JSON events
 	c.Writer.Header().Set("Content-Type", "application/x-ndjson")
@@ -436,6 +448,8 @@ func (h *ProcessHandler) HandleGetProcessLogs(c *gin.Context) {
 		return
 	}
 
+	audit.LogEvent(c, "process_logs_access", logrus.Fields{})
+
 	logs, err := h.GetProcessOutput(identifier)
 	if err != nil {
 		h.SendError(c, http.StatusNotFound, err)
@@ -462,6 +476,8 @@ func (h *ProcessHandler) HandleGetProcessLogsStream(c *gin.Context) {
 		h.SendError(c, http.StatusBadRequest, err)
 		return
 	}
+
+	audit.LogEvent(c, "process_logs_stream", logrus.Fields{})
 
 	// Set headers for streaming
 	c.Writer.Header().Set("Content-Type", "text/plain; charset=utf-8")
@@ -506,10 +522,9 @@ func (h *ProcessHandler) HandleGetProcessLogsStream(c *gin.Context) {
 	// Detach the writer
 	h.RemoveLogWriter(identifier, rw)
 
-	// Send final content from combined log file (which has prefixed, ordered content)
-	// This ensures any content written at the very end (like stderr) is captured
-	// The combined log file preserves the interleaved order of stdout/stderr
-	if proc.LogFile != "" {
+	// For very fast commands, streaming might not have sent anything.
+	// Only re-send from the log file if nothing was streamed, to avoid duplicating output.
+	if !rw.HasSentData() && proc.LogFile != "" {
 		if content, err := os.ReadFile(proc.LogFile); err == nil && len(content) > 0 {
 			rw.Write(content)
 		}
@@ -534,6 +549,8 @@ func (h *ProcessHandler) HandleStopProcess(c *gin.Context) {
 		h.SendError(c, http.StatusBadRequest, err)
 		return
 	}
+
+	audit.LogEvent(c, "process_stop", logrus.Fields{})
 
 	err = h.StopProcess(identifier)
 	if err != nil {
@@ -562,6 +579,8 @@ func (h *ProcessHandler) HandleKillProcess(c *gin.Context) {
 		h.SendError(c, http.StatusBadRequest, err)
 		return
 	}
+
+	audit.LogEvent(c, "process_kill", logrus.Fields{})
 
 	err = h.KillProcess(identifier)
 	if err != nil {

@@ -3,6 +3,7 @@ package handler
 import (
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/gin-gonic/gin"
@@ -10,6 +11,7 @@ import (
 	"github.com/sirupsen/logrus"
 
 	"github.com/blaxel-ai/sandbox-api/src/handler/terminal"
+	"github.com/blaxel-ai/sandbox-api/src/lib/audit"
 )
 
 var (
@@ -53,6 +55,92 @@ type TerminalMessage struct {
 	Rows uint16 `json:"rows,omitempty"`
 }
 
+// terminalEscapeState tracks which ANSI/VT escape sequence the parser is inside.
+type terminalEscapeState int
+
+const (
+	termEscNone   terminalEscapeState = iota // normal input
+	termEscStart                             // saw ESC, type not yet known
+	termEscCSI                               // inside CSI sequence (ESC [)
+	termEscOSC                               // inside OSC sequence (ESC ])
+	termEscOSCST                             // saw ESC inside OSC (possible ST = ESC \)
+)
+
+// terminalCommandBuffer reconstructs typed commands from raw PTY input bytes.
+// It uses a state machine to correctly skip CSI (ESC [), OSC (ESC ]), and
+// two-character escape sequences so that no payload bytes leak into the
+// reconstructed command string.
+type terminalCommandBuffer struct {
+	buf   strings.Builder
+	state terminalEscapeState
+}
+
+// feed processes raw PTY input and returns any completed commands (submitted via Enter).
+func (cb *terminalCommandBuffer) feed(data []byte) []string {
+	var commands []string
+	for _, b := range data {
+		switch cb.state {
+		case termEscNone:
+			switch b {
+			case 0x1b: // ESC — start of escape sequence
+				cb.state = termEscStart
+			case 0x7f, 0x08: // DEL / Backspace
+				s := cb.buf.String()
+				if len(s) > 0 {
+					cb.buf.Reset()
+					cb.buf.WriteString(s[:len(s)-1])
+				}
+			case '\r', '\n': // Enter — flush current command
+				if cmd := strings.TrimSpace(cb.buf.String()); cmd != "" {
+					commands = append(commands, cmd)
+				}
+				cb.buf.Reset()
+			default:
+				if b >= 0x20 { // printable ASCII / UTF-8 continuation bytes
+					cb.buf.WriteByte(b)
+				}
+			}
+		case termEscStart:
+			switch b {
+			case '[':
+				cb.state = termEscCSI // CSI sequence
+			case ']':
+				cb.state = termEscOSC // OSC sequence
+			default:
+				cb.state = termEscNone // two-char escape sequence — done
+			}
+		case termEscCSI:
+			// CSI final byte is in range 0x40–0x7E (@–~)
+			if b >= 0x40 && b <= 0x7e {
+				cb.state = termEscNone
+			}
+			// intermediate/parameter bytes: keep consuming
+		case termEscOSC:
+			switch b {
+			case 0x07: // BEL terminates OSC
+				cb.state = termEscNone
+			case 0x1b: // possible ST (ESC \)
+				cb.state = termEscOSCST
+			}
+			// other bytes are OSC payload — consume without buffering
+		case termEscOSCST:
+			// ESC \ = String Terminator, ends the OSC sequence
+			// Any other byte is a new escape sequence intro
+			switch b {
+			case '\\':
+				cb.state = termEscNone
+			case '[':
+				cb.state = termEscCSI
+			case ']':
+				cb.state = termEscOSC
+			default:
+				cb.state = termEscNone
+			}
+		}
+	}
+	return commands
+}
+
 func (h *TerminalHandler) HandleTerminalPage(c *gin.Context) {
 	c.Header("Content-Type", "text/html; charset=utf-8")
 	c.String(http.StatusOK, terminal.GetTerminalHTML())
@@ -75,6 +163,15 @@ func (h *TerminalHandler) HandleTerminalWS(c *gin.Context) {
 	shell := c.Query("shell")
 	workingDir := c.Query("workingDir")
 	sessionId := c.DefaultQuery("sessionId", "default")
+
+	// Capture identity before WebSocket upgrade (headers available only on HTTP request)
+	id := audit.GetIdentity(c)
+
+	audit.LogEvent(c, "terminal_connect", logrus.Fields{
+		"session-id":  sessionId,
+		"shell":       shell,
+		"working-dir": workingDir,
+	})
 
 	// Upgrade HTTP connection to WebSocket
 	conn, err := h.upgrader.Upgrade(c.Writer, c.Request, nil)
@@ -165,11 +262,17 @@ func (h *TerminalHandler) HandleTerminalWS(c *gin.Context) {
 	// close connection -> unsubscribe.  Using a single defer guarantees
 	// this ordering regardless of which return path is taken.
 	defer func() {
+		audit.LogEventDirect(id, "terminal_disconnect", logrus.Fields{
+			"session-id": sessionId,
+		})
 		closeDone()
 		wg.Wait()
 		conn.Close()
 		ms.Unsubscribe(sub)
 	}()
+
+	// cmdBuf tracks the line currently being typed to reconstruct commands for audit logs.
+	var cmdBuf terminalCommandBuffer
 
 	// Read from WebSocket and write to PTY
 	for {
@@ -192,7 +295,14 @@ func (h *TerminalHandler) HandleTerminalWS(c *gin.Context) {
 
 		switch msg.Type {
 		case "input":
-			if _, err := ms.Write([]byte(msg.Data)); err != nil {
+			data := []byte(msg.Data)
+			for _, cmd := range cmdBuf.feed(data) {
+				audit.LogEventDirect(id, "terminal_command", logrus.Fields{
+					"session-id": sessionId,
+					"command":   cmd,
+				})
+			}
+			if _, err := ms.Write(data); err != nil {
 				logrus.Warnf("Failed to write to PTY: %v", err)
 			}
 		case "resize":
