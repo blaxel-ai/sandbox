@@ -293,17 +293,17 @@ func (h *ProcessHandler) HandleExecuteCommand(c *gin.Context) {
 		}
 	}
 
+	audit.LogEvent(c, "process_exec", logrus.Fields{
+		"command":     req.Command,
+		"working-dir": req.WorkingDir,
+	})
+
 	// Set default timeout for keepAlive if not specified (default: 600s = 10 minutes)
 	// Timeout of 0 means infinite (no auto-kill)
 	timeout := req.Timeout
 	if req.KeepAlive && timeout < 0 {
 		timeout = 600 // Default 10 minutes
 	}
-
-	audit.LogEvent(c, "process_exec", logrus.Fields{
-		"command":     req.Command,
-		"working-dir": req.WorkingDir,
-	})
 
 	// Execute the process
 	processInfo, err := h.ExecuteProcess(req.Command, req.WorkingDir, req.Name, req.Env, req.WaitForCompletion, timeout, req.WaitForPorts, req.RestartOnFailure, req.MaxRestarts, req.KeepAlive)
@@ -342,17 +342,17 @@ func (h *ProcessHandler) handleExecuteCommandStream(c *gin.Context) {
 		}
 	}
 
+	audit.LogEvent(c, "process_exec_stream", logrus.Fields{
+		"command":     req.Command,
+		"working-dir": req.WorkingDir,
+	})
+
 	// Set default timeout for keepAlive if not specified (default: 600s = 10 minutes)
 	// Timeout of 0 means infinite (no auto-kill)
 	timeout := req.Timeout
 	if req.KeepAlive && timeout < 0 {
 		timeout = 600 // Default 10 minutes
 	}
-
-	audit.LogEvent(c, "process_exec_stream", logrus.Fields{
-		"command":     req.Command,
-		"working-dir": req.WorkingDir,
-	})
 
 	// Set headers for streaming JSON events
 	c.Writer.Header().Set("Content-Type", "application/x-ndjson")
