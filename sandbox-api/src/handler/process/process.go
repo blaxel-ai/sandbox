@@ -96,7 +96,7 @@ type ProcessInfo struct {
 	logWriters       []io.Writer
 	logLock          sync.RWMutex
 	stopTimeout      chan struct{} // Channel to signal timeout goroutine to stop
-	stopTimeoutOnce  sync.Once    // Protects stopTimeout channel from double-close
+	stopTimeoutOnce  sync.Once     // Protects stopTimeout channel from double-close
 }
 
 // ProcessLogDir is the directory where process logs are stored
@@ -423,7 +423,10 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 				process.logs.WriteString(errorMsg)
 
 				// If keepAlive was enabled, re-enable scale-to-zero now that process truly ended
-				if process.KeepAlive {
+				pm.mu.RLock()
+				stillKeepAlive := process.KeepAlive
+				pm.mu.RUnlock()
+				if stillKeepAlive {
 					keepAliveLog := logrus.WithFields(logrus.Fields{
 						"process_pid":  process.PID,
 						"process_name": process.Name,
@@ -450,7 +453,10 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 			// If restart succeeds, the callback will be called when that process completes
 		} else {
 			// If keepAlive was enabled, re-enable scale-to-zero now that process ended
-			if process.KeepAlive {
+			pm.mu.RLock()
+			stillKeepAlive := process.KeepAlive
+			pm.mu.RUnlock()
+			if stillKeepAlive {
 				keepAliveLog := logrus.WithFields(logrus.Fields{
 					"process_pid":  process.PID,
 					"process_name": process.Name,
@@ -679,16 +685,20 @@ func (pm *ProcessManager) restartProcess(oldProcess *ProcessInfo, callback func(
 	// Start file tailer for real-time log streaming
 	go pm.tailLogFiles(oldProcess)
 	// If keepAlive is enabled, start timeout goroutine for the restarted process
-	if oldProcess.KeepAlive && oldProcess.Timeout > 0 {
+	pm.mu.RLock()
+	keepAlive := oldProcess.KeepAlive
+	timeout := oldProcess.Timeout
+	pm.mu.RUnlock()
+	if keepAlive && timeout > 0 {
 		go func() {
-			timer := time.NewTimer(time.Duration(oldProcess.Timeout) * time.Second)
+			timer := time.NewTimer(time.Duration(timeout) * time.Second)
 			defer timer.Stop()
 			select {
 			case <-timer.C:
 				logrus.WithFields(logrus.Fields{
 					"process_pid":  oldProcess.PID,
 					"process_name": oldProcess.Name,
-					"timeout":      oldProcess.Timeout,
+					"timeout":      timeout,
 				}).Info("[KeepAlive] Timeout expired, killing process")
 				_ = pm.KillProcess(oldProcess.PID)
 			case <-oldProcess.stopTimeout:
@@ -787,7 +797,10 @@ func (pm *ProcessManager) restartProcess(oldProcess *ProcessInfo, callback func(
 				oldProcess.logs.WriteString(errorMsg)
 
 				// If keepAlive was enabled, re-enable scale-to-zero now that process truly ended
-				if oldProcess.KeepAlive {
+				pm.mu.RLock()
+				stillKeepAlive := oldProcess.KeepAlive
+				pm.mu.RUnlock()
+				if stillKeepAlive {
 					keepAliveLog := logrus.WithFields(logrus.Fields{
 						"process_pid":  oldProcess.PID,
 						"process_name": oldProcess.Name,
@@ -814,7 +827,10 @@ func (pm *ProcessManager) restartProcess(oldProcess *ProcessInfo, callback func(
 			// If restart succeeds, the callback will be called when that process completes
 		} else {
 			// If keepAlive was enabled, re-enable scale-to-zero now that process ended
-			if oldProcess.KeepAlive {
+			pm.mu.RLock()
+			stillKeepAlive := oldProcess.KeepAlive
+			pm.mu.RUnlock()
+			if stillKeepAlive {
 				keepAliveLog := logrus.WithFields(logrus.Fields{
 					"process_pid":  oldProcess.PID,
 					"process_name": oldProcess.Name,
@@ -951,6 +967,14 @@ func (pm *ProcessManager) StopProcess(identifier string) error {
 	// Add termination message to output buffers
 	process.stdout.Write(terminationMsg)
 
+	// Clear KeepAlive BEFORE the signal under lock: the completion goroutine
+	// reads KeepAlive after cmd.Wait() returns, so we must ensure it sees false
+	// to prevent a double ScaleEnable() call.
+	pm.mu.Lock()
+	wasKeepAlive := process.KeepAlive
+	process.KeepAlive = false
+	pm.mu.Unlock()
+
 	// Try to gracefully terminate the entire process group first
 	pid := process.ProcessPid
 
@@ -961,12 +985,32 @@ func (pm *ProcessManager) StopProcess(identifier string) error {
 		err = syscall.Kill(pid, syscall.SIGTERM)
 		if err != nil {
 			if err.Error() != "os: process already finished" {
+				pm.mu.Lock()
+				process.KeepAlive = wasKeepAlive
+				pm.mu.Unlock()
 				return fmt.Errorf("failed to send SIGTERM to process with Identifier %s: %w", identifier, err)
 			}
 		}
 	}
 
 	process.Status = StatusStopped
+
+	if wasKeepAlive {
+		if process.stopTimeout != nil {
+			process.stopTimeoutOnce.Do(func() { close(process.stopTimeout) })
+		}
+
+		keepAliveLog := logrus.WithFields(logrus.Fields{
+			"process_pid":  process.PID,
+			"process_name": process.Name,
+			"status":       "stopped",
+		})
+		if err := blaxel.ScaleEnable(); err != nil {
+			keepAliveLog.WithError(err).Warn("[KeepAlive] Failed to enable scale-to-zero after stopping process")
+		}
+		keepAliveLog.Info("[KeepAlive] Stopped process")
+	}
+
 	return nil
 }
 
@@ -992,12 +1036,14 @@ func (pm *ProcessManager) KillProcess(identifier string) error {
 	// Add termination message to output buffers
 	process.stdout.Write(terminationMsg)
 
-	// Clear KeepAlive BEFORE the kill: the completion goroutine is blocked on
-	// cmd.Wait() until the process dies, so it will observe KeepAlive==false
-	// when it resumes. This prevents a double ScaleEnable() call that would
-	// make the counter go negative and permanently disable auto-hibernation.
+	// Clear KeepAlive BEFORE the kill under lock: the completion goroutine
+	// reads KeepAlive under the same lock after cmd.Wait() returns, so it will
+	// observe KeepAlive==false. This prevents a double ScaleEnable() call that
+	// would make the counter go negative and permanently disable auto-hibernation.
+	pm.mu.Lock()
 	wasKeepAlive := process.KeepAlive
 	process.KeepAlive = false
+	pm.mu.Unlock()
 
 	// Kill the entire process group to ensure all child processes are terminated
 	// This is crucial for processes like Next.js dev servers that spawn child processes
@@ -1011,7 +1057,9 @@ func (pm *ProcessManager) KillProcess(identifier string) error {
 		err = syscall.Kill(pid, syscall.SIGKILL)
 		if err != nil {
 			if err.Error() != "os: process already finished" {
+				pm.mu.Lock()
 				process.KeepAlive = wasKeepAlive
+				pm.mu.Unlock()
 				return fmt.Errorf("failed to kill process with Identifier %s: %w", identifier, err)
 			}
 		}
