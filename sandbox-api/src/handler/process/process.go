@@ -685,16 +685,20 @@ func (pm *ProcessManager) restartProcess(oldProcess *ProcessInfo, callback func(
 	// Start file tailer for real-time log streaming
 	go pm.tailLogFiles(oldProcess)
 	// If keepAlive is enabled, start timeout goroutine for the restarted process
-	if oldProcess.KeepAlive && oldProcess.Timeout > 0 {
+	pm.mu.RLock()
+	keepAlive := oldProcess.KeepAlive
+	timeout := oldProcess.Timeout
+	pm.mu.RUnlock()
+	if keepAlive && timeout > 0 {
 		go func() {
-			timer := time.NewTimer(time.Duration(oldProcess.Timeout) * time.Second)
+			timer := time.NewTimer(time.Duration(timeout) * time.Second)
 			defer timer.Stop()
 			select {
 			case <-timer.C:
 				logrus.WithFields(logrus.Fields{
 					"process_pid":  oldProcess.PID,
 					"process_name": oldProcess.Name,
-					"timeout":      oldProcess.Timeout,
+					"timeout":      timeout,
 				}).Info("[KeepAlive] Timeout expired, killing process")
 				_ = pm.KillProcess(oldProcess.PID)
 			case <-oldProcess.stopTimeout:
