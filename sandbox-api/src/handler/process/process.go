@@ -48,12 +48,20 @@ func writeToLogWriter(w io.Writer, eventType string, data []byte) {
 // sanitizeLogValue removes newlines and control characters from user-provided
 // strings to prevent log injection attacks (CWE-117).
 func sanitizeLogValue(s string) string {
-	r := strings.NewReplacer(
-		"\n", "\\n",
-		"\r", "\\r",
-		"\t", "\\t",
-	)
-	return r.Replace(s)
+	clean := make([]byte, 0, len(s))
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c == '\n' || c == '\r' {
+			// Skip newlines to prevent log injection
+			continue
+		}
+		if c < 0x20 {
+			// Skip other control characters
+			continue
+		}
+		clean = append(clean, c)
+	}
+	return string(clean)
 }
 
 // Define process status constants
