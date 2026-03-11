@@ -2,8 +2,7 @@
   "name": "vite-react-ts",
   "displayName": "Vite React TS",
   "categories": [
-    "web",
-    "react"
+    "web"
   ],
   "description": "A simple Vite app",
   "longDescription": "The Vite app is a simple Vite app with React and TypeScript. It's ideal for building a simple web app.",

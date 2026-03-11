@@ -17,11 +17,13 @@ import (
 
 	_ "github.com/blaxel-ai/sandbox-api/docs" // Import generated docs
 	"github.com/blaxel-ai/sandbox-api/src/handler"
+	"github.com/blaxel-ai/sandbox-api/src/lib/audit"
 )
 
 // SetupRouter configures all the routes for the Sandbox API
 // If disableRequestLogging is true, the logrus middleware will be skipped
-func SetupRouter(disableRequestLogging bool) *gin.Engine {
+// If enableProcessingTime is true, the Server-Timing header middleware will be added
+func SetupRouter(disableRequestLogging bool, enableProcessingTime bool) *gin.Engine {
 	// Initialize the router
 	r := gin.New()
 
@@ -31,8 +33,16 @@ func SetupRouter(disableRequestLogging bool) *gin.Engine {
 	// Add middleware for CORS
 	r.Use(corsMiddleware())
 
+	// Add middleware to extract user identity from X-Blaxel-* headers
+	r.Use(audit.IdentityMiddleware())
+
 	// Add middleware to prevent caching
 	r.Use(noCacheMiddleware())
+
+	// Add processing time middleware if enabled
+	if enableProcessingTime {
+		r.Use(processingTimeMiddleware())
+	}
 
 	// Add logrus middleware unless disabled
 	if !disableRequestLogging {
@@ -53,6 +63,7 @@ func SetupRouter(disableRequestLogging bool) *gin.Engine {
 	codegenHandler := handler.NewCodegenHandler(fsHandler)
 	systemHandler := handler.NewSystemHandler()
 	gitHandler := handler.NewGitHandler(fsHandler)
+	driveHandler := handler.NewDriveHandler()
 
 	// Check if terminal is disabled via environment variable
 	disableTerminal := os.Getenv("DISABLE_TERMINAL") == "true" || os.Getenv("DISABLE_TERMINAL") == "1"
@@ -155,6 +166,10 @@ func SetupRouter(disableRequestLogging bool) *gin.Engine {
 	r.POST("/network/process/:pid/monitor", networkHandler.HandleMonitorPorts)
 	r.DELETE("/network/process/:pid/monitor", networkHandler.HandleStopMonitoringPorts)
 
+	// Tunnel routes (write-only, no GET to prevent config/key leakage)
+	r.PUT("/network/tunnel/config", networkHandler.HandleUpdateTunnelConfig)
+	r.DELETE("/network/tunnel", networkHandler.HandleDisconnectTunnel)
+
 	// Codegen routes
 	r.PUT("/codegen/fastapply/*path", codegenHandler.HandleFastApply)
 	r.GET("/codegen/reranking/*path", codegenHandler.HandleReranking)
@@ -192,6 +207,24 @@ func SetupRouter(disableRequestLogging bool) *gin.Engine {
 	r.HEAD("/upgrade", head)
 	r.GET("/health", systemHandler.HandleHealth)
 	r.HEAD("/health", head)
+
+	// Drive routes (for mounting/unmounting agent drives)
+	// GET /drives/mount list, POST /drives/mount attach, DELETE /drives/mount/*mountPath detach
+	r.GET("/drives/mount", driveHandler.ListMounts)
+	r.POST("/drives/mount", driveHandler.AttachDrive)
+	r.HEAD("/drives/mount", head)
+	r.DELETE("/drives/mount/*mountPath", func(c *gin.Context) {
+		mountPath := c.Param("mountPath")
+		if mountPath == "" || mountPath == "/" {
+			c.JSON(http.StatusBadRequest, handler.ErrorResponse{Error: "Mount path is required (must start with /)"})
+			return
+		}
+		if !strings.HasPrefix(mountPath, "/") {
+			mountPath = "/" + mountPath
+		}
+		c.Set("mountPath", mountPath)
+		driveHandler.DetachDrive(c)
+	})
 
 	// Root welcome endpoint - handles all HTTP methods
 	r.GET("/", baseHandler.HandleWelcome)
@@ -342,16 +375,18 @@ func logrusMiddleware() gin.HandlerFunc {
 			return
 		}
 
+		entry := logrus.WithField("source", "access")
+
 		if len(c.Errors) > 0 {
-			logrus.Error(c.Errors.ByType(gin.ErrorTypePrivate).String())
+			entry.Error(c.Errors.ByType(gin.ErrorTypePrivate).String())
 		} else {
 			msg := fmt.Sprintf("%s %s %d %d %dms", c.Request.Method, sanitizedPath, statusCode, dataLength, latency)
 			if statusCode >= http.StatusInternalServerError {
-				logrus.Error(msg)
+				entry.Error(msg)
 			} else if statusCode >= http.StatusBadRequest {
-				logrus.Error(msg)
+				entry.Error(msg)
 			} else {
-				logrus.Info(msg)
+				entry.Info(msg)
 			}
 		}
 	}

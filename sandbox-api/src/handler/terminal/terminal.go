@@ -4,6 +4,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -18,6 +19,10 @@ type TerminalSession struct {
 	mu         sync.Mutex
 	closed     bool
 	closeCh    chan struct{}
+	// shellDoneCh is closed when the shell process exits, even if child processes
+	// still hold the PTY slave open. This allows detecting "exit" without waiting
+	// for all children to close their inherited file descriptors.
+	shellDoneCh chan struct{}
 }
 
 // findShell returns the best available shell
@@ -107,10 +112,14 @@ func NewTerminalSession(shell string, workingDir string, env map[string]string, 
 
 	// Store only the PID to avoid FD leak (workspace rule: never store *exec.Cmd in struct)
 	pid := cmd.Process.Pid
+	shellDoneCh := make(chan struct{})
 
-	// Start a goroutine to wait for the process and release resources
+	// Start a goroutine to wait for the process and release resources.
+	// When the shell exits (e.g. user types "exit"), shellDoneCh is closed
+	// to notify listeners even if child processes still hold the PTY slave open.
 	go func() {
 		_ = cmd.Wait()
+		close(shellDoneCh)
 		// Release process resources immediately after Wait() to close pidfd
 		if cmd.Process != nil {
 			_ = cmd.Process.Release()
@@ -118,9 +127,10 @@ func NewTerminalSession(shell string, workingDir string, env map[string]string, 
 	}()
 
 	return &TerminalSession{
-		ptmx:       ptmx,
-		processPid: pid,
-		closeCh:    make(chan struct{}),
+		ptmx:        ptmx,
+		processPid:  pid,
+		closeCh:     make(chan struct{}),
+		shellDoneCh: shellDoneCh,
 	}, nil
 }
 
@@ -165,14 +175,13 @@ func (t *TerminalSession) Close() error {
 		_ = t.ptmx.Close()
 	}
 
-	// Kill the process and its session using stored PID
-	// Since pty.Start uses Setsid, the shell is the session leader
-	// Killing the session leader will send SIGHUP to all processes in the session
+	// Kill ALL processes in the terminal session.
+	// Since pty.Start uses Setsid, the shell is the session leader (SID = processPid).
+	// Background jobs started with & get their own process groups (different PGID),
+	// so Kill(-pid, SIGKILL) only kills the shell's process group, not background jobs.
+	// We must kill by session ID to catch everything.
 	if t.processPid > 0 {
-		// Try to kill the session (negative PID with SIGKILL)
-		// This works because Setsid makes the process a session leader with pgid == pid
-		_ = syscall.Kill(-t.processPid, syscall.SIGKILL)
-		// The Wait() and Release() are handled by the goroutine started in NewTerminalSession
+		killSessionProcesses(t.processPid)
 	}
 
 	return nil
@@ -183,9 +192,77 @@ func (t *TerminalSession) Done() <-chan struct{} {
 	return t.closeCh
 }
 
+// ShellDone returns a channel that is closed when the shell process exits.
+// This fires even if child processes still hold the PTY slave fd open.
+func (t *TerminalSession) ShellDone() <-chan struct{} {
+	return t.shellDoneCh
+}
+
 // IsClosed returns true if the session is closed
 func (t *TerminalSession) IsClosed() bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return t.closed
+}
+
+// killSessionProcesses kills all processes belonging to the given session ID.
+// When pty.Start uses Setsid, the shell becomes the session leader (SID = its PID).
+// Background jobs (started with &) may have different PGIDs but share the same SID.
+// This walks /proc to find every process in the session and sends SIGKILL.
+// Falls back to process-group kill on non-Linux systems where /proc is unavailable.
+//
+// Note: there is a theoretical TOCTOU window between reading /proc/<pid>/stat and
+// sending the kill signal during which a PID could be reused. In practice the window
+// is microseconds and the default Linux PID space (32768+) makes collisions
+// negligible. We mitigate further by skipping our own process and kernel threads.
+func killSessionProcesses(sessionID int) {
+	entries, err := os.ReadDir("/proc")
+	if err != nil {
+		// Fallback for non-Linux: kill the process group only
+		_ = syscall.Kill(-sessionID, syscall.SIGKILL)
+		return
+	}
+
+	ownPid := os.Getpid()
+
+	for _, entry := range entries {
+		pid, err := strconv.Atoi(entry.Name())
+		if err != nil || pid <= 1 || pid == ownPid {
+			continue
+		}
+
+		// Read /proc/<pid>/stat: "pid (comm) state ppid pgrp session ..."
+		data, err := os.ReadFile("/proc/" + entry.Name() + "/stat")
+		if err != nil {
+			continue
+		}
+
+		// The comm field (field 2) is in parens and can contain spaces/parens,
+		// so find the last ')' and parse fields after it.
+		s := string(data)
+		closeIdx := strings.LastIndex(s, ")")
+		if closeIdx < 0 {
+			continue
+		}
+		// Fields after ")": state ppid pgrp session ...
+		fields := strings.Fields(s[closeIdx+1:])
+		// fields[0]=state, [1]=ppid, [2]=pgrp, [3]=session
+		if len(fields) < 4 {
+			continue
+		}
+
+		// Skip kernel threads (parented by PID 0 or kthreadd PID 2)
+		ppid, _ := strconv.Atoi(fields[1])
+		if ppid == 0 || ppid == 2 {
+			continue
+		}
+
+		sid, err := strconv.Atoi(fields[3])
+		if err != nil {
+			continue
+		}
+		if sid == sessionID {
+			_ = syscall.Kill(pid, syscall.SIGKILL)
+		}
+	}
 }

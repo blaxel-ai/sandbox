@@ -2,8 +2,6 @@
   "name": "vibekit-grok",
   "displayName": "VibeKit Grok",
   "categories": [
-    "ai",
-    "xai"
   ],
   "description": "A development environment for building AI-powered applications with xAI Grok integration using VibeKit SDK.",
   "longDescription": "VibeKit provides a complete SDK and UI components for building conversational AI applications powered by xAI's Grok. This sandbox includes the VibeKit Grok runtime environment with pre-configured development tools, hot reloading, and all necessary dependencies for creating interactive AI chat interfaces and real-time knowledge applications. Perfect for developing Grok-powered chatbots, AI assistants with real-time web access, and intelligent conversational interfaces with modern React components.",
