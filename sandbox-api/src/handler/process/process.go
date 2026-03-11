@@ -45,10 +45,6 @@ func writeToLogWriter(w io.Writer, eventType string, data []byte) {
 	}
 }
 
-// logSanitizer replaces newlines and carriage returns to prevent log injection (CWE-117).
-// strings.NewReplacer.Replace is recognized by CodeQL as a sanitizer for go/log-injection.
-var logSanitizer = strings.NewReplacer("\n", "", "\r", "")
-
 // Define process status constants
 const (
 	StatusFailed    = constants.ProcessStatusFailed
@@ -296,12 +292,12 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 	// If keepAlive is enabled, disable scale-to-zero and log the event
 	if keepAlive {
 		if err := blaxel.ScaleDisable(); err != nil {
-			logrus.Warnf("[KeepAlive] Failed to disable scale-to-zero for process %s (name: %s): %v", process.PID, logSanitizer.Replace(name), err)
+			logrus.Warnf("[KeepAlive] Failed to disable scale-to-zero for process %s (name: %q): %v", process.PID, name, err)
 		}
 		if timeout > 0 {
-			logrus.Infof("[KeepAlive] Started process %s (name: %s, command: %s) with timeout %ds", process.PID, logSanitizer.Replace(name), logSanitizer.Replace(command), timeout)
+			logrus.Infof("[KeepAlive] Started process %s (name: %q, command: %q) with timeout %ds", process.PID, name, command, timeout)
 		} else {
-			logrus.Infof("[KeepAlive] Started process %s (name: %s, command: %s) with infinite timeout", process.PID, logSanitizer.Replace(name), logSanitizer.Replace(command))
+			logrus.Infof("[KeepAlive] Started process %s (name: %q, command: %q) with infinite timeout", process.PID, name, command)
 		}
 	}
 
@@ -320,7 +316,7 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 			defer timer.Stop()
 			select {
 			case <-timer.C:
-				logrus.Infof("[KeepAlive] Timeout expired for process %s (name: %s) after %d seconds, killing process", process.PID, logSanitizer.Replace(process.Name), timeout)
+				logrus.Infof("[KeepAlive] Timeout expired for process %s (name: %q) after %d seconds, killing process", process.PID, process.Name, timeout)
 				_ = pm.KillProcess(process.PID)
 			case <-process.stopTimeout:
 				// Process completed before timeout
@@ -419,9 +415,9 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 
 				// If keepAlive was enabled, re-enable scale-to-zero now that process truly ended
 				if process.KeepAlive {
-						logrus.Infof("[KeepAlive] Stopped process %s (name: %s, status: %s, exit_code: %d) - restart failed", process.PID, logSanitizer.Replace(process.Name), process.Status, process.ExitCode)
-						if err := blaxel.ScaleEnable(); err != nil {
-							logrus.Warnf("[KeepAlive] Failed to enable scale-to-zero for process %s (name: %s): %v", process.PID, logSanitizer.Replace(process.Name), err)
+					logrus.Infof("[KeepAlive] Stopped process %s (name: %q, status: %s, exit_code: %d) - restart failed", process.PID, process.Name, process.Status, process.ExitCode)
+					if err := blaxel.ScaleEnable(); err != nil {
+						logrus.Warnf("[KeepAlive] Failed to enable scale-to-zero for process %s (name: %q): %v", process.PID, process.Name, err)
 					}
 				}
 
@@ -440,9 +436,9 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 		} else {
 			// If keepAlive was enabled, re-enable scale-to-zero now that process ended
 			if process.KeepAlive {
-					logrus.Infof("[KeepAlive] Stopped process %s (name: %s, status: %s, exit_code: %d)", process.PID, logSanitizer.Replace(process.Name), process.Status, process.ExitCode)
-					if err := blaxel.ScaleEnable(); err != nil {
-						logrus.Warnf("[KeepAlive] Failed to enable scale-to-zero for process %s (name: %s): %v", process.PID, logSanitizer.Replace(process.Name), err)
+				logrus.Infof("[KeepAlive] Stopped process %s (name: %q, status: %s, exit_code: %d)", process.PID, process.Name, process.Status, process.ExitCode)
+				if err := blaxel.ScaleEnable(); err != nil {
+					logrus.Warnf("[KeepAlive] Failed to enable scale-to-zero for process %s (name: %q): %v", process.PID, process.Name, err)
 				}
 			}
 
@@ -668,7 +664,7 @@ func (pm *ProcessManager) restartProcess(oldProcess *ProcessInfo, callback func(
 			defer timer.Stop()
 			select {
 			case <-timer.C:
-				logrus.Infof("[KeepAlive] Timeout expired for process %s (name: %s) after %d seconds, killing process", oldProcess.PID, logSanitizer.Replace(oldProcess.Name), oldProcess.Timeout)
+				logrus.Infof("[KeepAlive] Timeout expired for process %s (name: %q) after %d seconds, killing process", oldProcess.PID, oldProcess.Name, oldProcess.Timeout)
 				_ = pm.KillProcess(oldProcess.PID)
 			case <-oldProcess.stopTimeout:
 				// Process completed before timeout
@@ -767,9 +763,9 @@ func (pm *ProcessManager) restartProcess(oldProcess *ProcessInfo, callback func(
 
 				// If keepAlive was enabled, re-enable scale-to-zero now that process truly ended
 				if oldProcess.KeepAlive {
-					logrus.Infof("[KeepAlive] Stopped process %s (name: %s, status: %s, exit_code: %d) - restart failed", oldProcess.PID, logSanitizer.Replace(oldProcess.Name), oldProcess.Status, oldProcess.ExitCode)
+					logrus.Infof("[KeepAlive] Stopped process %s (name: %q, status: %s, exit_code: %d) - restart failed", oldProcess.PID, oldProcess.Name, oldProcess.Status, oldProcess.ExitCode)
 					if err := blaxel.ScaleEnable(); err != nil {
-						logrus.Warnf("[KeepAlive] Failed to enable scale-to-zero for process %s (name: %s): %v", oldProcess.PID, logSanitizer.Replace(oldProcess.Name), err)
+						logrus.Warnf("[KeepAlive] Failed to enable scale-to-zero for process %s (name: %q): %v", oldProcess.PID, oldProcess.Name, err)
 					}
 				}
 
@@ -788,9 +784,9 @@ func (pm *ProcessManager) restartProcess(oldProcess *ProcessInfo, callback func(
 		} else {
 			// If keepAlive was enabled, re-enable scale-to-zero now that process ended
 			if oldProcess.KeepAlive {
-				logrus.Infof("[KeepAlive] Stopped process %s (name: %s, status: %s, exit_code: %d)", oldProcess.PID, logSanitizer.Replace(oldProcess.Name), oldProcess.Status, oldProcess.ExitCode)
+				logrus.Infof("[KeepAlive] Stopped process %s (name: %q, status: %s, exit_code: %d)", oldProcess.PID, oldProcess.Name, oldProcess.Status, oldProcess.ExitCode)
 				if err := blaxel.ScaleEnable(); err != nil {
-					logrus.Warnf("[KeepAlive] Failed to enable scale-to-zero for process %s (name: %s): %v", oldProcess.PID, logSanitizer.Replace(oldProcess.Name), err)
+					logrus.Warnf("[KeepAlive] Failed to enable scale-to-zero for process %s (name: %q): %v", oldProcess.PID, oldProcess.Name, err)
 				}
 			}
 
@@ -992,9 +988,9 @@ func (pm *ProcessManager) KillProcess(identifier string) error {
 		}
 
 		if err := blaxel.ScaleEnable(); err != nil {
-			logrus.Warnf("[KeepAlive] Failed to enable scale-to-zero after killing process %s (name: %s): %v", process.PID, logSanitizer.Replace(process.Name), err)
+			logrus.Warnf("[KeepAlive] Failed to enable scale-to-zero after killing process %s (name: %q): %v", process.PID, process.Name, err)
 		}
-		logrus.Infof("[KeepAlive] Stopped process %s (name: %s, status: killed, exit_code: -1)", process.PID, logSanitizer.Replace(process.Name))
+		logrus.Infof("[KeepAlive] Stopped process %s (name: %q, status: killed, exit_code: -1)", process.PID, process.Name)
 	}
 
 	return nil
