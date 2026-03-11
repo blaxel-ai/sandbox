@@ -2,11 +2,14 @@ package codegen
 
 import (
 	"bytes"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+
+	jsoniter "github.com/json-iterator/go"
 )
+
+var json = jsoniter.ConfigCompatibleWithStandardLibrary
 
 // Ensure MorphClient implements Client and CodeReranker interfaces
 var _ Client = (*MorphClient)(nil)

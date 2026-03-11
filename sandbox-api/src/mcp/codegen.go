@@ -2,7 +2,6 @@ package mcp
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io/fs"
 	"os"
@@ -11,11 +10,15 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/blaxel-ai/sandbox-api/src/handler/filesystem"
 	"github.com/blaxel-ai/sandbox-api/src/lib"
 	"github.com/blaxel-ai/sandbox-api/src/lib/codegen"
+	jsoniter "github.com/json-iterator/go"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/sirupsen/logrus"
 )
+
+var json = jsoniter.ConfigCompatibleWithStandardLibrary
 
 // Codegen tool input/output types
 
@@ -75,11 +78,66 @@ type EditRegion struct {
 	EndLine               *int   `json:"endLine,omitempty" jsonschema:"The end line of the region to edit. 1-indexed and inclusive"`
 }
 
-// Output types
-type CodegenOutput struct {
-	Success bool        `json:"success"`
-	Message string      `json:"message,omitempty"`
-	Data    interface{} `json:"data,omitempty"`
+// Output types - specific output types for each codegen tool
+
+// EditFileOutput is returned by codegenEditFile
+type EditFileOutput struct {
+	Success        bool   `json:"success"`
+	Message        string `json:"message,omitempty"`
+	FilePath       string `json:"filePath,omitempty"`
+	ChangesApplied string `json:"changesApplied,omitempty"`
+}
+
+// FileSearchOutput is returned by codegenFileSearch
+type FileSearchOutput struct {
+	Success bool     `json:"success"`
+	Matches []string `json:"matches"`
+	Query   string   `json:"query"`
+}
+
+// CodebaseSearchOutput is returned by codegenCodebaseSearch
+type CodebaseSearchOutput struct {
+	Success bool     `json:"success"`
+	Results []string `json:"results"`
+	Query   string   `json:"query"`
+}
+
+// GrepSearchOutput is returned by codegenGrepSearch
+type GrepSearchOutput struct {
+	Success bool   `json:"success"`
+	Results string `json:"results"`
+}
+
+// ReadFileRangeOutput is returned by codegenReadFileRange
+type ReadFileRangeOutput struct {
+	Success bool   `json:"success"`
+	Content string `json:"content"`
+	File    string `json:"file"`
+}
+
+// ReapplyOutput is returned by codegenReapply
+type ReapplyOutput struct {
+	Success bool   `json:"success"`
+	Message string `json:"message,omitempty"`
+}
+
+// ListDirOutput is returned by codegenListDir
+type ListDirOutput struct {
+	Success   bool                  `json:"success"`
+	Directory *filesystem.Directory `json:"directory,omitempty"`
+}
+
+// ParallelApplyOutput is returned by codegenParallelApply
+type ParallelApplyOutput struct {
+	Success bool   `json:"success"`
+	Message string `json:"message,omitempty"`
+}
+
+// RerankOutput is returned by codegenRerank
+type RerankOutput struct {
+	Success bool                 `json:"success"`
+	Message string               `json:"message,omitempty"`
+	Files   []codegen.RankedFile `json:"files"`
 }
 
 // registerCodegenTools registers all codegen-related tools
@@ -147,24 +205,24 @@ func (s *Server) registerCodegenTools() error {
 }
 
 // handleEditFile implements the edit_file tool functionality
-func (s *Server) handleEditFile(ctx context.Context, req *mcp.CallToolRequest, args EditFileInput) (*mcp.CallToolResult, CodegenOutput, error) {
+func (s *Server) handleEditFile(ctx context.Context, req *mcp.CallToolRequest, args EditFileInput) (*mcp.CallToolResult, EditFileOutput, error) {
 	// Create a FastApply client using the factory
 	client, err := codegen.NewClient()
 	if err != nil {
-		return nil, CodegenOutput{}, fmt.Errorf("failed to create FastApply client: %w", err)
+		return nil, EditFileOutput{}, fmt.Errorf("failed to create FastApply client: %w", err)
 	}
 
 	// Check if file exists
 	fileExists, err := s.handlers.FileSystem.FileExists(args.TargetFile)
 	if err != nil {
-		return nil, CodegenOutput{}, fmt.Errorf("failed to check if file exists: %w", err)
+		return nil, EditFileOutput{}, fmt.Errorf("failed to check if file exists: %w", err)
 	}
 
 	var originalContent string
 	if fileExists {
 		file, err := s.handlers.FileSystem.ReadFile(args.TargetFile)
 		if err != nil {
-			return nil, CodegenOutput{}, fmt.Errorf("failed to read file: %w", err)
+			return nil, EditFileOutput{}, fmt.Errorf("failed to read file: %w", err)
 		}
 		originalContent = string(file.Content)
 	}
@@ -174,33 +232,31 @@ func (s *Server) handleEditFile(ctx context.Context, req *mcp.CallToolRequest, a
 	logrus.Infof("Using %s API to apply code edit with model %s", client.ProviderName(), model)
 	updatedContent, err := client.ApplyCodeEdit(originalContent, args.CodeEdit, model)
 	if err != nil {
-		return nil, CodegenOutput{}, fmt.Errorf("failed to apply edit: %w", err)
+		return nil, EditFileOutput{}, fmt.Errorf("failed to apply edit: %w", err)
 	}
 
 	err = s.handlers.FileSystem.WriteFile(args.TargetFile, []byte(updatedContent), 0644)
 	if err != nil {
-		return nil, CodegenOutput{}, fmt.Errorf("failed to write file: %w", err)
+		return nil, EditFileOutput{}, fmt.Errorf("failed to write file: %w", err)
 	}
 
-	return nil, CodegenOutput{
-		Success: true,
-		Message: fmt.Sprintf("Successfully applied edit to %s: %s", args.TargetFile, args.Instructions),
-		Data: map[string]interface{}{
-			"file_path":       args.TargetFile,
-			"changes_applied": args.CodeEdit,
-		},
+	return nil, EditFileOutput{
+		Success:        true,
+		Message:        fmt.Sprintf("Successfully applied edit to %s: %s", args.TargetFile, args.Instructions),
+		FilePath:       args.TargetFile,
+		ChangesApplied: args.CodeEdit,
 	}, nil
 }
 
 // handleFileSearch implements fuzzy file search functionality
-func (s *Server) handleFileSearch(ctx context.Context, req *mcp.CallToolRequest, args FileSearchInput) (*mcp.CallToolResult, CodegenOutput, error) {
+func (s *Server) handleFileSearch(ctx context.Context, req *mcp.CallToolRequest, args FileSearchInput) (*mcp.CallToolResult, FileSearchOutput, error) {
 	var matches []string
 	query := strings.ToLower(args.Query)
 
 	// Get the working directory from the filesystem handler
 	workingDir, err := s.handlers.FileSystem.GetWorkingDirectory()
 	if err != nil {
-		return nil, CodegenOutput{}, fmt.Errorf("failed to get working directory: %w", err)
+		return nil, FileSearchOutput{}, fmt.Errorf("failed to get working directory: %w", err)
 	}
 
 	// Determine the search directory
@@ -213,16 +269,16 @@ func (s *Server) handleFileSearch(ctx context.Context, req *mcp.CallToolRequest,
 		cleanSearchDir := filepath.Clean(searchDir)
 		cleanWorkingDir := filepath.Clean(workingDir)
 		if !strings.HasPrefix(cleanSearchDir, cleanWorkingDir) {
-			return nil, CodegenOutput{}, fmt.Errorf("directory must be within workspace")
+			return nil, FileSearchOutput{}, fmt.Errorf("directory must be within workspace")
 		}
 
 		// Check if the directory exists
 		dirExists, err := s.handlers.FileSystem.DirectoryExists(*args.Directory)
 		if err != nil {
-			return nil, CodegenOutput{}, fmt.Errorf("failed to check directory: %w", err)
+			return nil, FileSearchOutput{}, fmt.Errorf("failed to check directory: %w", err)
 		}
 		if !dirExists {
-			return nil, CodegenOutput{}, fmt.Errorf("directory not found: %s", *args.Directory)
+			return nil, FileSearchOutput{}, fmt.Errorf("directory not found: %s", *args.Directory)
 		}
 
 		searchDir = cleanSearchDir
@@ -246,27 +302,29 @@ func (s *Server) handleFileSearch(ctx context.Context, req *mcp.CallToolRequest,
 	})
 
 	if err != nil {
-		return nil, CodegenOutput{}, fmt.Errorf("failed to search files: %w", err)
+		return nil, FileSearchOutput{}, fmt.Errorf("failed to search files: %w", err)
 	}
 
-	return nil, CodegenOutput{
+	return nil, FileSearchOutput{
 		Success: true,
-		Data:    map[string]interface{}{"matches": matches, "query": args.Query},
+		Matches: matches,
+		Query:   args.Query,
 	}, nil
 }
 
 // handleCodebaseSearch implements semantic search across the codebase
-func (s *Server) handleCodebaseSearch(ctx context.Context, req *mcp.CallToolRequest, args CodebaseSearchInput) (*mcp.CallToolResult, CodegenOutput, error) {
+func (s *Server) handleCodebaseSearch(ctx context.Context, req *mcp.CallToolRequest, args CodebaseSearchInput) (*mcp.CallToolResult, CodebaseSearchOutput, error) {
 	// Simplified implementation - in production, use proper semantic search
 	results := []string{}
-	return nil, CodegenOutput{
+	return nil, CodebaseSearchOutput{
 		Success: true,
-		Data:    map[string]interface{}{"results": results, "query": args.Query},
+		Results: results,
+		Query:   args.Query,
 	}, nil
 }
 
 // handleGrepSearch implements regex search functionality
-func (s *Server) handleGrepSearch(ctx context.Context, req *mcp.CallToolRequest, args GrepSearchInput) (*mcp.CallToolResult, CodegenOutput, error) {
+func (s *Server) handleGrepSearch(ctx context.Context, req *mcp.CallToolRequest, args GrepSearchInput) (*mcp.CallToolResult, GrepSearchOutput, error) {
 	cmd := exec.Command("rg", "--json")
 
 	caseSensitive := false
@@ -290,67 +348,68 @@ func (s *Server) handleGrepSearch(ctx context.Context, req *mcp.CallToolRequest,
 	output, err := cmd.Output()
 
 	if err != nil {
-		return nil, CodegenOutput{}, fmt.Errorf("grep search failed: %w", err)
+		return nil, GrepSearchOutput{}, fmt.Errorf("grep search failed: %w", err)
 	}
 
-	return nil, CodegenOutput{
+	return nil, GrepSearchOutput{
 		Success: true,
-		Data:    map[string]interface{}{"results": string(output)},
+		Results: string(output),
 	}, nil
 }
 
 // handleReadFileRange reads specific lines from a file
-func (s *Server) handleReadFileRange(ctx context.Context, req *mcp.CallToolRequest, args ReadFileRangeInput) (*mcp.CallToolResult, CodegenOutput, error) {
+func (s *Server) handleReadFileRange(ctx context.Context, req *mcp.CallToolRequest, args ReadFileRangeInput) (*mcp.CallToolResult, ReadFileRangeOutput, error) {
 	file, err := s.handlers.FileSystem.ReadFile(args.TargetFile)
 	if err != nil {
-		return nil, CodegenOutput{}, fmt.Errorf("failed to read file: %w", err)
+		return nil, ReadFileRangeOutput{}, fmt.Errorf("failed to read file: %w", err)
 	}
 
 	lines := strings.Split(string(file.Content), "\n")
 	if args.StartLineOneIndexed < 1 || args.EndLineOneIndexedInclusive > len(lines) {
-		return nil, CodegenOutput{}, fmt.Errorf("invalid line range")
+		return nil, ReadFileRangeOutput{}, fmt.Errorf("invalid line range")
 	}
 
 	selectedLines := lines[args.StartLineOneIndexed-1 : args.EndLineOneIndexedInclusive]
 	content := strings.Join(selectedLines, "\n")
 
-	return nil, CodegenOutput{
+	return nil, ReadFileRangeOutput{
 		Success: true,
-		Data:    map[string]interface{}{"content": content, "file": args.TargetFile},
+		Content: content,
+		File:    args.TargetFile,
 	}, nil
 }
 
 // handleReapply reapplies the last edit
-func (s *Server) handleReapply(ctx context.Context, req *mcp.CallToolRequest, args ReapplyInput) (*mcp.CallToolResult, CodegenOutput, error) {
-	return nil, CodegenOutput{
+func (s *Server) handleReapply(ctx context.Context, req *mcp.CallToolRequest, args ReapplyInput) (*mcp.CallToolResult, ReapplyOutput, error) {
+	return nil, ReapplyOutput{
 		Success: false,
 		Message: "Reapply functionality not yet implemented",
 	}, nil
 }
 
 // handleListDir lists directory contents
-func (s *Server) handleListDir(ctx context.Context, req *mcp.CallToolRequest, args ListDirInput) (*mcp.CallToolResult, CodegenOutput, error) {
+func (s *Server) handleListDir(ctx context.Context, req *mcp.CallToolRequest, args ListDirInput) (*mcp.CallToolResult, ListDirOutput, error) {
 	dir, err := s.handlers.FileSystem.ListDirectory(args.RelativeWorkspacePath)
 	if err != nil {
-		return nil, CodegenOutput{}, fmt.Errorf("failed to list directory: %w", err)
+		return nil, ListDirOutput{}, fmt.Errorf("failed to list directory: %w", err)
 	}
 
-	return nil, CodegenOutput{
-		Success: true,
-		Data:    dir,
+	return nil, ListDirOutput{
+		Success:   true,
+		Directory: dir,
 	}, nil
 }
 
 // handleParallelApply handles parallel edits
-func (s *Server) handleParallelApply(ctx context.Context, req *mcp.CallToolRequest, args ParallelApplyInput) (*mcp.CallToolResult, CodegenOutput, error) {
-	return nil, CodegenOutput{
+func (s *Server) handleParallelApply(ctx context.Context, req *mcp.CallToolRequest, args ParallelApplyInput) (*mcp.CallToolResult, ParallelApplyOutput, error) {
+	return nil, ParallelApplyOutput{
 		Success: false,
 		Message: "Parallel apply functionality not yet implemented",
 	}, nil
 }
 
 // handleRerank implements semantic reranking of documents
-func (s *Server) handleRerank(ctx context.Context, req *mcp.CallToolRequest, args RerankInput) (*mcp.CallToolResult, CodegenOutput, error) {
+func (s *Server) handleRerank(ctx context.Context, req *mcp.CallToolRequest, args RerankInput) (*mcp.CallToolResult, RerankOutput, error) {
 	// Set defaults
 	directory := args.Path
 	if directory == "" {
@@ -360,7 +419,7 @@ func (s *Server) handleRerank(ctx context.Context, req *mcp.CallToolRequest, arg
 	// Format the path
 	directory, err := lib.FormatPath(directory)
 	if err != nil {
-		return nil, CodegenOutput{}, fmt.Errorf("invalid path: %w", err)
+		return nil, RerankOutput{}, fmt.Errorf("invalid path: %w", err)
 	}
 
 	scoreThreshold := 0.5
@@ -381,37 +440,35 @@ func (s *Server) handleRerank(ctx context.Context, req *mcp.CallToolRequest, arg
 	// Check if directory exists
 	isDir, err := s.handlers.FileSystem.DirectoryExists(directory)
 	if err != nil {
-		return nil, CodegenOutput{}, fmt.Errorf("failed to check directory: %w", err)
+		return nil, RerankOutput{}, fmt.Errorf("failed to check directory: %w", err)
 	}
 	if !isDir {
-		return nil, CodegenOutput{}, fmt.Errorf("path is not a directory: %s", directory)
+		return nil, RerankOutput{}, fmt.Errorf("path is not a directory: %s", directory)
 	}
 
 	// Create a client that supports reranking
 	client, err := codegen.NewClient()
 	if err != nil {
-		return nil, CodegenOutput{}, fmt.Errorf("failed to create codegen client: %w", err)
+		return nil, RerankOutput{}, fmt.Errorf("failed to create codegen client: %w", err)
 	}
 
 	// Check if the client supports reranking
 	reranker, ok := client.(codegen.CodeReranker)
 	if !ok {
-		return nil, CodegenOutput{}, fmt.Errorf("current provider (%s) does not support reranking", client.ProviderName())
+		return nil, RerankOutput{}, fmt.Errorf("current provider (%s) does not support reranking", client.ProviderName())
 	}
 
 	// Collect documents from the directory
 	documents, err := s.collectDocumentsFromDirectory(directory, filePattern)
 	if err != nil {
-		return nil, CodegenOutput{}, fmt.Errorf("failed to collect documents: %w", err)
+		return nil, RerankOutput{}, fmt.Errorf("failed to collect documents: %w", err)
 	}
 
 	if len(documents) == 0 {
-		return nil, CodegenOutput{
+		return nil, RerankOutput{
 			Success: true,
 			Message: "No files found matching criteria",
-			Data: map[string]interface{}{
-				"files": []codegen.RankedFile{},
-			},
+			Files:   []codegen.RankedFile{},
 		}, nil
 	}
 
@@ -419,7 +476,7 @@ func (s *Server) handleRerank(ctx context.Context, req *mcp.CallToolRequest, arg
 	logrus.Infof("Performing code reranking on %d files using %s", len(documents), client.ProviderName())
 	rankedFiles, err := reranker.RerankCode(documents, args.Query, tokenLimit)
 	if err != nil {
-		return nil, CodegenOutput{}, fmt.Errorf("failed to rerank documents: %w", err)
+		return nil, RerankOutput{}, fmt.Errorf("failed to rerank documents: %w", err)
 	}
 
 	// Filter by score threshold
@@ -430,12 +487,10 @@ func (s *Server) handleRerank(ctx context.Context, req *mcp.CallToolRequest, arg
 		}
 	}
 
-	return nil, CodegenOutput{
+	return nil, RerankOutput{
 		Success: true,
 		Message: fmt.Sprintf("Found %d relevant files", len(filteredFiles)),
-		Data: map[string]interface{}{
-			"files": filteredFiles,
-		},
+		Files:   filteredFiles,
 	}, nil
 }
 

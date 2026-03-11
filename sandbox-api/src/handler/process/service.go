@@ -3,7 +3,6 @@ package process
 import (
 	"context"
 	"fmt"
-	"runtime"
 	"slices"
 	"strconv"
 	"sync"
@@ -88,48 +87,82 @@ func (pm *ProcessManager) ExecuteProcess(
 
 	// Set up port monitoring if requested
 	if len(waitForPorts) > 0 {
-		// Check for Mac OS and skip port monitoring if needed
-		if runtime.GOOS == "darwin" {
-			// Just close the channel without trying to monitor ports
-			func() {
-				defer func() {
-					_ = recover()
-				}()
-
-				mu.Lock()
-				if !portChClosed {
-					close(portCh)
-					portChClosed = true
-				}
-				mu.Unlock()
-			}()
-		} else {
-			n := network.GetNetwork()
-			ports := make([]int, 0, len(waitForPorts))
-			pidInt, _ := strconv.Atoi(pid)
-			n.RegisterPortOpenCallback(pidInt, func(pid int, port *network.PortInfo) {
-				if slices.Contains(waitForPorts, port.LocalPort) {
-					ports = append(ports, port.LocalPort)
-				}
-				if len(ports) == len(waitForPorts) {
-					// Safely close the channel with defer-recover to prevent panics
-					func() {
-						defer func() {
-							_ = recover()
-						}()
-
-						mu.Lock()
-						if !portChClosed {
-							close(portCh)
-							portChClosed = true
-						}
-						mu.Unlock()
-
-						// Unregister callbacks for this PID to stop monitoring
-						n.UnregisterPortOpenCallback(pidInt)
+		n := network.GetNetwork()
+		ports := make([]int, 0, len(waitForPorts))
+		pidInt, _ := strconv.Atoi(pid)
+		n.RegisterPortOpenCallback(pidInt, func(pid int, port *network.PortInfo) {
+			if slices.Contains(waitForPorts, port.LocalPort) {
+				ports = append(ports, port.LocalPort)
+			}
+			if len(ports) == len(waitForPorts) {
+				// Safely close the channel with defer-recover to prevent panics
+				func() {
+					defer func() {
+						_ = recover()
 					}()
+
+					mu.Lock()
+					if !portChClosed {
+						close(portCh)
+						portChClosed = true
+					}
+					mu.Unlock()
+
+					// Unregister callbacks for this PID to stop monitoring
+					n.UnregisterPortOpenCallback(pidInt)
+				}()
+			}
+		})
+
+		// Also start a direct port polling goroutine as a fallback (especially for macOS)
+		go func() {
+			ticker := time.NewTicker(500 * time.Millisecond)
+			defer ticker.Stop()
+
+			for {
+				select {
+				case <-ticker.C:
+					allPortsOpen := true
+					for _, port := range waitForPorts {
+						if !network.IsPortOpen(port) {
+							allPortsOpen = false
+							break
+						}
+					}
+					if allPortsOpen {
+						func() {
+							defer func() {
+								_ = recover()
+							}()
+
+							mu.Lock()
+							if !portChClosed {
+								close(portCh)
+								portChClosed = true
+							}
+							mu.Unlock()
+
+							n.UnregisterPortOpenCallback(pidInt)
+						}()
+						return
+					}
+				case <-ctx.Done():
+					return
+				case <-portCh:
+					// Already closed by PID-based monitoring
+					return
 				}
-			})
+			}
+		}()
+	}
+
+	// Wait for ports if requested
+	if len(waitForPorts) > 0 {
+		select {
+		case <-portCh:
+			// Ports are ready
+		case <-ctx.Done():
+			return nil, fmt.Errorf("process timed out waiting for ports after %d seconds", timeout)
 		}
 	}
 
@@ -144,6 +177,14 @@ func (pm *ProcessManager) ExecuteProcess(
 			pid = receivedPID // Update pid to the received PID
 			break
 		case <-ctx.Done():
+			// Process timed out but is still running - return process info along with error
+			// so the caller can still access the running process
+			processInfo, exists := pm.GetProcessByIdentifier(pid)
+			if exists {
+				logs := processInfo.logs.String()
+				processInfo.Logs = &logs
+				return processInfo, fmt.Errorf("process timed out after %d seconds", timeout)
+			}
 			return nil, fmt.Errorf("process timed out after %d seconds", timeout)
 		}
 	}
@@ -154,8 +195,21 @@ func (pm *ProcessManager) ExecuteProcess(
 		return nil, fmt.Errorf("process creation failed because process does not exist")
 	}
 	if waitForCompletion {
-		logs := processInfo.logs.String()
-		processInfo.Logs = &logs
+		// Read logs from file if available (more reliable than in-memory)
+		output, err := pm.GetProcessOutput(pid)
+		if err == nil {
+			processInfo.Logs = &output.Logs
+			processInfo.Stdout = &output.Stdout
+			processInfo.Stderr = &output.Stderr
+		} else {
+			// Fall back to in-memory
+			logs := processInfo.logs.String()
+			processInfo.Logs = &logs
+			stdout := processInfo.stdout.String()
+			processInfo.Stdout = &stdout
+			stderr := processInfo.stderr.String()
+			processInfo.Stderr = &stderr
+		}
 	}
 	return processInfo, nil
 }

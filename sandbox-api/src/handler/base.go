@@ -80,25 +80,12 @@ func (h *BaseHandler) BindJSON(c *gin.Context, obj interface{}) error {
 	return nil
 }
 
-// WelcomeResponse represents the welcome message response
 type WelcomeResponse struct {
 	Message       string `json:"message" example:"Welcome to your Blaxel Sandbox"`
 	Documentation string `json:"documentation" example:"https://docs.blaxel.ai/Sandboxes/Overview"`
 	Description   string `json:"description" example:"This sandbox provides a full-featured environment for running code securely"`
-} // @name WelcomeResponse
+}
 
-// HandleWelcome handles the root endpoint welcome message
-// @Summary Welcome message
-// @Description Returns a welcome message with links to documentation
-// @Tags root
-// @Produce json
-// @Success 200 {object} WelcomeResponse
-// @Router / [get]
-// @Router / [post]
-// @Router / [put]
-// @Router / [delete]
-// @Router / [patch]
-// @Router / [options]
 func (h *BaseHandler) HandleWelcome(c *gin.Context) {
 	c.JSON(http.StatusOK, WelcomeResponse{
 		Message:       "Welcome to your Blaxel Sandbox",

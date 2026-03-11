@@ -7,11 +7,15 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/blaxel-ai/sandbox-api/docs" // swagger generated docs
 	"github.com/blaxel-ai/sandbox-api/src/api"
+	"github.com/blaxel-ai/sandbox-api/src/handler/process"
+	"github.com/blaxel-ai/sandbox-api/src/lib/networking"
 	"github.com/blaxel-ai/sandbox-api/src/mcp"
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
@@ -21,20 +25,25 @@ import (
 // @title           Sandbox API
 // @version         0.0.1
 // @description     API for manipulating filesystem, processes and network.
-// @host            run.blaxel.ai/{workspace_id}/sandboxes/{sandbox_id}
+// @host            sbx-{sandbox_id}-{workspace_id}.{region}.bl.run
 // @schemes         https
 // @securityDefinitions.apikey BearerAuth
 // @in header
 // @name Authorization
 // @BasePath        /
 func main() {
-	logrus.SetFormatter(&logrus.TextFormatter{
-		DisableColors: true,
-	})
+	logrus.SetFormatter(&logrus.JSONFormatter{})
 	logrus.SetLevel(logrus.DebugLevel)
 
 	// Load .env file
 	_ = godotenv.Load()
+
+	// Initialize WireGuard client if configuration is present.
+	// If config is provided but initialization fails, the sandbox will have no egress
+	// (no outbound internet connectivity), but inbound connections will still work.
+	if err := networking.StartWireGuardFromEnv(); err != nil {
+		logrus.WithError(err).Warn("WireGuard initialization failed - the sandbox will NOT have outbound internet connectivity (no egress). Inbound connections to the sandbox will still work. You can check the tunnel status via the /network/tunnel endpoints.")
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -58,6 +67,8 @@ func main() {
 		docs.SwaggerInfo.Schemes = []string{"http"}
 	}
 	gin.SetMode(gin.ReleaseMode)
+	disableRequestLogging := os.Getenv("DISABLE_REQUEST_LOGGING") == "true"
+	enableProcessingTime := os.Getenv("ENABLE_PROCESSING_TIME") == "true"
 	// Define command-line flags
 	port := flag.Int("port", 8080, "Port to listen on")
 	shortPort := flag.Int("p", 8080, "Port to listen on (shorthand)")
@@ -139,7 +150,14 @@ func main() {
 	}
 
 	// Set up the router with all our API routes
-	router := api.SetupRouter()
+	router := api.SetupRouter(disableRequestLogging, enableProcessingTime)
+
+	// Try to recover process state from a previous instance (hot-reload support)
+	pm := process.GetProcessManager()
+	if err := pm.LoadState(); err != nil {
+		logrus.WithError(err).Warn("Failed to load process state from disk")
+	}
+
 	mcpServer, err := mcp.NewServer(router)
 	if err != nil {
 		logrus.Fatalf("Failed to create MCP server: %v", err)
@@ -163,7 +181,33 @@ func main() {
 		MaxHeaderBytes:    1 << 20,          // 1 MB max header size
 	}
 
-	if err := server.ListenAndServe(); err != nil {
+	// Set up signal handling for graceful shutdown
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+
+	go func() {
+		sig := <-sigCh
+		logrus.Infof("Received signal %v, shutting down...", sig)
+
+		// Shutdown HTTP server gracefully with a timeout
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer shutdownCancel()
+		if err := server.Shutdown(shutdownCtx); err != nil {
+			logrus.WithError(err).Warn("Failed to shutdown HTTP server gracefully")
+		}
+
+		// Stop WireGuard client and clean up routes
+		if err := networking.StopWireGuard(); err != nil {
+			logrus.WithError(err).Debug("WireGuard shutdown")
+		}
+
+		// Cancel the main context (stops background command if any)
+		cancel()
+	}()
+
+	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		logrus.Fatalf("Failed to start server: %v", err)
 	}
+
+	logrus.Info("Server stopped")
 }

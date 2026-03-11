@@ -15,116 +15,6 @@ const docTemplate = `{
     "host": "{{.Host}}",
     "basePath": "{{.BasePath}}",
     "paths": {
-        "/": {
-            "get": {
-                "description": "Returns a welcome message with links to documentation",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "root"
-                ],
-                "summary": "Welcome message",
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/WelcomeResponse"
-                        }
-                    }
-                }
-            },
-            "put": {
-                "description": "Returns a welcome message with links to documentation",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "root"
-                ],
-                "summary": "Welcome message",
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/WelcomeResponse"
-                        }
-                    }
-                }
-            },
-            "post": {
-                "description": "Returns a welcome message with links to documentation",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "root"
-                ],
-                "summary": "Welcome message",
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/WelcomeResponse"
-                        }
-                    }
-                }
-            },
-            "delete": {
-                "description": "Returns a welcome message with links to documentation",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "root"
-                ],
-                "summary": "Welcome message",
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/WelcomeResponse"
-                        }
-                    }
-                }
-            },
-            "options": {
-                "description": "Returns a welcome message with links to documentation",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "root"
-                ],
-                "summary": "Welcome message",
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/WelcomeResponse"
-                        }
-                    }
-                }
-            },
-            "patch": {
-                "description": "Returns a welcome message with links to documentation",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "root"
-                ],
-                "summary": "Welcome message",
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/WelcomeResponse"
-                        }
-                    }
-                }
-            }
-        },
         "/codegen/fastapply/{path}": {
             "put": {
                 "description": "Uses the configured LLM provider (Relace or Morph) to apply a code edit to the original content.\n\nTo use this endpoint as an agent tool, follow these guidelines:\n\nUse this tool to make an edit to an existing file. This will be read by a less intelligent model, which will quickly apply the edit. You should make it clear what the edit is, while also minimizing the unchanged code you write.\n\nWhen writing the edit, you should specify each edit in sequence, with the special comment \"// ... existing code ...\" to represent unchanged code in between edited lines.\n\nExample format:\n// ... existing code ...\nFIRST_EDIT\n// ... existing code ...\nSECOND_EDIT\n// ... existing code ...\nTHIRD_EDIT\n// ... existing code ...\n\nYou should still bias towards repeating as few lines of the original file as possible to convey the change. But, each edit should contain minimally sufficient context of unchanged lines around the code you're editing to resolve ambiguity.\n\nDO NOT omit spans of pre-existing code (or comments) without using the \"// ... existing code ...\" comment to indicate its absence. If you omit the existing code comment, the model may inadvertently delete these lines.\n\nIf you plan on deleting a section, you must provide context before and after to delete it. If the initial code is \"Block 1\\nBlock 2\\nBlock 3\", and you want to remove Block 2, you would output \"// ... existing code ...\\nBlock 1\\nBlock 3\\n// ... existing code ...\".\n\nMake sure it is clear what the edit should be, and where it should be applied. Make edits to a file in a single edit_file call instead of multiple edit_file calls to the same file. The apply model can handle many distinct edits at once.",
@@ -249,6 +139,295 @@ const docTemplate = `{
                     },
                     "503": {
                         "description": "Service unavailable - Relace not configured",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/drives/attach": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Mounts an agent drive using the blfs binary to a local path, optionally mounting a subpath within the drive",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "drive"
+                ],
+                "summary": "Attach a drive to a local path",
+                "parameters": [
+                    {
+                        "description": "Drive attachment parameters",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handler.AttachDriveRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handler.AttachDriveResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/drives/mount/{mountPath}": {
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Unmounts a previously mounted drive from the specified local path",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "drive"
+                ],
+                "summary": "Detach a drive from a local path",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Mount path to detach (must start with /, e.g. /mnt/test)",
+                        "name": "mountPath",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handler.DetachDriveResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/drives/mounts": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns a list of all currently mounted drives managed by blfs",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "drive"
+                ],
+                "summary": "List currently mounted drives",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handler.ListMountsResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/filesystem-content-search/{path}": {
+            "get": {
+                "description": "Searches for text content inside files using ripgrep. Returns matching lines with context.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "filesystem"
+                ],
+                "summary": "Search for text content in files",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Directory path to search in",
+                        "name": "path",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Text to search for",
+                        "name": "query",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "Case sensitive search (default: false)",
+                        "name": "caseSensitive",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Maximum number of results to return (default: 100)",
+                        "name": "maxResults",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "File pattern to include (e.g., *.go)",
+                        "name": "filePattern",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Comma-separated directory names to skip (default: node_modules,vendor,.git,dist,build,target,__pycache__,.venv,.next,coverage)",
+                        "name": "excludeDirs",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Content search results",
+                        "schema": {
+                            "$ref": "#/definitions/ContentSearchResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable entity",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/filesystem-find/{path}": {
+            "get": {
+                "description": "Finds files and directories using the find command.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "filesystem"
+                ],
+                "summary": "Find files and directories",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Path to search in (e.g., /home/user/projects)",
+                        "name": "path",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Type of search (file or directory)",
+                        "name": "type",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Comma-separated file patterns to include (e.g., *.go,*.js)",
+                        "name": "patterns",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Maximum number of results to return (default: 20). If set to 0, all results will be returned.",
+                        "name": "maxResults",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Comma-separated directory names to skip (default: node_modules,vendor,.git,dist,build,target,__pycache__,.venv,.next,coverage). Use empty string to skip no directories.",
+                        "name": "excludeDirs",
+                        "in": "query"
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "Exclude hidden files and directories (default: true)",
+                        "name": "excludeHidden",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Find results",
+                        "schema": {
+                            "$ref": "#/definitions/FindResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable entity",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
                         "schema": {
                             "$ref": "#/definitions/ErrorResponse"
                         }
@@ -551,6 +730,241 @@ const docTemplate = `{
                 }
             }
         },
+        "/filesystem-search/{path}": {
+            "get": {
+                "description": "Performs fuzzy search on filesystem paths using fuzzy matching algorithm. Optimized alternative to find and grep commands.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "filesystem"
+                ],
+                "summary": "Fuzzy search for files and directories",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Path to search in (e.g., /home/user/projects)",
+                        "name": "path",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Maximum number of results to return (default: 20)",
+                        "name": "maxResults",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Comma-separated file patterns to include (e.g., *.go,*.js)",
+                        "name": "patterns",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Comma-separated directory names to skip (default: node_modules,vendor,.git,dist,build,target,__pycache__,.venv,.next,coverage). Use empty string to skip no directories.",
+                        "name": "excludeDirs",
+                        "in": "query"
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "Exclude hidden files and directories (default: true)",
+                        "name": "excludeHidden",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Fuzzy search results",
+                        "schema": {
+                            "$ref": "#/definitions/FuzzySearchResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable entity",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/filesystem/tree/{path}": {
+            "get": {
+                "description": "Get a recursive directory tree structure starting from the specified path",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "filesystem"
+                ],
+                "summary": "Get directory tree",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Root directory path",
+                        "name": "path",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Directory tree",
+                        "schema": {
+                            "$ref": "#/definitions/Directory"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable entity",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "put": {
+                "description": "Create or update multiple files within a directory tree structure",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "filesystem"
+                ],
+                "summary": "Create or update directory tree",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Root directory path",
+                        "name": "path",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Map of file paths to content",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/TreeRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Updated directory tree",
+                        "schema": {
+                            "$ref": "#/definitions/Directory"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable entity",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "description": "Delete a directory tree recursively",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "filesystem"
+                ],
+                "summary": "Delete directory tree",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Root directory path",
+                        "name": "path",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "Delete directory recursively",
+                        "name": "recursive",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Directory deleted successfully",
+                        "schema": {
+                            "$ref": "#/definitions/SuccessResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable entity",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/filesystem/{path}": {
             "get": {
                 "description": "Get content of a file or listing of a directory. Use Accept header to control response format for files.",
@@ -714,6 +1128,26 @@ const docTemplate = `{
                         "description": "Internal server error",
                         "schema": {
                             "$ref": "#/definitions/ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/health": {
+            "get": {
+                "description": "Returns health status and system information including upgrade count and binary details\nAlso includes last upgrade attempt status with detailed error information if available",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "system"
+                ],
+                "summary": "Health check",
+                "responses": {
+                    "200": {
+                        "description": "Health status",
+                        "schema": {
+                            "$ref": "#/definitions/HealthResponse"
                         }
                     }
                 }
@@ -1088,6 +1522,90 @@ const docTemplate = `{
                 }
             }
         },
+        "/network/tunnel": {
+            "delete": {
+                "description": "Stop the network tunnel and restore the original network configuration. WARNING: After disconnecting, the sandbox will lose all outbound internet connectivity (no egress). Inbound connections to the sandbox will still work. Use PUT /network/tunnel/config to re-establish the tunnel.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "network"
+                ],
+                "summary": "Disconnect tunnel",
+                "responses": {
+                    "200": {
+                        "description": "Tunnel disconnected",
+                        "schema": {
+                            "$ref": "#/definitions/SuccessResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "No tunnel is running",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Failed to stop tunnel",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/network/tunnel/config": {
+            "put": {
+                "description": "Apply a new tunnel configuration on the fly. The existing tunnel is torn down and a new one is established. This endpoint is write-only; there is no corresponding GET to read the config back.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "network"
+                ],
+                "summary": "Update tunnel configuration",
+                "parameters": [
+                    {
+                        "description": "Base64-encoded tunnel configuration",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/TunnelConfigRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Configuration applied",
+                        "schema": {
+                            "$ref": "#/definitions/SuccessResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request body",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "Invalid tunnel configuration",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Failed to apply configuration",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/process": {
             "get": {
                 "description": "Get a list of all running and completed processes",
@@ -1114,12 +1632,13 @@ const docTemplate = `{
                 }
             },
             "post": {
-                "description": "Execute a command and return process information",
+                "description": "Execute a command and return process information. If Accept header is text/event-stream, streams logs in SSE format and returns the process response as a final event.",
                 "consumes": [
                     "application/json"
                 ],
                 "produces": [
-                    "application/json"
+                    "application/json",
+                    "text/event-stream"
                 ],
                 "tags": [
                     "process"
@@ -1397,6 +1916,45 @@ const docTemplate = `{
                 }
             }
         },
+        "/upgrade": {
+            "post": {
+                "description": "Triggers an upgrade of the sandbox-api process. Returns 200 immediately before upgrading.\nThe upgrade will: download the specified binary from GitHub releases, validate it, and restart.\nAll running processes will be preserved across the upgrade.\nAvailable versions: \"develop\" (default), \"main\", \"latest\", or specific tag like \"v1.0.0\"\nYou can also specify a custom baseUrl for forks (defaults to https://github.com/blaxel-ai/sandbox/releases)",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "system"
+                ],
+                "summary": "Upgrade the sandbox-api",
+                "parameters": [
+                    {
+                        "description": "Upgrade options",
+                        "name": "request",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/UpgradeRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Upgrade initiated",
+                        "schema": {
+                            "$ref": "#/definitions/SuccessResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/watch/filesystem/{path}": {
             "get": {
                 "description": "Streams the path of modified files (one per line) in the given directory. Closes when the client disconnects.",
@@ -1566,6 +2124,61 @@ const docTemplate = `{
                 }
             }
         },
+        "ContentSearchMatch": {
+            "type": "object",
+            "required": [
+                "column",
+                "line",
+                "path",
+                "text"
+            ],
+            "properties": {
+                "column": {
+                    "type": "integer",
+                    "example": 10
+                },
+                "context": {
+                    "type": "string",
+                    "example": "previous line\ncurrent line\nnext line"
+                },
+                "line": {
+                    "type": "integer",
+                    "example": 42
+                },
+                "path": {
+                    "type": "string",
+                    "example": "src/main.go"
+                },
+                "text": {
+                    "type": "string",
+                    "example": "const searchText = 'example'"
+                }
+            }
+        },
+        "ContentSearchResponse": {
+            "type": "object",
+            "required": [
+                "matches",
+                "query",
+                "total"
+            ],
+            "properties": {
+                "matches": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/ContentSearchMatch"
+                    }
+                },
+                "query": {
+                    "type": "string",
+                    "example": "searchText"
+                },
+                "total": {
+                    "type": "integer",
+                    "example": 5
+                }
+            }
+        },
         "CreateLSPServerRequest": {
             "type": "object",
             "required": [
@@ -1718,6 +2331,151 @@ const docTemplate = `{
                 },
                 "size": {
                     "type": "integer"
+                }
+            }
+        },
+        "FindMatch": {
+            "type": "object",
+            "required": [
+                "path",
+                "type"
+            ],
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "example": "src/main.go"
+                },
+                "type": {
+                    "description": "\"file\" or \"directory\"",
+                    "type": "string",
+                    "example": "file"
+                }
+            }
+        },
+        "FindResponse": {
+            "type": "object",
+            "required": [
+                "matches",
+                "total"
+            ],
+            "properties": {
+                "matches": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/FindMatch"
+                    }
+                },
+                "total": {
+                    "type": "integer",
+                    "example": 5
+                }
+            }
+        },
+        "FuzzySearchMatch": {
+            "type": "object",
+            "required": [
+                "path",
+                "score",
+                "type"
+            ],
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "example": "src/main.go"
+                },
+                "score": {
+                    "type": "integer",
+                    "example": 100
+                },
+                "type": {
+                    "description": "\"file\" or \"directory\"",
+                    "type": "string",
+                    "example": "file"
+                }
+            }
+        },
+        "FuzzySearchResponse": {
+            "type": "object",
+            "required": [
+                "matches",
+                "total"
+            ],
+            "properties": {
+                "matches": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/FuzzySearchMatch"
+                    }
+                },
+                "total": {
+                    "type": "integer",
+                    "example": 5
+                }
+            }
+        },
+        "HealthResponse": {
+            "type": "object",
+            "required": [
+                "arch",
+                "buildTime",
+                "gitCommit",
+                "goVersion",
+                "lastUpgrade",
+                "os",
+                "startedAt",
+                "status",
+                "upgradeCount",
+                "uptime",
+                "uptimeSeconds",
+                "version"
+            ],
+            "properties": {
+                "arch": {
+                    "type": "string",
+                    "example": "amd64"
+                },
+                "buildTime": {
+                    "type": "string",
+                    "example": "2026-01-29T17:36:52Z"
+                },
+                "gitCommit": {
+                    "type": "string",
+                    "example": "abc123"
+                },
+                "goVersion": {
+                    "type": "string",
+                    "example": "go1.25.0"
+                },
+                "lastUpgrade": {
+                    "$ref": "#/definitions/UpgradeStatus"
+                },
+                "os": {
+                    "type": "string",
+                    "example": "linux"
+                },
+                "startedAt": {
+                    "type": "string",
+                    "example": "2026-01-29T18:45:49Z"
+                },
+                "status": {
+                    "type": "string",
+                    "example": "ok"
+                },
+                "upgradeCount": {
+                    "type": "integer",
+                    "example": 0
+                },
+                "uptime": {
+                    "type": "string",
+                    "example": "1h30m"
+                },
+                "uptimeSeconds": {
+                    "type": "number",
+                    "example": 5400.5
+                },
+                "version": {
+                    "type": "string",
+                    "example": "v0.1.0"
                 }
             }
         },
@@ -1945,13 +2703,12 @@ const docTemplate = `{
                 "completedAt",
                 "exitCode",
                 "logs",
-                "maxRestarts",
                 "name",
                 "pid",
-                "restartCount",
-                "restartOnFailure",
                 "startedAt",
                 "status",
+                "stderr",
+                "stdout",
                 "workingDir"
             ],
             "properties": {
@@ -2005,6 +2762,14 @@ const docTemplate = `{
                         "completed"
                     ],
                     "example": "running"
+                },
+                "stderr": {
+                    "type": "string",
+                    "example": "stderr output"
+                },
+                "stdout": {
+                    "type": "string",
+                    "example": "stdout output"
                 },
                 "workingDir": {
                     "type": "string",
@@ -2076,20 +2841,99 @@ const docTemplate = `{
                 }
             }
         },
-        "WelcomeResponse": {
+        "TreeRequest": {
             "type": "object",
             "properties": {
-                "description": {
+                "files": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    },
+                    "example": {
+                        "\"dir/file2.txt\"": "\"content2\"}",
+                        "{\"file1.txt\"": "\"content1\""
+                    }
+                }
+            }
+        },
+        "TunnelConfigRequest": {
+            "type": "object",
+            "required": [
+                "config"
+            ],
+            "properties": {
+                "config": {
+                    "description": "Base64-encoded tunnel config JSON",
                     "type": "string",
-                    "example": "This sandbox provides a full-featured environment for running code securely"
+                    "example": "eyJsb2NhbF9pcCI6ICIxMC4wLjAuMS8zMiIsIC4uLn0="
+                }
+            }
+        },
+        "UpgradeRequest": {
+            "type": "object",
+            "properties": {
+                "baseUrl": {
+                    "description": "Base URL for releases (useful for forks)",
+                    "type": "string",
+                    "example": "https://github.com/blaxel-ai/sandbox/releases"
                 },
-                "documentation": {
+                "version": {
+                    "description": "Version to upgrade to: \"develop\", \"main\", \"latest\", or specific tag like \"v1.0.0\"",
                     "type": "string",
-                    "example": "https://docs.blaxel.ai/Sandboxes/Overview"
+                    "example": "develop"
+                }
+            }
+        },
+        "UpgradeStatus": {
+            "type": "object",
+            "required": [
+                "status",
+                "step",
+                "version"
+            ],
+            "properties": {
+                "binaryPath": {
+                    "description": "Path to downloaded binary",
+                    "type": "string",
+                    "example": "/tmp/sandbox-api-new"
                 },
-                "message": {
+                "bytesDownloaded": {
+                    "description": "Bytes downloaded",
+                    "type": "integer",
+                    "example": 25034936
+                },
+                "downloadUrl": {
+                    "description": "URL used for download",
                     "type": "string",
-                    "example": "Welcome to your Blaxel Sandbox"
+                    "example": "https://github.com/..."
+                },
+                "error": {
+                    "description": "Error message if failed",
+                    "type": "string",
+                    "example": "Failed to download binary"
+                },
+                "lastAttempt": {
+                    "description": "When the upgrade was attempted",
+                    "type": "string"
+                },
+                "status": {
+                    "description": "Current state (idle, running, completed, failed)",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/process.UpgradeState"
+                        }
+                    ],
+                    "example": "running"
+                },
+                "step": {
+                    "description": "Current/last step (none, starting, download, validate, replace, completed, skipped)",
+                    "type": "string",
+                    "example": "download"
+                },
+                "version": {
+                    "description": "Version being upgraded to",
+                    "type": "string",
+                    "example": "latest"
                 }
             }
         },
@@ -2138,6 +2982,111 @@ const docTemplate = `{
                     "type": "string"
                 }
             }
+        },
+        "handler.AttachDriveRequest": {
+            "type": "object",
+            "required": [
+                "driveName",
+                "mountPath"
+            ],
+            "properties": {
+                "driveName": {
+                    "type": "string"
+                },
+                "drivePath": {
+                    "description": "Optional, defaults to \"/\"",
+                    "type": "string"
+                },
+                "mountPath": {
+                    "type": "string"
+                }
+            }
+        },
+        "handler.AttachDriveResponse": {
+            "type": "object",
+            "properties": {
+                "driveName": {
+                    "type": "string"
+                },
+                "drivePath": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "mountPath": {
+                    "type": "string"
+                },
+                "success": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "handler.DetachDriveResponse": {
+            "type": "object",
+            "properties": {
+                "message": {
+                    "type": "string"
+                },
+                "mountPath": {
+                    "type": "string"
+                },
+                "success": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "handler.ListMountsResponse": {
+            "type": "object",
+            "properties": {
+                "mounts": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/handler.MountInfo"
+                    }
+                }
+            }
+        },
+        "handler.MountInfo": {
+            "type": "object",
+            "properties": {
+                "driveName": {
+                    "type": "string"
+                },
+                "drivePath": {
+                    "type": "string"
+                },
+                "mountPath": {
+                    "type": "string"
+                }
+            }
+        },
+        "process.UpgradeState": {
+            "type": "string",
+            "enum": [
+                "idle",
+                "running",
+                "completed",
+                "failed"
+            ],
+            "x-enum-comments": {
+                "UpgradeStateCompleted": "Upgrade completed successfully",
+                "UpgradeStateFailed": "Upgrade failed",
+                "UpgradeStateIdle": "No upgrade in progress",
+                "UpgradeStateRunning": "Upgrade is currently running"
+            },
+            "x-enum-descriptions": [
+                "No upgrade in progress",
+                "Upgrade is currently running",
+                "Upgrade completed successfully",
+                "Upgrade failed"
+            ],
+            "x-enum-varnames": [
+                "UpgradeStateIdle",
+                "UpgradeStateRunning",
+                "UpgradeStateCompleted",
+                "UpgradeStateFailed"
+            ]
         }
     },
     "securityDefinitions": {
@@ -2152,7 +3101,7 @@ const docTemplate = `{
 // SwaggerInfo holds exported Swagger Info so clients can modify it
 var SwaggerInfo = &swag.Spec{
 	Version:          "0.0.1",
-	Host:             "run.blaxel.ai/{workspace_id}/sandboxes/{sandbox_id}",
+	Host:             "sbx-{sandbox_id}-{workspace_id}.{region}.bl.run",
 	BasePath:         "",
 	Schemes:          []string{"https"},
 	Title:            "Sandbox API",

@@ -1,0 +1,30 @@
+name: CodSpeed Benchmarks
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'sandbox-api/**'
+
+permissions: # optional for public repositories
+  contents: read # required for actions/checkout
+  id-token: write # required for OIDC authentication with CodSpeed
+
+jobs:
+  benchmarks:
+    runs-on: codspeed-macro
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.25'
+          cache-dependency-path: sandbox-api/go.sum
+
+      - name: Run benchmarks
+        uses: CodSpeedHQ/action@v4
+        with:
+          mode: walltime
+          run: |
+            make benchmark

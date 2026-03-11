@@ -5,79 +5,6 @@ info:
   title: Sandbox API
   version: 0.0.1
 paths:
-  /:
-    delete:
-      description: Returns a welcome message with links to documentation
-      responses:
-        "200":
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/WelcomeResponse"
-      summary: Welcome message
-      tags:
-        - root
-    get:
-      description: Returns a welcome message with links to documentation
-      responses:
-        "200":
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/WelcomeResponse"
-      summary: Welcome message
-      tags:
-        - root
-    options:
-      description: Returns a welcome message with links to documentation
-      responses:
-        "200":
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/WelcomeResponse"
-      summary: Welcome message
-      tags:
-        - root
-    patch:
-      description: Returns a welcome message with links to documentation
-      responses:
-        "200":
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/WelcomeResponse"
-      summary: Welcome message
-      tags:
-        - root
-    post:
-      description: Returns a welcome message with links to documentation
-      responses:
-        "200":
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/WelcomeResponse"
-      summary: Welcome message
-      tags:
-        - root
-    put:
-      description: Returns a welcome message with links to documentation
-      responses:
-        "200":
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/WelcomeResponse"
-      summary: Welcome message
-      tags:
-        - root
   "/codegen/fastapply/{path}":
     put:
       description: >-
@@ -234,6 +161,222 @@ paths:
       summary: Code reranking/semantic search
       tags:
         - codegen
+  /drives/attach:
+    post:
+      description: Mounts an agent drive using the blfs binary to a local path, optionally mounting a subpath within the drive
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/handler.AttachDriveRequest"
+        description: Drive attachment parameters
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/handler.AttachDriveResponse"
+        "400":
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+      security:
+        - BearerAuth: []
+      summary: Attach a drive to a local path
+      tags:
+        - drive
+  "/drives/mount/{mountPath}":
+    delete:
+      description: Unmounts a previously mounted drive from the specified local path
+      parameters:
+        - description: Mount path to detach (must start with /, e.g. /mnt/test)
+          in: path
+          name: mountPath
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/handler.DetachDriveResponse"
+        "400":
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+      security:
+        - BearerAuth: []
+      summary: Detach a drive from a local path
+      tags:
+        - drive
+  /drives/mounts:
+    get:
+      description: Returns a list of all currently mounted drives managed by blfs
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/handler.ListMountsResponse"
+        "500":
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+      security:
+        - BearerAuth: []
+      summary: List currently mounted drives
+      tags:
+        - drive
+  "/filesystem-content-search/{path}":
+    get:
+      description: Searches for text content inside files using ripgrep. Returns matching lines with context.
+      parameters:
+        - description: Directory path to search in
+          in: path
+          name: path
+          required: true
+          schema:
+            type: string
+        - description: Text to search for
+          in: query
+          name: query
+          required: true
+          schema:
+            type: string
+        - description: "Case sensitive search (default: false)"
+          in: query
+          name: caseSensitive
+          schema:
+            type: boolean
+        - description: "Maximum number of results to return (default: 100)"
+          in: query
+          name: maxResults
+          schema:
+            type: integer
+        - description: File pattern to include (e.g., *.go)
+          in: query
+          name: filePattern
+          schema:
+            type: string
+        - description: "Comma-separated directory names to skip (default: node_modules,vendor,.git,dist,build,target,__pycache__,.venv,.next,coverage)"
+          in: query
+          name: excludeDirs
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Content search results
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContentSearchResponse"
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Unprocessable entity
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+      summary: Search for text content in files
+      tags:
+        - filesystem
+  "/filesystem-find/{path}":
+    get:
+      description: Finds files and directories using the find command.
+      parameters:
+        - description: Path to search in (e.g., /home/user/projects)
+          in: path
+          name: path
+          required: true
+          schema:
+            type: string
+        - description: Type of search (file or directory)
+          in: query
+          name: type
+          schema:
+            type: string
+        - description: Comma-separated file patterns to include (e.g., *.go,*.js)
+          in: query
+          name: patterns
+          schema:
+            type: string
+        - description: "Maximum number of results to return (default: 20). If set to 0, all results will be returned."
+          in: query
+          name: maxResults
+          schema:
+            type: integer
+        - description: "Comma-separated directory names to skip (default: node_modules,vendor,.git,dist,build,target,__pycache__,.venv,.next,coverage). Use empty string to skip no directories."
+          in: query
+          name: excludeDirs
+          schema:
+            type: string
+        - description: "Exclude hidden files and directories (default: true)"
+          in: query
+          name: excludeHidden
+          schema:
+            type: boolean
+      responses:
+        "200":
+          description: Find results
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FindResponse"
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Unprocessable entity
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+      summary: Find files and directories
+      tags:
+        - filesystem
   /filesystem-multipart:
     get:
       description: List all active multipart uploads
@@ -469,6 +612,64 @@ paths:
       summary: Initiate multipart upload
       tags:
         - filesystem
+  "/filesystem-search/{path}":
+    get:
+      description: Performs fuzzy search on filesystem paths using fuzzy matching algorithm. Optimized alternative to find and grep commands.
+      parameters:
+        - description: Path to search in (e.g., /home/user/projects)
+          in: path
+          name: path
+          required: true
+          schema:
+            type: string
+        - description: "Maximum number of results to return (default: 20)"
+          in: query
+          name: maxResults
+          schema:
+            type: integer
+        - description: Comma-separated file patterns to include (e.g., *.go,*.js)
+          in: query
+          name: patterns
+          schema:
+            type: string
+        - description: "Comma-separated directory names to skip (default: node_modules,vendor,.git,dist,build,target,__pycache__,.venv,.next,coverage). Use empty string to skip no directories."
+          in: query
+          name: excludeDirs
+          schema:
+            type: string
+        - description: "Exclude hidden files and directories (default: true)"
+          in: query
+          name: excludeHidden
+          schema:
+            type: boolean
+      responses:
+        "200":
+          description: Fuzzy search results
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FuzzySearchResponse"
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Unprocessable entity
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+      summary: Fuzzy search for files and directories
+      tags:
+        - filesystem
   "/filesystem/{path}":
     delete:
       description: Delete a file or directory
@@ -618,6 +819,154 @@ paths:
       summary: Create or update a file or directory
       tags:
         - filesystem
+  "/filesystem/tree/{path}":
+    delete:
+      description: Delete a directory tree recursively
+      parameters:
+        - description: Root directory path
+          in: path
+          name: path
+          required: true
+          schema:
+            type: string
+        - description: Delete directory recursively
+          in: query
+          name: recursive
+          schema:
+            type: boolean
+      responses:
+        "200":
+          description: Directory deleted successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Unprocessable entity
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+      summary: Delete directory tree
+      tags:
+        - filesystem
+    get:
+      description: Get a recursive directory tree structure starting from the specified path
+      parameters:
+        - description: Root directory path
+          in: path
+          name: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Directory tree
+          content:
+            application/json:
+              schema:
+                oneOf:
+                    - $ref: "#/components/schemas/Directory"
+                    - $ref: "#/components/schemas/FileWithContent"
+                    - type: string
+                      format: binary
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Unprocessable entity
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+      summary: Get directory tree
+      tags:
+        - filesystem
+    put:
+      description: Create or update multiple files within a directory tree structure
+      parameters:
+        - description: Root directory path
+          in: path
+          name: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TreeRequest"
+        description: Map of file paths to content
+        required: true
+      responses:
+        "200":
+          description: Updated directory tree
+          content:
+            application/json:
+              schema:
+                oneOf:
+                    - $ref: "#/components/schemas/Directory"
+                    - $ref: "#/components/schemas/FileWithContent"
+                    - type: string
+                      format: binary
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Unprocessable entity
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+      summary: Create or update directory tree
+      tags:
+        - filesystem
+  /health:
+    get:
+      description: >-
+        Returns health status and system information including upgrade count and binary details
+
+        Also includes last upgrade attempt status with detailed error information if available
+      responses:
+        "200":
+          description: Health status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+      summary: Health check
+      tags:
+        - system
   /lsp:
     get:
       description: Get a list of all active LSP servers
@@ -889,6 +1238,69 @@ paths:
       summary: Get open ports for a process
       tags:
         - network
+  /network/tunnel:
+    delete:
+      description: "Stop the network tunnel and restore the original network configuration. WARNING: After disconnecting, the sandbox will lose all outbound internet connectivity (no egress). Inbound connections to the sandbox will still work. Use PUT /network/tunnel/config to re-establish the tunnel."
+      responses:
+        "200":
+          description: Tunnel disconnected
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "400":
+          description: No tunnel is running
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Failed to stop tunnel
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+      summary: Disconnect tunnel
+      tags:
+        - network
+  /network/tunnel/config:
+    put:
+      description: Apply a new tunnel configuration on the fly. The existing tunnel is torn down and a new one is established. This endpoint is write-only; there is no corresponding GET to read the config back.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TunnelConfigRequest"
+        description: Base64-encoded tunnel configuration
+        required: true
+      responses:
+        "200":
+          description: Configuration applied
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "400":
+          description: Invalid request body
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Invalid tunnel configuration
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Failed to apply configuration
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+      summary: Update tunnel configuration
+      tags:
+        - network
   /process:
     get:
       description: Get a list of all running and completed processes
@@ -905,7 +1317,7 @@ paths:
       tags:
         - process
     post:
-      description: Execute a command and return process information
+      description: Execute a command and return process information. If Accept header is text/event-stream, streams logs in SSE format and returns the process response as a final event.
       requestBody:
         content:
           application/json:
@@ -920,10 +1332,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ProcessResponse"
+            text/event-stream:
+              schema:
+                $ref: "#/components/schemas/ProcessResponse"
         "400":
           description: Invalid request
           content:
             application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+            text/event-stream:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "422":
@@ -932,10 +1350,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+            text/event-stream:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "500":
           description: Internal server error
           content:
             application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+            text/event-stream:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
       summary: Execute a command
@@ -1118,6 +1542,40 @@ paths:
       summary: Stream process logs in real time
       tags:
         - process
+  /upgrade:
+    post:
+      description: >-
+        Triggers an upgrade of the sandbox-api process. Returns 200 immediately before upgrading.
+
+        The upgrade will: download the specified binary from GitHub releases, validate it, and restart.
+
+        All running processes will be preserved across the upgrade.
+
+        Available versions: "develop" (default), "main", "latest", or specific tag like "v1.0.0"
+
+        You can also specify a custom baseUrl for forks (defaults to https://github.com/blaxel-ai/sandbox/releases)
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpgradeRequest"
+        description: Upgrade options
+      responses:
+        "200":
+          description: Upgrade initiated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+      summary: Upgrade the sandbox-api
+      tags:
+        - system
   "/watch/filesystem/{path}":
     get:
       description: Streams the path of modified files (one per line) in the given directory. Closes when the client disconnects.
@@ -1156,11 +1614,13 @@ paths:
       tags:
         - filesystem
 servers:
-  - url: https://run.blaxel.ai/{workspace_id}/sandboxes/{sandbox_id}
+  - url: https://sbx-{sandbox_id}-{workspace_id}.{region}.bl.run
     variables:
+      sandbox_id:
+        default: unknown
       workspace_id:
         default: unknown
-      sandbox_id:
+      region:
         default: unknown
 components:
   securitySchemes:
@@ -1263,6 +1723,49 @@ components:
       required:
         - isIncomplete
         - items
+      type: object
+    ContentSearchMatch:
+      properties:
+        column:
+          example: 10
+          type: integer
+        context:
+          example: |-
+            previous line
+            current line
+            next line
+          type: string
+        line:
+          example: 42
+          type: integer
+        path:
+          example: src/main.go
+          type: string
+        text:
+          example: const searchText = 'example'
+          type: string
+      required:
+        - column
+        - line
+        - path
+        - text
+      type: object
+    ContentSearchResponse:
+      properties:
+        matches:
+          items:
+            $ref: "#/components/schemas/ContentSearchMatch"
+          type: array
+        query:
+          example: searchText
+          type: string
+        total:
+          example: 5
+          type: integer
+      required:
+        - matches
+        - query
+        - total
       type: object
     CreateLSPServerRequest:
       properties:
@@ -1373,6 +1876,113 @@ components:
         - path
         - permissions
         - size
+      type: object
+    FindMatch:
+      properties:
+        path:
+          example: src/main.go
+          type: string
+        type:
+          description: '"file" or "directory"'
+          example: file
+          type: string
+      required:
+        - path
+        - type
+      type: object
+    FindResponse:
+      properties:
+        matches:
+          items:
+            $ref: "#/components/schemas/FindMatch"
+          type: array
+        total:
+          example: 5
+          type: integer
+      required:
+        - matches
+        - total
+      type: object
+    FuzzySearchMatch:
+      properties:
+        path:
+          example: src/main.go
+          type: string
+        score:
+          example: 100
+          type: integer
+        type:
+          description: '"file" or "directory"'
+          example: file
+          type: string
+      required:
+        - path
+        - score
+        - type
+      type: object
+    FuzzySearchResponse:
+      properties:
+        matches:
+          items:
+            $ref: "#/components/schemas/FuzzySearchMatch"
+          type: array
+        total:
+          example: 5
+          type: integer
+      required:
+        - matches
+        - total
+      type: object
+    HealthResponse:
+      properties:
+        arch:
+          example: amd64
+          type: string
+        buildTime:
+          example: 2026-01-29T17:36:52Z
+          type: string
+        gitCommit:
+          example: abc123
+          type: string
+        goVersion:
+          example: go1.25.0
+          type: string
+        lastUpgrade:
+          $ref: "#/components/schemas/UpgradeStatus"
+        os:
+          example: linux
+          type: string
+        startedAt:
+          example: 2026-01-29T18:45:49Z
+          type: string
+        status:
+          example: ok
+          type: string
+        upgradeCount:
+          example: 0
+          type: integer
+        uptime:
+          example: 1h30m
+          type: string
+        uptimeSeconds:
+          example: 5400.5
+          type: number
+        version:
+          example: v0.1.0
+          type: string
+      required:
+        - arch
+        - buildTime
+        - gitCommit
+        - goVersion
+        - lastUpgrade
+        - os
+        - startedAt
+        - status
+        - upgradeCount
+        - uptime
+        - uptimeSeconds
+        - version
       type: object
     LSPServerResponse:
       properties:
@@ -1568,6 +2178,12 @@ components:
             - completed
           example: running
           type: string
+        stderr:
+          example: stderr output
+          type: string
+        stdout:
+          example: stdout output
+          type: string
         workingDir:
           example: /home/user
           type: string
@@ -1576,13 +2192,12 @@ components:
         - completedAt
         - exitCode
         - logs
-        - maxRestarts
         - name
         - pid
-        - restartCount
-        - restartOnFailure
         - startedAt
         - status
+        - stderr
+        - stdout
         - workingDir
       type: object
     RankedFile:
@@ -1628,17 +2243,74 @@ components:
       required:
         - message
       type: object
-    WelcomeResponse:
+    TreeRequest:
       properties:
-        description:
-          example: This sandbox provides a full-featured environment for running code securely
+        files:
+          additionalProperties:
+            type: string
+          example:
+            '"dir/file2.txt"': '"content2"}'
+            "{\"file1.txt\"": '"content1"'
+          type: object
+      type: object
+    TunnelConfigRequest:
+      properties:
+        config:
+          description: Base64-encoded tunnel config JSON
+          example: eyJsb2NhbF9pcCI6ICIxMC4wLjAuMS8zMiIsIC4uLn0=
           type: string
-        documentation:
-          example: https://docs.blaxel.ai/Sandboxes/Overview
+      required:
+        - config
+      type: object
+    UpgradeRequest:
+      properties:
+        baseUrl:
+          description: Base URL for releases (useful for forks)
+          example: https://github.com/blaxel-ai/sandbox/releases
           type: string
-        message:
-          example: Welcome to your Blaxel Sandbox
+        version:
+          description: 'Version to upgrade to: "develop", "main", "latest", or specific tag like "v1.0.0"'
+          example: develop
           type: string
+      type: object
+    UpgradeStatus:
+      properties:
+        binaryPath:
+          description: Path to downloaded binary
+          example: /tmp/sandbox-api-new
+          type: string
+        bytesDownloaded:
+          description: Bytes downloaded
+          example: 25034936
+          type: integer
+        downloadUrl:
+          description: URL used for download
+          example: https://github.com/...
+          type: string
+        error:
+          description: Error message if failed
+          example: Failed to download binary
+          type: string
+        lastAttempt:
+          description: When the upgrade was attempted
+          type: string
+        status:
+          allOf:
+            - $ref: "#/components/schemas/process.UpgradeState"
+          description: Current state (idle, running, completed, failed)
+          example: running
+        step:
+          description: Current/last step (none, starting, download, validate, replace, completed, skipped)
+          example: download
+          type: string
+        version:
+          description: Version being upgraded to
+          example: latest
+          type: string
+      required:
+        - status
+        - step
+        - version
       type: object
     filesystem.MultipartUpload:
       properties:
@@ -1672,5 +2344,78 @@ components:
         uploadedAt:
           type: string
       type: object
+    handler.AttachDriveRequest:
+      properties:
+        driveName:
+          type: string
+        drivePath:
+          description: Optional, defaults to "/"
+          type: string
+        mountPath:
+          type: string
+      required:
+        - driveName
+        - mountPath
+      type: object
+    handler.AttachDriveResponse:
+      properties:
+        driveName:
+          type: string
+        drivePath:
+          type: string
+        message:
+          type: string
+        mountPath:
+          type: string
+        success:
+          type: boolean
+      type: object
+    handler.DetachDriveResponse:
+      properties:
+        message:
+          type: string
+        mountPath:
+          type: string
+        success:
+          type: boolean
+      type: object
+    handler.ListMountsResponse:
+      properties:
+        mounts:
+          items:
+            $ref: "#/components/schemas/handler.MountInfo"
+          type: array
+      type: object
+    handler.MountInfo:
+      properties:
+        driveName:
+          type: string
+        drivePath:
+          type: string
+        mountPath:
+          type: string
+      type: object
+    process.UpgradeState:
+      enum:
+        - idle
+        - running
+        - completed
+        - failed
+      type: string
+      x-enum-comments:
+        UpgradeStateCompleted: Upgrade completed successfully
+        UpgradeStateFailed: Upgrade failed
+        UpgradeStateIdle: No upgrade in progress
+        UpgradeStateRunning: Upgrade is currently running
+      x-enum-descriptions:
+        - No upgrade in progress
+        - Upgrade is currently running
+        - Upgrade completed successfully
+        - Upgrade failed
+      x-enum-varnames:
+        - UpgradeStateIdle
+        - UpgradeStateRunning
+        - UpgradeStateCompleted
+        - UpgradeStateFailed
 security:
   - BearerAuth: []

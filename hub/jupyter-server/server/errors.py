@@ -1,0 +1,3 @@
+class ExecutionError(Exception):
+    pass
+
