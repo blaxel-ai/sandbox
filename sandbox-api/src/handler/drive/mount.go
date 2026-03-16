@@ -74,7 +74,7 @@ func MountDrive(driveName, mountPath, drivePath string) error {
 	// Build blfs mount command
 	args := []string{
 		"mount",
-		fmt.Sprintf("-filer=%s:8080", filerAddress),
+		fmt.Sprintf("-filer=%s:49200.49201", filerAddress),
 		"-writebackCache=true",
 		"-asyncDio=true",
 		"-cacheSymlink=true",
