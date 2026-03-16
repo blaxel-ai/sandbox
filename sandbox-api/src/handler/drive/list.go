@@ -52,8 +52,8 @@ func ListMounts() ([]MountInfo, error) {
 		mountPath := fields[1] // e.g., "/mnt/test"
 		fsType := fields[2]
 
-		// Only check fuse.seaweedfs mounts
-		if fsType != "fuse.seaweedfs" {
+		// Only check FUSE mounts from blfs/seaweedfs
+		if fsType != "fuse.blfs" && fsType != "fuse.seaweedfs" {
 			continue
 		}
 
