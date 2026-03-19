@@ -62,6 +62,27 @@ func GetStateFilePath() string {
 	return DefaultStateFilePath
 }
 
+// readSavedState reads the process state file from disk and returns the parsed state.
+// Returns an empty ManagerState (not an error) if no state file exists yet.
+func readSavedState() (*ManagerState, error) {
+	stateFile := GetStateFilePath()
+	data, err := os.ReadFile(stateFile)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return &ManagerState{Processes: make(map[string]ProcessState)}, nil
+		}
+		return nil, fmt.Errorf("failed to read state file: %w", err)
+	}
+	var state ManagerState
+	if err := json.Unmarshal(data, &state); err != nil {
+		return nil, fmt.Errorf("failed to parse state file: %w", err)
+	}
+	if state.Processes == nil {
+		state.Processes = make(map[string]ProcessState)
+	}
+	return &state, nil
+}
+
 // SaveState persists the current process state to disk
 func (pm *ProcessManager) SaveState() error {
 	pm.mu.RLock()
@@ -876,11 +897,27 @@ func validateNewBinary(binaryPath string) error {
 	logger := logrus.WithField("component", "upgrade")
 	logger.Info("Validating new binary before replacement...")
 
-	// Get the process count from current instance for comparison
+	// Re-save state immediately before starting the validation binary, then read
+	// the counts directly from the saved file. This prevents a race condition where
+	// processes with restartOnFailure=true fail and restart between HandleUpgrade's
+	// SaveState() and this point, acquiring new OS PIDs that the validation binary
+	// cannot find in the stale state file (causing a false "running process count
+	// mismatch" failure).
 	pm := GetProcessManager()
-	currentProcesses := pm.ListProcesses()
+	if err := pm.SaveState(); err != nil {
+		return fmt.Errorf("failed to re-save state before validation: %w", err)
+	}
+
+	// Read the expected counts directly from the state file we just wrote.
+	// Using the file (rather than in-memory) ensures the validation binary and
+	// this instance are comparing against the exact same snapshot.
+	savedState, err := readSavedState()
+	if err != nil {
+		return fmt.Errorf("failed to read saved state: %w", err)
+	}
+	totalCount := len(savedState.Processes)
 	runningCount := 0
-	for _, p := range currentProcesses {
+	for _, p := range savedState.Processes {
 		if p.Status == StatusRunning {
 			runningCount++
 		}
@@ -889,7 +926,7 @@ func validateNewBinary(binaryPath string) error {
 	logger.WithFields(logrus.Fields{
 		"port":           ValidationPort,
 		"currentRunning": runningCount,
-		"totalProcesses": len(currentProcesses),
+		"totalProcesses": totalCount,
 	}).Info("Starting new binary for validation")
 
 	// Start the new binary on the validation port
@@ -926,7 +963,7 @@ func validateNewBinary(binaryPath string) error {
 	logger.Info("Validation instance is healthy, checking process recovery...")
 
 	// Verify process state was recovered correctly
-	if err := verifyProcessRecovery(validationURL, len(currentProcesses), runningCount); err != nil {
+	if err := verifyProcessRecovery(validationURL, totalCount, runningCount); err != nil {
 		logger.WithError(err).Error("Process recovery verification failed")
 		return fmt.Errorf("process recovery verification failed: %w", err)
 	}
