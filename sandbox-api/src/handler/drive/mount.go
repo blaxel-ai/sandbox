@@ -75,7 +75,6 @@ func MountDrive(driveName, mountPath, drivePath string) error {
 	args := []string{
 		"mount",
 		fmt.Sprintf("-filer=%s:49200.49201", filerAddress),
-		"-writebackCache=true",
 		"-asyncDio=true",
 		"-cacheSymlink=true",
 		fmt.Sprintf("-auth.tokenFile=%s", getAuthTokenPath()),
@@ -83,6 +82,13 @@ func MountDrive(driveName, mountPath, drivePath string) error {
 		fmt.Sprintf("-dir=%s", mountPath),
 		"-volumeServerAccess=filerProxy",
 		"-dirAutoCreate=true",
+	}
+
+	// It's causing inconsistency issues on F_APPEND with the cache, so we're adding an environment variable to disable it
+	if os.Getenv("BLFS_DISABLE_WRITEBACK_CACHE") == "true" {
+		args = append(args, "-writebackCache=false")
+	} else {
+		args = append(args, "-writebackCache=true")
 	}
 
 	logrus.WithFields(logrus.Fields{
