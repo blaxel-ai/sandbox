@@ -1,6 +1,7 @@
 package tests
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -595,16 +596,16 @@ func TestDriveConcurrentFileCreation(t *testing.T) {
 	// Verify each file's content is intact
 	for i := 0; i < numAgents; i++ {
 		filePath := fmt.Sprintf("%s/agent-%d-output.txt", mountPath, i)
-		resp, err = common.MakeRequest(http.MethodGet, common.EncodeFilesystemPath(filePath), nil)
+		fileResp, err := common.MakeRequest(http.MethodGet, common.EncodeFilesystemPath(filePath), nil)
 		require.NoError(t, err)
-		defer resp.Body.Close()
-		assert.Equal(t, http.StatusOK, resp.StatusCode, "Agent %d file should be readable", i)
+		assert.Equal(t, http.StatusOK, fileResp.StatusCode, "Agent %d file should be readable", i)
 
-		var fileResp map[string]interface{}
-		err = common.ParseJSONResponse(resp, &fileResp)
+		var fileData map[string]interface{}
+		err = common.ParseJSONResponse(fileResp, &fileData)
+		fileResp.Body.Close()
 		require.NoError(t, err)
 
-		content, ok := fileResp["content"].(string)
+		content, ok := fileData["content"].(string)
 		require.True(t, ok)
 		assert.Contains(t, content, fmt.Sprintf("Output from agent %d", i),
 			"Agent %d file content should be intact", i)
@@ -698,16 +699,16 @@ func TestDriveConcurrentLogAppend(t *testing.T) {
 	// Verify each agent's log file has the expected content
 	for i := 0; i < numAgents; i++ {
 		logFile := fmt.Sprintf("%s/agent-%d.log", logDir, i)
-		resp, err = common.MakeRequest(http.MethodGet, common.EncodeFilesystemPath(logFile), nil)
+		logResp, err := common.MakeRequest(http.MethodGet, common.EncodeFilesystemPath(logFile), nil)
 		require.NoError(t, err)
-		defer resp.Body.Close()
-		assert.Equal(t, http.StatusOK, resp.StatusCode, "Agent %d log file should be readable", i)
+		assert.Equal(t, http.StatusOK, logResp.StatusCode, "Agent %d log file should be readable", i)
 
-		var fileResp map[string]interface{}
-		err = common.ParseJSONResponse(resp, &fileResp)
+		var fileData map[string]interface{}
+		err = common.ParseJSONResponse(logResp, &fileData)
+		logResp.Body.Close()
 		require.NoError(t, err)
 
-		content, ok := fileResp["content"].(string)
+		content, ok := fileData["content"].(string)
 		require.True(t, ok)
 
 		// Verify all entries are present
@@ -889,14 +890,26 @@ func TestDriveFileWatchOnMount(t *testing.T) {
 
 	time.Sleep(500 * time.Millisecond)
 
-	// Start watching the mount path
+	// Start watching the mount path using a cancellable context to avoid goroutine leaks
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	received := make(chan string, 10)
 	done := make(chan struct{})
 
 	go func() {
 		defer close(done)
-		watchResp, err := common.MakeRequest(http.MethodGet, common.EncodeWatchPath(mountPath), nil)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, common.BaseURL+common.EncodeWatchPath(mountPath), nil)
 		if err != nil {
+			t.Logf("Watch request creation error: %v", err)
+			return
+		}
+		watchResp, err := common.Client.Do(req)
+		if err != nil {
+			// Context cancellation is expected
+			if ctx.Err() != nil {
+				return
+			}
 			t.Logf("Watch error: %v", err)
 			return
 		}
@@ -937,6 +950,10 @@ func TestDriveFileWatchOnMount(t *testing.T) {
 		// On FUSE mounts, inotify may not always work. This is a known limitation.
 		t.Log("Warning: No watch event received within timeout. This may be expected for FUSE-mounted drives where inotify events are not fully supported.")
 	}
+
+	// Cancel context to stop the watch goroutine and wait for it to exit
+	cancel()
+	<-done
 }
 
 // TestDriveRemountAfterDetach tests that a drive can be remounted after being detached,
@@ -956,6 +973,14 @@ func TestDriveRemountAfterDetach(t *testing.T) {
 	require.NoError(t, err)
 	resp.Body.Close()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	// Ensure cleanup even if steps between first mount and remount fail
+	defer func() {
+		r, _ := common.MakeRequest(http.MethodDelete, "/drives/mount"+mountPath, nil)
+		if r != nil {
+			r.Body.Close()
+		}
+	}()
 
 	time.Sleep(500 * time.Millisecond)
 
@@ -985,13 +1010,6 @@ func TestDriveRemountAfterDetach(t *testing.T) {
 	require.NoError(t, err)
 	resp.Body.Close()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
-
-	defer func() {
-		r, _ := common.MakeRequest(http.MethodDelete, "/drives/mount"+mountPath, nil)
-		if r != nil {
-			r.Body.Close()
-		}
-	}()
 
 	time.Sleep(500 * time.Millisecond)
 
