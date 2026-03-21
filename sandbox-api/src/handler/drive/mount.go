@@ -115,7 +115,7 @@ func MountDrive(driveName, mountPath, drivePath string) error {
 
 	// Poll until the mount point is ready or timeout.
 	// Two-phase check: first wait for the kernel FUSE mount to appear in
-	// /proc/mounts, then probe with ReadDir to confirm the filer gRPC
+	// /proc/mounts, then probe with ReadDir to confirm the server gRPC
 	// stream is actually serving before we declare readiness.
 	startTime := time.Now()
 	mountDetected := false
@@ -127,19 +127,19 @@ func MountDrive(driveName, mountPath, drivePath string) error {
 		if !mountDetected {
 			if isMountPoint(mountPath) {
 				mountDetected = true
-				logrus.WithField("mount_path", mountPath).Debug("Kernel mount registered, waiting for filer connection...")
+				logrus.WithField("mount_path", mountPath).Debug("Kernel mount registered, waiting for server connection...")
 			}
 			time.Sleep(pollInterval)
 			continue
 		}
 
-		// Phase 2: mount is registered, now probe until filer gRPC is actually serving
+		// Phase 2: mount is registered, now probe until server gRPC is actually serving
 		_, err := os.ReadDir(mountPath)
 		if err == nil {
-			logrus.WithField("mount_path", mountPath).Info("Mount point is ready and filer connection established")
+			logrus.WithField("mount_path", mountPath).Info("Mount point is ready and server connection established")
 			return nil
 		}
-		logrus.WithField("mount_path", mountPath).Debug("Filer connection not yet ready, retrying...")
+		logrus.WithField("mount_path", mountPath).Debug("Server connection not yet ready, retrying...")
 		time.Sleep(pollInterval)
 	}
 
