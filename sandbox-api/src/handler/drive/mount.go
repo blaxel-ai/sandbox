@@ -46,7 +46,8 @@ func MountDrive(driveName, mountPath, drivePath string) error {
 		return fmt.Errorf("BL_WORKSPACE_ID environment variable not set")
 	}
 
-	// Construct infrastructure ID: drv-{driveName}-{workspaceID}
+	// Construct infrastructure ID: drv-{drive
+	// Name}-{workspaceID}
 	infrastructureId := fmt.Sprintf("drv-%s-%s", driveName, workspaceID)
 
 	// Get filer address
