@@ -113,19 +113,33 @@ func MountDrive(driveName, mountPath, drivePath string) error {
 		"mount_path": mountPath,
 	}).Info("Started blfs mount process")
 
-	// Poll until the mount point is ready or timeout
+	// Poll until the mount point is ready or timeout.
+	// Two-phase check: first wait for the kernel FUSE mount to appear in
+	// /proc/mounts, then probe with ReadDir to confirm the server gRPC
+	// stream is actually serving before we declare readiness.
 	startTime := time.Now()
+	mountDetected := false
 	for time.Since(startTime) < mountTimeout {
-		if isMountPoint(mountPath) {
-			logrus.WithField("mount_path", mountPath).Info("Mount point is ready")
-			return nil
-		}
-
-		// Check if the process has exited unexpectedly
 		if cmd.ProcessState != nil && cmd.ProcessState.Exited() {
 			return fmt.Errorf("blfs mount process exited unexpectedly: %s", cmd.ProcessState.String())
 		}
 
+		if !mountDetected {
+			if isMountPoint(mountPath) {
+				mountDetected = true
+				logrus.WithField("mount_path", mountPath).Debug("Kernel mount registered, waiting for server connection...")
+			}
+			time.Sleep(pollInterval)
+			continue
+		}
+
+		// Phase 2: mount is registered, now probe until server gRPC is actually serving
+		_, err := os.ReadDir(mountPath)
+		if err == nil {
+			logrus.WithField("mount_path", mountPath).Info("Mount point is ready and server connection established")
+			return nil
+		}
+		logrus.WithField("mount_path", mountPath).Debug("Server connection not yet ready, retrying...")
 		time.Sleep(pollInterval)
 	}
 
