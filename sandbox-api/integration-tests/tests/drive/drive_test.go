@@ -12,6 +12,7 @@ import (
 
 	"github.com/blaxel-ai/sandbox-api/integration_tests/common"
 	"github.com/blaxel-ai/sandbox-api/src/handler"
+	"github.com/blaxel-ai/sandbox-api/src/handler/filesystem"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -166,13 +167,7 @@ func TestDriveListMounts(t *testing.T) {
 	// On environments without blfs, the list may fail with 500;
 	// on environments with blfs, it should return 200 with mounts array.
 	if resp.StatusCode == http.StatusOK {
-		var listResp struct {
-			Mounts []struct {
-				DriveName string `json:"driveName"`
-				MountPath string `json:"mountPath"`
-				DrivePath string `json:"drivePath"`
-			} `json:"mounts"`
-		}
+		var listResp handler.ListMountsResponse
 		err = common.ParseJSONResponse(resp, &listResp)
 		require.NoError(t, err)
 		assert.NotNil(t, listResp.Mounts, "Mounts field should be present (even if empty)")
@@ -201,12 +196,7 @@ func TestDriveMountLifecycle(t *testing.T) {
 	defer resp.Body.Close()
 	require.Equal(t, http.StatusOK, resp.StatusCode, "Drive attach should succeed")
 
-	var attachResp struct {
-		Success   bool   `json:"success"`
-		DriveName string `json:"driveName"`
-		MountPath string `json:"mountPath"`
-		DrivePath string `json:"drivePath"`
-	}
+	var attachResp handler.AttachDriveResponse
 	err = common.ParseJSONResponse(resp, &attachResp)
 	require.NoError(t, err)
 	assert.True(t, attachResp.Success)
@@ -228,13 +218,7 @@ func TestDriveMountLifecycle(t *testing.T) {
 	defer resp.Body.Close()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 
-	var listResp struct {
-		Mounts []struct {
-			DriveName string `json:"driveName"`
-			MountPath string `json:"mountPath"`
-			DrivePath string `json:"drivePath"`
-		} `json:"mounts"`
-	}
+	var listResp handler.ListMountsResponse
 	err = common.ParseJSONResponse(resp, &listResp)
 	require.NoError(t, err)
 
@@ -254,10 +238,7 @@ func TestDriveMountLifecycle(t *testing.T) {
 	defer resp.Body.Close()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 
-	var detachResp struct {
-		Success   bool   `json:"success"`
-		MountPath string `json:"mountPath"`
-	}
+	var detachResp handler.DetachDriveResponse
 	err = common.ParseJSONResponse(resp, &detachResp)
 	require.NoError(t, err)
 	assert.True(t, detachResp.Success)
@@ -296,10 +277,7 @@ func TestDriveMountWithSubpath(t *testing.T) {
 	defer resp.Body.Close()
 	require.Equal(t, http.StatusOK, resp.StatusCode, "Drive attach with subpath should succeed")
 
-	var attachResp struct {
-		Success   bool   `json:"success"`
-		DrivePath string `json:"drivePath"`
-	}
+	var attachResp handler.AttachDriveResponse
 	err = common.ParseJSONResponse(resp, &attachResp)
 	require.NoError(t, err)
 	assert.True(t, attachResp.Success)
@@ -358,32 +336,23 @@ func TestDriveFileReadWrite(t *testing.T) {
 	assert.Contains(t, successResp.Message, "success")
 
 	// 2. Read the file back
-	resp, err = common.MakeRequest(http.MethodGet, common.EncodeFilesystemPath(testFilePath), nil)
+	var fileResp filesystem.FileWithContent
+	resp, err = common.MakeRequestAndParse(http.MethodGet, common.EncodeFilesystemPath(testFilePath), nil, &fileResp)
 	require.NoError(t, err)
 	defer resp.Body.Close()
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
-
-	var fileResp map[string]interface{}
-	err = common.ParseJSONResponse(resp, &fileResp)
-	require.NoError(t, err)
-	assert.Equal(t, testContent, fileResp["content"])
+	assert.Equal(t, testContent, fileResp.Content)
 
 	// 3. List the directory to verify the file exists
-	resp, err = common.MakeRequest(http.MethodGet, common.EncodeFilesystemPath(mountPath), nil)
+	var dirResp filesystem.Directory
+	resp, err = common.MakeRequestAndParse(http.MethodGet, common.EncodeFilesystemPath(mountPath), nil, &dirResp)
 	require.NoError(t, err)
 	defer resp.Body.Close()
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-	var dirResp map[string]interface{}
-	err = common.ParseJSONResponse(resp, &dirResp)
-	require.NoError(t, err)
-
-	files, ok := dirResp["files"].([]interface{})
-	require.True(t, ok, "Directory response should have files array")
 	foundFile := false
-	for _, f := range files {
-		fileMap, ok := f.(map[string]interface{})
-		if ok && fileMap["path"] == testFilePath {
+	for _, f := range dirResp.Files {
+		if f.Path == testFilePath {
 			foundFile = true
 			break
 		}
@@ -466,20 +435,15 @@ func TestDriveLogDirectoryAppend(t *testing.T) {
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
 	// 4. Read back and verify the content persisted correctly
-	resp, err = common.MakeRequest(http.MethodGet, common.EncodeFilesystemPath(sessionFile), nil)
+	var fileResp filesystem.FileWithContent
+	resp, err = common.MakeRequestAndParse(http.MethodGet, common.EncodeFilesystemPath(sessionFile), nil, &fileResp)
 	require.NoError(t, err)
 	defer resp.Body.Close()
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-	var fileResp map[string]interface{}
-	err = common.ParseJSONResponse(resp, &fileResp)
-	require.NoError(t, err)
-
-	content, ok := fileResp["content"].(string)
-	require.True(t, ok, "Content should be a string")
-	assert.Contains(t, content, "session-start")
-	assert.Contains(t, content, "Processing user request")
-	assert.Contains(t, content, "Completed analysis")
+	assert.Contains(t, fileResp.Content, "session-start")
+	assert.Contains(t, fileResp.Content, "Processing user request")
+	assert.Contains(t, fileResp.Content, "Completed analysis")
 
 	// 5. Create multiple session log files (simulating multiple sessions)
 	for i := 2; i <= 5; i++ {
@@ -495,18 +459,12 @@ func TestDriveLogDirectoryAppend(t *testing.T) {
 	}
 
 	// 6. Verify all session files exist in .log directory
-	resp, err = common.MakeRequest(http.MethodGet, common.EncodeFilesystemPath(logDir), nil)
+	var dirResp filesystem.Directory
+	resp, err = common.MakeRequestAndParse(http.MethodGet, common.EncodeFilesystemPath(logDir), nil, &dirResp)
 	require.NoError(t, err)
 	defer resp.Body.Close()
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
-
-	var dirResp map[string]interface{}
-	err = common.ParseJSONResponse(resp, &dirResp)
-	require.NoError(t, err)
-
-	files, ok := dirResp["files"].([]interface{})
-	require.True(t, ok)
-	assert.GreaterOrEqual(t, len(files), 5, "Should have at least 5 session log files")
+	assert.GreaterOrEqual(t, len(dirResp.Files), 5, "Should have at least 5 session log files")
 }
 
 // --- Concurrent Access Tests ---
@@ -580,34 +538,22 @@ func TestDriveConcurrentFileCreation(t *testing.T) {
 	}
 
 	// Verify all files were created
-	resp, err = common.MakeRequest(http.MethodGet, common.EncodeFilesystemPath(mountPath), nil)
+	var dirResp filesystem.Directory
+	resp, err = common.MakeRequestAndParse(http.MethodGet, common.EncodeFilesystemPath(mountPath), nil, &dirResp)
 	require.NoError(t, err)
 	defer resp.Body.Close()
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
-
-	var dirResp map[string]interface{}
-	err = common.ParseJSONResponse(resp, &dirResp)
-	require.NoError(t, err)
-
-	files, ok := dirResp["files"].([]interface{})
-	require.True(t, ok)
-	assert.GreaterOrEqual(t, len(files), numAgents, "All agent files should be created")
+	assert.GreaterOrEqual(t, len(dirResp.Files), numAgents, "All agent files should be created")
 
 	// Verify each file's content is intact
 	for i := 0; i < numAgents; i++ {
 		filePath := fmt.Sprintf("%s/agent-%d-output.txt", mountPath, i)
-		fileResp, err := common.MakeRequest(http.MethodGet, common.EncodeFilesystemPath(filePath), nil)
+		var fileContent filesystem.FileWithContent
+		fileResp, err := common.MakeRequestAndParse(http.MethodGet, common.EncodeFilesystemPath(filePath), nil, &fileContent)
 		require.NoError(t, err)
-		assert.Equal(t, http.StatusOK, fileResp.StatusCode, "Agent %d file should be readable", i)
-
-		var fileData map[string]interface{}
-		err = common.ParseJSONResponse(fileResp, &fileData)
 		fileResp.Body.Close()
-		require.NoError(t, err)
-
-		content, ok := fileData["content"].(string)
-		require.True(t, ok)
-		assert.Contains(t, content, fmt.Sprintf("Output from agent %d", i),
+		assert.Equal(t, http.StatusOK, fileResp.StatusCode, "Agent %d file should be readable", i)
+		assert.Contains(t, fileContent.Content, fmt.Sprintf("Output from agent %d", i),
 			"Agent %d file content should be intact", i)
 	}
 }
@@ -699,21 +645,15 @@ func TestDriveConcurrentLogAppend(t *testing.T) {
 	// Verify each agent's log file has the expected content
 	for i := 0; i < numAgents; i++ {
 		logFile := fmt.Sprintf("%s/agent-%d.log", logDir, i)
-		logResp, err := common.MakeRequest(http.MethodGet, common.EncodeFilesystemPath(logFile), nil)
+		var logContent filesystem.FileWithContent
+		logResp, err := common.MakeRequestAndParse(http.MethodGet, common.EncodeFilesystemPath(logFile), nil, &logContent)
 		require.NoError(t, err)
-		assert.Equal(t, http.StatusOK, logResp.StatusCode, "Agent %d log file should be readable", i)
-
-		var fileData map[string]interface{}
-		err = common.ParseJSONResponse(logResp, &fileData)
 		logResp.Body.Close()
-		require.NoError(t, err)
-
-		content, ok := fileData["content"].(string)
-		require.True(t, ok)
+		assert.Equal(t, http.StatusOK, logResp.StatusCode, "Agent %d log file should be readable", i)
 
 		// Verify all entries are present
 		for j := 0; j < numEntries; j++ {
-			assert.Contains(t, content,
+			assert.Contains(t, logContent.Content,
 				fmt.Sprintf("agent=%d entry=%d", i, j),
 				"Agent %d entry %d should be present", i, j)
 		}
@@ -810,18 +750,14 @@ func TestDriveConcurrentReadWrite(t *testing.T) {
 				return
 			}
 
-			var fileResp map[string]interface{}
+			var fileResp filesystem.FileWithContent
 			if err := common.ParseJSONResponse(r, &fileResp); err != nil {
 				readErrors[readerID] = err
 				return
 			}
 
 			// The content should be valid JSON (not corrupted)
-			content, ok := fileResp["content"].(string)
-			if !ok {
-				readErrors[readerID] = fmt.Errorf("reader %d: content not a string", readerID)
-				return
-			}
+			content := fileResp.Content
 			var parsed map[string]interface{}
 			if err := json.Unmarshal([]byte(content), &parsed); err != nil {
 				readErrors[readerID] = fmt.Errorf("reader %d: JSON corruption detected: %w", readerID, err)
@@ -839,20 +775,14 @@ func TestDriveConcurrentReadWrite(t *testing.T) {
 	}
 
 	// Final read should return valid JSON
-	resp, err = common.MakeRequest(http.MethodGet, common.EncodeFilesystemPath(sharedFile), nil)
+	var finalResp filesystem.FileWithContent
+	resp, err = common.MakeRequestAndParse(http.MethodGet, common.EncodeFilesystemPath(sharedFile), nil, &finalResp)
 	require.NoError(t, err)
 	defer resp.Body.Close()
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-	var finalResp map[string]interface{}
-	err = common.ParseJSONResponse(resp, &finalResp)
-	require.NoError(t, err)
-
-	finalContent, ok := finalResp["content"].(string)
-	require.True(t, ok)
-
 	var finalJSON map[string]interface{}
-	err = json.Unmarshal([]byte(finalContent), &finalJSON)
+	err = json.Unmarshal([]byte(finalResp.Content), &finalJSON)
 	assert.NoError(t, err, "Final file content should be valid JSON (not corrupted)")
 	assert.Contains(t, finalJSON, "counter", "JSON should contain counter field")
 	assert.Contains(t, finalJSON, "lastUpdated", "JSON should contain lastUpdated field")
@@ -1014,14 +944,11 @@ func TestDriveRemountAfterDetach(t *testing.T) {
 	time.Sleep(500 * time.Millisecond)
 
 	// 5. Verify the file still exists after remount (data persistence)
-	resp, err = common.MakeRequest(http.MethodGet, common.EncodeFilesystemPath(testFile), nil)
+	var fileResp filesystem.FileWithContent
+	resp, err = common.MakeRequestAndParse(http.MethodGet, common.EncodeFilesystemPath(testFile), nil, &fileResp)
 	require.NoError(t, err)
 	defer resp.Body.Close()
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
-
-	var fileResp map[string]interface{}
-	err = common.ParseJSONResponse(resp, &fileResp)
-	require.NoError(t, err)
-	assert.Equal(t, testContent, fileResp["content"],
+	assert.Equal(t, testContent, fileResp.Content,
 		"File content should persist across unmount/remount cycle")
 }
