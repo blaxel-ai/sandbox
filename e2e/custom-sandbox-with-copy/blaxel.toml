@@ -6,7 +6,7 @@ memory = 8192
 [[runtime.ports]]
 name = "code-server"
 target = 8081
-protocol = "tcp"
+protocol = "HTTP"
 
 [[runtime.ports]]
 name = "debug-sandbox"
