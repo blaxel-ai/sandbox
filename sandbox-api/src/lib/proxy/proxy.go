@@ -99,19 +99,26 @@ func collectTemplates(names ...string) []envTemplate {
 		if raw == "" {
 			continue
 		}
-		match := fileDirectiveRe.FindStringSubmatch(raw)
-		if match == nil {
+		matches := fileDirectiveRe.FindAllStringSubmatch(raw, -1)
+		if matches == nil {
+			continue
+		}
+		if len(matches) > 1 {
+			logrus.Warnf("proxy: %s contains %d {{file(...)}} directives; only one is supported", name, len(matches))
 			continue
 		}
 		out = append(out, envTemplate{
 			Name:     name,
 			Template: raw,
-			FilePath: match[1],
+			FilePath: matches[0][1],
 		})
-		logrus.Infof("proxy: detected {{file(...)}} directive in %s, will refresh token from %s", name, match[1])
+		logrus.Infof("proxy: detected {{file(...)}} directive in %s, will refresh token from %s", name, matches[0][1])
 	}
 	return out
 }
+}
+
+var mu sync.Mutex
 
 func resolveAndSet(t envTemplate) error {
 	data, err := os.ReadFile(t.FilePath)
@@ -120,6 +127,8 @@ func resolveAndSet(t envTemplate) error {
 	}
 	token := strings.TrimSpace(string(data))
 	resolved := fileDirectiveRe.ReplaceAllString(t.Template, token)
+	mu.Lock()
+	defer mu.Unlock()
 	return os.Setenv(t.Name, resolved)
 }
 
