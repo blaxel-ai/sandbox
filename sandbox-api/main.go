@@ -17,6 +17,7 @@ import (
 	"github.com/blaxel-ai/sandbox-api/src/handler/process"
 	"github.com/blaxel-ai/sandbox-api/src/lib/blaxel"
 	"github.com/blaxel-ai/sandbox-api/src/lib/networking"
+	"github.com/blaxel-ai/sandbox-api/src/lib/proxy"
 	"github.com/blaxel-ai/sandbox-api/src/mcp"
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
@@ -39,6 +40,14 @@ func main() {
 	// Load .env file
 	_ = godotenv.Load()
 
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Resolve {{file(...)}} directives in HTTP_PROXY / HTTPS_PROXY and
+	// start a background goroutine that re-reads the token file periodically
+	// so rotated credentials are picked up before they expire.
+	proxy.StartProxyTokenRefresh(ctx)
+
 	// Initialize WireGuard client if configuration is present.
 	// If config is provided but initialization fails, the sandbox will have no egress
 	// (no outbound internet connectivity), but inbound connections will still work.
@@ -52,9 +61,6 @@ func main() {
 	if err := blaxel.ScaleReset(); err != nil {
 		logrus.Warnf("Failed to reset scale-to-zero counter on startup: %v", err)
 	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 
 	workspace := os.Getenv("BL_WORKSPACE")
 	name := os.Getenv("BL_NAME")
