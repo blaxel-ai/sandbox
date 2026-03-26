@@ -118,6 +118,8 @@ func collectTemplates(names ...string) []envTemplate {
 }
 }
 
+var mu sync.Mutex
+
 func resolveAndSet(t envTemplate) error {
 	data, err := os.ReadFile(t.FilePath)
 	if err != nil {
@@ -125,6 +127,8 @@ func resolveAndSet(t envTemplate) error {
 	}
 	token := strings.TrimSpace(string(data))
 	resolved := fileDirectiveRe.ReplaceAllString(t.Template, token)
+	mu.Lock()
+	defer mu.Unlock()
 	return os.Setenv(t.Name, resolved)
 }
 
