@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/sirupsen/logrus"
@@ -115,7 +116,6 @@ func collectTemplates(names ...string) []envTemplate {
 		logrus.Infof("proxy: detected {{file(...)}} directive in %s, will refresh token from %s", name, matches[0][1])
 	}
 	return out
-}
 }
 
 var mu sync.Mutex
