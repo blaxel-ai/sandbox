@@ -48,6 +48,12 @@ func main() {
 	// so rotated credentials are picked up before they expire.
 	proxy.StartProxyTokenRefresh(ctx)
 
+	// Merge extra CA certificates (SANDBOX_EXTRA_CA_CERTS) with the system
+	// trust store so TLS-intercepting proxies are trusted by every runtime.
+	if err := proxy.MergeCABundle(); err != nil {
+		logrus.WithError(err).Error("Failed to merge CA bundle – TLS connections through the proxy may fail")
+	}
+
 	// Initialize WireGuard client if configuration is present.
 	// If config is provided but initialization fails, the sandbox will have no egress
 	// (no outbound internet connectivity), but inbound connections will still work.
