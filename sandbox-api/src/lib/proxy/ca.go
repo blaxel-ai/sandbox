@@ -57,7 +57,8 @@ func MergeCABundle() error {
 
 	logrus.Infof("proxy/ca: merging extra CA certificates from %s", extraPath)
 
-	systemCerts, _ := os.ReadFile(systemCABundlePath())
+	systemPath := systemCABundlePath()
+	systemCerts, _ := os.ReadFile(systemPath)
 
 	merged := appendPEMBundles(systemCerts, extraCerts)
 
