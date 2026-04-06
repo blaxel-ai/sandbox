@@ -24,7 +24,12 @@ Sandbox Hub is a collection of development environment templates for creating se
 The hub directory contains the following templates:
 
 ### Base Image
-A minimal micro VM environment with basic system utilities and networking capabilities. Provides a lightweight, secure foundation for running basic applications and services, featuring a minimal attack surface and optimized resource usage.
+A minimal micro VM environment based on **Alpine Linux** (`node:22-alpine`) with basic system utilities and networking capabilities. Provides a lightweight, secure foundation for running basic applications and services, featuring a minimal attack surface and optimized resource usage.
+
+> **Important:** The base image includes **Node.js 22** and **git**, but does **not** include Python or other language runtimes. If you need Python, either use the [`py-app`](#python-app) template or install it manually:
+> ```bash
+> apk add --no-cache python3 py3-pip
+> ```
 
 ### Python App
 A complete Python development environment with pip package manager and common development libraries. Ideal for developing web applications, data science projects, automation scripts, and machine learning applications.
