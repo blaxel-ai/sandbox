@@ -117,7 +117,7 @@ func (pm *ProcessManager) ExecuteProcess(
 
 		// Also start a direct port polling goroutine as a fallback (especially for macOS)
 		go func() {
-			ticker := time.NewTicker(500 * time.Millisecond)
+			ticker := time.NewTicker(200 * time.Millisecond)
 			defer ticker.Stop()
 
 			for {

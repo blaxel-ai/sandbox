@@ -124,7 +124,7 @@ func (n *Network) startMonitoring() {
 	n.isMonitoring = true
 	n.mutex.Unlock()
 
-	ticker := time.NewTicker(2 * time.Second)
+	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 
 	for {
@@ -200,15 +200,23 @@ func getOpenPortsForPID(pid int) ([]*PortInfo, error) {
 	return getPortsUsingNetstat(pid)
 }
 
-// IsPortOpen checks if a specific port is open and listening
+// IsPortOpen checks if a specific port is open and listening.
+// It tries a direct TCP connect first (fastest, no exec overhead),
+// then falls back to command-based checks if needed.
 func IsPortOpen(port int) bool {
+	// Direct TCP connect is the fastest and most reliable check:
+	// no process spawn overhead and works on any system.
+	if isPortOpenByConnect(port) {
+		return true
+	}
+
+	// Fall back to command-based checks for edge cases where the port
+	// is bound but not yet accepting connections.
 	if runtime.GOOS == "darwin" {
-		// On macOS, use lsof to check if port is listening
 		cmd := exec.Command("lsof", "-i", fmt.Sprintf(":%d", port), "-sTCP:LISTEN", "-n", "-P")
 		output, err := cmd.Output()
 		if err != nil {
-			// Fallback to direct connection attempt
-			return isPortOpenByConnect(port)
+			return false
 		}
 		return len(strings.TrimSpace(string(output))) > 0
 	}
@@ -217,7 +225,6 @@ func IsPortOpen(port int) bool {
 	cmd := exec.Command("ss", "-tlnp", fmt.Sprintf("sport = :%d", port))
 	output, err := cmd.Output()
 	if err == nil {
-		// ss always outputs a header line, so check if there's more than just the header
 		lines := strings.Split(strings.TrimSpace(string(output)), "\n")
 		return len(lines) > 1
 	}
@@ -226,14 +233,11 @@ func IsPortOpen(port int) bool {
 	cmd = exec.Command("netstat", "-tlnp")
 	output, err = cmd.Output()
 	if err == nil {
-		// Check if the port appears in netstat output
 		portStr := fmt.Sprintf(":%d ", port)
 		return strings.Contains(string(output), portStr)
 	}
 
-	// Final fallback: try to connect directly to the port
-	// This works on minimal images without ss/netstat/lsof
-	return isPortOpenByConnect(port)
+	return false
 }
 
 // isPortOpenByConnect checks if a port is open by attempting to connect to it
