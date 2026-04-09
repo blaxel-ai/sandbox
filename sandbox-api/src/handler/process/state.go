@@ -825,8 +825,9 @@ func retryableDownload(client *http.Client, url string) (*http.Response, error) 
 	logger := logrus.WithField("component", "upgrade")
 
 	var lastErr error
+	var retryAfterUsed bool
 	for attempt := 0; attempt <= downloadMaxRetries; attempt++ {
-		if attempt > 0 {
+		if attempt > 0 && !retryAfterUsed {
 			backoff := time.Duration(float64(downloadInitialBackoff) * math.Pow(2, float64(attempt-1)))
 			if backoff > downloadMaxBackoff {
 				backoff = downloadMaxBackoff
@@ -840,6 +841,7 @@ func retryableDownload(client *http.Client, url string) (*http.Response, error) 
 			}).Warn("Retrying download after transient failure")
 			time.Sleep(jitter)
 		}
+		retryAfterUsed = false
 
 		req, err := http.NewRequest("GET", url, nil)
 		if err != nil {
@@ -869,11 +871,18 @@ func retryableDownload(client *http.Client, url string) (*http.Response, error) 
 
 			lastErr = fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
 
-			// Honor Retry-After header if present (GitHub sends this on 429)
+			// Honor Retry-After header if present (GitHub sends this on 429).
+			// When used, skip the exponential backoff on the next iteration
+			// to avoid double-sleeping.
 			if retryAfter := resp.Header.Get("Retry-After"); retryAfter != "" {
 				if seconds, parseErr := strconv.Atoi(retryAfter); parseErr == nil && seconds > 0 {
-					logger.WithField("retryAfter", seconds).Info("Honoring Retry-After header")
+					logger.WithFields(logrus.Fields{
+						"attempt":    attempt + 1,
+						"retryAfter": seconds,
+						"error":      lastErr.Error(),
+					}).Warn("Retrying download after Retry-After")
 					time.Sleep(time.Duration(seconds) * time.Second)
+					retryAfterUsed = true
 				}
 			}
 			continue
