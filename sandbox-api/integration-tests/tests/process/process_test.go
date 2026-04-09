@@ -1280,6 +1280,200 @@ HTTPServer(('', %d), H).serve_forever()
 	t.Log("Test passed: HTTP server started successfully and port was immediately callable after waitForPorts returned")
 }
 
+// TestWaitForPortsDetectionLatency runs multiple iterations to catch intermittent
+// timeout issues with port detection. It mimics the real-world scenario where a
+// process binds a port near-instantly (like python3 -m http.server) and asserts
+// that the API detects it within a reasonable time, not at the tail of a 2s poll.
+func TestWaitForPortsDetectionLatency(t *testing.T) {
+	const iterations = 5
+	const port = 3020
+	const maxAcceptableLatencyMs = 5000 // detection should not take more than 5s
+
+	for i := 0; i < iterations; i++ {
+		t.Run(fmt.Sprintf("iteration_%d", i+1), func(t *testing.T) {
+			processName := fmt.Sprintf("test-waitforports-latency-%d", i)
+
+			// Cleanup any leftover process
+			resp, _ := common.MakeRequest(http.MethodDelete, "/process/"+processName+"/kill", nil)
+			if resp != nil {
+				resp.Body.Close()
+			}
+			time.Sleep(300 * time.Millisecond)
+
+			// Server binds instantly (no sleep) to simulate a fast-starting process.
+			// This is the scenario that was flaky: the server binds quickly but
+			// the polling loop misses it between 2s intervals.
+			command := fmt.Sprintf(`python3 -c "
+from http.server import HTTPServer, BaseHTTPRequestHandler
+class H(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header('Content-type', 'text/plain')
+        self.end_headers()
+        self.wfile.write(b'OK')
+    def log_message(self, format, *args):
+        pass
+HTTPServer(('', %d), H).serve_forever()
+"`, port)
+
+			processRequest := map[string]interface{}{
+				"name":         processName,
+				"command":      command,
+				"workingDir":   "/",
+				"waitForPorts": []int{port},
+				"timeout":      15,
+			}
+
+			start := time.Now()
+
+			resp, err := common.MakeRequestWithTimeout(http.MethodPost, "/process", processRequest, 30*time.Second)
+			require.NoError(t, err)
+			defer resp.Body.Close()
+
+			elapsed := time.Since(start)
+
+			require.Equal(t, http.StatusOK, resp.StatusCode, "waitForPorts should succeed")
+
+			t.Logf("Port detected in %dms", elapsed.Milliseconds())
+			assert.Less(t, elapsed.Milliseconds(), int64(maxAcceptableLatencyMs),
+				"Port detection took %dms, expected < %dms", elapsed.Milliseconds(), maxAcceptableLatencyMs)
+
+			// Verify the port is actually callable
+			client := &http.Client{Timeout: 3 * time.Second}
+			httpResp, err := client.Get(fmt.Sprintf("http://localhost:%d", port))
+			require.NoError(t, err, "port should be callable immediately after waitForPorts returns")
+			defer httpResp.Body.Close()
+			assert.Equal(t, http.StatusOK, httpResp.StatusCode)
+
+			// Cleanup
+			resp, _ = common.MakeRequest(http.MethodDelete, "/process/"+processName+"/kill", nil)
+			if resp != nil {
+				resp.Body.Close()
+			}
+			time.Sleep(300 * time.Millisecond)
+		})
+	}
+}
+
+// TestWaitForPortsMultiplePorts tests waiting for multiple ports simultaneously,
+// where each port binds at a different time. This catches race conditions in the
+// port aggregation logic.
+func TestWaitForPortsMultiplePorts(t *testing.T) {
+	ports := []int{3030, 3031}
+	processName := "test-waitforports-multi"
+
+	// Cleanup
+	resp, _ := common.MakeRequest(http.MethodDelete, "/process/"+processName+"/kill", nil)
+	if resp != nil {
+		resp.Body.Close()
+	}
+	time.Sleep(300 * time.Millisecond)
+
+	// Start two servers: one immediately, one after 2s delay.
+	// waitForPorts should only return after BOTH are up.
+	command := fmt.Sprintf(`bash -c '
+python3 -c "
+from http.server import HTTPServer, BaseHTTPRequestHandler
+import threading, time
+class H(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200); self.end_headers(); self.wfile.write(b\"OK\")
+    def log_message(self, *a): pass
+s1 = HTTPServer((\"\", %d), H)
+threading.Thread(target=s1.serve_forever, daemon=True).start()
+time.sleep(2)
+HTTPServer((\"\", %d), H).serve_forever()
+"'`, ports[0], ports[1])
+
+	processRequest := map[string]interface{}{
+		"name":         processName,
+		"command":      command,
+		"workingDir":   "/",
+		"waitForPorts": ports,
+		"timeout":      30,
+	}
+
+	start := time.Now()
+
+	resp, err := common.MakeRequestWithTimeout(http.MethodPost, "/process", processRequest, 60*time.Second)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	elapsed := time.Since(start)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	t.Logf("Both ports detected in %dms", elapsed.Milliseconds())
+
+	// Should take at least ~2s (second server delay) but not much more
+	assert.GreaterOrEqual(t, elapsed.Milliseconds(), int64(1500),
+		"Should wait for the delayed second port")
+	assert.Less(t, elapsed.Milliseconds(), int64(10000),
+		"Detection after second port binds should be fast")
+
+	// Verify both ports are callable
+	client := &http.Client{Timeout: 3 * time.Second}
+	for _, port := range ports {
+		httpResp, err := client.Get(fmt.Sprintf("http://localhost:%d", port))
+		require.NoError(t, err, "port %d should be callable", port)
+		assert.Equal(t, http.StatusOK, httpResp.StatusCode, "port %d should return 200", port)
+		httpResp.Body.Close()
+	}
+
+	// Cleanup
+	resp, _ = common.MakeRequest(http.MethodDelete, "/process/"+processName+"/kill", nil)
+	if resp != nil {
+		resp.Body.Close()
+	}
+}
+
+// TestWaitForPortsTimeout verifies that when a port never opens, the API returns
+// an error after the timeout expires rather than hanging indefinitely.
+func TestWaitForPortsTimeout(t *testing.T) {
+	processName := "test-waitforports-timeout"
+
+	// Cleanup
+	resp, _ := common.MakeRequest(http.MethodDelete, "/process/"+processName+"/kill", nil)
+	if resp != nil {
+		resp.Body.Close()
+	}
+	time.Sleep(300 * time.Millisecond)
+
+	// Process that runs but never opens port 3040
+	command := "sleep 60"
+
+	processRequest := map[string]interface{}{
+		"name":         processName,
+		"command":      command,
+		"workingDir":   "/",
+		"waitForPorts": []int{3040},
+		"timeout":      5,
+	}
+
+	start := time.Now()
+
+	resp, err := common.MakeRequestWithTimeout(http.MethodPost, "/process", processRequest, 30*time.Second)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	elapsed := time.Since(start)
+
+	t.Logf("Timeout triggered after %dms", elapsed.Milliseconds())
+
+	// Should fail with a timeout error, not succeed
+	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode,
+		"Should return 422 when port never opens within timeout")
+
+	// Should take roughly 5s (the timeout), not hang
+	assert.GreaterOrEqual(t, elapsed.Milliseconds(), int64(4000))
+	assert.Less(t, elapsed.Milliseconds(), int64(10000))
+
+	// Cleanup
+	resp, _ = common.MakeRequest(http.MethodDelete, "/process/"+processName+"/kill", nil)
+	if resp != nil {
+		resp.Body.Close()
+	}
+}
+
 // TestProcessTimeoutWithWaitForCompletion tests that when a process times out with waitForCompletion,
 // the API returns an error but the process continues running and can be retrieved
 func TestProcessTimeoutWithWaitForCompletion(t *testing.T) {
