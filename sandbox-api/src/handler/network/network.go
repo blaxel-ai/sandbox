@@ -216,7 +216,7 @@ func IsPortOpen(port int) bool {
 		cmd := exec.Command("lsof", "-i", fmt.Sprintf(":%d", port), "-sTCP:LISTEN", "-n", "-P")
 		output, err := cmd.Output()
 		if err != nil {
-			return false
+			return isPortOpenByConnect(port)
 		}
 		return len(strings.TrimSpace(string(output))) > 0
 	}
@@ -237,7 +237,7 @@ func IsPortOpen(port int) bool {
 		return strings.Contains(string(output), portStr)
 	}
 
-	return false
+	return isPortOpenByConnect(port)
 }
 
 // isPortOpenByConnect checks if a port is open by attempting to connect to it

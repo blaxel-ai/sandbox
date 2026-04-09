@@ -1415,8 +1415,8 @@ HTTPServer((\"\", %d), H).serve_forever()
 	for _, port := range ports {
 		httpResp, err := client.Get(fmt.Sprintf("http://localhost:%d", port))
 		require.NoError(t, err, "port %d should be callable", port)
-		defer httpResp.Body.Close()
 		assert.Equal(t, http.StatusOK, httpResp.StatusCode, "port %d should return 200", port)
+		httpResp.Body.Close()
 	}
 
 	// Cleanup
