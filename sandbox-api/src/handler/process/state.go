@@ -885,24 +885,7 @@ func validateNewBinary(binaryPath string) error {
 		logger.WithError(err).Warn("Failed to re-save state before validation, continuing with existing state file")
 	}
 
-	// Capture process counts immediately after SaveState, so both the state
-	// file and expected counts reflect the same moment in time. If we delayed
-	// this until after the validation binary starts, a process could complete
-	// between SaveState and the count capture, creating a mismatch in the
-	// opposite direction.
-	currentProcesses := pm.ListProcesses()
-	runningCount := 0
-	for _, p := range currentProcesses {
-		if p.Status == StatusRunning {
-			runningCount++
-		}
-	}
-
-	logger.WithFields(logrus.Fields{
-		"port":           ValidationPort,
-		"currentRunning": runningCount,
-		"totalProcesses": len(currentProcesses),
-	}).Info("Starting new binary for validation")
+	logger.WithField("port", ValidationPort).Info("Starting new binary for validation")
 
 	// Start the new binary on the validation port
 	cmd := exec.Command(binaryPath, "-p", strconv.Itoa(ValidationPort))
@@ -936,6 +919,27 @@ func validateNewBinary(binaryPath string) error {
 	}
 
 	logger.Info("Validation instance is healthy, checking process recovery...")
+
+	// Capture process counts NOW, right before verification.
+	// We intentionally capture here rather than earlier (e.g. next to SaveState)
+	// because the validation binary takes up to ~30s to start and pass health
+	// checks. If a process completes during that window, the validation binary's
+	// monitorAdoptedProcess will update its status to Completed. By capturing
+	// the current instance's counts at the same moment we query the validation
+	// binary, both sides reflect the same reality and the strict equality check
+	// in verifyProcessRecovery won't spuriously fail.
+	currentProcesses := pm.ListProcesses()
+	runningCount := 0
+	for _, p := range currentProcesses {
+		if p.Status == StatusRunning {
+			runningCount++
+		}
+	}
+
+	logger.WithFields(logrus.Fields{
+		"currentRunning": runningCount,
+		"totalProcesses": len(currentProcesses),
+	}).Info("Current process state for verification")
 
 	// Verify process state was recovered correctly
 	if err := verifyProcessRecovery(validationURL, len(currentProcesses), runningCount); err != nil {
