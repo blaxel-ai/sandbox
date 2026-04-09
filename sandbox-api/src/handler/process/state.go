@@ -4,6 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
+	"math/rand"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -631,6 +634,14 @@ func ClearState() error {
 const (
 	DefaultReleaseURL = "https://github.com/blaxel-ai/sandbox/releases"
 	ValidationPort    = 19999 // Port used for validating the new binary
+
+	// Download retry/timeout settings
+	downloadMaxRetries     = 3
+	downloadInitialBackoff = 2 * time.Second
+	downloadMaxBackoff     = 30 * time.Second
+	downloadConnTimeout    = 10 * time.Second
+	downloadTotalTimeout   = 5 * time.Minute
+	downloadUserAgent      = "blaxel-sandbox-api/1.0"
 )
 
 // UpgradeState represents the current state of an upgrade
@@ -792,6 +803,98 @@ func TriggerUpgrade(version, baseURL string) {
 	upgradeWithNewBinary(newBinaryPath)
 }
 
+// newDownloadHTTPClient creates an HTTP client configured for downloading
+// release assets from GitHub with appropriate timeouts.
+func newDownloadHTTPClient() *http.Client {
+	return &http.Client{
+		Timeout: downloadTotalTimeout,
+		Transport: &http.Transport{
+			DialContext: (&net.Dialer{
+				Timeout: downloadConnTimeout,
+			}).DialContext,
+			TLSHandshakeTimeout:   10 * time.Second,
+			ResponseHeaderTimeout: 30 * time.Second,
+			IdleConnTimeout:       90 * time.Second,
+		},
+	}
+}
+
+// retryableDownload performs an HTTP GET with exponential backoff and jitter.
+// It retries on transient failures (5xx, 429, network errors) up to downloadMaxRetries times.
+func retryableDownload(client *http.Client, url string) (*http.Response, error) {
+	logger := logrus.WithField("component", "upgrade")
+
+	var lastErr error
+	var retryAfterUsed bool
+	for attempt := 0; attempt <= downloadMaxRetries; attempt++ {
+		if attempt > 0 && !retryAfterUsed {
+			backoff := time.Duration(float64(downloadInitialBackoff) * math.Pow(2, float64(attempt-1)))
+			if backoff > downloadMaxBackoff {
+				backoff = downloadMaxBackoff
+			}
+			// Add jitter: 50-100% of the computed backoff
+			jitter := time.Duration(float64(backoff) * (0.5 + rand.Float64()*0.5))
+			logger.WithFields(logrus.Fields{
+				"attempt": attempt + 1,
+				"backoff": jitter.String(),
+				"error":   lastErr.Error(),
+			}).Warn("Retrying download after transient failure")
+			time.Sleep(jitter)
+		}
+		retryAfterUsed = false
+
+		req, err := http.NewRequest("GET", url, nil)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create request: %w", err)
+		}
+		req.Header.Set("User-Agent", downloadUserAgent)
+		req.Header.Set("Accept", "application/octet-stream")
+
+		resp, err := client.Do(req)
+		if err != nil {
+			lastErr = fmt.Errorf("HTTP request failed: %w", err)
+			continue
+		}
+
+		// Success
+		if resp.StatusCode == http.StatusOK {
+			return resp, nil
+		}
+
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		resp.Body.Close()
+
+		// Retryable status codes: 429 (rate limited), 5xx (server errors), 403 (anti-scraping / CDN issues)
+		if resp.StatusCode == http.StatusTooManyRequests ||
+			resp.StatusCode == http.StatusForbidden ||
+			resp.StatusCode >= 500 {
+
+			lastErr = fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
+
+			// Honor Retry-After header if present (GitHub sends this on 429).
+			// When used, skip the exponential backoff on the next iteration
+			// to avoid double-sleeping.
+			if retryAfter := resp.Header.Get("Retry-After"); retryAfter != "" {
+				if seconds, parseErr := strconv.Atoi(retryAfter); parseErr == nil && seconds > 0 {
+					logger.WithFields(logrus.Fields{
+						"attempt":    attempt + 1,
+						"retryAfter": seconds,
+						"error":      lastErr.Error(),
+					}).Warn("Retrying download after Retry-After")
+					time.Sleep(time.Duration(seconds) * time.Second)
+					retryAfterUsed = true
+				}
+			}
+			continue
+		}
+
+		// Non-retryable error (404, 401, etc.)
+		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
+	}
+
+	return nil, fmt.Errorf("download failed after %d attempts, last error: %w", downloadMaxRetries+1, lastErr)
+}
+
 // downloadReleaseWithDetails downloads the sandbox-api binary from GitHub releases
 // version can be: "develop", "main", "latest", or a specific tag like "v1.0.0"
 // baseURL is the releases URL (e.g., https://github.com/blaxel-ai/sandbox/releases)
@@ -830,18 +933,13 @@ func downloadReleaseWithDetails(version, baseURL string) (string, string, int64,
 	// Create temp file for download
 	tmpFile := filepath.Join("/tmp", fmt.Sprintf("sandbox-api-new-%d", time.Now().UnixNano()))
 
-	// Download the binary
-	resp, err := http.Get(downloadURL)
+	// Download the binary with retries and timeouts
+	client := newDownloadHTTPClient()
+	resp, err := retryableDownload(client, downloadURL)
 	if err != nil {
-		return "", downloadURL, 0, fmt.Errorf("HTTP request failed: %w", err)
+		return "", downloadURL, 0, err
 	}
 	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		// Try to read error body for more details
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-		return "", downloadURL, 0, fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
-	}
 
 	// Create the output file
 	out, err := os.Create(tmpFile)
@@ -855,6 +953,12 @@ func downloadReleaseWithDetails(version, baseURL string) (string, string, int64,
 	if err != nil {
 		os.Remove(tmpFile)
 		return "", downloadURL, written, fmt.Errorf("failed to write binary after %d bytes: %w", written, err)
+	}
+
+	// Verify download completeness if Content-Length was provided
+	if resp.ContentLength > 0 && written != resp.ContentLength {
+		os.Remove(tmpFile)
+		return "", downloadURL, written, fmt.Errorf("incomplete download: got %d bytes, expected %d", written, resp.ContentLength)
 	}
 
 	// Make executable
@@ -876,21 +980,16 @@ func validateNewBinary(binaryPath string) error {
 	logger := logrus.WithField("component", "upgrade")
 	logger.Info("Validating new binary before replacement...")
 
-	// Get the process count from current instance for comparison
+	// Re-save process state right before starting validation binary.
+	// The original SaveState was called in HandleUpgrade before download started,
+	// so the state file may be stale if processes completed during download.
+	// This ensures the validation binary loads a fresh snapshot.
 	pm := GetProcessManager()
-	currentProcesses := pm.ListProcesses()
-	runningCount := 0
-	for _, p := range currentProcesses {
-		if p.Status == StatusRunning {
-			runningCount++
-		}
+	if err := pm.SaveState(); err != nil {
+		logger.WithError(err).Warn("Failed to re-save state before validation, continuing with existing state file")
 	}
 
-	logger.WithFields(logrus.Fields{
-		"port":           ValidationPort,
-		"currentRunning": runningCount,
-		"totalProcesses": len(currentProcesses),
-	}).Info("Starting new binary for validation")
+	logger.WithField("port", ValidationPort).Info("Starting new binary for validation")
 
 	// Start the new binary on the validation port
 	cmd := exec.Command(binaryPath, "-p", strconv.Itoa(ValidationPort))
@@ -924,6 +1023,27 @@ func validateNewBinary(binaryPath string) error {
 	}
 
 	logger.Info("Validation instance is healthy, checking process recovery...")
+
+	// Capture process counts NOW, right before verification.
+	// We intentionally capture here rather than earlier (e.g. next to SaveState)
+	// because the validation binary takes up to ~30s to start and pass health
+	// checks. If a process completes during that window, the validation binary's
+	// monitorAdoptedProcess will update its status to Completed. By capturing
+	// the current instance's counts at the same moment we query the validation
+	// binary, both sides reflect the same reality and the strict equality check
+	// in verifyProcessRecovery won't spuriously fail.
+	currentProcesses := pm.ListProcesses()
+	runningCount := 0
+	for _, p := range currentProcesses {
+		if p.Status == StatusRunning {
+			runningCount++
+		}
+	}
+
+	logger.WithFields(logrus.Fields{
+		"currentRunning": runningCount,
+		"totalProcesses": len(currentProcesses),
+	}).Info("Current process state for verification")
 
 	// Verify process state was recovered correctly
 	if err := verifyProcessRecovery(validationURL, len(currentProcesses), runningCount); err != nil {
