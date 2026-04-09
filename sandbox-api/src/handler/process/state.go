@@ -885,7 +885,24 @@ func validateNewBinary(binaryPath string) error {
 		logger.WithError(err).Warn("Failed to re-save state before validation, continuing with existing state file")
 	}
 
-	logger.WithField("port", ValidationPort).Info("Starting new binary for validation")
+	// Capture process counts immediately after SaveState, so both the state
+	// file and expected counts reflect the same moment in time. If we delayed
+	// this until after the validation binary starts, a process could complete
+	// between SaveState and the count capture, creating a mismatch in the
+	// opposite direction.
+	currentProcesses := pm.ListProcesses()
+	runningCount := 0
+	for _, p := range currentProcesses {
+		if p.Status == StatusRunning {
+			runningCount++
+		}
+	}
+
+	logger.WithFields(logrus.Fields{
+		"port":           ValidationPort,
+		"currentRunning": runningCount,
+		"totalProcesses": len(currentProcesses),
+	}).Info("Starting new binary for validation")
 
 	// Start the new binary on the validation port
 	cmd := exec.Command(binaryPath, "-p", strconv.Itoa(ValidationPort))
@@ -919,24 +936,6 @@ func validateNewBinary(binaryPath string) error {
 	}
 
 	logger.Info("Validation instance is healthy, checking process recovery...")
-
-	// Capture process counts NOW, right before verification.
-	// Previously, counts were captured before binary download, creating a race
-	// condition: processes could complete during the (variable-length) download
-	// and startup, causing a stale expected count to mismatch the new binary's
-	// actual recovered count. By capturing here, both sides reflect current reality.
-	currentProcesses := pm.ListProcesses()
-	runningCount := 0
-	for _, p := range currentProcesses {
-		if p.Status == StatusRunning {
-			runningCount++
-		}
-	}
-
-	logger.WithFields(logrus.Fields{
-		"currentRunning": runningCount,
-		"totalProcesses": len(currentProcesses),
-	}).Info("Current process state for verification")
 
 	// Verify process state was recovered correctly
 	if err := verifyProcessRecovery(validationURL, len(currentProcesses), runningCount); err != nil {
