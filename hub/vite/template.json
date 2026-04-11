@@ -5,7 +5,7 @@
     "web"
   ],
   "description": "A simple Vite app",
-  "longDescription": "The Vite app is a simple Vite app with React and TypeScript. It's ideal for building a simple web app.",
+  "longDescription": "The Vite app is a simple Vite app with React and TypeScript. It's ideal for building a simple web app. Built on Alpine Linux with Node.js 22, and ships with git, curl, and npm pre-installed.",
   "url": "https://vitejs.dev",
   "icon": "https://vitejs.dev/logo.svg",
   "memory": 4096,

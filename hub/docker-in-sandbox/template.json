@@ -4,7 +4,7 @@
   "categories": ["devops"],
   "description": "A development environment for Docker with essential development tools.",
   "icon": "https://avatars.githubusercontent.com/u/5429470?s=200&v=4",
-  "longDescription": "The Docker micro VM provides a comprehensive development environment for building Docker applications. It includes the Docker CLI, development server, and all necessary tools for cross-platform mobile development. Features hot reloading, over-the-air updates, and access to native device features through Expo's managed workflow. Perfect for developing iOS and Android applications with a single codebase.",
+  "longDescription": "The Docker-in-Sandbox micro VM provides a complete Docker development environment running inside a sandbox. It includes the Docker Engine, Docker Compose, and essential development tools for building and running containerized applications. Perfect for developing, testing, and orchestrating Docker containers in an isolated environment. Built on Alpine Linux, and ships with Docker, Docker Compose, git, curl, zsh (with oh-my-zsh), make, and jq pre-installed.",
   "url": "https://github.com/docker",
   "memory": 4096,
   "ports": [
