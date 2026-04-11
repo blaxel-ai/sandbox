@@ -3,7 +3,7 @@
   "displayName": "Chromium",
   "categories": ["browser"],
   "description": "A headless Chromium browser environment with Chrome DevTools Protocol access via nginx proxy.",
-  "longDescription": "The Chromium sandbox provides a headless Chromium browser with Chrome DevTools Protocol (CDP) access through an nginx reverse proxy. It supports remote debugging, browser automation via CDP WebSocket connections, and URL rewriting for seamless access in both internal and external network configurations. Ideal for web scraping, automated testing, and browser-based automation workflows.",
+  "longDescription": "The Chromium sandbox provides a headless Chromium browser with Chrome DevTools Protocol (CDP) access through an nginx reverse proxy. It supports remote debugging, browser automation via CDP WebSocket connections, and URL rewriting for seamless access in both internal and external network configurations. Ideal for web scraping, automated testing, and browser-based automation workflows. Built on Alpine Linux with Chromium 124 and nginx pre-installed.",
   "url": "https://www.chromium.org",
   "icon": "https://avatars.githubusercontent.com/u/30044?s=200&v=4",
   "memory": 4096,

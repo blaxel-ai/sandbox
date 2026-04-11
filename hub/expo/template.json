@@ -4,7 +4,7 @@
   "categories": ["mobile"],
   "description": "A complete development environment for React Native applications using Expo framework.",
   "icon": "https://avatars.githubusercontent.com/u/12504344?s=200&v=4",
-  "longDescription": "The Expo micro VM provides a comprehensive development environment for building React Native applications using the Expo framework. It includes the Expo CLI, development server, and all necessary tools for cross-platform mobile development. Features hot reloading, over-the-air updates, and access to native device features through Expo's managed workflow. Perfect for developing iOS and Android applications with a single codebase.",
+  "longDescription": "The Expo micro VM provides a comprehensive development environment for building React Native applications using the Expo framework. It includes the Expo CLI, development server, and all necessary tools for cross-platform mobile development. Features hot reloading, over-the-air updates, and access to native device features through Expo's managed workflow. Perfect for developing iOS and Android applications with a single codebase. Built on Alpine Linux with Node.js 22, and ships with git, curl, npm, and the Expo CLI pre-installed.",
   "url": "https://github.com/expo",
   "memory": 4096,
   "ports": [

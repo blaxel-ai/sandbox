@@ -4,7 +4,7 @@
   "categories": ["web"],
   "description": "A complete development environment for Astro applications with a dev server ready at startup.",
   "icon": "https://astro.build/assets/press/astro-icon-light-gradient.svg",
-  "longDescription": "The Astro micro VM provides a comprehensive development environment for building Astro applications. It includes Node.js runtime, npm package manager, and all necessary tools for building content-driven websites. Features hot reloading, island architecture, and zero JavaScript by default. Perfect for developing fast, content-focused websites with Astro's modern web framework.",
+  "longDescription": "The Astro micro VM provides a comprehensive development environment for building Astro applications. It includes Node.js runtime, npm package manager, and all necessary tools for building content-driven websites. Features hot reloading, island architecture, and zero JavaScript by default. Perfect for developing fast, content-focused websites with Astro's modern web framework. Built on Alpine Linux with Node.js 22, and ships with git, curl, and npm pre-installed.",
   "url": "https://github.com/withastro/astro",
   "memory": 4096,
   "ports": [
