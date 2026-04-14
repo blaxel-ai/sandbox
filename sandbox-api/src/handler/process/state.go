@@ -1096,7 +1096,12 @@ func waitForHealthy(baseURL string, timeout time.Duration) error {
 	return fmt.Errorf("health check timed out after %v", timeout)
 }
 
-// verifyProcessRecovery checks that the new instance recovered processes correctly
+// verifyProcessRecovery checks that the new instance recovered processes correctly.
+// The running count check tolerates processes that transitioned from running to
+// completed between the moment we captured the current instance's counts and the
+// moment the validation binary's monitorAdoptedProcess detected the exit.
+// A process completing naturally is fine; what we want to catch is processes that
+// were silently lost (not recovered at all).
 func verifyProcessRecovery(baseURL string, expectedTotal, expectedRunning int) error {
 	logger := logrus.WithField("component", "upgrade")
 
@@ -1118,17 +1123,24 @@ func verifyProcessRecovery(baseURL string, expectedTotal, expectedRunning int) e
 
 	recoveredTotal := len(processes)
 	recoveredRunning := 0
+	recoveredCompleted := 0
 	for _, p := range processes {
-		if status, ok := p["status"].(string); ok && status == string(StatusRunning) {
-			recoveredRunning++
+		if status, ok := p["status"].(string); ok {
+			switch status {
+			case string(StatusRunning):
+				recoveredRunning++
+			case string(StatusCompleted), string(StatusFailed):
+				recoveredCompleted++
+			}
 		}
 	}
 
 	logger.WithFields(logrus.Fields{
-		"expectedTotal":    expectedTotal,
-		"recoveredTotal":   recoveredTotal,
-		"expectedRunning":  expectedRunning,
-		"recoveredRunning": recoveredRunning,
+		"expectedTotal":      expectedTotal,
+		"recoveredTotal":     recoveredTotal,
+		"expectedRunning":    expectedRunning,
+		"recoveredRunning":   recoveredRunning,
+		"recoveredCompleted": recoveredCompleted,
 	}).Info("Process recovery comparison")
 
 	// Process recovery is mandatory - if we can't recover processes, fail the upgrade
@@ -1136,9 +1148,24 @@ func verifyProcessRecovery(baseURL string, expectedTotal, expectedRunning int) e
 		return fmt.Errorf("process count mismatch: expected %d, got %d - upgrade aborted to preserve running processes", expectedTotal, recoveredTotal)
 	}
 
-	// Verify running processes were recovered
-	if recoveredRunning != expectedRunning {
-		return fmt.Errorf("running process count mismatch: expected %d running, got %d - upgrade aborted", expectedRunning, recoveredRunning)
+	// Verify running processes were recovered. A process may have completed
+	// between the moment we counted (current instance) and when the validation
+	// binary's monitorAdoptedProcess detected the exit. That is acceptable:
+	// recovered running + those that naturally completed must account for all
+	// the processes we expected to be running.
+	if recoveredRunning < expectedRunning {
+		// Some "expected running" processes may now show as completed/failed
+		// in the validation binary. That is OK as long as the total still adds up.
+		missingRunning := expectedRunning - recoveredRunning
+		if missingRunning > recoveredCompleted {
+			return fmt.Errorf("running process count mismatch: expected %d running, got %d (with %d completed) - upgrade aborted",
+				expectedRunning, recoveredRunning, recoveredCompleted)
+		}
+		logger.WithFields(logrus.Fields{
+			"expectedRunning":          expectedRunning,
+			"recoveredRunning":         recoveredRunning,
+			"naturallyCompletedDuring": missingRunning,
+		}).Info("Some processes completed during validation window, counts are consistent")
 	}
 
 	logger.Info("All processes recovered successfully")
