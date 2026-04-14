@@ -1154,12 +1154,18 @@ func verifyProcessRecovery(baseURL string, expectedTotal, expectedRunning int) e
 	// recovered running + those that naturally completed must account for all
 	// the processes we expected to be running.
 	if recoveredRunning < expectedRunning {
-		// Some "expected running" processes may now show as completed/failed
-		// in the validation binary. That is OK as long as the total still adds up.
 		missingRunning := expectedRunning - recoveredRunning
-		if missingRunning > recoveredCompleted {
-			return fmt.Errorf("running process count mismatch: expected %d running, got %d (with %d completed) - upgrade aborted",
-				expectedRunning, recoveredRunning, recoveredCompleted)
+		// recoveredCompleted includes pre-existing completed processes.
+		// Only the excess beyond expectedCompleted can account for processes
+		// that transitioned during the validation window.
+		expectedCompleted := expectedTotal - expectedRunning
+		newlyCompleted := recoveredCompleted - expectedCompleted
+		if newlyCompleted < 0 {
+			newlyCompleted = 0
+		}
+		if missingRunning > newlyCompleted {
+			return fmt.Errorf("running process count mismatch: expected %d running, got %d (with %d newly completed) - upgrade aborted",
+				expectedRunning, recoveredRunning, newlyCompleted)
 		}
 		logger.WithFields(logrus.Fields{
 			"expectedRunning":          expectedRunning,
