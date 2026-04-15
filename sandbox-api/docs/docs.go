@@ -146,7 +146,36 @@ const docTemplate = `{
                 }
             }
         },
-        "/drives/attach": {
+        "/drives/mount": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns a list of all currently mounted drives managed by blfs",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "drive"
+                ],
+                "summary": "List currently mounted drives",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/DriveListResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    }
+                }
+            },
             "post": {
                 "security": [
                     {
@@ -232,37 +261,6 @@ const docTemplate = `{
                         "description": "Bad Request",
                         "schema": {
                             "$ref": "#/definitions/ErrorResponse"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal Server Error",
-                        "schema": {
-                            "$ref": "#/definitions/ErrorResponse"
-                        }
-                    }
-                }
-            }
-        },
-        "/drives/mounts": {
-            "get": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Returns a list of all currently mounted drives managed by blfs",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "drive"
-                ],
-                "summary": "List currently mounted drives",
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/DriveListResponse"
                         }
                     },
                     "500": {

@@ -66,7 +66,7 @@ type DriveListResponse struct {
 // @Failure      400 {object} ErrorResponse
 // @Failure      500 {object} ErrorResponse
 // @Security     BearerAuth
-// @Router       /drives/attach [post]
+// @Router       /drives/mount [post]
 func (h *DriveHandler) AttachDrive(c *gin.Context) {
 	var req DriveMountRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -193,7 +193,7 @@ func (h *DriveHandler) DetachDrive(c *gin.Context) {
 // @Success      200 {object} DriveListResponse
 // @Failure      500 {object} ErrorResponse
 // @Security     BearerAuth
-// @Router       /drives/mounts [get]
+// @Router       /drives/mount [get]
 func (h *DriveHandler) ListMounts(c *gin.Context) {
 	logrus.Info("Listing mounted drives")
 
