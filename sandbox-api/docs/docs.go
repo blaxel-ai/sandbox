@@ -146,6 +146,134 @@ const docTemplate = `{
                 }
             }
         },
+        "/drives/attach": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Mounts an agent drive using the blfs binary to a local path, optionally mounting a subpath within the drive",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "drive"
+                ],
+                "summary": "Attach a drive to a local path",
+                "parameters": [
+                    {
+                        "description": "Drive attachment parameters",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/DriveMountRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/DriveMountResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/drives/mount/{mountPath}": {
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Unmounts a previously mounted drive from the specified local path",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "drive"
+                ],
+                "summary": "Detach a drive from a local path",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Mount path to detach (must start with /, e.g. /mnt/test)",
+                        "name": "mountPath",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/DriveUnmountResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/drives/mounts": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns a list of all currently mounted drives managed by blfs",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "drive"
+                ],
+                "summary": "List currently mounted drives",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/DriveListResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/filesystem-content-search/{path}": {
             "get": {
                 "description": "Searches for text content inside files using ripgrep. Returns matching lines with context.",
@@ -1797,6 +1925,84 @@ const docTemplate = `{
                 }
             }
         },
+        "DriveListResponse": {
+            "type": "object",
+            "properties": {
+                "mounts": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/DriveMountInfo"
+                    }
+                }
+            }
+        },
+        "DriveMountInfo": {
+            "type": "object",
+            "properties": {
+                "driveName": {
+                    "type": "string"
+                },
+                "drivePath": {
+                    "type": "string"
+                },
+                "mountPath": {
+                    "type": "string"
+                }
+            }
+        },
+        "DriveMountRequest": {
+            "type": "object",
+            "required": [
+                "driveName",
+                "mountPath"
+            ],
+            "properties": {
+                "driveName": {
+                    "type": "string"
+                },
+                "drivePath": {
+                    "description": "Optional, defaults to \"/\"",
+                    "type": "string"
+                },
+                "mountPath": {
+                    "type": "string"
+                }
+            }
+        },
+        "DriveMountResponse": {
+            "type": "object",
+            "properties": {
+                "driveName": {
+                    "type": "string"
+                },
+                "drivePath": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "mountPath": {
+                    "type": "string"
+                },
+                "success": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "DriveUnmountResponse": {
+            "type": "object",
+            "properties": {
+                "message": {
+                    "type": "string"
+                },
+                "mountPath": {
+                    "type": "string"
+                },
+                "success": {
+                    "type": "boolean"
+                }
+            }
+        },
         "ErrorResponse": {
             "type": "object",
             "required": [
@@ -2533,6 +2739,12 @@ const docTemplate = `{
                 "UpgradeStateIdle": "No upgrade in progress",
                 "UpgradeStateRunning": "Upgrade is currently running"
             },
+            "x-enum-descriptions": [
+                "No upgrade in progress",
+                "Upgrade is currently running",
+                "Upgrade completed successfully",
+                "Upgrade failed"
+            ],
             "x-enum-varnames": [
                 "UpgradeStateIdle",
                 "UpgradeStateRunning",

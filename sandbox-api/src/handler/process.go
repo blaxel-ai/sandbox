@@ -52,11 +52,11 @@ type ProcessRequest struct {
 	WorkingDir        string            `json:"workingDir" example:"/home/user"`
 	Env               map[string]string `json:"env" example:"{\"PORT\": \"3000\"}"`
 	WaitForCompletion bool              `json:"waitForCompletion" example:"false"`
-	Timeout           *int              `json:"timeout,omitempty" example:"30"`
+	Timeout           *int              `json:"timeout,omitempty" example:"30"` // Timeout in seconds. When keepAlive is true, defaults to 600s (10 minutes). Set to 0 for infinite (no auto-kill).
 	WaitForPorts      []int             `json:"waitForPorts" example:"3000,8080"`
 	RestartOnFailure  bool              `json:"restartOnFailure" example:"true"`
 	MaxRestarts       int               `json:"maxRestarts" example:"3"`
-	KeepAlive         bool              `json:"keepAlive" example:"false"`
+	KeepAlive         bool              `json:"keepAlive" example:"false"` // Disable scale-to-zero while process runs. Default timeout is 600s (10 minutes). Set timeout to 0 for infinite.
 } // @name ProcessRequest
 
 // ProcessResponse is the response body for a process
@@ -75,7 +75,7 @@ type ProcessResponse struct {
 	RestartOnFailure bool    `json:"restartOnFailure" example:"true"`
 	MaxRestarts      int     `json:"maxRestarts" example:"3"`
 	RestartCount     int     `json:"restartCount" example:"2"`
-	KeepAlive        bool    `json:"keepAlive" example:"false"`
+	KeepAlive        bool    `json:"keepAlive" example:"false"` // Whether scale-to-zero is disabled for this process
 } // @name ProcessResponse
 
 type ProcessResponseWithLogs struct {

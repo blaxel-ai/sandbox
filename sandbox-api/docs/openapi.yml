@@ -161,6 +161,95 @@ paths:
       summary: Code reranking/semantic search
       tags:
         - codegen
+  /drives/attach:
+    post:
+      description: Mounts an agent drive using the blfs binary to a local path, optionally mounting a subpath within the drive
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DriveMountRequest"
+        description: Drive attachment parameters
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DriveMountResponse"
+        "400":
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+      security:
+        - BearerAuth: []
+      summary: Attach a drive to a local path
+      tags:
+        - drive
+  "/drives/mount/{mountPath}":
+    delete:
+      description: Unmounts a previously mounted drive from the specified local path
+      parameters:
+        - description: Mount path to detach (must start with /, e.g. /mnt/test)
+          in: path
+          name: mountPath
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DriveUnmountResponse"
+        "400":
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+      security:
+        - BearerAuth: []
+      summary: Detach a drive from a local path
+      tags:
+        - drive
+  /drives/mounts:
+    get:
+      description: Returns a list of all currently mounted drives managed by blfs
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DriveListResponse"
+        "500":
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+      security:
+        - BearerAuth: []
+      summary: List currently mounted drives
+      tags:
+        - drive
   "/filesystem-content-search/{path}":
     get:
       description: Searches for text content inside files using ripgrep. Returns matching lines with context.
@@ -1498,6 +1587,57 @@ components:
         - path
         - subdirectories
       type: object
+    DriveListResponse:
+      properties:
+        mounts:
+          items:
+            $ref: "#/components/schemas/DriveMountInfo"
+          type: array
+      type: object
+    DriveMountInfo:
+      properties:
+        driveName:
+          type: string
+        drivePath:
+          type: string
+        mountPath:
+          type: string
+      type: object
+    DriveMountRequest:
+      properties:
+        driveName:
+          type: string
+        drivePath:
+          description: Optional, defaults to "/"
+          type: string
+        mountPath:
+          type: string
+      required:
+        - driveName
+        - mountPath
+      type: object
+    DriveMountResponse:
+      properties:
+        driveName:
+          type: string
+        drivePath:
+          type: string
+        message:
+          type: string
+        mountPath:
+          type: string
+        success:
+          type: boolean
+      type: object
+    DriveUnmountResponse:
+      properties:
+        message:
+          type: string
+        mountPath:
+          type: string
+        success:
+          type: boolean
+      type: object
     ErrorResponse:
       properties:
         error:
@@ -2028,6 +2168,11 @@ components:
         UpgradeStateFailed: Upgrade failed
         UpgradeStateIdle: No upgrade in progress
         UpgradeStateRunning: Upgrade is currently running
+      x-enum-descriptions:
+        - No upgrade in progress
+        - Upgrade is currently running
+        - Upgrade completed successfully
+        - Upgrade failed
       x-enum-varnames:
         - UpgradeStateIdle
         - UpgradeStateRunning
