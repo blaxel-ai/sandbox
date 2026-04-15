@@ -161,7 +161,27 @@ paths:
       summary: Code reranking/semantic search
       tags:
         - codegen
-  /drives/attach:
+  /drives/mount:
+    get:
+      description: Returns a list of all currently mounted drives managed by blfs
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DriveListResponse"
+        "500":
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+      security:
+        - BearerAuth: []
+      summary: List currently mounted drives
+      tags:
+        - drive
     post:
       description: Mounts an agent drive using the blfs binary to a local path, optionally mounting a subpath within the drive
       requestBody:
@@ -227,27 +247,6 @@ paths:
       security:
         - BearerAuth: []
       summary: Detach a drive from a local path
-      tags:
-        - drive
-  /drives/mounts:
-    get:
-      description: Returns a list of all currently mounted drives managed by blfs
-      responses:
-        "200":
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/DriveListResponse"
-        "500":
-          description: Internal Server Error
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-      security:
-        - BearerAuth: []
-      summary: List currently mounted drives
       tags:
         - drive
   "/filesystem-content-search/{path}":
