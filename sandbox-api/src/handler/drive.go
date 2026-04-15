@@ -20,40 +20,40 @@ func NewDriveHandler() *DriveHandler {
 	}
 }
 
-// AttachDriveRequest represents the request body for attaching a drive
-type AttachDriveRequest struct {
+// DriveMountRequest represents the request body for mounting a drive
+type DriveMountRequest struct {
 	DriveName string `json:"driveName" binding:"required"`
 	MountPath string `json:"mountPath" binding:"required"`
 	DrivePath string `json:"drivePath"` // Optional, defaults to "/"
-}
+} // @name DriveMountRequest
 
-// AttachDriveResponse represents the response for a successful drive attachment
-type AttachDriveResponse struct {
+// DriveMountResponse represents the response for a successful drive mount
+type DriveMountResponse struct {
 	Success   bool   `json:"success"`
 	Message   string `json:"message"`
 	DriveName string `json:"driveName"`
 	MountPath string `json:"mountPath"`
 	DrivePath string `json:"drivePath"`
-}
+} // @name DriveMountResponse
 
-// DetachDriveResponse represents the response for a successful drive detachment
-type DetachDriveResponse struct {
+// DriveUnmountResponse represents the response for a successful drive unmount
+type DriveUnmountResponse struct {
 	Success   bool   `json:"success"`
 	Message   string `json:"message"`
 	MountPath string `json:"mountPath"`
-}
+} // @name DriveUnmountResponse
 
-// MountInfo represents information about a mounted drive
-type MountInfo struct {
+// DriveMountInfo represents information about a mounted drive
+type DriveMountInfo struct {
 	DriveName string `json:"driveName"`
 	MountPath string `json:"mountPath"`
 	DrivePath string `json:"drivePath"`
-}
+} // @name DriveMountInfo
 
-// ListMountsResponse represents the response for listing mounted drives
-type ListMountsResponse struct {
-	Mounts []MountInfo `json:"mounts"`
-}
+// DriveListResponse represents the response for listing mounted drives
+type DriveListResponse struct {
+	Mounts []DriveMountInfo `json:"mounts"`
+} // @name DriveListResponse
 
 // AttachDrive godoc
 // @Summary      Attach a drive to a local path
@@ -61,14 +61,14 @@ type ListMountsResponse struct {
 // @Tags         drive
 // @Accept       json
 // @Produce      json
-// @Param        request body AttachDriveRequest true "Drive attachment parameters"
-// @Success      200 {object} AttachDriveResponse
+// @Param        request body DriveMountRequest true "Drive attachment parameters"
+// @Success      200 {object} DriveMountResponse
 // @Failure      400 {object} ErrorResponse
 // @Failure      500 {object} ErrorResponse
 // @Security     BearerAuth
 // @Router       /drives/attach [post]
 func (h *DriveHandler) AttachDrive(c *gin.Context) {
-	var req AttachDriveRequest
+	var req DriveMountRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		logrus.WithError(err).Error("Failed to bind JSON for drive attachment")
 		c.JSON(http.StatusBadRequest, ErrorResponse{
@@ -132,7 +132,7 @@ func (h *DriveHandler) AttachDrive(c *gin.Context) {
 		"drive_path": req.DrivePath,
 	}).Info("Drive attached successfully")
 
-	c.JSON(http.StatusOK, AttachDriveResponse{
+	c.JSON(http.StatusOK, DriveMountResponse{
 		Success:   true,
 		Message:   "Drive mounted successfully",
 		DriveName: req.DriveName,
@@ -147,7 +147,7 @@ func (h *DriveHandler) AttachDrive(c *gin.Context) {
 // @Tags         drive
 // @Produce      json
 // @Param        mountPath path string true "Mount path to detach (must start with /, e.g. /mnt/test)"
-// @Success      200 {object} DetachDriveResponse
+// @Success      200 {object} DriveUnmountResponse
 // @Failure      400 {object} ErrorResponse
 // @Failure      500 {object} ErrorResponse
 // @Security     BearerAuth
@@ -178,7 +178,7 @@ func (h *DriveHandler) DetachDrive(c *gin.Context) {
 
 	logrus.WithField("mount_path", mountPath).Info("Drive detached successfully")
 
-	c.JSON(http.StatusOK, DetachDriveResponse{
+	c.JSON(http.StatusOK, DriveUnmountResponse{
 		Success:   true,
 		Message:   "Drive unmounted successfully",
 		MountPath: mountPath,
@@ -190,7 +190,7 @@ func (h *DriveHandler) DetachDrive(c *gin.Context) {
 // @Description  Returns a list of all currently mounted drives managed by blfs
 // @Tags         drive
 // @Produce      json
-// @Success      200 {object} ListMountsResponse
+// @Success      200 {object} DriveListResponse
 // @Failure      500 {object} ErrorResponse
 // @Security     BearerAuth
 // @Router       /drives/mounts [get]
@@ -207,11 +207,11 @@ func (h *DriveHandler) ListMounts(c *gin.Context) {
 	}
 
 	// Convert internal mount info to API response format
-	response := ListMountsResponse{
-		Mounts: make([]MountInfo, len(mounts)),
+	response := DriveListResponse{
+		Mounts: make([]DriveMountInfo, len(mounts)),
 	}
 	for i, m := range mounts {
-		response.Mounts[i] = MountInfo{
+		response.Mounts[i] = DriveMountInfo{
 			DriveName: m.DriveName,
 			MountPath: m.MountPath,
 			DrivePath: m.DrivePath,
