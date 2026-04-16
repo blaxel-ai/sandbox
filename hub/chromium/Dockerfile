@@ -9,16 +9,6 @@ COPY --from=sandbox-api /sandbox-api /usr/local/bin/sandbox-api
 USER root
 RUN apk add --no-cache nginx nginx-mod-http-perl
 
-# Resolve shared library symlinks to actual files (prevents EROFS "Structure
-# needs cleaning" errors on Unikraft where inline symlink data crossing block
-# boundaries fails to load)
-RUN find /usr/lib -type l -name "*.so*" | while read link; do \
-        target=$(readlink -f "$link" 2>/dev/null); \
-        if [ -f "$target" ] && [ "$link" != "$target" ]; then \
-            rm "$link" && cp "$target" "$link"; \
-        fi; \
-    done 2>/dev/null || true
-
 # Replace the default nginx configuration with our proxy config
 COPY hub/chromium/nginx.conf /etc/nginx/nginx.conf
 
