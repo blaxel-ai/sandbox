@@ -31,7 +31,8 @@ func getAuthTokenPath() string {
 // driveName: name of the drive resource
 // mountPath: local path where the drive will be mounted
 // drivePath: subpath within the drive to mount (defaults to "/")
-func MountDrive(driveName, mountPath, drivePath string) error {
+// readOnly: if true, mount the drive as read-only
+func MountDrive(driveName, mountPath, drivePath string, readOnly bool) error {
 	mountPath = NormalizeMountPath(mountPath)
 	if err := ValidateDriveName(driveName); err != nil {
 		return fmt.Errorf("invalid drive name: %w", err)
@@ -89,6 +90,10 @@ func MountDrive(driveName, mountPath, drivePath string) error {
 		args = append(args, "-writebackCache=false")
 	} else {
 		args = append(args, "-writebackCache=true")
+	}
+
+	if readOnly {
+		args = append(args, "-readOnly=true")
 	}
 
 	logrus.WithFields(logrus.Fields{

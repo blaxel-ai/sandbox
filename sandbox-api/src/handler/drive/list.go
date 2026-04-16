@@ -14,6 +14,7 @@ type MountInfo struct {
 	DriveName string
 	MountPath string
 	DrivePath string
+	ReadOnly  bool
 }
 
 // ListMounts returns a list of all currently mounted drives managed by blfs
@@ -89,10 +90,21 @@ func ListMounts() ([]MountInfo, error) {
 			driveName = infrastructureId // Fallback to infrastructure ID
 		}
 
+		// Check mount options for read-only flag
+		options := fields[3]
+		isReadOnly := false
+		for _, opt := range strings.Split(options, ",") {
+			if opt == "ro" {
+				isReadOnly = true
+				break
+			}
+		}
+
 		mounts = append(mounts, MountInfo{
 			DriveName: driveName,
 			MountPath: mountPath,
 			DrivePath: drivePath,
+			ReadOnly:  isReadOnly,
 		})
 	}
 

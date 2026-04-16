@@ -25,6 +25,7 @@ type DriveMountRequest struct {
 	DriveName string `json:"driveName" binding:"required"`
 	MountPath string `json:"mountPath" binding:"required"`
 	DrivePath string `json:"drivePath"` // Optional, defaults to "/"
+	ReadOnly  bool   `json:"readOnly"`  // Optional, defaults to false
 } // @name DriveMountRequest
 
 // DriveMountResponse represents the response for a successful drive mount
@@ -34,6 +35,7 @@ type DriveMountResponse struct {
 	DriveName string `json:"driveName"`
 	MountPath string `json:"mountPath"`
 	DrivePath string `json:"drivePath"`
+	ReadOnly  bool   `json:"readOnly"`
 } // @name DriveMountResponse
 
 // DriveUnmountResponse represents the response for a successful drive unmount
@@ -48,6 +50,7 @@ type DriveMountInfo struct {
 	DriveName string `json:"driveName"`
 	MountPath string `json:"mountPath"`
 	DrivePath string `json:"drivePath"`
+	ReadOnly  bool   `json:"readOnly"`
 } // @name DriveMountInfo
 
 // DriveListResponse represents the response for listing mounted drives
@@ -113,7 +116,7 @@ func (h *DriveHandler) AttachDrive(c *gin.Context) {
 	}).Info("Attaching drive")
 
 	// Mount the drive
-	err := drive.MountDrive(req.DriveName, req.MountPath, req.DrivePath)
+	err := drive.MountDrive(req.DriveName, req.MountPath, req.DrivePath, req.ReadOnly)
 	if err != nil {
 		logrus.WithError(err).WithFields(logrus.Fields{
 			"drive_name": req.DriveName,
@@ -138,6 +141,7 @@ func (h *DriveHandler) AttachDrive(c *gin.Context) {
 		DriveName: req.DriveName,
 		MountPath: req.MountPath,
 		DrivePath: req.DrivePath,
+		ReadOnly:  req.ReadOnly,
 	})
 }
 
@@ -215,6 +219,7 @@ func (h *DriveHandler) ListMounts(c *gin.Context) {
 			DriveName: m.DriveName,
 			MountPath: m.MountPath,
 			DrivePath: m.DrivePath,
+			ReadOnly:  m.ReadOnly,
 		}
 	}
 
