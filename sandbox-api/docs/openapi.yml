@@ -1601,6 +1601,8 @@ components:
           type: string
         mountPath:
           type: string
+        readOnly:
+          type: boolean
       type: object
     DriveMountRequest:
       properties:
@@ -1611,6 +1613,9 @@ components:
           type: string
         mountPath:
           type: string
+        readOnly:
+          description: Optional, defaults to false
+          type: boolean
       required:
         - driveName
         - mountPath
@@ -1625,6 +1630,8 @@ components:
           type: string
         mountPath:
           type: string
+        readOnly:
+          type: boolean
         success:
           type: boolean
       type: object
