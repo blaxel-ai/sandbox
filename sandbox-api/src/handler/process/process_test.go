@@ -835,58 +835,72 @@ func TestLargeOutputStreaming(t *testing.T) {
 	})
 }
 
-func TestProcessLoggingOptIn(t *testing.T) {
+// TestProcessLoggingInteraction tests all combinations of global
+// (ENABLE_PROCESS_LOGGING) and per-process (enableLogging) flags.
+// The resulting proc.EnableLogging is: enableLogging || enableProcessLogging.
+func TestProcessLoggingInteraction(t *testing.T) {
 	pm := GetProcessManager()
-	expectedOutput := "logging-opt-in-test"
+	expectedOutput := "logging-interaction-test"
 
-	// DefaultOff: enableProcessLogging is false by default (set in init()),
-	// and StartProcess defaults enableLogging to false, so readAndBroadcast
-	// checks proc.EnableLogging which is false — no logrus output expected.
-	t.Run("DefaultOff", func(t *testing.T) {
-		pid, err := pm.StartProcess("echo '"+expectedOutput+"'", "", nil, false, 0, false, 0, func(p *ProcessInfo) {})
-		if err != nil {
-			t.Fatalf("Error starting process: %v", err)
-		}
+	cases := []struct {
+		name           string
+		globalFlag     bool
+		perProcessFlag bool
+		expectLogrus   bool
+	}{
+		{"GlobalOff_PerProcessOff", false, false, false},
+		{"GlobalOff_PerProcessOn", false, true, true},
+		{"GlobalOn_PerProcessOff", true, false, true},
+		{"GlobalOn_PerProcessOn", true, true, true},
+	}
 
-		time.Sleep(100 * time.Millisecond)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Set and restore the global flag. This is safe because subtests
+			// run sequentially within a single top-level test.
+			orig := enableProcessLogging
+			enableProcessLogging = tc.globalFlag
+			defer func() { enableProcessLogging = orig }()
 
-		logs, err := pm.GetProcessOutput(pid)
-		if err != nil {
-			t.Fatalf("Error getting process output: %v", err)
-		}
-		if !strings.Contains(strings.TrimSpace(logs.Stdout), expectedOutput) {
-			t.Errorf("Expected stdout to contain '%s', got: '%s'", expectedOutput, logs.Stdout)
-		}
-	})
+			tw := &testWriter{}
+			logrus.SetOutput(tw)
+			logrus.SetFormatter(&logrus.JSONFormatter{})
+			defer func() {
+				logrus.SetOutput(os.Stderr)
+				logrus.SetFormatter(&logrus.TextFormatter{})
+			}()
 
-	// OptInPerProcess: pass enableLogging=true via StartProcessWithName.
-	// Capture logrus output to verify the process logs are exported.
-	t.Run("OptInPerProcess", func(t *testing.T) {
-		tw := &testWriter{}
-		logrus.SetOutput(tw)
-		logrus.SetFormatter(&logrus.JSONFormatter{})
-		defer func() {
-			logrus.SetOutput(os.Stderr)
-			logrus.SetFormatter(&logrus.TextFormatter{})
-		}()
+			pid, err := pm.StartProcessWithName(
+				"echo '"+expectedOutput+"'", "",
+				fmt.Sprintf("log-test-%s", tc.name), nil,
+				false, 0, false, 0,
+				tc.perProcessFlag,
+				func(p *ProcessInfo) {},
+			)
+			if err != nil {
+				t.Fatalf("Error starting process: %v", err)
+			}
 
-		pid, err := pm.StartProcessWithName("echo '"+expectedOutput+"'", "", "opt-in-test", nil, false, 0, false, 0, true, func(p *ProcessInfo) {})
-		if err != nil {
-			t.Fatalf("Error starting process: %v", err)
-		}
+			time.Sleep(100 * time.Millisecond)
 
-		time.Sleep(100 * time.Millisecond)
+			hasLogrus := strings.Contains(tw.String(), `"source":"process"`)
+			if tc.expectLogrus && !hasLogrus {
+				t.Errorf("Expected logrus output (global=%v, perProcess=%v), but got none:\n%s",
+					tc.globalFlag, tc.perProcessFlag, tw.String())
+			}
+			if !tc.expectLogrus && hasLogrus {
+				t.Errorf("Expected no logrus output (global=%v, perProcess=%v), but got:\n%s",
+					tc.globalFlag, tc.perProcessFlag, tw.String())
+			}
 
-		if !strings.Contains(tw.String(), `"source":"process"`) {
-			t.Errorf("Expected logrus output with source=process when enableLogging=true, but got:\n%s", tw.String())
-		}
-
-		logs, err := pm.GetProcessOutput(pid)
-		if err != nil {
-			t.Fatalf("Error getting process output: %v", err)
-		}
-		if !strings.Contains(strings.TrimSpace(logs.Stdout), expectedOutput) {
-			t.Errorf("Expected stdout to contain '%s', got: '%s'", expectedOutput, logs.Stdout)
-		}
-	})
+			// Regardless of logging flag, process output must be accessible.
+			logs, err := pm.GetProcessOutput(pid)
+			if err != nil {
+				t.Fatalf("Error getting process output: %v", err)
+			}
+			if !strings.Contains(strings.TrimSpace(logs.Stdout), expectedOutput) {
+				t.Errorf("Expected stdout to contain '%s', got: '%s'", expectedOutput, logs.Stdout)
+			}
+		})
+	}
 }
