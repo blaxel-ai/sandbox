@@ -3,10 +3,13 @@ package process
 import (
 	"bytes"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/sirupsen/logrus"
 )
 
 // TestProcessManagerIntegration tests the complete functionality of the process manager
@@ -189,7 +192,7 @@ func TestProcessManagerIntegrationWithName(t *testing.T) {
 	// Test starting a long-running process
 	t.Run("StartLongRunningProcess", func(t *testing.T) {
 		name := "sleep-process"
-		_, err := pm.StartProcessWithName("sleep 5", "", name, nil, false, 0, false, 0, func(process *ProcessInfo) {
+		_, err := pm.StartProcessWithName("sleep 5", "", name, nil, false, 0, false, 0, false, func(process *ProcessInfo) {
 			t.Logf("Process: %+v", process.stderr)
 		})
 		if err != nil {
@@ -238,7 +241,7 @@ func TestProcessManagerIntegrationWithName(t *testing.T) {
 	t.Run("ProcessWithOutput", func(t *testing.T) {
 		expectedOutput := "Hello, Process Manager!"
 		name := "echo-process"
-		_, err := pm.StartProcessWithName("echo '"+expectedOutput+"'", "", name, nil, false, 0, false, 0, func(process *ProcessInfo) {
+		_, err := pm.StartProcessWithName("echo '"+expectedOutput+"'", "", name, nil, false, 0, false, 0, false, func(process *ProcessInfo) {
 			t.Logf("Process: %+v", process.stderr)
 		})
 		if err != nil {
@@ -279,7 +282,7 @@ func TestProcessManagerIntegrationWithName(t *testing.T) {
 	// Test process with working directory
 	t.Run("ProcessWithWorkingDirectory", func(t *testing.T) {
 		name := "ls-process"
-		_, err := pm.StartProcessWithName("ls -la", "", name, nil, false, 0, false, 0, func(process *ProcessInfo) {
+		_, err := pm.StartProcessWithName("ls -la", "", name, nil, false, 0, false, 0, false, func(process *ProcessInfo) {
 			t.Logf("Process: %+v", process.stderr)
 		})
 		if err != nil {
@@ -327,7 +330,7 @@ func TestProcessManagerIntegrationWithName(t *testing.T) {
 	t.Run("ListProcesses", func(t *testing.T) {
 		// Start a new process for this test
 		name := "test-process"
-		_, err := pm.StartProcessWithName("sleep 1", "", name, nil, false, 0, false, 0, func(process *ProcessInfo) {
+		_, err := pm.StartProcessWithName("sleep 1", "", name, nil, false, 0, false, 0, false, func(process *ProcessInfo) {
 			t.Logf("Process: %+v", process.stderr)
 		})
 		if err != nil {
@@ -830,4 +833,74 @@ func TestLargeOutputStreaming(t *testing.T) {
 			t.Errorf("Expected 10000 E characters, got %d", eCount)
 		}
 	})
+}
+
+// TestProcessLoggingInteraction tests all combinations of global
+// (DISABLE_PROCESS_LOGGING) and per-process (disableLogging) flags.
+// The resulting proc.DisableLogging is: disableLogging || disableProcessLogging.
+// Logging is ON by default; either flag can opt out.
+func TestProcessLoggingInteraction(t *testing.T) {
+	pm := GetProcessManager()
+	expectedOutput := "logging-interaction-test"
+
+	cases := []struct {
+		name             string
+		globalDisable    bool
+		perProcessDisable bool
+		expectLogrus     bool
+	}{
+		{"BothOff_LoggingOn", false, false, true},
+		{"GlobalOff_PerProcessDisable", false, true, false},
+		{"GlobalDisable_PerProcessOff", true, false, false},
+		{"BothDisable_LoggingOff", true, true, false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Set and restore the global flag atomically.
+			orig := disableProcessLogging.Load()
+			disableProcessLogging.Store(tc.globalDisable)
+			defer disableProcessLogging.Store(orig)
+
+			tw := &testWriter{}
+			logrus.SetOutput(tw)
+			logrus.SetFormatter(&logrus.JSONFormatter{})
+			defer func() {
+				logrus.SetOutput(os.Stderr)
+				logrus.SetFormatter(&logrus.TextFormatter{})
+			}()
+
+			pid, err := pm.StartProcessWithName(
+				"echo '"+expectedOutput+"'", "",
+				fmt.Sprintf("log-test-%s", tc.name), nil,
+				false, 0, false, 0,
+				tc.perProcessDisable,
+				func(p *ProcessInfo) {},
+			)
+			if err != nil {
+				t.Fatalf("Error starting process: %v", err)
+			}
+
+			time.Sleep(100 * time.Millisecond)
+
+			hasLogrus := strings.Contains(tw.String(), `"source":"process"`)
+			if tc.expectLogrus && !hasLogrus {
+				t.Errorf("Expected logrus output (globalDisable=%v, perProcessDisable=%v), but got none:\n%s",
+					tc.globalDisable, tc.perProcessDisable, tw.String())
+			}
+			if !tc.expectLogrus && hasLogrus {
+				t.Errorf("Expected no logrus output (globalDisable=%v, perProcessDisable=%v), but got:\n%s",
+					tc.globalDisable, tc.perProcessDisable, tw.String())
+			}
+
+			// Regardless of logging flag, process output must be accessible.
+			logs, err := pm.GetProcessOutput(pid)
+			if err != nil {
+				t.Fatalf("Error getting process output: %v", err)
+			}
+			if !strings.Contains(strings.TrimSpace(logs.Stdout), expectedOutput) {
+				t.Errorf("Expected stdout to contain '%s', got: '%s'", expectedOutput, logs.Stdout)
+			}
+		})
+	}
 }

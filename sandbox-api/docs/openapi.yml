@@ -1912,6 +1912,10 @@ components:
         command:
           example: ls -la
           type: string
+        disableLogging:
+          description: Disable logrus export to stdout for this process. Defaults to false (logging enabled).
+          example: false
+          type: boolean
         env:
           additionalProperties:
             type: string
