@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -108,14 +109,14 @@ var ProcessLogDir = "/var/log/sandbox-api"
 // to the sandbox-api's own stdout via logrus is disabled. Can be set via
 // DISABLE_PROCESS_LOGGING=true environment variable. Defaults to false
 // (logging is enabled by default).
-var disableProcessLogging bool
+var disableProcessLogging atomic.Bool
 
 func init() {
 	if dir := os.Getenv("SANDBOX_LOG_DIR"); dir != "" {
 		ProcessLogDir = dir
 	}
 	val := os.Getenv("DISABLE_PROCESS_LOGGING")
-	disableProcessLogging = val == "true" || val == "1"
+	disableProcessLogging.Store(val == "true" || val == "1")
 }
 
 // getLogFilePaths returns the log file paths for a process (stdout, stderr, combined)
@@ -263,7 +264,7 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 		MaxRestarts:      maxRestarts,
 		RestartCount:     0,
 		KeepAlive:        keepAlive,
-		DisableLogging:   disableLogging || disableProcessLogging,
+		DisableLogging:   disableLogging || disableProcessLogging.Load(),
 		Timeout:          timeout,
 		LogFile:          combinedPath,
 		StdoutFile:       stdoutPath,

@@ -857,11 +857,10 @@ func TestProcessLoggingInteraction(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			// Set and restore the global flag. This is safe because subtests
-			// run sequentially within a single top-level test.
-			orig := disableProcessLogging
-			disableProcessLogging = tc.globalDisable
-			defer func() { disableProcessLogging = orig }()
+			// Set and restore the global flag atomically.
+			orig := disableProcessLogging.Load()
+			disableProcessLogging.Store(tc.globalDisable)
+			defer disableProcessLogging.Store(orig)
 
 			tw := &testWriter{}
 			logrus.SetOutput(tw)
