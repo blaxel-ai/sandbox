@@ -3,10 +3,13 @@ package process
 import (
 	"bytes"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/sirupsen/logrus"
 )
 
 // TestProcessManagerIntegration tests the complete functionality of the process manager
@@ -830,4 +833,45 @@ func TestLargeOutputStreaming(t *testing.T) {
 			t.Errorf("Expected 10000 E characters, got %d", eCount)
 		}
 	})
+}
+
+func TestDisableProcessLogging(t *testing.T) {
+	// Enable the flag for this test and restore afterwards.
+	orig := disableProcessLogging
+	disableProcessLogging = true
+	defer func() { disableProcessLogging = orig }()
+
+	// Capture logrus output.
+	var buf bytes.Buffer
+	logrus.SetOutput(&buf)
+	logrus.SetFormatter(&logrus.JSONFormatter{})
+	defer func() {
+		logrus.SetOutput(os.Stderr)
+		logrus.SetFormatter(&logrus.TextFormatter{})
+	}()
+
+	pm := GetProcessManager()
+	expectedOutput := "disable-logging-test-output"
+	pid, err := pm.StartProcess("echo '"+expectedOutput+"'", "", nil, false, 0, false, 0, func(p *ProcessInfo) {})
+	if err != nil {
+		t.Fatalf("Error starting process: %v", err)
+	}
+
+	// Wait for the process to finish and logs to flush.
+	time.Sleep(100 * time.Millisecond)
+
+	// Verify no logrus output with source=process was emitted.
+	logOutput := buf.String()
+	if strings.Contains(logOutput, `"source":"process"`) {
+		t.Errorf("Expected no logrus output with source=process, but got:\n%s", logOutput)
+	}
+
+	// Verify process logs are still available via GetProcessOutput.
+	logs, err := pm.GetProcessOutput(pid)
+	if err != nil {
+		t.Fatalf("Error getting process output: %v", err)
+	}
+	if !strings.Contains(strings.TrimSpace(logs.Stdout), expectedOutput) {
+		t.Errorf("Expected stdout to contain '%s', got: '%s'", expectedOutput, logs.Stdout)
+	}
 }

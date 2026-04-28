@@ -103,10 +103,17 @@ type ProcessInfo struct {
 // Can be configured via SANDBOX_LOG_DIR environment variable
 var ProcessLogDir = "/var/log/sandbox-api"
 
+// disableProcessLogging controls whether process stdout/stderr is exported
+// to the sandbox-api's own stdout via logrus. Can be set via
+// DISABLE_PROCESS_LOGGING=true environment variable.
+var disableProcessLogging bool
+
 func init() {
 	if dir := os.Getenv("SANDBOX_LOG_DIR"); dir != "" {
 		ProcessLogDir = dir
 	}
+	val := os.Getenv("DISABLE_PROCESS_LOGGING")
+	disableProcessLogging = val == "true" || val == "1"
 }
 
 // getLogFilePaths returns the log file paths for a process (stdout, stderr, combined)
@@ -558,26 +565,28 @@ func (pm *ProcessManager) readAndBroadcast(file *os.File, buf []byte, proc *Proc
 				}
 			}
 		}
-		// Export process logs to stdout for telemetry collection.
-		// Uses structured log attributes so the telemetry collector can
-		// distinguish process logs from access logs.
-		logEntry := logrus.WithFields(logrus.Fields{
-			"source":       "process",
-			"process-name": proc.Name,
-			"process-pid":  proc.PID,
-			"stream":       streamType,
-		})
-		// Log each line separately for clean telemetry ingestion
-		logLines := strings.SplitAfter(string(data), "\n")
-		for _, line := range logLines {
-			trimmed := strings.TrimSuffix(line, "\n")
-			if trimmed == "" {
-				continue
-			}
-			if streamType == "stderr" {
-				logEntry.Error(trimmed)
-			} else {
-				logEntry.Info(trimmed)
+		if !disableProcessLogging {
+			// Export process logs to stdout for telemetry collection.
+			// Uses structured log attributes so the telemetry collector can
+			// distinguish process logs from access logs.
+			logEntry := logrus.WithFields(logrus.Fields{
+				"source":       "process",
+				"process-name": proc.Name,
+				"process-pid":  proc.PID,
+				"stream":       streamType,
+			})
+			// Log each line separately for clean telemetry ingestion
+			logLines := strings.SplitAfter(string(data), "\n")
+			for _, line := range logLines {
+				trimmed := strings.TrimSuffix(line, "\n")
+				if trimmed == "" {
+					continue
+				}
+				if streamType == "stderr" {
+					logEntry.Error(trimmed)
+				} else {
+					logEntry.Info(trimmed)
+				}
 			}
 		}
 		// Send to log writers for streaming
