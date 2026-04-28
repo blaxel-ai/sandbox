@@ -192,7 +192,7 @@ func TestProcessManagerIntegrationWithName(t *testing.T) {
 	// Test starting a long-running process
 	t.Run("StartLongRunningProcess", func(t *testing.T) {
 		name := "sleep-process"
-		_, err := pm.StartProcessWithName("sleep 5", "", name, nil, false, 0, false, 0, func(process *ProcessInfo) {
+		_, err := pm.StartProcessWithName("sleep 5", "", name, nil, false, 0, false, 0, false, func(process *ProcessInfo) {
 			t.Logf("Process: %+v", process.stderr)
 		})
 		if err != nil {
@@ -241,7 +241,7 @@ func TestProcessManagerIntegrationWithName(t *testing.T) {
 	t.Run("ProcessWithOutput", func(t *testing.T) {
 		expectedOutput := "Hello, Process Manager!"
 		name := "echo-process"
-		_, err := pm.StartProcessWithName("echo '"+expectedOutput+"'", "", name, nil, false, 0, false, 0, func(process *ProcessInfo) {
+		_, err := pm.StartProcessWithName("echo '"+expectedOutput+"'", "", name, nil, false, 0, false, 0, false, func(process *ProcessInfo) {
 			t.Logf("Process: %+v", process.stderr)
 		})
 		if err != nil {
@@ -282,7 +282,7 @@ func TestProcessManagerIntegrationWithName(t *testing.T) {
 	// Test process with working directory
 	t.Run("ProcessWithWorkingDirectory", func(t *testing.T) {
 		name := "ls-process"
-		_, err := pm.StartProcessWithName("ls -la", "", name, nil, false, 0, false, 0, func(process *ProcessInfo) {
+		_, err := pm.StartProcessWithName("ls -la", "", name, nil, false, 0, false, 0, false, func(process *ProcessInfo) {
 			t.Logf("Process: %+v", process.stderr)
 		})
 		if err != nil {
@@ -330,7 +330,7 @@ func TestProcessManagerIntegrationWithName(t *testing.T) {
 	t.Run("ListProcesses", func(t *testing.T) {
 		// Start a new process for this test
 		name := "test-process"
-		_, err := pm.StartProcessWithName("sleep 1", "", name, nil, false, 0, false, 0, func(process *ProcessInfo) {
+		_, err := pm.StartProcessWithName("sleep 1", "", name, nil, false, 0, false, 0, false, func(process *ProcessInfo) {
 			t.Logf("Process: %+v", process.stderr)
 		})
 		if err != nil {

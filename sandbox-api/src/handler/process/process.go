@@ -84,6 +84,7 @@ type ProcessInfo struct {
 	MaxRestarts      int                     `json:"maxRestarts"`
 	RestartCount     int                     `json:"restartCount"`
 	KeepAlive        bool                    `json:"keepAlive"`
+	DisableLogging   bool                    `json:"-"` // Whether logrus export is suppressed for this process
 	Timeout          int                     `json:"-"` // Internal: timeout in seconds for keepAlive processes
 	LogFile          string                  `json:"-"` // Path to combined log file
 	StdoutFile       string                  `json:"-"` // Path to stdout log file
@@ -152,10 +153,10 @@ func GetProcessManager() *ProcessManager {
 
 func (pm *ProcessManager) StartProcess(command string, workingDir string, env map[string]string, restartOnFailure bool, maxRestarts int, keepAlive bool, timeout int, callback func(process *ProcessInfo)) (string, error) {
 	name := GenerateRandomName(8)
-	return pm.StartProcessWithName(command, workingDir, name, env, restartOnFailure, maxRestarts, keepAlive, timeout, callback)
+	return pm.StartProcessWithName(command, workingDir, name, env, restartOnFailure, maxRestarts, keepAlive, timeout, false, callback)
 }
 
-func (pm *ProcessManager) StartProcessWithName(command string, workingDir string, name string, env map[string]string, restartOnFailure bool, maxRestarts int, keepAlive bool, timeout int, callback func(process *ProcessInfo)) (string, error) {
+func (pm *ProcessManager) StartProcessWithName(command string, workingDir string, name string, env map[string]string, restartOnFailure bool, maxRestarts int, keepAlive bool, timeout int, disableLogging bool, callback func(process *ProcessInfo)) (string, error) {
 	// Always use shell to execute commands
 	// This ensures shell built-ins (cd, export, alias) work properly
 	// Use SHELL and SHELL_ARGS environment variables if set
@@ -261,6 +262,7 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 		MaxRestarts:      maxRestarts,
 		RestartCount:     0,
 		KeepAlive:        keepAlive,
+		DisableLogging:   disableLogging || disableProcessLogging,
 		Timeout:          timeout,
 		LogFile:          combinedPath,
 		StdoutFile:       stdoutPath,
@@ -565,7 +567,7 @@ func (pm *ProcessManager) readAndBroadcast(file *os.File, buf []byte, proc *Proc
 				}
 			}
 		}
-		if !disableProcessLogging {
+		if !proc.DisableLogging {
 			// Export process logs to stdout for telemetry collection.
 			// Uses structured log attributes so the telemetry collector can
 			// distinguish process logs from access logs.
