@@ -84,7 +84,7 @@ type ProcessInfo struct {
 	MaxRestarts      int                     `json:"maxRestarts"`
 	RestartCount     int                     `json:"restartCount"`
 	KeepAlive        bool                    `json:"keepAlive"`
-	DisableLogging   bool                    `json:"-"` // Whether logrus export is suppressed for this process
+	EnableLogging    bool                    `json:"-"` // Whether logrus export is enabled for this process
 	Timeout          int                     `json:"-"` // Internal: timeout in seconds for keepAlive processes
 	LogFile          string                  `json:"-"` // Path to combined log file
 	StdoutFile       string                  `json:"-"` // Path to stdout log file
@@ -104,17 +104,17 @@ type ProcessInfo struct {
 // Can be configured via SANDBOX_LOG_DIR environment variable
 var ProcessLogDir = "/var/log/sandbox-api"
 
-// disableProcessLogging controls whether process stdout/stderr is exported
+// enableProcessLogging controls whether process stdout/stderr is exported
 // to the sandbox-api's own stdout via logrus. Can be set via
-// DISABLE_PROCESS_LOGGING=true environment variable.
-var disableProcessLogging bool
+// ENABLE_PROCESS_LOGGING=true environment variable. Defaults to false.
+var enableProcessLogging bool
 
 func init() {
 	if dir := os.Getenv("SANDBOX_LOG_DIR"); dir != "" {
 		ProcessLogDir = dir
 	}
-	val := os.Getenv("DISABLE_PROCESS_LOGGING")
-	disableProcessLogging = val == "true" || val == "1"
+	val := os.Getenv("ENABLE_PROCESS_LOGGING")
+	enableProcessLogging = val == "true" || val == "1"
 }
 
 // getLogFilePaths returns the log file paths for a process (stdout, stderr, combined)
@@ -153,10 +153,10 @@ func GetProcessManager() *ProcessManager {
 
 func (pm *ProcessManager) StartProcess(command string, workingDir string, env map[string]string, restartOnFailure bool, maxRestarts int, keepAlive bool, timeout int, callback func(process *ProcessInfo)) (string, error) {
 	name := GenerateRandomName(8)
-	return pm.StartProcessWithName(command, workingDir, name, env, restartOnFailure, maxRestarts, keepAlive, timeout, false, callback)
+	return pm.StartProcessWithName(command, workingDir, name, env, restartOnFailure, maxRestarts, keepAlive, timeout, false, callback) // enableLogging defaults to false
 }
 
-func (pm *ProcessManager) StartProcessWithName(command string, workingDir string, name string, env map[string]string, restartOnFailure bool, maxRestarts int, keepAlive bool, timeout int, disableLogging bool, callback func(process *ProcessInfo)) (string, error) {
+func (pm *ProcessManager) StartProcessWithName(command string, workingDir string, name string, env map[string]string, restartOnFailure bool, maxRestarts int, keepAlive bool, timeout int, enableLogging bool, callback func(process *ProcessInfo)) (string, error) {
 	// Always use shell to execute commands
 	// This ensures shell built-ins (cd, export, alias) work properly
 	// Use SHELL and SHELL_ARGS environment variables if set
@@ -262,7 +262,7 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 		MaxRestarts:      maxRestarts,
 		RestartCount:     0,
 		KeepAlive:        keepAlive,
-		DisableLogging:   disableLogging || disableProcessLogging,
+		EnableLogging:    enableLogging || enableProcessLogging,
 		Timeout:          timeout,
 		LogFile:          combinedPath,
 		StdoutFile:       stdoutPath,
@@ -567,7 +567,7 @@ func (pm *ProcessManager) readAndBroadcast(file *os.File, buf []byte, proc *Proc
 				}
 			}
 		}
-		if !proc.DisableLogging {
+		if proc.EnableLogging {
 			// Export process logs to stdout for telemetry collection.
 			// Uses structured log attributes so the telemetry collector can
 			// distinguish process logs from access logs.

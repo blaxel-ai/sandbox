@@ -835,11 +835,11 @@ func TestLargeOutputStreaming(t *testing.T) {
 	})
 }
 
-func TestDisableProcessLogging(t *testing.T) {
-	// Enable the flag for this test and restore afterwards.
-	orig := disableProcessLogging
-	disableProcessLogging = true
-	defer func() { disableProcessLogging = orig }()
+func TestProcessLoggingOptIn(t *testing.T) {
+	// Ensure the global flag is off (default).
+	orig := enableProcessLogging
+	enableProcessLogging = false
+	defer func() { enableProcessLogging = orig }()
 
 	// Capture logrus output.
 	var buf bytes.Buffer
@@ -851,27 +851,49 @@ func TestDisableProcessLogging(t *testing.T) {
 	}()
 
 	pm := GetProcessManager()
-	expectedOutput := "disable-logging-test-output"
-	pid, err := pm.StartProcess("echo '"+expectedOutput+"'", "", nil, false, 0, false, 0, func(p *ProcessInfo) {})
-	if err != nil {
-		t.Fatalf("Error starting process: %v", err)
-	}
+	expectedOutput := "logging-opt-in-test"
 
-	// Wait for the process to finish and logs to flush.
-	time.Sleep(100 * time.Millisecond)
+	t.Run("DefaultOff", func(t *testing.T) {
+		buf.Reset()
+		pid, err := pm.StartProcess("echo '"+expectedOutput+"'", "", nil, false, 0, false, 0, func(p *ProcessInfo) {})
+		if err != nil {
+			t.Fatalf("Error starting process: %v", err)
+		}
 
-	// Verify no logrus output with source=process was emitted.
-	logOutput := buf.String()
-	if strings.Contains(logOutput, `"source":"process"`) {
-		t.Errorf("Expected no logrus output with source=process, but got:\n%s", logOutput)
-	}
+		time.Sleep(100 * time.Millisecond)
 
-	// Verify process logs are still available via GetProcessOutput.
-	logs, err := pm.GetProcessOutput(pid)
-	if err != nil {
-		t.Fatalf("Error getting process output: %v", err)
-	}
-	if !strings.Contains(strings.TrimSpace(logs.Stdout), expectedOutput) {
-		t.Errorf("Expected stdout to contain '%s', got: '%s'", expectedOutput, logs.Stdout)
-	}
+		if strings.Contains(buf.String(), `"source":"process"`) {
+			t.Errorf("Expected no logrus output by default, but got:\n%s", buf.String())
+		}
+
+		logs, err := pm.GetProcessOutput(pid)
+		if err != nil {
+			t.Fatalf("Error getting process output: %v", err)
+		}
+		if !strings.Contains(strings.TrimSpace(logs.Stdout), expectedOutput) {
+			t.Errorf("Expected stdout to contain '%s', got: '%s'", expectedOutput, logs.Stdout)
+		}
+	})
+
+	t.Run("OptInPerProcess", func(t *testing.T) {
+		buf.Reset()
+		pid, err := pm.StartProcessWithName("echo '"+expectedOutput+"'", "", "opt-in-test", nil, false, 0, false, 0, true, func(p *ProcessInfo) {})
+		if err != nil {
+			t.Fatalf("Error starting process: %v", err)
+		}
+
+		time.Sleep(100 * time.Millisecond)
+
+		if !strings.Contains(buf.String(), `"source":"process"`) {
+			t.Errorf("Expected logrus output with source=process when enableLogging=true, but got:\n%s", buf.String())
+		}
+
+		logs, err := pm.GetProcessOutput(pid)
+		if err != nil {
+			t.Fatalf("Error getting process output: %v", err)
+		}
+		if !strings.Contains(strings.TrimSpace(logs.Stdout), expectedOutput) {
+			t.Errorf("Expected stdout to contain '%s', got: '%s'", expectedOutput, logs.Stdout)
+		}
+	})
 }
