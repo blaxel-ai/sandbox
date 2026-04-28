@@ -1945,6 +1945,9 @@ const docTemplate = `{
                 },
                 "mountPath": {
                     "type": "string"
+                },
+                "readOnly": {
+                    "type": "boolean"
                 }
             }
         },
@@ -1964,6 +1967,10 @@ const docTemplate = `{
                 },
                 "mountPath": {
                     "type": "string"
+                },
+                "readOnly": {
+                    "description": "Optional, defaults to false",
+                    "type": "boolean"
                 }
             }
         },
@@ -1981,6 +1988,9 @@ const docTemplate = `{
                 },
                 "mountPath": {
                     "type": "string"
+                },
+                "readOnly": {
+                    "type": "boolean"
                 },
                 "success": {
                     "type": "boolean"
@@ -2379,6 +2389,11 @@ const docTemplate = `{
                 "command": {
                     "type": "string",
                     "example": "ls -la"
+                },
+                "disableLogging": {
+                    "description": "Disable logrus export to stdout for this process. Defaults to false (logging enabled).",
+                    "type": "boolean",
+                    "example": false
                 },
                 "env": {
                     "type": "object",

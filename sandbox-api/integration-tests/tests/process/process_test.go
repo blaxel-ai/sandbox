@@ -1559,47 +1559,20 @@ func TestProcessTimeoutWithWaitForCompletion(t *testing.T) {
 	t.Log("✓ Test passed: Process timeout returns error but process continues running and is accessible")
 }
 
-// TestEnableLoggingFlag verifies that the enableLogging field is accepted by
+// TestDisableLoggingFlag verifies that the disableLogging field is accepted by
 // the process API and that process output remains accessible regardless of
 // the flag value. The flag controls server-side logrus export (not observable
 // via HTTP), so this test validates the API contract and correct execution.
-func TestEnableLoggingFlag(t *testing.T) {
-	expectedOutput := "enable-logging-test"
+func TestDisableLoggingFlag(t *testing.T) {
+	expectedOutput := "disable-logging-test"
 
-	t.Run("DefaultOff", func(t *testing.T) {
-		// No enableLogging field — defaults to false.
+	t.Run("DefaultOn", func(t *testing.T) {
+		// No disableLogging field — defaults to false (logging enabled).
 		req := map[string]interface{}{
-			"name":              "logging-default-off",
+			"name":              "logging-default-on",
 			"command":           "echo '" + expectedOutput + "'",
 			"cwd":               "/",
 			"waitForCompletion": true,
-		}
-
-		resp, err := common.MakeRequest(http.MethodPost, "/process", req)
-		require.NoError(t, err)
-		defer resp.Body.Close()
-
-		assert.Equal(t, http.StatusOK, resp.StatusCode)
-
-		var body map[string]interface{}
-		err = json.NewDecoder(resp.Body).Decode(&body)
-		require.NoError(t, err)
-
-		require.Contains(t, body, "pid")
-		assert.Equal(t, "completed", body["status"])
-		assert.Equal(t, float64(0), body["exitCode"])
-		require.Contains(t, body, "logs")
-		assert.Contains(t, body["logs"], expectedOutput)
-	})
-
-	t.Run("ExplicitlyEnabled", func(t *testing.T) {
-		// enableLogging: true — logrus export enabled for this process.
-		req := map[string]interface{}{
-			"name":              "logging-explicit-on",
-			"command":           "echo '" + expectedOutput + "'",
-			"cwd":               "/",
-			"waitForCompletion": true,
-			"enableLogging":     true,
 		}
 
 		resp, err := common.MakeRequest(http.MethodPost, "/process", req)
@@ -1620,13 +1593,13 @@ func TestEnableLoggingFlag(t *testing.T) {
 	})
 
 	t.Run("ExplicitlyDisabled", func(t *testing.T) {
-		// enableLogging: false — explicitly off.
+		// disableLogging: true — logrus export disabled for this process.
 		req := map[string]interface{}{
 			"name":              "logging-explicit-off",
 			"command":           "echo '" + expectedOutput + "'",
 			"cwd":               "/",
 			"waitForCompletion": true,
-			"enableLogging":     false,
+			"disableLogging":    true,
 		}
 
 		resp, err := common.MakeRequest(http.MethodPost, "/process", req)
@@ -1646,13 +1619,40 @@ func TestEnableLoggingFlag(t *testing.T) {
 		assert.Contains(t, body["logs"], expectedOutput)
 	})
 
-	t.Run("LongRunningWithLogging", func(t *testing.T) {
-		// Verify enableLogging works with non-waitForCompletion processes.
+	t.Run("ExplicitlyNotDisabled", func(t *testing.T) {
+		// disableLogging: false — logging stays enabled (explicit default).
 		req := map[string]interface{}{
-			"name":          "logging-long-running",
-			"command":       "echo '" + expectedOutput + "' && sleep 2",
-			"cwd":           "/",
-			"enableLogging": true,
+			"name":              "logging-explicit-on",
+			"command":           "echo '" + expectedOutput + "'",
+			"cwd":               "/",
+			"waitForCompletion": true,
+			"disableLogging":    false,
+		}
+
+		resp, err := common.MakeRequest(http.MethodPost, "/process", req)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+		var body map[string]interface{}
+		err = json.NewDecoder(resp.Body).Decode(&body)
+		require.NoError(t, err)
+
+		require.Contains(t, body, "pid")
+		assert.Equal(t, "completed", body["status"])
+		assert.Equal(t, float64(0), body["exitCode"])
+		require.Contains(t, body, "logs")
+		assert.Contains(t, body["logs"], expectedOutput)
+	})
+
+	t.Run("LongRunningWithDisabledLogging", func(t *testing.T) {
+		// Verify disableLogging works with non-waitForCompletion processes.
+		req := map[string]interface{}{
+			"name":           "logging-long-running-disabled",
+			"command":        "echo '" + expectedOutput + "' && sleep 2",
+			"cwd":            "/",
+			"disableLogging": true,
 		}
 
 		resp, err := common.MakeRequest(http.MethodPost, "/process", req)
