@@ -836,31 +836,31 @@ func TestLargeOutputStreaming(t *testing.T) {
 }
 
 // TestProcessLoggingInteraction tests all combinations of global
-// (DISABLE_PROCESS_LOGGING) and per-process (disableLogging) flags.
-// The resulting proc.DisableLogging is: disableLogging || disableProcessLogging.
-// Logging is ON by default; either flag can opt out.
+// (ENABLE_PROCESS_LOGGING) and per-process (enableLogging) flags.
+// The resulting proc.EnableLogging is: enableLogging || enableProcessLogging.
+// Logging is OFF by default; either flag can opt in.
 func TestProcessLoggingInteraction(t *testing.T) {
 	pm := GetProcessManager()
 	expectedOutput := "logging-interaction-test"
 
 	cases := []struct {
-		name             string
-		globalDisable    bool
-		perProcessDisable bool
-		expectLogrus     bool
+		name              string
+		globalEnable      bool
+		perProcessEnable  bool
+		expectLogrus      bool
 	}{
-		{"BothOff_LoggingOn", false, false, true},
-		{"GlobalOff_PerProcessDisable", false, true, false},
-		{"GlobalDisable_PerProcessOff", true, false, false},
-		{"BothDisable_LoggingOff", true, true, false},
+		{"BothOff_LoggingOff", false, false, false},
+		{"GlobalOff_PerProcessOn", false, true, true},
+		{"GlobalOn_PerProcessOff", true, false, true},
+		{"BothOn_LoggingOn", true, true, true},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			// Set and restore the global flag atomically.
-			orig := disableProcessLogging.Load()
-			disableProcessLogging.Store(tc.globalDisable)
-			defer disableProcessLogging.Store(orig)
+			orig := enableProcessLogging.Load()
+			enableProcessLogging.Store(tc.globalEnable)
+			defer enableProcessLogging.Store(orig)
 
 			tw := &testWriter{}
 			logrus.SetOutput(tw)
@@ -874,7 +874,7 @@ func TestProcessLoggingInteraction(t *testing.T) {
 				"echo '"+expectedOutput+"'", "",
 				fmt.Sprintf("log-test-%s", tc.name), nil,
 				false, 0, false, 0,
-				tc.perProcessDisable,
+				tc.perProcessEnable,
 				func(p *ProcessInfo) {},
 			)
 			if err != nil {
@@ -885,12 +885,12 @@ func TestProcessLoggingInteraction(t *testing.T) {
 
 			hasLogrus := strings.Contains(tw.String(), `"source":"process"`)
 			if tc.expectLogrus && !hasLogrus {
-				t.Errorf("Expected logrus output (globalDisable=%v, perProcessDisable=%v), but got none:\n%s",
-					tc.globalDisable, tc.perProcessDisable, tw.String())
+				t.Errorf("Expected logrus output (globalEnable=%v, perProcessEnable=%v), but got none:\n%s",
+					tc.globalEnable, tc.perProcessEnable, tw.String())
 			}
 			if !tc.expectLogrus && hasLogrus {
-				t.Errorf("Expected no logrus output (globalDisable=%v, perProcessDisable=%v), but got:\n%s",
-					tc.globalDisable, tc.perProcessDisable, tw.String())
+				t.Errorf("Expected no logrus output (globalEnable=%v, perProcessEnable=%v), but got:\n%s",
+					tc.globalEnable, tc.perProcessEnable, tw.String())
 			}
 
 			// Regardless of logging flag, process output must be accessible.
