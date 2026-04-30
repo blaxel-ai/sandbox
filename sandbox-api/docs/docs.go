@@ -2390,8 +2390,8 @@ const docTemplate = `{
                     "type": "string",
                     "example": "ls -la"
                 },
-                "disableLogging": {
-                    "description": "Disable logrus export to stdout for this process. Defaults to false (logging enabled).",
+                "enableLogging": {
+                    "description": "Enable logrus export to stdout for this process. Defaults to false.",
                     "type": "boolean",
                     "example": false
                 },
