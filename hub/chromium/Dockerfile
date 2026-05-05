@@ -7,7 +7,7 @@ COPY --from=sandbox-api /sandbox-api /usr/local/bin/sandbox-api
 
 # Install nginx with perl module to act as a proxy for host header mapping
 USER root
-RUN apk add --no-cache nginx nginx-mod-http-perl
+RUN apk add --no-cache bash nginx nginx-mod-http-perl
 
 # Replace the default nginx configuration with our proxy config
 COPY hub/chromium/nginx.conf /etc/nginx/nginx.conf
