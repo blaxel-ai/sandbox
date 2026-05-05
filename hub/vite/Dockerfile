@@ -4,8 +4,9 @@ FROM ghcr.io/blaxel-ai/sandbox:${SANDBOX_VERSION} AS sandbox-api
 FROM node:22-alpine
 
 RUN apk update && apk add --no-cache \
-  git \
+  bash \
   curl \
+  git \
   netcat-openbsd \
   && rm -rf /var/cache/apk/*
 

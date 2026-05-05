@@ -1,16 +1,17 @@
 FROM alpine
 
 RUN apk update && apk add --no-cache \
-  git \
+  bash \
   curl \
   docker \
   docker-cli-compose \
-  netcat-openbsd \
+  git \
   iptables \
   iptables-legacy \
-  zsh \
-  make \
   jq \
+  make \
+  netcat-openbsd \
+  zsh \
   && rm -rf /var/cache/apk/*
 
 # The sandbox kernel doesn't support nftables, so switch to iptables-legacy
