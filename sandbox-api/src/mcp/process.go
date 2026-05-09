@@ -143,6 +143,7 @@ func (s *Server) registerProcessTools() error {
 			restartOnFailure,
 			maxRestarts,
 			keepAlive,
+			false,
 		)
 
 		// Check if this is a timeout error due to the capped timeout (CloudFront workaround)

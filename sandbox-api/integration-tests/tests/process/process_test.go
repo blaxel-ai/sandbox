@@ -1559,6 +1559,140 @@ func TestProcessTimeoutWithWaitForCompletion(t *testing.T) {
 	t.Log("✓ Test passed: Process timeout returns error but process continues running and is accessible")
 }
 
+// TestEnableLoggingFlag verifies that the enableLogging field is accepted by
+// the process API and that process output remains accessible regardless of
+// the flag value. The flag controls server-side logrus export (not observable
+// via HTTP), so this test validates the API contract and correct execution.
+func TestEnableLoggingFlag(t *testing.T) {
+	expectedOutput := "enable-logging-test"
+
+	t.Run("DefaultOff", func(t *testing.T) {
+		// No enableLogging field — defaults to false (logging disabled).
+		req := map[string]interface{}{
+			"name":              "logging-default-off",
+			"command":           "echo '" + expectedOutput + "'",
+			"cwd":               "/",
+			"waitForCompletion": true,
+		}
+
+		resp, err := common.MakeRequest(http.MethodPost, "/process", req)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+		var body map[string]interface{}
+		err = json.NewDecoder(resp.Body).Decode(&body)
+		require.NoError(t, err)
+
+		require.Contains(t, body, "pid")
+		assert.Equal(t, "completed", body["status"])
+		assert.Equal(t, float64(0), body["exitCode"])
+		require.Contains(t, body, "logs")
+		assert.Contains(t, body["logs"], expectedOutput)
+	})
+
+	t.Run("ExplicitlyEnabled", func(t *testing.T) {
+		// enableLogging: true — logrus export enabled for this process.
+		req := map[string]interface{}{
+			"name":              "logging-explicit-on",
+			"command":           "echo '" + expectedOutput + "'",
+			"cwd":               "/",
+			"waitForCompletion": true,
+			"enableLogging":     true,
+		}
+
+		resp, err := common.MakeRequest(http.MethodPost, "/process", req)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+		var body map[string]interface{}
+		err = json.NewDecoder(resp.Body).Decode(&body)
+		require.NoError(t, err)
+
+		require.Contains(t, body, "pid")
+		assert.Equal(t, "completed", body["status"])
+		assert.Equal(t, float64(0), body["exitCode"])
+		require.Contains(t, body, "logs")
+		assert.Contains(t, body["logs"], expectedOutput)
+	})
+
+	t.Run("ExplicitlyDisabled", func(t *testing.T) {
+		// enableLogging: false — logging stays disabled (explicit default).
+		req := map[string]interface{}{
+			"name":              "logging-explicit-off",
+			"command":           "echo '" + expectedOutput + "'",
+			"cwd":               "/",
+			"waitForCompletion": true,
+			"enableLogging":     false,
+		}
+
+		resp, err := common.MakeRequest(http.MethodPost, "/process", req)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+		var body map[string]interface{}
+		err = json.NewDecoder(resp.Body).Decode(&body)
+		require.NoError(t, err)
+
+		require.Contains(t, body, "pid")
+		assert.Equal(t, "completed", body["status"])
+		assert.Equal(t, float64(0), body["exitCode"])
+		require.Contains(t, body, "logs")
+		assert.Contains(t, body["logs"], expectedOutput)
+	})
+
+	t.Run("LongRunningWithLogging", func(t *testing.T) {
+		// Verify enableLogging works with non-waitForCompletion processes.
+		req := map[string]interface{}{
+			"name":          "logging-long-running",
+			"command":       "echo '" + expectedOutput + "' && sleep 2",
+			"cwd":           "/",
+			"enableLogging": true,
+		}
+
+		resp, err := common.MakeRequest(http.MethodPost, "/process", req)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+		var body map[string]interface{}
+		err = json.NewDecoder(resp.Body).Decode(&body)
+		require.NoError(t, err)
+
+		require.Contains(t, body, "pid")
+		pid := body["pid"].(string)
+		assert.Equal(t, "running", body["status"])
+
+		// Wait for output to be captured, then fetch logs.
+		time.Sleep(500 * time.Millisecond)
+
+		resp, err = common.MakeRequest(http.MethodGet, "/process/"+pid+"/logs", nil)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+		var logsBody map[string]interface{}
+		err = json.NewDecoder(resp.Body).Decode(&logsBody)
+		require.NoError(t, err)
+
+		require.Contains(t, logsBody, "stdout")
+		assert.Contains(t, logsBody["stdout"], expectedOutput)
+
+		// Clean up
+		resp, err = common.MakeRequest(http.MethodDelete, "/process/"+pid, nil)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+	})
+}
+
 // makeRequestWithHeaders makes an HTTP request with custom headers
 func makeRequestWithHeaders(method, path string, body interface{}, headers map[string]string) (*http.Response, error) {
 	var bodyReader io.Reader
