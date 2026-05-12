@@ -15,6 +15,11 @@ import (
 	"time"
 )
 
+// JSON encoding for this file goes through the package-level `json` variable
+// declared in morph.go: `var json = jsoniter.ConfigCompatibleWithStandardLibrary`.
+// Do not add an `encoding/json` import here — it would shadow that variable
+// and break the rest of the package.
+
 // WarpGrep model and protocol constants.
 const (
 	// WarpGrepModel is the MorphLLM model identifier for WarpGrep.
@@ -28,6 +33,15 @@ const (
 
 	// DefaultWarpGrepRequestTimeout caps a single chat-completion request.
 	DefaultWarpGrepRequestTimeout = 60 * time.Second
+
+	// MaxWarpGrepTurns is the hard upper bound on the agent loop budget,
+	// regardless of what the caller requests. Each turn can take up to
+	// DefaultWarpGrepRequestTimeout, so we cap total wall time at a sane value.
+	MaxWarpGrepTurns = 20
+
+	// warpGrepMaxResponseBytes caps how much of the MorphLLM HTTP response
+	// body we will read into memory.
+	warpGrepMaxResponseBytes = 16 << 20 // 16 MiB
 
 	// warpGrepRepoStructureDepth controls how deep the initial repo structure
 	// is enumerated (matches docs: depth 2).
@@ -180,6 +194,9 @@ func (w *WarpGrepClient) Execute(ctx context.Context, repoRoot, query string, op
 	if opts.MaxTurns <= 0 {
 		opts.MaxTurns = DefaultWarpGrepMaxTurns
 	}
+	if opts.MaxTurns > MaxWarpGrepTurns {
+		opts.MaxTurns = MaxWarpGrepTurns
+	}
 	if opts.MaxTokens <= 0 {
 		opts.MaxTokens = DefaultWarpGrepMaxTokens
 	}
@@ -302,7 +319,7 @@ func (w *WarpGrepClient) callOnce(ctx context.Context, body warpGrepRequest) (*w
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	raw, err := io.ReadAll(resp.Body)
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, warpGrepMaxResponseBytes))
 	if err != nil {
 		return nil, fmt.Errorf("warpgrep: read response: %w", err)
 	}
