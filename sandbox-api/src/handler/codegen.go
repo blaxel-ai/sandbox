@@ -356,6 +356,112 @@ func (h *CodegenHandler) HandleReranking(c *gin.Context) {
 	})
 }
 
+// WarpGrepRequest represents the query parameters for WarpGrep agentic search
+type WarpGrepRequest struct {
+	Query    string `form:"query" binding:"required" example:"where are JWT tokens validated"`
+	MaxTurns int    `form:"maxTurns" example:"6"`
+} // @name WarpGrepRequest
+
+// WarpGrepFile is a single relevant code location returned by WarpGrep
+type WarpGrepFile = codegen.WarpGrepFile // @name WarpGrepFile
+
+// WarpGrepResponse represents the response for a WarpGrep search
+type WarpGrepResponse struct {
+	Success  bool           `json:"success" example:"true"`
+	RepoRoot string         `json:"repoRoot,omitempty" example:"/blaxel/myproject"`
+	Query    string         `json:"query,omitempty" example:"where are JWT tokens validated"`
+	Files    []WarpGrepFile `json:"files"`
+	Answer   string         `json:"answer,omitempty"`
+	Turns    int            `json:"turns" example:"3"`
+	Finished bool           `json:"finished" example:"true"`
+	Message  string         `json:"message,omitempty" example:"WarpGrep returned 2 file(s) after 3 turn(s)"`
+} // @name WarpGrepResponse
+
+// HandleWarpGrep performs an agentic natural-language code search via MorphLLM WarpGrep
+// @Summary WarpGrep agentic code search
+// @Description Agentic natural-language code search powered by MorphLLM WarpGrep (morph-warp-grep-v2.1).
+// @Description
+// @Description Unlike the regex-based grep_search tool, WarpGrep takes a natural-language description of the code you are looking for, runs its own multi-turn search loop in an isolated context window, and returns the relevant code locations.
+// @Description
+// @Description The sandbox API orchestrates the loop: it forwards the query and a flat repo structure to MorphLLM, executes the tool_calls returned by the model (grep_search, read, list_directory, glob) against the local filesystem, and returns the final answer.
+// @Description
+// @Description Requires MORPH_API_KEY to be configured. Typical searches complete in 3-6 turns and a few seconds of wall time.
+// @Tags codegen
+// @Produce json
+// @Param path path string true "Repository root to search in (relative to workspace)"
+// @Param query query string true "Natural-language description of the code to find"
+// @Param maxTurns query int false "Maximum number of agent turns (default: 6)"
+// @Success 200 {object} WarpGrepResponse "WarpGrep results"
+// @Failure 400 {object} ErrorResponse "Invalid request"
+// @Failure 422 {object} ErrorResponse "Unprocessable entity - failed to process the request"
+// @Failure 503 {object} ErrorResponse "Service unavailable - WarpGrep not configured"
+// @Router /codegen/warpgrep/{path} [get]
+func (h *CodegenHandler) HandleWarpGrep(c *gin.Context) {
+	if !codegen.IsWarpGrepEnabled() {
+		h.SendError(c, http.StatusServiceUnavailable,
+			fmt.Errorf("WarpGrep is not configured: set MORPH_API_KEY to enable. See https://docs.blaxel.ai/Sandboxes/Codegen"))
+		return
+	}
+
+	directory := h.extractPathFromRequest(c)
+	directory, err := lib.FormatPath(directory)
+	if err != nil {
+		h.SendError(c, http.StatusBadRequest, err)
+		return
+	}
+	if directory == "" {
+		directory = "."
+	}
+
+	var req WarpGrepRequest
+	if err := c.ShouldBindQuery(&req); err != nil {
+		h.SendError(c, http.StatusBadRequest, err)
+		return
+	}
+
+	isDir, err := h.FileSystem.DirectoryExists(directory)
+	if err != nil {
+		h.SendError(c, http.StatusUnprocessableEntity, fmt.Errorf("failed to check directory: %w", err))
+		return
+	}
+	if !isDir {
+		h.SendError(c, http.StatusBadRequest, fmt.Errorf("path is not a directory"))
+		return
+	}
+
+	client, err := codegen.NewWarpGrep()
+	if err != nil {
+		h.SendError(c, http.StatusServiceUnavailable, err)
+		return
+	}
+
+	opts := &codegen.WarpGrepOptions{MaxTurns: req.MaxTurns}
+
+	logrus.Infof("Running WarpGrep on %s with query %q", directory, req.Query)
+	result, err := client.Execute(c.Request.Context(), directory, req.Query, opts)
+	if err != nil {
+		logrus.Errorf("WarpGrep failed: %v", err)
+		h.SendError(c, http.StatusUnprocessableEntity, err)
+		return
+	}
+
+	message := fmt.Sprintf("WarpGrep returned %d file(s) after %d turn(s)", len(result.Files), result.Turns)
+	if !result.Finished {
+		message += " (max turns reached before finish)"
+	}
+
+	c.JSON(http.StatusOK, WarpGrepResponse{
+		Success:  true,
+		RepoRoot: result.RepoRoot,
+		Query:    result.Query,
+		Files:    result.Files,
+		Answer:   result.Answer,
+		Turns:    result.Turns,
+		Finished: result.Finished,
+		Message:  message,
+	})
+}
+
 // collectDocumentsFromDirectory walks a directory and collects all eligible code files
 func (h *CodegenHandler) collectDocumentsFromDirectory(directory, filePattern string) ([]codegen.CodebaseDocument, error) {
 	// Compile regex pattern if provided

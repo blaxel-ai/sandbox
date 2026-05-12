@@ -146,6 +146,66 @@ const docTemplate = `{
                 }
             }
         },
+        "/codegen/warpgrep/{path}": {
+            "get": {
+                "description": "Agentic natural-language code search powered by MorphLLM WarpGrep (morph-warp-grep-v2.1).\n\nUnlike the regex-based grep_search tool, WarpGrep takes a natural-language description of the code you are looking for, runs its own multi-turn search loop in an isolated context window, and returns the relevant code locations.\n\nThe sandbox API orchestrates the loop: it forwards the query and a flat repo structure to MorphLLM, executes the tool_calls returned by the model (grep_search, read, list_directory, glob) against the local filesystem, and returns the final answer.\n\nRequires MORPH_API_KEY to be configured. Typical searches complete in 3-6 turns and a few seconds of wall time.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "codegen"
+                ],
+                "summary": "WarpGrep agentic code search",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Repository root to search in (relative to workspace)",
+                        "name": "path",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Natural-language description of the code to find",
+                        "name": "query",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Maximum number of agent turns (default: 6)",
+                        "name": "maxTurns",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "WarpGrep results",
+                        "schema": {
+                            "$ref": "#/definitions/WarpGrepResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable entity - failed to process the request",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "Service unavailable - WarpGrep not configured",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/drives/mount": {
             "get": {
                 "security": [
@@ -1945,6 +2005,9 @@ const docTemplate = `{
                 },
                 "mountPath": {
                     "type": "string"
+                },
+                "readOnly": {
+                    "type": "boolean"
                 }
             }
         },
@@ -1964,6 +2027,10 @@ const docTemplate = `{
                 },
                 "mountPath": {
                     "type": "string"
+                },
+                "readOnly": {
+                    "description": "Optional, defaults to false",
+                    "type": "boolean"
                 }
             }
         },
@@ -1981,6 +2048,9 @@ const docTemplate = `{
                 },
                 "mountPath": {
                     "type": "string"
+                },
+                "readOnly": {
+                    "type": "boolean"
                 },
                 "success": {
                     "type": "boolean"
@@ -2674,6 +2744,57 @@ const docTemplate = `{
                     "description": "Version being upgraded to",
                     "type": "string",
                     "example": "latest"
+                }
+            }
+        },
+        "WarpGrepFile": {
+            "type": "object",
+            "properties": {
+                "lines": {
+                    "description": "Lines is an optional line range hint (e.g. \"1-50\") as emitted by the\nmodel. Empty when the model points at the whole file.",
+                    "type": "string"
+                },
+                "path": {
+                    "description": "Path is the absolute or repo-relative path to the file.",
+                    "type": "string"
+                }
+            }
+        },
+        "WarpGrepResponse": {
+            "type": "object",
+            "properties": {
+                "answer": {
+                    "type": "string"
+                },
+                "files": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/WarpGrepFile"
+                    }
+                },
+                "finished": {
+                    "type": "boolean",
+                    "example": true
+                },
+                "message": {
+                    "type": "string",
+                    "example": "WarpGrep returned 2 file(s) after 3 turn(s)"
+                },
+                "query": {
+                    "type": "string",
+                    "example": "where are JWT tokens validated"
+                },
+                "repoRoot": {
+                    "type": "string",
+                    "example": "/blaxel/myproject"
+                },
+                "success": {
+                    "type": "boolean",
+                    "example": true
+                },
+                "turns": {
+                    "type": "integer",
+                    "example": 3
                 }
             }
         },
