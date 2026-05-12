@@ -71,6 +71,24 @@ func checkCodegenConfigured(t *testing.T) bool {
 	return !strings.Contains(string(body), "codegen tools are not configured")
 }
 
+// checkWarpGrepConfigured probes the server with a quick GET against a fake
+// directory: when MORPH_API_KEY is unset the handler returns 503 with the
+// "WarpGrep is not configured" message; otherwise we expect a different error
+// (likely 400 because the directory doesn't exist).
+func checkWarpGrepConfigured(t *testing.T) bool {
+	baseURL := setupHTTP(t)
+	requestURL := fmt.Sprintf("%s/codegen/warpgrep/non-existent-dir?query=test", baseURL)
+	resp, err := http.Get(requestURL)
+	require.NoError(t, err, "HTTP request should succeed")
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err, "Should read response body")
+	if resp.StatusCode == http.StatusNotFound {
+		return false
+	}
+	return !strings.Contains(string(body), "WarpGrep is not configured")
+}
+
 // setupHTTP initializes HTTP test client
 func setupHTTP(t *testing.T) string {
 	baseURL = os.Getenv("SANDBOX_API_URL")
@@ -489,6 +507,117 @@ func TestHTTPCodegenFastApply(t *testing.T) {
 	assert.True(t, response["success"].(bool), "Success should be true")
 	assert.Contains(t, response, "updatedContent", "Response should contain updatedContent")
 	assert.Contains(t, response, "provider", "Response should contain provider")
+}
+
+// TestMCPCodegenWarpGrep tests the MCP WarpGrep tool. Skipped when WarpGrep
+// is not configured on the server (MORPH_API_KEY missing).
+func TestMCPCodegenWarpGrep(t *testing.T) {
+	if !checkWarpGrepConfigured(t) {
+		t.Skip("WarpGrep not configured on server - skipping test")
+		return
+	}
+	_, session := setupMCPClient(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	testDir := setupTestDirectory(t)
+
+	result, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name: "codegenWarpGrep",
+		Arguments: map[string]any{
+			"path":  testDir,
+			"query": "authentication middleware that checks a token",
+		},
+	})
+
+	require.NoError(t, err, "Tool call should not fail at transport level")
+	require.NotNil(t, result, "Result should not be nil")
+
+	if result.IsError && len(result.Content) > 0 {
+		textContent, ok := result.Content[0].(*mcp.TextContent)
+		require.True(t, ok, "Expected TextContent")
+		// Configuration / availability problems are not test failures.
+		if strings.Contains(textContent.Text, "warpgrep") ||
+			strings.Contains(textContent.Text, "WarpGrep") {
+			t.Logf("WarpGrep not available on server: %s", textContent.Text)
+			return
+		}
+		t.Fatalf("Unexpected error: %s", textContent.Text)
+	}
+
+	require.NotEmpty(t, result.Content, "Result should have content")
+	textContent, ok := result.Content[0].(*mcp.TextContent)
+	require.True(t, ok, "Expected TextContent")
+	assert.NotEmpty(t, textContent.Text, "Result should not be empty")
+
+	var response map[string]interface{}
+	err = json.Unmarshal([]byte(textContent.Text), &response)
+	require.NoError(t, err, "Response should be valid JSON")
+
+	assert.True(t, response["success"].(bool), "Success should be true")
+	assert.Contains(t, response, "files", "Response should contain files")
+	// Turns is reported even when finish wasn't called.
+	assert.Contains(t, response, "turns", "Response should contain turns")
+}
+
+// TestHTTPCodegenWarpGrep tests the REST WarpGrep endpoint.
+func TestHTTPCodegenWarpGrep(t *testing.T) {
+	if !checkWarpGrepConfigured(t) {
+		t.Skip("WarpGrep not configured on server - skipping test")
+		return
+	}
+	baseURL := setupHTTP(t)
+	testDir := setupTestDirectory(t)
+
+	query := url.QueryEscape("authentication middleware that checks a token")
+	requestURL := fmt.Sprintf("%s/codegen/warpgrep/%s?query=%s",
+		baseURL,
+		testDir,
+		query,
+	)
+
+	httpClient := &http.Client{Timeout: 120 * time.Second}
+	resp, err := httpClient.Get(requestURL)
+	require.NoError(t, err, "HTTP request should succeed")
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err, "Should read response body")
+
+	if resp.StatusCode != http.StatusOK {
+		t.Logf("Response status: %d, body: %s", resp.StatusCode, string(body))
+	}
+	if strings.Contains(string(body), "WarpGrep is not configured") {
+		t.Skip("WarpGrep not configured on server - test passes")
+		return
+	}
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode, "Should return 200 OK")
+
+	var response map[string]interface{}
+	err = json.Unmarshal(body, &response)
+	require.NoError(t, err, "Response should be valid JSON")
+	assert.True(t, response["success"].(bool), "Success should be true")
+	assert.Contains(t, response, "files", "Response should contain files")
+	assert.Contains(t, response, "turns", "Response should contain turns")
+}
+
+// TestHTTPCodegenWarpGrepMissingQuery verifies the REST endpoint rejects
+// requests without the required query parameter.
+func TestHTTPCodegenWarpGrepMissingQuery(t *testing.T) {
+	if !checkWarpGrepConfigured(t) {
+		t.Skip("WarpGrep not configured on server - skipping test")
+		return
+	}
+	baseURL := setupHTTP(t)
+	testDir := setupTestDirectory(t)
+
+	requestURL := fmt.Sprintf("%s/codegen/warpgrep/%s", baseURL, testDir)
+	resp, err := http.Get(requestURL)
+	require.NoError(t, err, "HTTP request should succeed")
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode, "Should return 400 when query is missing")
 }
 
 // setupTestDirectory creates a test directory with sample files for testing

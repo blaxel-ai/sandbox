@@ -43,6 +43,17 @@ func IsEnabled() bool {
 	return os.Getenv("RELACE_API_KEY") != "" || os.Getenv("MORPH_API_KEY") != ""
 }
 
+// NewWarpGrep returns a configured WarpGrep client when MORPH_API_KEY is set.
+// WarpGrep is currently only offered by MorphLLM, so it cannot fall back to
+// Relace the way fastapply/reranking can.
+func NewWarpGrep() (*WarpGrepClient, error) {
+	apiKey := os.Getenv("MORPH_API_KEY")
+	if apiKey == "" {
+		return nil, fmt.Errorf("warpgrep requires MORPH_API_KEY")
+	}
+	return NewWarpGrepClient(apiKey), nil
+}
+
 // NewClient creates a new code editing client based on environment variables
 // It checks for RELACE_API_KEY first, then falls back to MORPH_API_KEY
 func NewClient() (Client, error) {

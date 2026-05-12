@@ -161,6 +161,65 @@ paths:
       summary: Code reranking/semantic search
       tags:
         - codegen
+  "/codegen/warpgrep/{path}":
+    get:
+      description: >-
+        Agentic natural-language code search powered by MorphLLM WarpGrep (morph-warp-grep-v2.1).
+
+
+        Unlike the regex-based grep_search tool, WarpGrep takes a natural-language description of the code you are looking for, runs its own multi-turn search loop in an isolated context window, and returns the relevant code locations.
+
+
+        The sandbox API orchestrates the loop: it forwards the query and a flat repo structure to MorphLLM, executes the tool_calls returned by the model (grep_search, read, list_directory, glob) against the local filesystem, and returns the final answer.
+
+
+        Requires MORPH_API_KEY to be configured. Typical searches complete in 3-6 turns and a few seconds of wall time.
+      parameters:
+        - description: Repository root to search in (relative to workspace)
+          in: path
+          name: path
+          required: true
+          schema:
+            type: string
+        - description: Natural-language description of the code to find
+          in: query
+          name: query
+          required: true
+          schema:
+            type: string
+        - description: "Maximum number of agent turns (default: 6)"
+          in: query
+          name: maxTurns
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: WarpGrep results
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WarpGrepResponse"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Unprocessable entity - failed to process the request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: Service unavailable - WarpGrep not configured
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+      summary: WarpGrep agentic code search
+      tags:
+        - codegen
   /drives/mount:
     get:
       description: Returns a list of all currently mounted drives managed by blfs
@@ -2129,6 +2188,44 @@ components:
         - status
         - step
         - version
+      type: object
+    WarpGrepFile:
+      properties:
+        lines:
+          description: |-
+            Lines is an optional line range hint (e.g. "1-50") as emitted by the
+            model. Empty when the model points at the whole file.
+          type: string
+        path:
+          description: Path is the absolute or repo-relative path to the file.
+          type: string
+      type: object
+    WarpGrepResponse:
+      properties:
+        answer:
+          type: string
+        files:
+          items:
+            $ref: "#/components/schemas/WarpGrepFile"
+          type: array
+        finished:
+          example: true
+          type: boolean
+        message:
+          example: WarpGrep returned 2 file(s) after 3 turn(s)
+          type: string
+        query:
+          example: where are JWT tokens validated
+          type: string
+        repoRoot:
+          example: /blaxel/myproject
+          type: string
+        success:
+          example: true
+          type: boolean
+        turns:
+          example: 3
+          type: integer
       type: object
     filesystem.MultipartUpload:
       properties:

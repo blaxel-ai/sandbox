@@ -53,6 +53,12 @@ type GrepSearchInput struct {
 	ExcludePattern *string `json:"excludePattern,omitempty" jsonschema:"Glob pattern for files to exclude"`
 }
 
+type WarpGrepInput struct {
+	Path     string `json:"path" jsonschema:"Repository root to search in (relative to workspace root, default: current directory)"`
+	Query    string `json:"query" jsonschema:"Natural-language description of the code to find (e.g. 'where are JWT tokens validated')"`
+	MaxTurns *int   `json:"maxTurns,omitempty" jsonschema:"Maximum number of agent turns (default: 6, max: 6)"`
+}
+
 type ReadFileRangeInput struct {
 	TargetFile                 string `json:"targetFile" jsonschema:"The path of the file to read"`
 	StartLineOneIndexed        int    `json:"startLineOneIndexed" jsonschema:"The one-indexed line number to start reading from (inclusive)"`
@@ -140,6 +146,18 @@ type RerankOutput struct {
 	Files   []codegen.RankedFile `json:"files"`
 }
 
+// WarpGrepOutput is returned by codegenWarpGrep
+type WarpGrepOutput struct {
+	Success  bool                  `json:"success"`
+	Message  string                `json:"message,omitempty"`
+	RepoRoot string                `json:"repoRoot,omitempty"`
+	Query    string                `json:"query,omitempty"`
+	Files    []codegen.WarpGrepFile `json:"files"`
+	Answer   string                `json:"answer,omitempty"`
+	Turns    int                   `json:"turns,omitempty"`
+	Finished bool                  `json:"finished,omitempty"`
+}
+
 // registerCodegenTools registers all codegen-related tools
 func (s *Server) registerCodegenTools() error {
 	// Edit file tool - the most critical tool for coding agents
@@ -199,6 +217,16 @@ func (s *Server) registerCodegenTools() error {
 			Name:        "codegenRerank",
 			Description: "Performs semantic search/reranking on code files in a directory. Finds the most relevant files for a given query using AI-powered code understanding. Returns files sorted by relevance score, filtered by optional score threshold. Useful as a first pass in agentic exploration to narrow down the search space. Supports file pattern filtering via regex.",
 		}, LogToolCall("codegenRerank", s.handleRerank))
+	}
+
+	// WarpGrep tool - agentic natural-language code search via MorphLLM.
+	// Only registered when MORPH_API_KEY is configured because WarpGrep is
+	// MorphLLM-specific and cannot fall back to Relace.
+	if codegen.IsWarpGrepEnabled() {
+		mcp.AddTool(s.mcpServer, &mcp.Tool{
+			Name:        "codegenWarpGrep",
+			Description: "Agentic natural-language code search powered by MorphLLM WarpGrep (morph-warp-grep-v2.1). Takes a natural-language query and explores the repository in its own context window using grep, read, list_directory and glob, then returns the relevant code locations. Prefer over codegenGrepSearch when the query is fuzzy/semantic (e.g. 'where are billing invoices emailed to customers?') rather than an exact regex.",
+		}, LogToolCall("codegenWarpGrep", s.handleWarpGrep))
 	}
 
 	return nil
@@ -491,6 +519,58 @@ func (s *Server) handleRerank(ctx context.Context, req *mcp.CallToolRequest, arg
 		Success: true,
 		Message: fmt.Sprintf("Found %d relevant files", len(filteredFiles)),
 		Files:   filteredFiles,
+	}, nil
+}
+
+// handleWarpGrep runs an agentic WarpGrep search rooted at the requested path.
+func (s *Server) handleWarpGrep(ctx context.Context, req *mcp.CallToolRequest, args WarpGrepInput) (*mcp.CallToolResult, WarpGrepOutput, error) {
+	directory := args.Path
+	if directory == "" {
+		directory = "."
+	}
+	directory, err := lib.FormatPath(directory)
+	if err != nil {
+		return nil, WarpGrepOutput{}, fmt.Errorf("invalid path: %w", err)
+	}
+
+	isDir, err := s.handlers.FileSystem.DirectoryExists(directory)
+	if err != nil {
+		return nil, WarpGrepOutput{}, fmt.Errorf("failed to check directory: %w", err)
+	}
+	if !isDir {
+		return nil, WarpGrepOutput{}, fmt.Errorf("path is not a directory: %s", directory)
+	}
+
+	client, err := codegen.NewWarpGrep()
+	if err != nil {
+		return nil, WarpGrepOutput{}, err
+	}
+
+	opts := &codegen.WarpGrepOptions{}
+	if args.MaxTurns != nil {
+		opts.MaxTurns = *args.MaxTurns
+	}
+
+	logrus.Infof("Running WarpGrep on %s with query %q", directory, args.Query)
+	result, err := client.Execute(ctx, directory, args.Query, opts)
+	if err != nil {
+		return nil, WarpGrepOutput{}, fmt.Errorf("warpgrep failed: %w", err)
+	}
+
+	message := fmt.Sprintf("WarpGrep returned %d file(s) after %d turn(s)", len(result.Files), result.Turns)
+	if !result.Finished {
+		message += " (max turns reached before finish)"
+	}
+
+	return nil, WarpGrepOutput{
+		Success:  true,
+		Message:  message,
+		RepoRoot: result.RepoRoot,
+		Query:    result.Query,
+		Files:    result.Files,
+		Answer:   result.Answer,
+		Turns:    result.Turns,
+		Finished: result.Finished,
 	}, nil
 }
 

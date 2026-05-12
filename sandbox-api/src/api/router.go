@@ -173,6 +173,8 @@ func SetupRouter(disableRequestLogging bool, enableProcessingTime bool) *gin.Eng
 	r.PUT("/codegen/fastapply/*path", codegenHandler.HandleFastApply)
 	r.GET("/codegen/reranking/*path", codegenHandler.HandleReranking)
 	r.HEAD("/codegen/reranking/*path", head)
+	r.GET("/codegen/warpgrep/*path", codegenHandler.HandleWarpGrep)
+	r.HEAD("/codegen/warpgrep/*path", head)
 
 	// Terminal routes (web-based terminal with PTY)
 	// Can be disabled with DISABLE_TERMINAL=true environment variable
