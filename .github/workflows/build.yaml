@@ -15,6 +15,7 @@ on:
         default: ""
         options:
           - all
+          - app-runner
           - astro
           - base-image
           - chromium
