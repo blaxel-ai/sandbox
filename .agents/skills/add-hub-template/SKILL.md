@@ -1,77 +1,85 @@
 ---
 name: add-hub-template
-description: Create a new sandbox hub template (a pre-configured micro VM environment). Use when adding support for a new language, framework, or toolchain as a reusable sandbox image.
+description: Add or update a Blaxel Sandbox Hub image/template under hub/. Use when adding a new hub image, sandbox image, runtime image, template.json, Dockerfile, hidden/internal image, or workflow-dispatch build option in the blaxel-ai/sandbox repository.
 ---
 
-# Add a New Hub Template
+# Add a Sandbox Hub Image
 
-Hub templates are pre-built sandbox images stored in `hub/<template-name>/`. Each template is a Docker image with a `sandbox-api` binary pre-installed and a configured entrypoint.
+Use this skill for new images under `hub/<name>/`, including visible templates and hidden/internal runtime images.
 
-## Step 1: Create the Template Directory
+## Scope First
 
-```bash
-mkdir hub/<template-name>
-```
+1. Check repository instructions at the relevant scope before editing.
+2. Inspect nearby templates:
+   - generic base: `hub/base-image`, `hub/node`, `hub/ts-app`, `hub/py-app`
+   - entrypoint examples: `hub/expo`, `hub/vite`, `hub/nextjs`
+   - hidden/internal examples: `hub/benchmark`, `hub/vibekit-*`
+3. Check the current git status and preserve unrelated user changes.
+4. Decide whether the image is user-facing or internal:
+   - User-facing: add useful metadata and README mention.
+   - Internal/platform-managed: set `"hidden": true` and avoid README marketing.
 
-Convention: use lowercase kebab-case (e.g., `ruby-app`, `go-app`, `playwright-firefox`).
+## Required Files
 
----
+Create or update:
 
-## Step 2: Write the Dockerfile
+- `hub/<name>/Dockerfile`
+- `hub/<name>/template.json`
+- `.github/workflows/build.yaml`
 
-Create `hub/<template-name>/Dockerfile`. The Dockerfile must:
-1. Start from a base image with the required runtime
-2. Copy in the `sandbox-api` binary (or build it from source)
-3. Expose port `8080` for the sandbox-api
-4. Set an entrypoint that starts `sandbox-api`
+Usually update for local testing:
 
-Minimal example (adapts the base-image pattern):
+- `docker-compose.yaml`
+
+Only update `README.md` for visible user-facing templates. Do not list hidden/internal images as normal templates.
+
+## Dockerfile Rules
+
+Follow the existing multi-stage pattern:
 
 ```dockerfile
-FROM ubuntu:22.04
+ARG SANDBOX_VERSION=latest
+FROM ghcr.io/blaxel-ai/sandbox:${SANDBOX_VERSION} AS sandbox-api
 
-# Install runtime dependencies
-RUN apt-get update && apt-get install -y \
-    curl \
-    <your-tools> \
-    && rm -rf /var/lib/apt/lists/*
+FROM <runtime-base>
 
-# Copy sandbox-api binary (built by the multi-stage or pre-built)
-COPY sandbox-api/sandbox-api /usr/local/bin/sandbox-api
+RUN <install required runtime tools>
+
+WORKDIR /blaxel
+
+COPY --from=sandbox-api /sandbox-api /usr/local/bin/sandbox-api
 RUN chmod +x /usr/local/bin/sandbox-api
 
-# Working directory for user code
-WORKDIR /blaxel/app
-
 EXPOSE 8080
+
+ENV HOME=/blaxel
 
 ENTRYPOINT ["/usr/local/bin/sandbox-api"]
 ```
 
-Look at existing templates for reference patterns:
-- `hub/base-image/Dockerfile` — minimal baseline
-- `hub/py-app/Dockerfile` — Python with pip
-- `hub/ts-app/Dockerfile` — Node.js/TypeScript
-- `hub/expo/Dockerfile` — Expo with entrypoint script that auto-starts a dev server
+Rules:
 
-If your template needs to auto-start a service on boot, create an `entrypoint.sh` script and call it before `sandbox-api` (see `hub/expo/entrypoint.sh` for an example using `curl` to POST to `/process`).
+- Always include the `ARG SANDBOX_VERSION=latest` stage unless the image has a specific reason not to.
+- Copy `/sandbox-api` from the sandbox-api stage into `/usr/local/bin/sandbox-api`.
+- Expose `8080` for `sandbox-api`.
+- Only expose app/dev ports when they are intrinsic to that template. Do not expose dynamic app ports for platform-managed hidden images.
+- If an entrypoint script is needed, keep `sandbox-api` running as the control plane and test the real startup path.
+- Keep runtime dependencies explicit. If the runner supports `s3://`, `gs://`, or Azure Blob, install and test `rclone`.
 
----
+## template.json Rules
 
-## Step 3: Write template.json
-
-Create `hub/<template-name>/template.json`:
+Minimal shape:
 
 ```json
 {
-  "name": "<template-name>",
-  "displayName": "<Human Readable Name>",
+  "name": "<name>",
+  "displayName": "<Display Name>",
   "categories": [],
-  "description": "Short one-line description",
-  "longDescription": "Longer description explaining use cases and what's included.",
-  "url": "https://link-to-upstream-project",
-  "icon": "https://url-to-icon-image.png",
-  "memory": 4096,
+  "description": "Short description.",
+  "longDescription": "Longer description.",
+  "url": "https://github.com/blaxel-ai/sandbox",
+  "icon": "https://blaxel.ai/logo.png",
+  "memory": 2048,
   "ports": [
     {
       "name": "sandbox-api",
@@ -84,67 +92,84 @@ Create `hub/<template-name>/template.json`:
 }
 ```
 
-- `memory`: RAM in MB (`4096` = 4GB is standard; increase for heavy workloads)
-- `ports`: List all ports the template exposes. Add extra entries for app ports (e.g., 3000 for a dev server)
-- `enterprise`: Set `true` to restrict to enterprise workspaces
-- `coming_soon`: Set `true` to show the template in the UI but disable creation
+For hidden/internal images, add:
 
----
+```json
+"hidden": true
+```
 
-## Step 4: Add to docker-compose.yaml
+Port rule: put only stable ports in `template.json`. If another service creates previews with a caller-provided `runtime.port`, leave that dynamic port out of the template.
 
-Add a service entry so you can test locally:
+## GitHub Workflow
+
+Update `.github/workflows/build.yaml` every time a new hub image is added:
+
+- Add `<name>` under `on.workflow_dispatch.inputs.sandbox.options`.
+- Keep alphabetical-ish order near existing options.
+
+The automatic build matrix uses folders under `hub/`, so the directory is enough for push/tag auto-detection. The `workflow_dispatch` options list is separate and must be updated manually.
+
+## docker-compose
+
+Add a service when local build/run is useful:
 
 ```yaml
-  <template-name>:
+  <name>:
     platform: linux/amd64
     build:
       context: .
-      dockerfile: hub/<template-name>/Dockerfile
+      dockerfile: hub/<name>/Dockerfile
     env_file:
       - .env
     ports:
       - "8080:8080"
-      - "<app-port>:<app-port>"  # add any extra ports
       - "3010:3010"
 ```
 
----
+Add app ports only when they are stable template ports. Avoid dynamic platform-managed app ports.
 
-## Step 5: Build and Test Locally
+## Validation
+
+Run the cheapest structural checks first:
 
 ```bash
-# Build the image
-docker-compose build <template-name>
+jq empty hub/<name>/template.json
+find hub/<name> -maxdepth 1 -name '*.sh' -print -exec sh -n {} \;
+ruby -e 'require "yaml"; YAML.load_file(".github/workflows/build.yaml"); puts "yaml-ok"'
+```
 
-# Start it
-docker-compose up <template-name>
+Build with an explicit platform:
 
-# Verify sandbox-api is running
+```bash
+docker build --platform linux/amd64 -t blaxel/<name>:test -f hub/<name>/Dockerfile .
+```
+
+Prefer explicit `docker build --platform linux/amd64` over `docker compose build` on Apple Silicon. Some local compose providers ignore the service platform when pulling `ghcr.io/blaxel-ai/sandbox:latest` and fail on `arm64`.
+
+If the image has a runner or entrypoint script, smoke-test it inside the built image with realistic env vars and mounted test input. Verify:
+
+- required binaries exist (`command -v <tool>`)
+- source materialization works
+- pre-start/setup hooks run in the intended order
+- the final command starts or exits as expected
+
+When feasible, start the sandbox API and check:
+
+```bash
 curl http://localhost:8080/health
-
-# Run a process inside it
 curl -X POST http://localhost:8080/process \
   -H "Content-Type: application/json" \
   -d '{"command": "echo hello", "waitForCompletion": true}'
 ```
 
----
+## Final Checklist
 
-## Step 6: Run Integration Tests Against It
-
-```bash
-cd sandbox-api/integration-tests
-API_HOST=localhost API_PORT=8080 ./run_tests.sh
-```
-
----
-
-## Checklist Before PR
-
-- [ ] `hub/<template-name>/Dockerfile` builds successfully
-- [ ] `hub/<template-name>/template.json` is valid JSON with all required fields
-- [ ] Service added to `docker-compose.yaml`
-- [ ] `curl http://localhost:8080/health` returns `200 OK`
-- [ ] Integration tests pass against the new image
-- [ ] Template listed in the root `README.md` under the Templates section
+- [ ] `hub/<name>/Dockerfile` builds with `--platform linux/amd64`.
+- [ ] `hub/<name>/template.json` is valid JSON.
+- [ ] Hidden/internal images have `"hidden": true`.
+- [ ] Dynamic app ports are not hard-coded in `Dockerfile`, `template.json`, or `docker-compose.yaml`.
+- [ ] `.github/workflows/build.yaml` includes `<name>` in `workflow_dispatch` options.
+- [ ] `docker-compose.yaml` is updated when local testing is useful.
+- [ ] Runner or entrypoint scripts are syntax-checked and smoke-tested.
+- [ ] User-facing visible templates are documented in `README.md`; hidden/internal ones are not.
+- [ ] No public action, commit, push, PR, or deploy is performed without user confirmation.
