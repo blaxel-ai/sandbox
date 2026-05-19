@@ -109,12 +109,6 @@ Update `.github/workflows/build.yaml` every time a new hub image is added:
 
 The automatic build matrix uses folders under `hub/`, so the directory is enough for push/tag auto-detection. The `workflow_dispatch` options list is separate and must be updated manually.
 
-If changing the workflow conditions, preserve this behavior:
-
-- automatic pushes to `main` should not build hub images unless the workflow is explicitly intended to do so
-- `workflow_dispatch` on `main` with a selected sandbox must continue past `sandbox-api` into `generate-matrix`, `build-ghcr-hub`, and `build-s3-hub`
-- apply equivalent guards to all three hub jobs, not just `generate-matrix`
-
 ## docker-compose
 
 Add a service when local build/run is useful:
