@@ -1009,8 +1009,9 @@ func (h *FileSystemHandler) HandleCompleteMultipartUpload(c *gin.Context) {
 		return
 	}
 
-	// Verify upload exists
-	if _, err := h.multipartManager.GetUpload(uploadID); err != nil {
+	// Get upload metadata
+	upload, err := h.multipartManager.GetUpload(uploadID)
+	if err != nil {
 		h.SendError(c, http.StatusNotFound, err)
 		return
 	}
@@ -1029,10 +1030,7 @@ func (h *FileSystemHandler) HandleCompleteMultipartUpload(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusAccepted, MultipartUploadStatusResponse{
-		UploadID: uploadID,
-		Status:   filesystem.UploadStatusInProgress,
-	})
+	h.SendSuccessWithPath(c, upload.Path, "Multipart upload accepted, assembly in progress")
 }
 
 // HandleAbortMultipartUpload aborts a multipart upload

@@ -279,16 +279,15 @@ func (m *MultipartManager) GetUploadStatus(uploadID string) (string, string, err
 	return status, completionError, nil
 }
 
-// cleanupUpload removes the temporary parts directory and the in-memory upload
-// record to prevent unbounded memory growth from completed uploads.
+// cleanupUpload removes the temporary parts directory. The in-memory upload
+// record is kept so clients can still poll GetUploadStatus for the terminal
+// state. CleanupExpired handles eviction of old records to prevent unbounded
+// memory growth.
 func (m *MultipartManager) cleanupUpload(uploadID string) error {
 	uploadDir := filepath.Join(m.uploadsDir, uploadID)
 	if err := os.RemoveAll(uploadDir); err != nil {
 		return fmt.Errorf("failed to remove upload directory: %w", err)
 	}
-	m.mu.Lock()
-	delete(m.uploads, uploadID)
-	m.mu.Unlock()
 	return nil
 }
 
