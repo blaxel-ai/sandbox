@@ -14,14 +14,24 @@ import (
 	"github.com/google/uuid"
 )
 
+// Upload status constants
+const (
+	UploadStatusPending    = "pending"
+	UploadStatusInProgress = "in_progress"
+	UploadStatusCompleted  = "completed"
+	UploadStatusFailed     = "failed"
+)
+
 // MultipartUpload represents an in-progress multipart upload
 type MultipartUpload struct {
-	UploadID    string                `json:"uploadId" example:"550e8400-e29b-41d4-a716-446655440000"`
-	Path        string                `json:"path" example:"/tmp/largefile.dat"`
-	Permissions os.FileMode           `json:"permissions" swaggertype:"integer" example:"420"`
-	InitiatedAt time.Time             `json:"initiatedAt"`
-	Parts       map[int]*UploadedPart `json:"parts"`
-	mu          sync.RWMutex          `json:"-" swaggerignore:"true"`
+	UploadID        string                `json:"uploadId" example:"550e8400-e29b-41d4-a716-446655440000"`
+	Path            string                `json:"path" example:"/tmp/largefile.dat"`
+	Permissions     os.FileMode           `json:"permissions" swaggertype:"integer" example:"420"`
+	InitiatedAt     time.Time             `json:"initiatedAt"`
+	Parts           map[int]*UploadedPart `json:"parts"`
+	Status          string                `json:"status" example:"pending"`
+	CompletionError string                `json:"completionError,omitempty" example:""`
+	mu              sync.RWMutex          `json:"-" swaggerignore:"true"`
 }
 
 // UploadedPart represents a single uploaded part
@@ -65,6 +75,7 @@ func (m *MultipartManager) InitiateUpload(path string, permissions os.FileMode) 
 		Permissions: permissions,
 		InitiatedAt: time.Now(),
 		Parts:       make(map[int]*UploadedPart),
+		Status:      UploadStatusPending,
 	}
 
 	m.uploads[uploadID] = upload
@@ -140,7 +151,9 @@ func (m *MultipartManager) UploadPart(uploadID string, partNumber int, reader io
 	return part, nil
 }
 
-// CompleteUpload assembles all parts into the final file
+// CompleteUpload validates parts and spawns a background goroutine to assemble the final file.
+// It returns immediately after validation so the HTTP response is not blocked by the copy.
+// Clients should poll GetUploadStatus to check when assembly is finished.
 func (m *MultipartManager) CompleteUpload(uploadID string, parts []UploadedPart) error {
 	m.mu.RLock()
 	upload, exists := m.uploads[uploadID]
@@ -150,16 +163,27 @@ func (m *MultipartManager) CompleteUpload(uploadID string, parts []UploadedPart)
 		return fmt.Errorf("upload not found: %s", uploadID)
 	}
 
-	upload.mu.RLock()
-	defer upload.mu.RUnlock()
+	upload.mu.Lock()
+
+	// Prevent completing an upload that is already in progress or finished
+	if upload.Status == UploadStatusInProgress {
+		upload.mu.Unlock()
+		return fmt.Errorf("upload %s is already being completed", uploadID)
+	}
+	if upload.Status == UploadStatusCompleted {
+		upload.mu.Unlock()
+		return fmt.Errorf("upload %s is already completed", uploadID)
+	}
 
 	// Validate all parts are present
 	for _, part := range parts {
 		storedPart, exists := upload.Parts[part.PartNumber]
 		if !exists {
+			upload.mu.Unlock()
 			return fmt.Errorf("part %d not found", part.PartNumber)
 		}
 		if storedPart.ETag != part.ETag {
+			upload.mu.Unlock()
 			return fmt.Errorf("etag mismatch for part %d", part.PartNumber)
 		}
 	}
@@ -169,40 +193,99 @@ func (m *MultipartManager) CompleteUpload(uploadID string, parts []UploadedPart)
 		return parts[i].PartNumber < parts[j].PartNumber
 	})
 
+	upload.Status = UploadStatusInProgress
+	upload.mu.Unlock()
+
+	// Persist the in_progress status
+	_ = m.saveMetadata(upload)
+
+	// Spawn background goroutine for the actual file assembly
+	go m.assembleFile(upload, parts)
+
+	return nil
+}
+
+// assembleFile concatenates all parts into the final file in the background.
+func (m *MultipartManager) assembleFile(upload *MultipartUpload, parts []UploadedPart) {
+	uploadID := upload.UploadID
+
+	setFailed := func(err error) {
+		upload.mu.Lock()
+		upload.Status = UploadStatusFailed
+		upload.CompletionError = err.Error()
+		upload.mu.Unlock()
+		_ = m.saveMetadata(upload)
+	}
+
 	// Create parent directories if they don't exist
 	dir := filepath.Dir(upload.Path)
 	if err := os.MkdirAll(dir, 0755); err != nil {
-		return fmt.Errorf("failed to create parent directory: %w", err)
+		setFailed(fmt.Errorf("failed to create parent directory: %w", err))
+		return
 	}
 
 	// Create final file
 	finalFile, err := os.OpenFile(upload.Path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, upload.Permissions)
 	if err != nil {
-		return fmt.Errorf("failed to create final file: %w", err)
+		setFailed(fmt.Errorf("failed to create final file: %w", err))
+		return
 	}
-	defer finalFile.Close()
 
 	// Concatenate all parts in order
 	for _, part := range parts {
 		partPath := filepath.Join(m.uploadsDir, uploadID, fmt.Sprintf("part-%d", part.PartNumber))
 		partFile, err := os.Open(partPath)
 		if err != nil {
-			return fmt.Errorf("failed to open part %d: %w", part.PartNumber, err)
+			_ = finalFile.Close()
+			setFailed(fmt.Errorf("failed to open part %d: %w", part.PartNumber, err))
+			return
 		}
 
 		if _, err := io.Copy(finalFile, partFile); err != nil {
 			_ = partFile.Close()
-			return fmt.Errorf("failed to copy part %d: %w", part.PartNumber, err)
+			_ = finalFile.Close()
+			setFailed(fmt.Errorf("failed to copy part %d: %w", part.PartNumber, err))
+			return
 		}
 		_ = partFile.Close()
 	}
+	_ = finalFile.Close()
+
+	// Mark as completed
+	upload.mu.Lock()
+	upload.Status = UploadStatusCompleted
+	upload.mu.Unlock()
+	_ = m.saveMetadata(upload)
 
 	// Clean up upload directory and metadata
-	if err := m.AbortUpload(uploadID); err != nil {
-		// Log error but don't fail since file is already created
-		return nil
+	_ = m.cleanupUpload(uploadID)
+}
+
+// GetUploadStatus returns the completion status of an upload
+func (m *MultipartManager) GetUploadStatus(uploadID string) (string, string, error) {
+	m.mu.RLock()
+	upload, exists := m.uploads[uploadID]
+	m.mu.RUnlock()
+
+	if !exists {
+		return "", "", fmt.Errorf("upload not found: %s", uploadID)
 	}
 
+	upload.mu.RLock()
+	status := upload.Status
+	completionError := upload.CompletionError
+	upload.mu.RUnlock()
+
+	return status, completionError, nil
+}
+
+// cleanupUpload removes the temporary parts directory but keeps the upload record
+// so clients can still poll the status.
+func (m *MultipartManager) cleanupUpload(uploadID string) error {
+	uploadDir := filepath.Join(m.uploadsDir, uploadID)
+	if err := os.RemoveAll(uploadDir); err != nil {
+		return fmt.Errorf("failed to remove upload directory: %w", err)
+	}
 	return nil
 }
 
@@ -211,9 +294,17 @@ func (m *MultipartManager) AbortUpload(uploadID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	_, exists := m.uploads[uploadID]
+	upload, exists := m.uploads[uploadID]
 	if !exists {
 		return fmt.Errorf("upload not found: %s", uploadID)
+	}
+
+	// Prevent aborting an upload that is currently being assembled
+	upload.mu.RLock()
+	status := upload.Status
+	upload.mu.RUnlock()
+	if status == UploadStatusInProgress {
+		return fmt.Errorf("cannot abort upload %s: assembly is in progress", uploadID)
 	}
 
 	// Remove upload directory with all parts

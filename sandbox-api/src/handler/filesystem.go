@@ -88,6 +88,13 @@ type MultipartListUploadsResponse struct {
 	Uploads []*filesystem.MultipartUpload `json:"uploads"`
 } // @name MultipartListUploadsResponse
 
+// MultipartUploadStatusResponse represents the response for upload status
+type MultipartUploadStatusResponse struct {
+	UploadID        string `json:"uploadId" example:"550e8400-e29b-41d4-a716-446655440000"`
+	Status          string `json:"status" example:"in_progress"`
+	CompletionError string `json:"completionError,omitempty" example:""`
+} // @name MultipartUploadStatusResponse
+
 // FuzzySearchRequest represents the request body for fuzzy search
 type FuzzySearchRequest struct {
 	IncludeFiles bool     `json:"includeFiles" example:"true"`
@@ -1002,9 +1009,8 @@ func (h *FileSystemHandler) HandleCompleteMultipartUpload(c *gin.Context) {
 		return
 	}
 
-	// Get upload metadata to get the path
-	upload, err := h.multipartManager.GetUpload(uploadID)
-	if err != nil {
+	// Verify upload exists
+	if _, err := h.multipartManager.GetUpload(uploadID); err != nil {
 		h.SendError(c, http.StatusNotFound, err)
 		return
 	}
@@ -1023,7 +1029,10 @@ func (h *FileSystemHandler) HandleCompleteMultipartUpload(c *gin.Context) {
 		return
 	}
 
-	h.SendSuccessWithPath(c, upload.Path, "Multipart upload completed successfully")
+	c.JSON(http.StatusAccepted, MultipartUploadStatusResponse{
+		UploadID: uploadID,
+		Status:   filesystem.UploadStatusInProgress,
+	})
 }
 
 // HandleAbortMultipartUpload aborts a multipart upload
@@ -1097,6 +1106,41 @@ func (h *FileSystemHandler) HandleListParts(c *gin.Context) {
 		Parts:    partsList,
 	}
 	h.SendJSON(c, http.StatusOK, response)
+}
+
+// HandleGetMultipartUploadStatus returns the completion status of a multipart upload
+// @Summary Get multipart upload status
+// @Description Get the completion status of an asynchronous multipart upload assembly
+// @Tags filesystem
+// @Produce json
+// @Param uploadId path string true "Upload ID"
+// @Success 200 {object} MultipartUploadStatusResponse "Upload status"
+// @Failure 400 {object} ErrorResponse "Bad request"
+// @Failure 404 {object} ErrorResponse "Upload not found"
+// @Router /filesystem-multipart/{uploadId}/status [get]
+func (h *FileSystemHandler) HandleGetMultipartUploadStatus(c *gin.Context) {
+	if h.multipartManager == nil {
+		h.SendError(c, http.StatusInternalServerError, fmt.Errorf("multipart upload not available"))
+		return
+	}
+
+	uploadID := c.Param("uploadId")
+	if uploadID == "" {
+		h.SendError(c, http.StatusBadRequest, fmt.Errorf("uploadId is required"))
+		return
+	}
+
+	status, completionError, err := h.multipartManager.GetUploadStatus(uploadID)
+	if err != nil {
+		h.SendError(c, http.StatusNotFound, err)
+		return
+	}
+
+	h.SendJSON(c, http.StatusOK, MultipartUploadStatusResponse{
+		UploadID:        uploadID,
+		Status:          status,
+		CompletionError: completionError,
+	})
 }
 
 // HandleListMultipartUploads lists all active multipart uploads
