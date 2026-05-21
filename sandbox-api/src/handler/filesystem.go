@@ -152,9 +152,10 @@ func NewFileSystemHandler() *FileSystemHandler {
 		}
 	}
 
-	// Setup multipart uploads directory
-	uploadsDir := filepath.Join(os.TempDir(), "multipart-uploads")
-	multipartManager := filesystem.NewMultipartManager(uploadsDir)
+	// Metadata-only directory on rootfs; actual part data is stored adjacent
+	// to each upload's destination path to avoid rootfs size limits.
+	metaDir := filepath.Join(os.TempDir(), "multipart-uploads")
+	multipartManager := filesystem.NewMultipartManager(metaDir)
 
 	// Load existing uploads from disk
 	if multipartManager != nil {

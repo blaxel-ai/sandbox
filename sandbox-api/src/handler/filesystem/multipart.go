@@ -18,6 +18,7 @@ import (
 type MultipartUpload struct {
 	UploadID    string                `json:"uploadId" example:"550e8400-e29b-41d4-a716-446655440000"`
 	Path        string                `json:"path" example:"/tmp/largefile.dat"`
+	PartsDir    string                `json:"partsDir" example:"/home/user/.blaxel-uploads/550e8400"`
 	Permissions os.FileMode           `json:"permissions" swaggertype:"integer" example:"420"`
 	InitiatedAt time.Time             `json:"initiatedAt"`
 	Parts       map[int]*UploadedPart `json:"parts"`
@@ -35,33 +36,41 @@ type UploadedPart struct {
 // MultipartManager manages multipart upload sessions
 type MultipartManager struct {
 	uploads    map[string]*MultipartUpload
-	uploadsDir string
+	metaDir    string
 	mu         sync.RWMutex
 }
 
-// NewMultipartManager creates a new multipart upload manager
-func NewMultipartManager(uploadsDir string) *MultipartManager {
-	// Ensure uploads directory exists
-	if err := os.MkdirAll(uploadsDir, 0755); err != nil {
+// NewMultipartManager creates a new multipart upload manager.
+// metaDir is a small directory on rootfs used only for metadata JSON files;
+// actual part data is written adjacent to each upload's destination path.
+func NewMultipartManager(metaDir string) *MultipartManager {
+	if err := os.MkdirAll(metaDir, 0755); err != nil {
 		return nil
 	}
 
 	return &MultipartManager{
-		uploads:    make(map[string]*MultipartUpload),
-		uploadsDir: uploadsDir,
+		uploads: make(map[string]*MultipartUpload),
+		metaDir: metaDir,
 	}
 }
 
-// InitiateUpload creates a new multipart upload session
+// InitiateUpload creates a new multipart upload session.
+// Part data is stored adjacent to the destination path so that large uploads
+// never land on the rootfs.
 func (m *MultipartManager) InitiateUpload(path string, permissions os.FileMode) (*MultipartUpload, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	uploadID := uuid.New().String()
 
+	// Parts directory lives next to the destination file so it resides on the
+	// same filesystem (e.g. a mounted volume) rather than the rootfs.
+	partsDir := filepath.Join(filepath.Dir(path), ".blaxel-uploads", uploadID)
+
 	upload := &MultipartUpload{
 		UploadID:    uploadID,
 		Path:        path,
+		PartsDir:    partsDir,
 		Permissions: permissions,
 		InitiatedAt: time.Now(),
 		Parts:       make(map[int]*UploadedPart),
@@ -69,16 +78,24 @@ func (m *MultipartManager) InitiateUpload(path string, permissions os.FileMode) 
 
 	m.uploads[uploadID] = upload
 
-	// Create directory for this upload's parts
-	uploadDir := filepath.Join(m.uploadsDir, uploadID)
-	if err := os.MkdirAll(uploadDir, 0755); err != nil {
+	// Create the parts directory on the destination filesystem
+	if err := os.MkdirAll(partsDir, 0755); err != nil {
 		delete(m.uploads, uploadID)
-		return nil, fmt.Errorf("failed to create upload directory: %w", err)
+		return nil, fmt.Errorf("failed to create parts directory: %w", err)
 	}
 
-	// Save metadata
+	// Create a metadata-only directory on rootfs (tiny JSON) so LoadUploads
+	// can rediscover in-progress uploads after a restart.
+	metaUploadDir := filepath.Join(m.metaDir, uploadID)
+	if err := os.MkdirAll(metaUploadDir, 0755); err != nil {
+		_ = os.RemoveAll(partsDir)
+		delete(m.uploads, uploadID)
+		return nil, fmt.Errorf("failed to create metadata directory: %w", err)
+	}
+
 	if err := m.saveMetadata(upload); err != nil {
-		_ = os.RemoveAll(uploadDir)
+		_ = os.RemoveAll(partsDir)
+		_ = os.RemoveAll(metaUploadDir)
 		delete(m.uploads, uploadID)
 		return nil, fmt.Errorf("failed to save upload metadata: %w", err)
 	}
@@ -86,7 +103,9 @@ func (m *MultipartManager) InitiateUpload(path string, permissions os.FileMode) 
 	return upload, nil
 }
 
-// UploadPart uploads a single part of a multipart upload
+// UploadPart uploads a single part of a multipart upload.
+// The part data is written directly to the destination-adjacent parts
+// directory so it never touches the rootfs.
 func (m *MultipartManager) UploadPart(uploadID string, partNumber int, reader io.Reader) (*UploadedPart, error) {
 	m.mu.RLock()
 	upload, exists := m.uploads[uploadID]
@@ -100,15 +119,13 @@ func (m *MultipartManager) UploadPart(uploadID string, partNumber int, reader io
 		return nil, fmt.Errorf("part number must be between 1 and 10000")
 	}
 
-	// Create part file
-	partPath := filepath.Join(m.uploadsDir, uploadID, fmt.Sprintf("part-%d", partNumber))
+	partPath := filepath.Join(upload.PartsDir, fmt.Sprintf("part-%d", partNumber))
 	partFile, err := os.Create(partPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create part file: %w", err)
 	}
 	defer partFile.Close()
 
-	// Calculate MD5 hash while writing
 	hash := md5.New()
 	multiWriter := io.MultiWriter(partFile, hash)
 
@@ -127,12 +144,10 @@ func (m *MultipartManager) UploadPart(uploadID string, partNumber int, reader io
 		UploadedAt: time.Now(),
 	}
 
-	// Update upload metadata
 	upload.mu.Lock()
 	upload.Parts[partNumber] = part
 	upload.mu.Unlock()
 
-	// Save updated metadata
 	if err := m.saveMetadata(upload); err != nil {
 		return nil, fmt.Errorf("failed to save metadata: %w", err)
 	}
@@ -184,7 +199,7 @@ func (m *MultipartManager) CompleteUpload(uploadID string, parts []UploadedPart)
 
 	// Concatenate all parts in order
 	for _, part := range parts {
-		partPath := filepath.Join(m.uploadsDir, uploadID, fmt.Sprintf("part-%d", part.PartNumber))
+		partPath := filepath.Join(upload.PartsDir, fmt.Sprintf("part-%d", part.PartNumber))
 		partFile, err := os.Open(partPath)
 		if err != nil {
 			return fmt.Errorf("failed to open part %d: %w", part.PartNumber, err)
@@ -211,18 +226,23 @@ func (m *MultipartManager) AbortUpload(uploadID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	_, exists := m.uploads[uploadID]
+	upload, exists := m.uploads[uploadID]
 	if !exists {
 		return fmt.Errorf("upload not found: %s", uploadID)
 	}
 
-	// Remove upload directory with all parts
-	uploadDir := filepath.Join(m.uploadsDir, uploadID)
-	if err := os.RemoveAll(uploadDir); err != nil {
-		return fmt.Errorf("failed to remove upload directory: %w", err)
+	// Remove part data (on destination filesystem)
+	if upload.PartsDir != "" {
+		_ = os.RemoveAll(upload.PartsDir)
+		// Try to remove the parent .blaxel-uploads dir if empty
+		parent := filepath.Dir(upload.PartsDir)
+		_ = os.Remove(parent) // no-op if not empty
 	}
 
-	// Remove from active uploads
+	// Remove metadata directory on rootfs
+	metaDir := filepath.Join(m.metaDir, uploadID)
+	_ = os.RemoveAll(metaDir)
+
 	delete(m.uploads, uploadID)
 
 	return nil
@@ -280,9 +300,9 @@ func (m *MultipartManager) ListUploads() []*MultipartUpload {
 	return uploads
 }
 
-// saveMetadata saves upload metadata to disk
+// saveMetadata saves upload metadata to the rootfs metadata directory
 func (m *MultipartManager) saveMetadata(upload *MultipartUpload) error {
-	metadataPath := filepath.Join(m.uploadsDir, upload.UploadID, "metadata.json")
+	metadataPath := filepath.Join(m.metaDir, upload.UploadID, "metadata.json")
 
 	upload.mu.RLock()
 	data, err := json.Marshal(upload)
@@ -299,17 +319,17 @@ func (m *MultipartManager) saveMetadata(upload *MultipartUpload) error {
 	return nil
 }
 
-// LoadUploads loads all upload metadata from disk
+// LoadUploads loads all upload metadata from the rootfs metadata directory
 func (m *MultipartManager) LoadUploads() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	entries, err := os.ReadDir(m.uploadsDir)
+	entries, err := os.ReadDir(m.metaDir)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil
 		}
-		return fmt.Errorf("failed to read uploads directory: %w", err)
+		return fmt.Errorf("failed to read metadata directory: %w", err)
 	}
 
 	for _, entry := range entries {
@@ -317,16 +337,14 @@ func (m *MultipartManager) LoadUploads() error {
 			continue
 		}
 
-		metadataPath := filepath.Join(m.uploadsDir, entry.Name(), "metadata.json")
+		metadataPath := filepath.Join(m.metaDir, entry.Name(), "metadata.json")
 		data, err := os.ReadFile(metadataPath)
 		if err != nil {
-			// Skip corrupted uploads
 			continue
 		}
 
 		var upload MultipartUpload
 		if err := json.Unmarshal(data, &upload); err != nil {
-			// Skip corrupted uploads
 			continue
 		}
 
@@ -355,8 +373,14 @@ func (m *MultipartManager) CleanupExpired(maxAge time.Duration) error {
 	}
 
 	for _, uploadID := range expired {
-		uploadDir := filepath.Join(m.uploadsDir, uploadID)
-		_ = os.RemoveAll(uploadDir)
+		upload := m.uploads[uploadID]
+		if upload.PartsDir != "" {
+			_ = os.RemoveAll(upload.PartsDir)
+			parent := filepath.Dir(upload.PartsDir)
+			_ = os.Remove(parent)
+		}
+		metaDir := filepath.Join(m.metaDir, uploadID)
+		_ = os.RemoveAll(metaDir)
 		delete(m.uploads, uploadID)
 	}
 
