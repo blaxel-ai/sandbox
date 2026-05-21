@@ -421,6 +421,14 @@ func (m *MultipartManager) LoadUploads() error {
 			continue
 		}
 
+		// If the process restarted while assembly was in progress, the goroutine
+		// is gone and the upload will never finish. Mark it as failed so clients
+		// get a deterministic terminal state instead of polling forever.
+		if upload.Status == UploadStatusInProgress {
+			upload.Status = UploadStatusFailed
+			upload.CompletionError = "assembly interrupted by process restart"
+		}
+
 		m.uploads[upload.UploadID] = &upload
 	}
 
