@@ -131,6 +131,8 @@ func SetupRouter(disableRequestLogging bool, enableProcessingTime bool) *gin.Eng
 	r.DELETE("/filesystem-multipart/:uploadId/abort", fsHandler.HandleAbortMultipartUpload)
 	r.GET("/filesystem-multipart/:uploadId/parts", fsHandler.HandleListParts)
 	r.HEAD("/filesystem-multipart/:uploadId/parts", head)
+	r.GET("/filesystem-multipart/:uploadId/status", fsHandler.HandleGetMultipartUploadStatus)
+	r.HEAD("/filesystem-multipart/:uploadId/status", head)
 
 	// Filesystem routes
 	r.GET("/filesystem-find/*path", fsHandler.HandleFind)

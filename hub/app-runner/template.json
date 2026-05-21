@@ -1,0 +1,20 @@
+{
+  "name": "app-runner",
+  "displayName": "App Runner",
+  "categories": ["backend"],
+  "description": "A hidden runtime image for launching uploaded or cloned application sources.",
+  "longDescription": "The App Runner sandbox materializes app source code from git, HTTPS archives, S3, GCS, or Azure Blob storage, optionally runs a base64 setup script before source materialization, optionally runs a pre-start command after source materialization, then starts the application command on the configured port. It is intended for platform-managed app hosting flows rather than direct Hub selection.",
+  "url": "https://github.com/blaxel-ai/sandbox",
+  "icon": "https://blaxel.ai/logo.png",
+  "memory": 2048,
+  "ports": [
+    {
+      "name": "sandbox-api",
+      "target": 8080,
+      "protocol": "HTTP"
+    }
+  ],
+  "enterprise": false,
+  "coming_soon": false,
+  "hidden": true
+}
