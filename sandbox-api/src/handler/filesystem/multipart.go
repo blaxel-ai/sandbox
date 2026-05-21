@@ -348,6 +348,14 @@ func (m *MultipartManager) LoadUploads() error {
 			continue
 		}
 
+		// Recreate the parts directory in case it was lost across restarts.
+		if upload.PartsDir != "" {
+			if err := os.MkdirAll(upload.PartsDir, 0755); err != nil {
+				// Parts directory unrecoverable (e.g. volume not mounted); skip upload.
+				continue
+			}
+		}
+
 		m.uploads[upload.UploadID] = &upload
 	}
 
