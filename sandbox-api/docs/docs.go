@@ -728,6 +728,47 @@ const docTemplate = `{
                 }
             }
         },
+        "/filesystem-multipart/{uploadId}/status": {
+            "get": {
+                "description": "Get the completion status of an asynchronous multipart upload assembly",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "filesystem"
+                ],
+                "summary": "Get multipart upload status",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Upload ID",
+                        "name": "uploadId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Upload status",
+                        "schema": {
+                            "$ref": "#/definitions/MultipartUploadStatusResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Upload not found",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/filesystem-search/{path}": {
             "get": {
                 "description": "Performs fuzzy search on filesystem paths using fuzzy matching algorithm. Optimized alternative to find and grep commands.",
@@ -1945,6 +1986,9 @@ const docTemplate = `{
                 },
                 "mountPath": {
                     "type": "string"
+                },
+                "readOnly": {
+                    "type": "boolean"
                 }
             }
         },
@@ -1964,6 +2008,10 @@ const docTemplate = `{
                 },
                 "mountPath": {
                     "type": "string"
+                },
+                "readOnly": {
+                    "description": "Optional, defaults to false",
+                    "type": "boolean"
                 }
             }
         },
@@ -1981,6 +2029,9 @@ const docTemplate = `{
                 },
                 "mountPath": {
                     "type": "string"
+                },
+                "readOnly": {
+                    "type": "boolean"
                 },
                 "success": {
                     "type": "boolean"
@@ -2338,6 +2389,23 @@ const docTemplate = `{
                 }
             }
         },
+        "MultipartUploadStatusResponse": {
+            "type": "object",
+            "properties": {
+                "completionError": {
+                    "type": "string",
+                    "example": ""
+                },
+                "status": {
+                    "type": "string",
+                    "example": "in_progress"
+                },
+                "uploadId": {
+                    "type": "string",
+                    "example": "550e8400-e29b-41d4-a716-446655440000"
+                }
+            }
+        },
         "PortMonitorRequest": {
             "type": "object",
             "properties": {
@@ -2680,6 +2748,10 @@ const docTemplate = `{
         "filesystem.MultipartUpload": {
             "type": "object",
             "properties": {
+                "completionError": {
+                    "type": "string",
+                    "example": ""
+                },
                 "initiatedAt": {
                     "type": "string"
                 },
@@ -2696,6 +2768,10 @@ const docTemplate = `{
                 "permissions": {
                     "type": "integer",
                     "example": 420
+                },
+                "status": {
+                    "type": "string",
+                    "example": "pending"
                 },
                 "uploadId": {
                     "type": "string",

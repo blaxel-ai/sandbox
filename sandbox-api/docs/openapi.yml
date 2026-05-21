@@ -573,6 +573,38 @@ paths:
       summary: List parts
       tags:
         - filesystem
+  "/filesystem-multipart/{uploadId}/status":
+    get:
+      description: Get the completion status of an asynchronous multipart upload assembly
+      parameters:
+        - description: Upload ID
+          in: path
+          name: uploadId
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Upload status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MultipartUploadStatusResponse"
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Upload not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+      summary: Get multipart upload status
+      tags:
+        - filesystem
   "/filesystem-multipart/initiate/{path}":
     post:
       description: Initiate a multipart upload session for a file
@@ -1884,6 +1916,18 @@ components:
           example: 5242880
           type: integer
       type: object
+    MultipartUploadStatusResponse:
+      properties:
+        completionError:
+          example: ""
+          type: string
+        status:
+          example: in_progress
+          type: string
+        uploadId:
+          example: 550e8400-e29b-41d4-a716-446655440000
+          type: string
+      type: object
     PortMonitorRequest:
       properties:
         callback:
@@ -2132,6 +2176,9 @@ components:
       type: object
     filesystem.MultipartUpload:
       properties:
+        completionError:
+          example: ""
+          type: string
         initiatedAt:
           type: string
         parts:
@@ -2144,6 +2191,9 @@ components:
         permissions:
           example: 420
           type: integer
+        status:
+          example: pending
+          type: string
         uploadId:
           example: 550e8400-e29b-41d4-a716-446655440000
           type: string
