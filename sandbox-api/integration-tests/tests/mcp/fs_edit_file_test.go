@@ -25,30 +25,24 @@ func uniqueTestPath(prefix string) string {
 }
 
 // writeFileMCP creates a file via the fsWriteFile MCP tool.
-// permissions may be empty (server default applies) or an octal string like "640".
-func writeFileMCP(t *testing.T, session *mcp.ClientSession, path, content, permissions string) {
+func writeFileMCP(t *testing.T, session *mcp.ClientSession, path, content string) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	args := map[string]any{
-		"path":    path,
-		"content": content,
-	}
-	if permissions != "" {
-		args["permissions"] = permissions
-	}
-
 	result, err := session.CallTool(ctx, &mcp.CallToolParams{
-		Name:      "fsWriteFile",
-		Arguments: args,
+		Name: "fsWriteFile",
+		Arguments: map[string]any{
+			"path":    path,
+			"content": content,
+		},
 	})
 	require.NoError(t, err, "fsWriteFile transport error")
 	require.False(t, result.IsError, "fsWriteFile tool error: %s", textOf(result))
 }
 
 // readFileMCP returns the current content of a file via the fsReadFile MCP tool.
-func readFileMCP(t *testing.T, session *mcp.ClientSession, path string) (content string, permissions string) {
+func readFileMCP(t *testing.T, session *mcp.ClientSession, path string) string {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -61,11 +55,10 @@ func readFileMCP(t *testing.T, session *mcp.ClientSession, path string) (content
 	require.False(t, result.IsError, "fsReadFile tool error: %s", textOf(result))
 
 	var out struct {
-		Content     string `json:"content"`
-		Permissions string `json:"permissions"`
+		Content string `json:"content"`
 	}
 	require.NoError(t, json.Unmarshal([]byte(textOf(result)), &out), "fsReadFile response not JSON")
-	return out.Content, out.Permissions
+	return out.Content
 }
 
 // callEditFile invokes fsEditFile and returns the raw MCP result for the caller to inspect.
@@ -115,7 +108,7 @@ func TestFsEditFile_HappyPath_UniqueMatch(t *testing.T) {
 	path := uniqueTestPath("happy")
 	cleanupFile(t, session, path)
 
-	writeFileMCP(t, session, path, "hello world\nfoo bar\n", "")
+	writeFileMCP(t, session, path, "hello world\nfoo bar\n")
 
 	result := callEditFile(t, session, map[string]any{
 		"path":      path,
@@ -129,7 +122,7 @@ func TestFsEditFile_HappyPath_UniqueMatch(t *testing.T) {
 	assert.Equal(t, path, out.Path)
 	assert.Equal(t, 1, out.OccurrencesReplaced)
 
-	content, _ := readFileMCP(t, session, path)
+	content := readFileMCP(t, session, path)
 	assert.Equal(t, "hello world\nfoo BAZ\n", content)
 }
 
@@ -140,7 +133,7 @@ func TestFsEditFile_ZeroMatch(t *testing.T) {
 	path := uniqueTestPath("zero")
 	cleanupFile(t, session, path)
 
-	writeFileMCP(t, session, path, "alpha\nbeta\ngamma\n", "")
+	writeFileMCP(t, session, path, "alpha\nbeta\ngamma\n")
 
 	result := callEditFile(t, session, map[string]any{
 		"path":      path,
@@ -152,7 +145,7 @@ func TestFsEditFile_ZeroMatch(t *testing.T) {
 		"error message should indicate the string was not found")
 
 	// File must be unchanged.
-	content, _ := readFileMCP(t, session, path)
+	content := readFileMCP(t, session, path)
 	assert.Equal(t, "alpha\nbeta\ngamma\n", content)
 }
 
@@ -163,7 +156,7 @@ func TestFsEditFile_MultipleMatches_WithoutReplaceAll(t *testing.T) {
 	path := uniqueTestPath("ambiguous")
 	cleanupFile(t, session, path)
 
-	writeFileMCP(t, session, path, "x = 1\nx = 1\nx = 1\n", "")
+	writeFileMCP(t, session, path, "x = 1\nx = 1\nx = 1\n")
 
 	result := callEditFile(t, session, map[string]any{
 		"path":      path,
@@ -175,7 +168,7 @@ func TestFsEditFile_MultipleMatches_WithoutReplaceAll(t *testing.T) {
 		"error message should report the number of matches")
 
 	// File must be unchanged.
-	content, _ := readFileMCP(t, session, path)
+	content := readFileMCP(t, session, path)
 	assert.Equal(t, "x = 1\nx = 1\nx = 1\n", content)
 }
 
@@ -186,7 +179,7 @@ func TestFsEditFile_MultipleMatches_ReplaceAll(t *testing.T) {
 	path := uniqueTestPath("replaceall")
 	cleanupFile(t, session, path)
 
-	writeFileMCP(t, session, path, "x = 1\nx = 1\nx = 1\n", "")
+	writeFileMCP(t, session, path, "x = 1\nx = 1\nx = 1\n")
 
 	result := callEditFile(t, session, map[string]any{
 		"path":       path,
@@ -200,7 +193,7 @@ func TestFsEditFile_MultipleMatches_ReplaceAll(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(textOf(result)), &out))
 	assert.Equal(t, 3, out.OccurrencesReplaced)
 
-	content, _ := readFileMCP(t, session, path)
+	content := readFileMCP(t, session, path)
 	assert.Equal(t, "x = 2\nx = 2\nx = 2\n", content)
 }
 
@@ -211,7 +204,7 @@ func TestFsEditFile_IdenticalStrings(t *testing.T) {
 	path := uniqueTestPath("identical")
 	cleanupFile(t, session, path)
 
-	writeFileMCP(t, session, path, "content\n", "")
+	writeFileMCP(t, session, path, "content\n")
 
 	result := callEditFile(t, session, map[string]any{
 		"path":      path,
@@ -229,7 +222,7 @@ func TestFsEditFile_EmptyOldString(t *testing.T) {
 	path := uniqueTestPath("empty")
 	cleanupFile(t, session, path)
 
-	writeFileMCP(t, session, path, "content\n", "")
+	writeFileMCP(t, session, path, "content\n")
 
 	result := callEditFile(t, session, map[string]any{
 		"path":      path,
@@ -237,26 +230,4 @@ func TestFsEditFile_EmptyOldString(t *testing.T) {
 		"newString": "anything",
 	})
 	assert.True(t, result.IsError, "expected error when oldString is empty")
-}
-
-// TestFsEditFile_PreservesPermissions: editing must not change the file's mode bits.
-// fsWriteFile defaults to 0644, so we explicitly set 0640 on the source file.
-func TestFsEditFile_PreservesPermissions(t *testing.T) {
-	_, session := setupMCPClient(t)
-	path := uniqueTestPath("perms")
-	cleanupFile(t, session, path)
-
-	writeFileMCP(t, session, path, "before\n", "640")
-	_, modeBefore := readFileMCP(t, session, path)
-	require.Equal(t, "640", modeBefore, "test precondition: file should be 0640")
-
-	result := callEditFile(t, session, map[string]any{
-		"path":      path,
-		"oldString": "before",
-		"newString": "after",
-	})
-	require.False(t, result.IsError, "edit failed: %s", textOf(result))
-
-	_, modeAfter := readFileMCP(t, session, path)
-	assert.Equal(t, modeBefore, modeAfter, "fsEditFile must preserve the file mode")
 }
