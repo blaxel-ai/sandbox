@@ -95,6 +95,7 @@ func TestMCPClientListTools(t *testing.T) {
 		"fsListDirectory",
 		"fsReadFile",
 		"fsWriteFile",
+		"fsEditFile",
 		"fsDeleteFileOrDirectory",
 		"codegenFileSearch",
 		"codegenCodebaseSearch",
