@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/blaxel-ai/sandbox-api/src/handler/filesystem"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -61,6 +62,18 @@ type DeleteFileInput struct {
 type DeleteFileOutput struct {
 	Path    string `json:"path"`
 	Message string `json:"message"`
+}
+
+type FsEditFileInput struct {
+	Path       string `json:"path" jsonschema:"Path to the file to edit"`
+	OldString  string `json:"oldString" jsonschema:"Exact text to replace. Must be non-empty. Must appear exactly once in the file unless replaceAll is true."`
+	NewString  string `json:"newString" jsonschema:"Replacement text. Must differ from oldString. Use an empty string to delete the matched text."`
+	ReplaceAll *bool  `json:"replaceAll,omitempty" jsonschema:"Replace every occurrence of oldString (default: false)"`
+}
+
+type FsEditFileOutput struct {
+	Path                string `json:"path"`
+	OccurrencesReplaced int    `json:"occurrencesReplaced"`
 }
 
 // registerFileSystemTools registers filesystem-related tools
@@ -154,6 +167,57 @@ func (s *Server) registerFileSystemTools() error {
 				Message: "File created/updated successfully",
 			}, nil
 		}
+	}))
+
+	// Edit file (deterministic search/replace)
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name: "fsEditFile",
+		Description: "Make a targeted string-replace edit to an existing file. " +
+			"Prefer this over fsWriteFile for any change to a file that already exists. " +
+			"oldString must appear exactly once unless replaceAll is true; include enough " +
+			"surrounding context (whitespace, neighbouring lines) to make the match unambiguous.",
+	}, LogToolCall("fsEditFile", func(ctx context.Context, req *mcp.CallToolRequest, input FsEditFileInput) (*mcp.CallToolResult, FsEditFileOutput, error) {
+		if input.OldString == "" {
+			return nil, FsEditFileOutput{}, fmt.Errorf("oldString must be non-empty")
+		}
+		if input.OldString == input.NewString {
+			return nil, FsEditFileOutput{}, fmt.Errorf("oldString and newString are identical")
+		}
+		replaceAll := input.ReplaceAll != nil && *input.ReplaceAll
+
+		file, err := s.handlers.FileSystem.ReadFile(input.Path)
+		if err != nil {
+			return nil, FsEditFileOutput{}, fmt.Errorf("failed to read %s: %w", input.Path, err)
+		}
+
+		content := string(file.Content)
+		occurrences := strings.Count(content, input.OldString)
+		if occurrences == 0 {
+			return nil, FsEditFileOutput{}, fmt.Errorf(
+				"oldString not found in %s. Re-read the file and retry — its contents may have changed since you last read it",
+				input.Path)
+		}
+		if occurrences > 1 && !replaceAll {
+			return nil, FsEditFileOutput{}, fmt.Errorf(
+				"oldString matches %d locations in %s; add more surrounding context to make the match unique, or set replaceAll=true",
+				occurrences, input.Path)
+		}
+
+		var updated string
+		if replaceAll {
+			updated = strings.ReplaceAll(content, input.OldString, input.NewString)
+		} else {
+			updated = strings.Replace(content, input.OldString, input.NewString, 1)
+		}
+
+		if err := s.handlers.FileSystem.WriteFile(input.Path, []byte(updated), file.Permissions); err != nil {
+			return nil, FsEditFileOutput{}, fmt.Errorf("failed to write %s: %w", input.Path, err)
+		}
+
+		return nil, FsEditFileOutput{
+			Path:                file.Path,
+			OccurrencesReplaced: occurrences,
+		}, nil
 	}))
 
 	// Delete file or directory
