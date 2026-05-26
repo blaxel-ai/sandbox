@@ -182,7 +182,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Mounts an agent drive using the blfs binary to a local path, optionally mounting a subpath within the drive",
+                "description": "Mounts an agent drive using the blfs binary to a local path, optionally mounting a subpath within the drive. Supports optional UID/GID mapping to remap file ownership between the local sandbox and the filer (always mapped to filer UID/GID 0). Mapping values can be set per-request via uidMap/gidMap fields, or globally via BLFS_UID_MAP/BLFS_GID_MAP environment variables (request values take precedence).",
                 "consumes": [
                     "application/json"
                 ],
@@ -1984,11 +1984,19 @@ const docTemplate = `{
                 "drivePath": {
                     "type": "string"
                 },
+                "gidMap": {
+                    "description": "The local GID used for this mount",
+                    "type": "string"
+                },
                 "mountPath": {
                     "type": "string"
                 },
                 "readOnly": {
                     "type": "boolean"
+                },
+                "uidMap": {
+                    "description": "The local UID used for this mount",
+                    "type": "string"
                 }
             }
         },
@@ -2006,12 +2014,20 @@ const docTemplate = `{
                     "description": "Optional, defaults to \"/\"",
                     "type": "string"
                 },
+                "gidMap": {
+                    "description": "Optional, local GID to map (filer GID is always 0)",
+                    "type": "string"
+                },
                 "mountPath": {
                     "type": "string"
                 },
                 "readOnly": {
                     "description": "Optional, defaults to false",
                     "type": "boolean"
+                },
+                "uidMap": {
+                    "description": "Optional, local UID to map (filer UID is always 0)",
+                    "type": "string"
                 }
             }
         },
@@ -2022,6 +2038,10 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "drivePath": {
+                    "type": "string"
+                },
+                "gidMap": {
+                    "description": "The local GID used for this mount",
                     "type": "string"
                 },
                 "message": {
@@ -2035,6 +2055,10 @@ const docTemplate = `{
                 },
                 "success": {
                     "type": "boolean"
+                },
+                "uidMap": {
+                    "description": "The local UID used for this mount",
+                    "type": "string"
                 }
             }
         },
