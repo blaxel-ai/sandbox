@@ -98,7 +98,7 @@ type ProcessInfo struct {
 	logWriters       []io.Writer
 	logLock          sync.RWMutex
 	stopTimeout      chan struct{} // Channel to signal timeout goroutine to stop
-	stopTimeoutOnce  sync.Once    // Protects stopTimeout channel from double-close
+	stopTimeoutOnce  sync.Once     // Protects stopTimeout channel from double-close
 }
 
 // ProcessLogDir is the directory where process logs are stored
@@ -553,6 +553,10 @@ func (pm *ProcessManager) readAndBroadcast(file *os.File, buf []byte, proc *Proc
 	n, err := file.Read(buf)
 	if n > 0 {
 		data := buf[:n]
+		// Copy data for telemetry use after releasing the lock.
+		dataCopy := make([]byte, n)
+		copy(dataCopy, data)
+
 		proc.logLock.Lock()
 		if streamType == "stdout" {
 			proc.stdout.Write(data)
@@ -569,18 +573,24 @@ func (pm *ProcessManager) readAndBroadcast(file *os.File, buf []byte, proc *Proc
 				}
 			}
 		}
+		// Send to log writers for streaming
+		for _, w := range proc.logWriters {
+			writeToLogWriter(w, streamType, data)
+		}
+		proc.logLock.Unlock()
+
 		if proc.EnableLogging {
 			// Export process logs to stdout for telemetry collection.
-			// Uses structured log attributes so the telemetry collector can
-			// distinguish process logs from access logs.
+			// Performed outside logLock to avoid blocking GET /process/{pid}
+			// readers during large log drains. Structured fields let the
+			// telemetry collector distinguish process logs from access logs.
 			logEntry := logrus.WithFields(logrus.Fields{
 				"source":       "process",
 				"process-name": proc.Name,
 				"process-pid":  proc.PID,
 				"stream":       streamType,
 			})
-			// Log each line separately for clean telemetry ingestion
-			logLines := strings.SplitAfter(string(data), "\n")
+			logLines := strings.SplitAfter(string(dataCopy), "\n")
 			for _, line := range logLines {
 				trimmed := strings.TrimSuffix(line, "\n")
 				if trimmed == "" {
@@ -593,11 +603,6 @@ func (pm *ProcessManager) readAndBroadcast(file *os.File, buf []byte, proc *Proc
 				}
 			}
 		}
-		// Send to log writers for streaming
-		for _, w := range proc.logWriters {
-			writeToLogWriter(w, streamType, data)
-		}
-		proc.logLock.Unlock()
 	}
 	if err != nil && err != io.EOF {
 		// Real error, but we'll keep trying
