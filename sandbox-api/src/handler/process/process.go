@@ -562,11 +562,16 @@ func (pm *ProcessManager) readAndBroadcast(file *os.File, buf []byte, proc *Proc
 				}
 			}
 		}
-		// Send to log writers for streaming
-		for _, w := range proc.logWriters {
-			writeToLogWriter(w, streamType, data)
-		}
+		// Snapshot log writers so we can broadcast outside the lock.
+		writers := make([]io.Writer, len(proc.logWriters))
+		copy(writers, proc.logWriters)
 		proc.logLock.Unlock()
+
+		// Send to log writers for streaming (outside logLock to avoid
+		// blocking readers when a streaming client is slow to drain).
+		for _, w := range writers {
+			writeToLogWriter(w, streamType, dataCopy)
+		}
 
 		// Export process logs to stdout for telemetry collection.
 		// Performed outside logLock to avoid blocking GET /process/{pid}
