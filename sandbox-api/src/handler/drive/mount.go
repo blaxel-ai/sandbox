@@ -28,10 +28,11 @@ func getAuthTokenPath() string {
 	return "/var/run/secrets/blaxel.ai/identity/token"
 }
 
-// validateLocalID validates that a UID/GID value is a valid integer.
+// validateLocalID validates that a UID/GID value is a non-negative integer.
 func validateLocalID(value, name string) error {
-	if _, err := strconv.Atoi(value); err != nil {
-		return fmt.Errorf("invalid %s %q: must be an integer", name, value)
+	n, err := strconv.Atoi(value)
+	if err != nil || n < 0 {
+		return fmt.Errorf("invalid %s %q: must be a non-negative integer", name, value)
 	}
 	return nil
 }
@@ -66,19 +67,22 @@ func resolveMapping(reqValue, envKey, name string) (string, error) {
 // readOnly: if true, mount the drive as read-only
 // uidMap: optional local UID to map to filer UID 0 (falls back to BLFS_UID_MAP env var)
 // gidMap: optional local GID to map to filer GID 0 (falls back to BLFS_GID_MAP env var)
-func MountDrive(driveName, mountPath, drivePath string, readOnly bool, uidMap, gidMap string) error {
+//
+// Returns the effective uidMap and gidMap values that were actually applied
+// (after resolving env var defaults) so the caller can report them accurately.
+func MountDrive(driveName, mountPath, drivePath string, readOnly bool, uidMap, gidMap string) (effectiveUid, effectiveGid string, err error) {
 	mountPath = NormalizeMountPath(mountPath)
 	if err := ValidateDriveName(driveName); err != nil {
-		return fmt.Errorf("invalid drive name: %w", err)
+		return "", "", fmt.Errorf("invalid drive name: %w", err)
 	}
 	if err := ValidateMountPath(mountPath); err != nil {
-		return fmt.Errorf("invalid mount path: %w", err)
+		return "", "", fmt.Errorf("invalid mount path: %w", err)
 	}
 
 	// Get workspace ID from environment
 	workspaceID := strings.ToLower(os.Getenv("BL_WORKSPACE_ID"))
 	if workspaceID == "" {
-		return fmt.Errorf("BL_WORKSPACE_ID environment variable not set")
+		return "", "", fmt.Errorf("BL_WORKSPACE_ID environment variable not set")
 	}
 
 	// Construct infrastructure ID: drv-{driveName}-{workspaceID}
@@ -87,12 +91,12 @@ func MountDrive(driveName, mountPath, drivePath string, readOnly bool, uidMap, g
 	// Get filer address
 	filerAddress, err := getFilerAddress()
 	if err != nil {
-		return fmt.Errorf("failed to get filer address: %w", err)
+		return "", "", fmt.Errorf("failed to get filer address: %w", err)
 	}
 
 	// Create mount directory if it doesn't exist
 	if err := os.MkdirAll(mountPath, 0755); err != nil {
-		return fmt.Errorf("failed to create mount directory: %w", err)
+		return "", "", fmt.Errorf("failed to create mount directory: %w", err)
 	}
 
 	// Build the filer path: /buckets/{infrastructureId}{drivePath}
@@ -133,11 +137,11 @@ func MountDrive(driveName, mountPath, drivePath string, readOnly bool, uidMap, g
 	// Resolve UID/GID mappings (request param > env var > none)
 	effectiveUidMap, err := resolveMapping(uidMap, "BLFS_UID_MAP", "uidMap")
 	if err != nil {
-		return fmt.Errorf("invalid uidMap: %w", err)
+		return "", "", fmt.Errorf("invalid uidMap: %w", err)
 	}
 	effectiveGidMap, err := resolveMapping(gidMap, "BLFS_GID_MAP", "gidMap")
 	if err != nil {
-		return fmt.Errorf("invalid gidMap: %w", err)
+		return "", "", fmt.Errorf("invalid gidMap: %w", err)
 	}
 	if effectiveUidMap != "" {
 		args = append(args, fmt.Sprintf("-map.uid=%s:0", effectiveUidMap))
@@ -160,7 +164,7 @@ func MountDrive(driveName, mountPath, drivePath string, readOnly bool, uidMap, g
 	cmd.Stderr = os.Stderr
 
 	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("failed to start blfs mount: %w", err)
+		return "", "", fmt.Errorf("failed to start blfs mount: %w", err)
 	}
 
 	logrus.WithFields(logrus.Fields{
@@ -176,7 +180,7 @@ func MountDrive(driveName, mountPath, drivePath string, readOnly bool, uidMap, g
 	mountDetected := false
 	for time.Since(startTime) < mountTimeout {
 		if cmd.ProcessState != nil && cmd.ProcessState.Exited() {
-			return fmt.Errorf("blfs mount process exited unexpectedly: %s", cmd.ProcessState.String())
+			return "", "", fmt.Errorf("blfs mount process exited unexpectedly: %s", cmd.ProcessState.String())
 		}
 
 		if !mountDetected {
@@ -192,7 +196,7 @@ func MountDrive(driveName, mountPath, drivePath string, readOnly bool, uidMap, g
 		_, err := os.ReadDir(mountPath)
 		if err == nil {
 			logrus.WithField("mount_path", mountPath).Info("Mount point is ready and server connection established")
-			return nil
+			return effectiveUidMap, effectiveGidMap, nil
 		}
 		logrus.WithField("mount_path", mountPath).Debug("Server connection not yet ready, retrying...")
 		time.Sleep(pollInterval)
@@ -206,7 +210,7 @@ func MountDrive(driveName, mountPath, drivePath string, readOnly bool, uidMap, g
 	if isMountPoint(mountPath) {
 		_ = UnmountDrive(mountPath) // Best-effort cleanup of partial mount
 	}
-	return fmt.Errorf("timeout waiting for mount point to be ready after %s", mountTimeout)
+	return "", "", fmt.Errorf("timeout waiting for mount point to be ready after %s", mountTimeout)
 }
 
 // getFilerAddress reads the filer address from /etc/resolv.conf

@@ -66,7 +66,7 @@ type DriveListResponse struct {
 
 // AttachDrive godoc
 // @Summary      Attach a drive to a local path
-// @Description  Mounts an agent drive using the blfs binary to a local path, optionally mounting a subpath within the drive
+// @Description  Mounts an agent drive using the blfs binary to a local path, optionally mounting a subpath within the drive. Supports optional UID/GID mapping to remap file ownership between the local sandbox and the filer (always mapped to filer UID/GID 0). Mapping values can be set per-request via uidMap/gidMap fields, or globally via BLFS_UID_MAP/BLFS_GID_MAP environment variables (request values take precedence).
 // @Tags         drive
 // @Accept       json
 // @Produce      json
@@ -124,7 +124,7 @@ func (h *DriveHandler) AttachDrive(c *gin.Context) {
 	}).Info("Attaching drive")
 
 	// Mount the drive
-	err := drive.MountDrive(req.DriveName, req.MountPath, req.DrivePath, req.ReadOnly, req.UidMap, req.GidMap)
+	effectiveUid, effectiveGid, err := drive.MountDrive(req.DriveName, req.MountPath, req.DrivePath, req.ReadOnly, req.UidMap, req.GidMap)
 	if err != nil {
 		logrus.WithError(err).WithFields(logrus.Fields{
 			"drive_name": req.DriveName,
@@ -141,6 +141,8 @@ func (h *DriveHandler) AttachDrive(c *gin.Context) {
 		"drive_name": req.DriveName,
 		"mount_path": req.MountPath,
 		"drive_path": req.DrivePath,
+		"uid_map":    effectiveUid,
+		"gid_map":    effectiveGid,
 	}).Info("Drive attached successfully")
 
 	c.JSON(http.StatusOK, DriveMountResponse{
@@ -150,8 +152,8 @@ func (h *DriveHandler) AttachDrive(c *gin.Context) {
 		MountPath: req.MountPath,
 		DrivePath: req.DrivePath,
 		ReadOnly:  req.ReadOnly,
-		UidMap:    req.UidMap,
-		GidMap:    req.GidMap,
+		UidMap:    effectiveUid,
+		GidMap:    effectiveGid,
 	})
 }
 
