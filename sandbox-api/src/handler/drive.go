@@ -26,6 +26,8 @@ type DriveMountRequest struct {
 	MountPath string `json:"mountPath" binding:"required"`
 	DrivePath string `json:"drivePath"` // Optional, defaults to "/"
 	ReadOnly  bool   `json:"readOnly"`  // Optional, defaults to false
+	UidMap    string `json:"uidMap"`    // Optional, local UID to map (filer UID is always 0)
+	GidMap    string `json:"gidMap"`    // Optional, local GID to map (filer GID is always 0)
 } // @name DriveMountRequest
 
 // DriveMountResponse represents the response for a successful drive mount
@@ -36,6 +38,8 @@ type DriveMountResponse struct {
 	MountPath string `json:"mountPath"`
 	DrivePath string `json:"drivePath"`
 	ReadOnly  bool   `json:"readOnly"`
+	UidMap    string `json:"uidMap"` // The local UID used for this mount
+	GidMap    string `json:"gidMap"` // The local GID used for this mount
 } // @name DriveMountResponse
 
 // DriveUnmountResponse represents the response for a successful drive unmount
@@ -51,6 +55,8 @@ type DriveMountInfo struct {
 	MountPath string `json:"mountPath"`
 	DrivePath string `json:"drivePath"`
 	ReadOnly  bool   `json:"readOnly"`
+	UidMap    string `json:"uidMap"` // The local UID used for this mount
+	GidMap    string `json:"gidMap"` // The local GID used for this mount
 } // @name DriveMountInfo
 
 // DriveListResponse represents the response for listing mounted drives
@@ -113,10 +119,12 @@ func (h *DriveHandler) AttachDrive(c *gin.Context) {
 		"drive_name": req.DriveName,
 		"mount_path": req.MountPath,
 		"drive_path": req.DrivePath,
+		"uid_map":    req.UidMap,
+		"gid_map":    req.GidMap,
 	}).Info("Attaching drive")
 
 	// Mount the drive
-	err := drive.MountDrive(req.DriveName, req.MountPath, req.DrivePath, req.ReadOnly)
+	err := drive.MountDrive(req.DriveName, req.MountPath, req.DrivePath, req.ReadOnly, req.UidMap, req.GidMap)
 	if err != nil {
 		logrus.WithError(err).WithFields(logrus.Fields{
 			"drive_name": req.DriveName,
@@ -142,6 +150,8 @@ func (h *DriveHandler) AttachDrive(c *gin.Context) {
 		MountPath: req.MountPath,
 		DrivePath: req.DrivePath,
 		ReadOnly:  req.ReadOnly,
+		UidMap:    req.UidMap,
+		GidMap:    req.GidMap,
 	})
 }
 
@@ -220,6 +230,8 @@ func (h *DriveHandler) ListMounts(c *gin.Context) {
 			MountPath: m.MountPath,
 			DrivePath: m.DrivePath,
 			ReadOnly:  m.ReadOnly,
+			UidMap:    m.UidMap,
+			GidMap:    m.GidMap,
 		}
 	}
 

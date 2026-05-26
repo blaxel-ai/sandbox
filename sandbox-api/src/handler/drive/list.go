@@ -15,6 +15,8 @@ type MountInfo struct {
 	MountPath string
 	DrivePath string
 	ReadOnly  bool
+	UidMap    string
+	GidMap    string
 }
 
 // ListMounts returns a list of all currently mounted drives managed by blfs

@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -27,12 +28,45 @@ func getAuthTokenPath() string {
 	return "/var/run/secrets/blaxel.ai/identity/token"
 }
 
+// validateLocalID validates that a UID/GID value is a valid integer.
+func validateLocalID(value, name string) error {
+	if _, err := strconv.Atoi(value); err != nil {
+		return fmt.Errorf("invalid %s %q: must be an integer", name, value)
+	}
+	return nil
+}
+
+// resolveMapping returns the effective local UID/GID value.
+// Priority: request parameter > environment variable > empty (no mapping).
+func resolveMapping(reqValue, envKey, name string) (string, error) {
+	value := reqValue
+	source := "request"
+	if value == "" {
+		value = os.Getenv(envKey)
+		source = "env"
+	}
+	if value == "" {
+		return "", nil
+	}
+	if err := validateLocalID(value, name); err != nil {
+		return "", err
+	}
+	logrus.WithFields(logrus.Fields{
+		"name":   name,
+		"value":  value,
+		"source": source,
+	}).Debug("Resolved UID/GID mapping")
+	return value, nil
+}
+
 // MountDrive mounts a drive using the blfs binary
 // driveName: name of the drive resource
 // mountPath: local path where the drive will be mounted
 // drivePath: subpath within the drive to mount (defaults to "/")
 // readOnly: if true, mount the drive as read-only
-func MountDrive(driveName, mountPath, drivePath string, readOnly bool) error {
+// uidMap: optional local UID to map to filer UID 0 (falls back to BLFS_UID_MAP env var)
+// gidMap: optional local GID to map to filer GID 0 (falls back to BLFS_GID_MAP env var)
+func MountDrive(driveName, mountPath, drivePath string, readOnly bool, uidMap, gidMap string) error {
 	mountPath = NormalizeMountPath(mountPath)
 	if err := ValidateDriveName(driveName); err != nil {
 		return fmt.Errorf("invalid drive name: %w", err)
@@ -94,6 +128,22 @@ func MountDrive(driveName, mountPath, drivePath string, readOnly bool) error {
 
 	if readOnly {
 		args = append(args, "-readOnly=true")
+	}
+
+	// Resolve UID/GID mappings (request param > env var > none)
+	effectiveUidMap, err := resolveMapping(uidMap, "BLFS_UID_MAP", "uidMap")
+	if err != nil {
+		return fmt.Errorf("invalid uidMap: %w", err)
+	}
+	effectiveGidMap, err := resolveMapping(gidMap, "BLFS_GID_MAP", "gidMap")
+	if err != nil {
+		return fmt.Errorf("invalid gidMap: %w", err)
+	}
+	if effectiveUidMap != "" {
+		args = append(args, fmt.Sprintf("-map.uid=%s:0", effectiveUidMap))
+	}
+	if effectiveGidMap != "" {
+		args = append(args, fmt.Sprintf("-map.gid=%s:0", effectiveGidMap))
 	}
 
 	logrus.WithFields(logrus.Fields{
