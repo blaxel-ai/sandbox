@@ -553,19 +553,22 @@ func (pm *ProcessManager) readAndBroadcast(file *os.File, buf []byte, proc *Proc
 			proc.stderr.Write(data)
 		}
 		proc.logs.Write(data)
-		// Write prefixed content to combined log file (preserves interleaved order)
+		// Snapshot log writers so we can broadcast outside the lock.
+		writers := make([]io.Writer, len(proc.logWriters))
+		copy(writers, proc.logWriters)
+		proc.logLock.Unlock()
+
+		// Write prefixed content to combined log file (outside logLock
+		// because combinedFile is only accessed from the tailLogFiles
+		// goroutine — no cross-goroutine synchronisation needed).
 		if combinedFile != nil {
-			lines := strings.SplitAfter(string(data), "\n")
+			lines := strings.SplitAfter(string(dataCopy), "\n")
 			for _, line := range lines {
 				if line != "" {
 					combinedFile.WriteString(streamType + ":" + line)
 				}
 			}
 		}
-		// Snapshot log writers so we can broadcast outside the lock.
-		writers := make([]io.Writer, len(proc.logWriters))
-		copy(writers, proc.logWriters)
-		proc.logLock.Unlock()
 
 		// Send to log writers for streaming (outside logLock to avoid
 		// blocking readers when a streaming client is slow to drain).
