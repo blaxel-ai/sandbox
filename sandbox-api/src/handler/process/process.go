@@ -6,6 +6,7 @@ import (
 	"math/rand"
 	"os"
 	"os/exec"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -511,8 +512,35 @@ func (pm *ProcessManager) tailLogFiles(proc *ProcessInfo) {
 		}
 	}
 
-	stdoutBuf := make([]byte, 4096)
-	stderrBuf := make([]byte, 4096)
+	stdoutBuf := make([]byte, 65536)
+	stderrBuf := make([]byte, 65536)
+
+	// Start an async logging goroutine so that per-line logrus calls
+	// (which can block on stdout pipe backpressure) never stall the
+	// drain loop or delay GET /process/{pid} responses.
+	logCh := make(chan logBatch, 512)
+	logDone := make(chan struct{})
+	go func() {
+		defer close(logDone)
+		logEntry := logrus.WithFields(logrus.Fields{
+			"source":       "process",
+			"process-name": proc.Name,
+			"process-pid":  proc.PID,
+		})
+		for batch := range logCh {
+			for _, line := range batch.lines {
+				trimmed := strings.TrimSuffix(line, "\n")
+				if trimmed == "" {
+					continue
+				}
+				if batch.streamType == "stderr" {
+					logEntry.WithField("stream", "stderr").Error(trimmed)
+				} else {
+					logEntry.WithField("stream", "stdout").Info(trimmed)
+				}
+			}
+		}
+	}()
 
 	for {
 		select {
@@ -520,28 +548,49 @@ func (pm *ProcessManager) tailLogFiles(proc *ProcessInfo) {
 			// Drain all remaining data from both files before returning.
 			// Loop until both files return 0 bytes to handle data larger than the buffer.
 			for {
-				n1 := pm.readAndBroadcast(stdoutFile, stdoutBuf, proc, "stdout", combinedFile)
-				n2 := pm.readAndBroadcast(stderrFile, stderrBuf, proc, "stderr", combinedFile)
+				n1 := pm.readAndBroadcast(stdoutFile, stdoutBuf, proc, "stdout", combinedFile, logCh)
+				n2 := pm.readAndBroadcast(stderrFile, stderrBuf, proc, "stderr", combinedFile, logCh)
 				if n1 == 0 && n2 == 0 {
 					break
 				}
+				// Yield the processor so that HTTP handler goroutines
+				// (e.g. GET /process/{pid}) can be scheduled between
+				// drain iterations on low-vCPU VMs.
+				runtime.Gosched()
 			}
+			// Wait for the logging goroutine to finish processing all
+			// queued entries before signalling tail completion.
+			close(logCh)
+			<-logDone
 			close(proc.tailDone)
 			return
 		default:
-			pm.readAndBroadcast(stdoutFile, stdoutBuf, proc, "stdout", combinedFile)
-			pm.readAndBroadcast(stderrFile, stderrBuf, proc, "stderr", combinedFile)
+			pm.readAndBroadcast(stdoutFile, stdoutBuf, proc, "stdout", combinedFile, logCh)
+			pm.readAndBroadcast(stderrFile, stderrBuf, proc, "stderr", combinedFile, logCh)
 			time.Sleep(50 * time.Millisecond)
 		}
 	}
 }
 
+// logBatch holds a set of lines to be logged asynchronously by the
+// dedicated logging goroutine started in tailLogFiles.
+type logBatch struct {
+	streamType string
+	lines      []string
+}
+
 // readAndBroadcast reads from a file and broadcasts to log writers.
-// Returns the number of bytes read.
-func (pm *ProcessManager) readAndBroadcast(file *os.File, buf []byte, proc *ProcessInfo, streamType string, combinedFile *os.File) int {
+// Returns the number of bytes read.  Telemetry lines are sent to logCh
+// for async processing so that stdout pipe backpressure never stalls
+// the caller.
+func (pm *ProcessManager) readAndBroadcast(file *os.File, buf []byte, proc *ProcessInfo, streamType string, combinedFile *os.File, logCh chan<- logBatch) int {
 	n, err := file.Read(buf)
 	if n > 0 {
 		data := buf[:n]
+		// Copy data for telemetry use after releasing the lock.
+		dataCopy := make([]byte, n)
+		copy(dataCopy, data)
+
 		proc.logLock.Lock()
 		if streamType == "stdout" {
 			proc.stdout.Write(data)
@@ -549,42 +598,41 @@ func (pm *ProcessManager) readAndBroadcast(file *os.File, buf []byte, proc *Proc
 			proc.stderr.Write(data)
 		}
 		proc.logs.Write(data)
-		// Write prefixed content to combined log file (preserves interleaved order)
+		// Snapshot log writers so we can broadcast outside the lock.
+		writers := make([]io.Writer, len(proc.logWriters))
+		copy(writers, proc.logWriters)
+		proc.logLock.Unlock()
+
+		// Send to log writers for streaming (outside logLock to avoid
+		// blocking readers when a streaming client is slow to drain).
+		for _, w := range writers {
+			writeToLogWriter(w, streamType, dataCopy)
+		}
+
+		// Split once and reuse for both combinedFile and logrus.
+		lines := strings.SplitAfter(string(dataCopy), "\n")
+
+		// Write prefixed content to combined log file in a single
+		// syscall per chunk (outside logLock because combinedFile is
+		// only accessed from the tailLogFiles goroutine).
 		if combinedFile != nil {
-			lines := strings.SplitAfter(string(data), "\n")
+			var cb strings.Builder
+			prefix := streamType + ":"
 			for _, line := range lines {
 				if line != "" {
-					combinedFile.WriteString(streamType + ":" + line)
+					cb.WriteString(prefix)
+					cb.WriteString(line)
 				}
 			}
+			combinedFile.WriteString(cb.String())
 		}
-		// Export process logs to stdout for telemetry collection.
-		// Uses structured log attributes so the telemetry collector can
-		// distinguish process logs from access logs.
-		logEntry := logrus.WithFields(logrus.Fields{
-			"source":       "process",
-			"process-name": proc.Name,
-			"process-pid":  proc.PID,
-			"stream":       streamType,
-		})
-		// Log each line separately for clean telemetry ingestion
-		logLines := strings.SplitAfter(string(data), "\n")
-		for _, line := range logLines {
-			trimmed := strings.TrimSuffix(line, "\n")
-			if trimmed == "" {
-				continue
-			}
-			if streamType == "stderr" {
-				logEntry.Error(trimmed)
-			} else {
-				logEntry.Info(trimmed)
-			}
-		}
-		// Send to log writers for streaming
-		for _, w := range proc.logWriters {
-			writeToLogWriter(w, streamType, data)
-		}
-		proc.logLock.Unlock()
+
+		// Send lines to the async logging goroutine for telemetry
+		// export.  This never blocks the drain loop because the
+		// channel is buffered and the logging goroutine processes
+		// entries independently at whatever rate the stdout pipe
+		// allows.
+		logCh <- logBatch{streamType: streamType, lines: lines}
 	}
 	if err != nil && err != io.EOF {
 		// Real error, but we'll keep trying
@@ -1093,8 +1141,14 @@ func (pm *ProcessManager) GetProcessOutput(identifier string) (ProcessLogs, erro
 	if !exists {
 		return ProcessLogs{}, fmt.Errorf("process with PID %s not found", identifier)
 	}
+	return pm.ReadProcessOutputFor(process), nil
+}
 
-	// Try to read from separate log files if available
+// ReadProcessOutputFor reads process output from log files, falling back to
+// in-memory buffers. Use this when the caller already has the *ProcessInfo to
+// avoid a redundant GetProcessByIdentifier lookup (and its extra logLock
+// acquisition that can stall during the drain loop).
+func (pm *ProcessManager) ReadProcessOutputFor(process *ProcessInfo) ProcessLogs {
 	var stdout, stderr, logs string
 
 	// Read stdout from file or memory
@@ -1102,10 +1156,14 @@ func (pm *ProcessManager) GetProcessOutput(identifier string) (ProcessLogs, erro
 		if content, err := os.ReadFile(process.StdoutFile); err == nil {
 			stdout = string(content)
 		} else {
+			process.logLock.RLock()
 			stdout = process.stdout.String()
+			process.logLock.RUnlock()
 		}
-	} else {
+	} else if process.stdout != nil {
+		process.logLock.RLock()
 		stdout = process.stdout.String()
+		process.logLock.RUnlock()
 	}
 
 	// Read stderr from file or memory
@@ -1113,10 +1171,14 @@ func (pm *ProcessManager) GetProcessOutput(identifier string) (ProcessLogs, erro
 		if content, err := os.ReadFile(process.StderrFile); err == nil {
 			stderr = string(content)
 		} else {
+			process.logLock.RLock()
 			stderr = process.stderr.String()
+			process.logLock.RUnlock()
 		}
-	} else {
+	} else if process.stderr != nil {
+		process.logLock.RLock()
 		stderr = process.stderr.String()
+		process.logLock.RUnlock()
 	}
 
 	// Combined logs
@@ -1126,7 +1188,7 @@ func (pm *ProcessManager) GetProcessOutput(identifier string) (ProcessLogs, erro
 		Stdout: stdout,
 		Stderr: stderr,
 		Logs:   logs,
-	}, nil
+	}
 }
 
 func (pm *ProcessManager) StreamProcessOutput(identifier string, w io.Writer) error {
