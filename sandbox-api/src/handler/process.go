@@ -57,6 +57,7 @@ type ProcessRequest struct {
 	RestartOnFailure  bool              `json:"restartOnFailure" example:"true"`
 	MaxRestarts       int               `json:"maxRestarts" example:"3"`
 	KeepAlive         bool              `json:"keepAlive" example:"false"` // Disable scale-to-zero while process runs. Default timeout is 600s (10 minutes). Set timeout to 0 for infinite.
+	DisableLogging    bool              `json:"disableLogging" example:"false"` // Disable telemetry logging for this process
 } // @name ProcessRequest
 
 // ProcessResponse is the response body for a process
@@ -76,6 +77,7 @@ type ProcessResponse struct {
 	MaxRestarts      int     `json:"maxRestarts" example:"3"`
 	RestartCount     int     `json:"restartCount" example:"2"`
 	KeepAlive        bool    `json:"keepAlive" example:"false"` // Whether scale-to-zero is disabled for this process
+	DisableLogging   bool    `json:"disableLogging" example:"false"` // Whether telemetry logging is disabled for this process
 } // @name ProcessResponse
 
 type ProcessResponseWithLogs struct {
@@ -89,8 +91,8 @@ type ProcessKillRequest struct {
 } // @name ProcessKillRequest
 
 // ExecuteProcess executes a process
-func (h *ProcessHandler) ExecuteProcess(command string, workingDir string, name string, env map[string]string, waitForCompletion bool, timeout int, waitForPorts []int, restartOnFailure bool, maxRestarts int, keepAlive bool) (ProcessResponse, error) {
-	processInfo, err := h.processManager.ExecuteProcess(command, workingDir, name, env, waitForCompletion, timeout, waitForPorts, restartOnFailure, maxRestarts, keepAlive)
+func (h *ProcessHandler) ExecuteProcess(command string, workingDir string, name string, env map[string]string, waitForCompletion bool, timeout int, waitForPorts []int, restartOnFailure bool, maxRestarts int, keepAlive bool, disableLogging bool) (ProcessResponse, error) {
+	processInfo, err := h.processManager.ExecuteProcess(command, workingDir, name, env, waitForCompletion, timeout, waitForPorts, restartOnFailure, maxRestarts, keepAlive, disableLogging)
 
 	// If processInfo is nil (process failed to start), return empty response with error
 	if processInfo == nil {
@@ -120,6 +122,7 @@ func (h *ProcessHandler) ExecuteProcess(command string, workingDir string, name 
 		MaxRestarts:      processInfo.MaxRestarts,
 		RestartCount:     processInfo.RestartCount,
 		KeepAlive:        processInfo.KeepAlive,
+		DisableLogging:   processInfo.DisableLogging,
 	}, err
 }
 
@@ -162,6 +165,7 @@ func (h *ProcessHandler) ListProcesses() []ProcessResponse {
 			MaxRestarts:      p.MaxRestarts,
 			RestartCount:     p.RestartCount,
 			KeepAlive:        p.KeepAlive,
+			DisableLogging:   p.DisableLogging,
 		})
 	}
 	return result
@@ -207,6 +211,7 @@ func (h *ProcessHandler) GetProcess(identifier string) (ProcessResponse, error) 
 		MaxRestarts:      processInfo.MaxRestarts,
 		RestartCount:     processInfo.RestartCount,
 		KeepAlive:        processInfo.KeepAlive,
+		DisableLogging:   processInfo.DisableLogging,
 	}, nil
 }
 
@@ -309,7 +314,7 @@ func (h *ProcessHandler) HandleExecuteCommand(c *gin.Context) {
 	}
 
 	// Execute the process
-	processInfo, err := h.ExecuteProcess(req.Command, req.WorkingDir, req.Name, req.Env, req.WaitForCompletion, timeout, req.WaitForPorts, req.RestartOnFailure, req.MaxRestarts, req.KeepAlive)
+	processInfo, err := h.ExecuteProcess(req.Command, req.WorkingDir, req.Name, req.Env, req.WaitForCompletion, timeout, req.WaitForPorts, req.RestartOnFailure, req.MaxRestarts, req.KeepAlive, req.DisableLogging)
 	if err != nil {
 		h.SendError(c, http.StatusUnprocessableEntity, err)
 		return
@@ -371,7 +376,7 @@ func (h *ProcessHandler) handleExecuteCommandStream(c *gin.Context) {
 	jw := &JSONStreamWriter{gin: c}
 
 	// Execute the process without waiting for completion (we'll handle waiting ourselves)
-	processInfo, err := h.ExecuteProcess(req.Command, req.WorkingDir, req.Name, req.Env, false, timeout, req.WaitForPorts, req.RestartOnFailure, req.MaxRestarts, req.KeepAlive)
+	processInfo, err := h.ExecuteProcess(req.Command, req.WorkingDir, req.Name, req.Env, false, timeout, req.WaitForPorts, req.RestartOnFailure, req.MaxRestarts, req.KeepAlive, req.DisableLogging)
 	if err != nil {
 		jw.WriteEvent("error", err.Error())
 		return

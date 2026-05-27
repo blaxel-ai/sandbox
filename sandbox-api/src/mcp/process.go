@@ -31,6 +31,7 @@ type ProcessExecuteInput struct {
 	RestartOnFailure  *bool             `json:"restartOnFailure,omitempty" jsonschema:"Whether to restart the process on failure (default: false)"`
 	MaxRestarts       *int              `json:"maxRestarts,omitempty" jsonschema:"Maximum number of restarts (default: 0)"`
 	KeepAlive         *bool             `json:"keepAlive,omitempty" jsonschema:"Disable scale-to-zero while process runs. Default timeout 600s. Set timeout to 0 for infinite."`
+	DisableLogging    *bool             `json:"disableLogging,omitempty" jsonschema:"Disable telemetry logging for this process (default: false)"`
 }
 
 // ProcessExecuteOutput is the output for processExecute tool
@@ -118,6 +119,11 @@ func (s *Server) registerProcessTools() error {
 			keepAlive = *input.KeepAlive
 		}
 
+		disableLogging := false
+		if input.DisableLogging != nil {
+			disableLogging = *input.DisableLogging
+		}
+
 		// Set default timeout for keepAlive if not specified (default: 600s = 10 minutes)
 		// Timeout of 0 means infinite (no auto-kill)
 		if keepAlive && input.Timeout == nil {
@@ -143,6 +149,7 @@ func (s *Server) registerProcessTools() error {
 			restartOnFailure,
 			maxRestarts,
 			keepAlive,
+			disableLogging,
 		)
 
 		// Check if this is a timeout error due to the capped timeout (CloudFront workaround)

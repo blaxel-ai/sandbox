@@ -84,6 +84,7 @@ type ProcessInfo struct {
 	MaxRestarts      int                     `json:"maxRestarts"`
 	RestartCount     int                     `json:"restartCount"`
 	KeepAlive        bool                    `json:"keepAlive"`
+	DisableLogging   bool                    `json:"disableLogging"`
 	Timeout          int                     `json:"-"` // Internal: timeout in seconds for keepAlive processes
 	LogFile          string                  `json:"-"` // Path to combined log file
 	StdoutFile       string                  `json:"-"` // Path to stdout log file
@@ -143,12 +144,12 @@ func GetProcessManager() *ProcessManager {
 	return processManager
 }
 
-func (pm *ProcessManager) StartProcess(command string, workingDir string, env map[string]string, restartOnFailure bool, maxRestarts int, keepAlive bool, timeout int, callback func(process *ProcessInfo)) (string, error) {
+func (pm *ProcessManager) StartProcess(command string, workingDir string, env map[string]string, restartOnFailure bool, maxRestarts int, keepAlive bool, timeout int, disableLogging bool, callback func(process *ProcessInfo)) (string, error) {
 	name := GenerateRandomName(8)
-	return pm.StartProcessWithName(command, workingDir, name, env, restartOnFailure, maxRestarts, keepAlive, timeout, callback)
+	return pm.StartProcessWithName(command, workingDir, name, env, restartOnFailure, maxRestarts, keepAlive, timeout, disableLogging, callback)
 }
 
-func (pm *ProcessManager) StartProcessWithName(command string, workingDir string, name string, env map[string]string, restartOnFailure bool, maxRestarts int, keepAlive bool, timeout int, callback func(process *ProcessInfo)) (string, error) {
+func (pm *ProcessManager) StartProcessWithName(command string, workingDir string, name string, env map[string]string, restartOnFailure bool, maxRestarts int, keepAlive bool, timeout int, disableLogging bool, callback func(process *ProcessInfo)) (string, error) {
 	// Always use shell to execute commands
 	// This ensures shell built-ins (cd, export, alias) work properly
 	// Use SHELL and SHELL_ARGS environment variables if set
@@ -254,6 +255,7 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 		MaxRestarts:      maxRestarts,
 		RestartCount:     0,
 		KeepAlive:        keepAlive,
+		DisableLogging:   disableLogging,
 		Timeout:          timeout,
 		LogFile:          combinedPath,
 		StdoutFile:       stdoutPath,
@@ -561,23 +563,25 @@ func (pm *ProcessManager) readAndBroadcast(file *os.File, buf []byte, proc *Proc
 		// Export process logs to stdout for telemetry collection.
 		// Uses structured log attributes so the telemetry collector can
 		// distinguish process logs from access logs.
-		logEntry := logrus.WithFields(logrus.Fields{
-			"source":       "process",
-			"process-name": proc.Name,
-			"process-pid":  proc.PID,
-			"stream":       streamType,
-		})
-		// Log each line separately for clean telemetry ingestion
-		logLines := strings.SplitAfter(string(data), "\n")
-		for _, line := range logLines {
-			trimmed := strings.TrimSuffix(line, "\n")
-			if trimmed == "" {
-				continue
-			}
-			if streamType == "stderr" {
-				logEntry.Error(trimmed)
-			} else {
-				logEntry.Info(trimmed)
+		if !proc.DisableLogging {
+			logEntry := logrus.WithFields(logrus.Fields{
+				"source":       "process",
+				"process-name": proc.Name,
+				"process-pid":  proc.PID,
+				"stream":       streamType,
+			})
+			// Log each line separately for clean telemetry ingestion
+			logLines := strings.SplitAfter(string(data), "\n")
+			for _, line := range logLines {
+				trimmed := strings.TrimSuffix(line, "\n")
+				if trimmed == "" {
+					continue
+				}
+				if streamType == "stderr" {
+					logEntry.Error(trimmed)
+				} else {
+					logEntry.Info(trimmed)
+				}
 			}
 		}
 		// Send to log writers for streaming
