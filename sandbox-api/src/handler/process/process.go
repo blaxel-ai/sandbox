@@ -515,14 +515,41 @@ func (pm *ProcessManager) tailLogFiles(proc *ProcessInfo) {
 	stdoutBuf := make([]byte, 65536)
 	stderrBuf := make([]byte, 65536)
 
+	// Start an async logging goroutine so that per-line logrus calls
+	// (which can block on stdout pipe backpressure) never stall the
+	// drain loop or delay GET /process/{pid} responses.
+	logCh := make(chan logBatch, 512)
+	logDone := make(chan struct{})
+	go func() {
+		defer close(logDone)
+		logEntry := logrus.WithFields(logrus.Fields{
+			"source":       "process",
+			"process-name": proc.Name,
+			"process-pid":  proc.PID,
+		})
+		for batch := range logCh {
+			for _, line := range batch.lines {
+				trimmed := strings.TrimSuffix(line, "\n")
+				if trimmed == "" {
+					continue
+				}
+				if batch.streamType == "stderr" {
+					logEntry.WithField("stream", "stderr").Error(trimmed)
+				} else {
+					logEntry.WithField("stream", "stdout").Info(trimmed)
+				}
+			}
+		}
+	}()
+
 	for {
 		select {
 		case <-proc.Done:
 			// Drain all remaining data from both files before returning.
 			// Loop until both files return 0 bytes to handle data larger than the buffer.
 			for {
-				n1 := pm.readAndBroadcast(stdoutFile, stdoutBuf, proc, "stdout", combinedFile)
-				n2 := pm.readAndBroadcast(stderrFile, stderrBuf, proc, "stderr", combinedFile)
+				n1 := pm.readAndBroadcast(stdoutFile, stdoutBuf, proc, "stdout", combinedFile, logCh)
+				n2 := pm.readAndBroadcast(stderrFile, stderrBuf, proc, "stderr", combinedFile, logCh)
 				if n1 == 0 && n2 == 0 {
 					break
 				}
@@ -531,19 +558,32 @@ func (pm *ProcessManager) tailLogFiles(proc *ProcessInfo) {
 				// drain iterations on low-vCPU VMs.
 				runtime.Gosched()
 			}
+			// Wait for the logging goroutine to finish processing all
+			// queued entries before signalling tail completion.
+			close(logCh)
+			<-logDone
 			close(proc.tailDone)
 			return
 		default:
-			pm.readAndBroadcast(stdoutFile, stdoutBuf, proc, "stdout", combinedFile)
-			pm.readAndBroadcast(stderrFile, stderrBuf, proc, "stderr", combinedFile)
+			pm.readAndBroadcast(stdoutFile, stdoutBuf, proc, "stdout", combinedFile, logCh)
+			pm.readAndBroadcast(stderrFile, stderrBuf, proc, "stderr", combinedFile, logCh)
 			time.Sleep(50 * time.Millisecond)
 		}
 	}
 }
 
+// logBatch holds a set of lines to be logged asynchronously by the
+// dedicated logging goroutine started in tailLogFiles.
+type logBatch struct {
+	streamType string
+	lines      []string
+}
+
 // readAndBroadcast reads from a file and broadcasts to log writers.
-// Returns the number of bytes read.
-func (pm *ProcessManager) readAndBroadcast(file *os.File, buf []byte, proc *ProcessInfo, streamType string, combinedFile *os.File) int {
+// Returns the number of bytes read.  Telemetry lines are sent to logCh
+// for async processing so that stdout pipe backpressure never stalls
+// the caller.
+func (pm *ProcessManager) readAndBroadcast(file *os.File, buf []byte, proc *ProcessInfo, streamType string, combinedFile *os.File, logCh chan<- logBatch) int {
 	n, err := file.Read(buf)
 	if n > 0 {
 		data := buf[:n]
@@ -587,32 +627,12 @@ func (pm *ProcessManager) readAndBroadcast(file *os.File, buf []byte, proc *Proc
 			combinedFile.WriteString(cb.String())
 		}
 
-		// Export process logs to stdout for telemetry collection.
-		// Performed outside logLock to avoid blocking GET /process/{pid}
-		// readers during large log drains.  Yields every 64 lines so
-		// HTTP handler goroutines can be scheduled on single-vCPU VMs.
-		logEntry := logrus.WithFields(logrus.Fields{
-			"source":       "process",
-			"process-name": proc.Name,
-			"process-pid":  proc.PID,
-			"stream":       streamType,
-		})
-		lineCount := 0
-		for _, line := range lines {
-			trimmed := strings.TrimSuffix(line, "\n")
-			if trimmed == "" {
-				continue
-			}
-			if streamType == "stderr" {
-				logEntry.Error(trimmed)
-			} else {
-				logEntry.Info(trimmed)
-			}
-			lineCount++
-			if lineCount%64 == 0 {
-				runtime.Gosched()
-			}
-		}
+		// Send lines to the async logging goroutine for telemetry
+		// export.  This never blocks the drain loop because the
+		// channel is buffered and the logging goroutine processes
+		// entries independently at whatever rate the stdout pipe
+		// allows.
+		logCh <- logBatch{streamType: streamType, lines: lines}
 	}
 	if err != nil && err != io.EOF {
 		// Real error, but we'll keep trying
