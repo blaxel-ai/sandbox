@@ -134,17 +134,13 @@ func (h *ProcessHandler) ListProcesses() []ProcessResponse {
 			completedAtPtr = &completedAt
 		}
 
-		// Get logs from file if available
-		var logs, stdout, stderr *string
-		if output, err := h.processManager.GetProcessOutput(p.PID); err == nil {
-			logs = &output.Logs
-			stdout = &output.Stdout
-			stderr = &output.Stderr
-		} else {
-			logs = p.Logs
-			stdout = p.Stdout
-			stderr = p.Stderr
-		}
+		// Read logs directly from files (falling back to in-memory buffers).
+		// Uses ReadProcessOutputFor to avoid a redundant GetProcessByIdentifier
+		// call that would re-acquire logLock during the drain loop.
+		output := h.processManager.ReadProcessOutputFor(p)
+		logs := &output.Logs
+		stdout := &output.Stdout
+		stderr := &output.Stderr
 
 		result = append(result, ProcessResponse{
 			PID:              p.PID,
@@ -179,17 +175,14 @@ func (h *ProcessHandler) GetProcess(identifier string) (ProcessResponse, error) 
 		completedAt = processInfo.CompletedAt.Format("Mon, 02 Jan 2006 15:04:05 GMT")
 	}
 
-	// Get logs from file if available
-	var logs, stdout, stderr *string
-	if output, err := h.processManager.GetProcessOutput(identifier); err == nil {
-		logs = &output.Logs
-		stdout = &output.Stdout
-		stderr = &output.Stderr
-	} else {
-		logs = processInfo.Logs
-		stdout = processInfo.Stdout
-		stderr = processInfo.Stderr
-	}
+	// Read logs directly from files (falling back to in-memory buffers).
+	// Uses ReadProcessOutputFor to avoid a redundant GetProcessByIdentifier
+	// call inside GetProcessOutput — that extra call acquires logLock.RLock
+	// again, which can stall for seconds during the drain loop.
+	output := h.processManager.ReadProcessOutputFor(processInfo)
+	logs := &output.Logs
+	stdout := &output.Stdout
+	stderr := &output.Stderr
 
 	return ProcessResponse{
 		PID:              processInfo.PID,

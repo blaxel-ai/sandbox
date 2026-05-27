@@ -6,6 +6,7 @@ import (
 	"math/rand"
 	"os"
 	"os/exec"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -511,8 +512,8 @@ func (pm *ProcessManager) tailLogFiles(proc *ProcessInfo) {
 		}
 	}
 
-	stdoutBuf := make([]byte, 4096)
-	stderrBuf := make([]byte, 4096)
+	stdoutBuf := make([]byte, 65536)
+	stderrBuf := make([]byte, 65536)
 
 	for {
 		select {
@@ -525,6 +526,10 @@ func (pm *ProcessManager) tailLogFiles(proc *ProcessInfo) {
 				if n1 == 0 && n2 == 0 {
 					break
 				}
+				// Yield the processor so that HTTP handler goroutines
+				// (e.g. GET /process/{pid}) can be scheduled between
+				// drain iterations on low-vCPU VMs.
+				runtime.Gosched()
 			}
 			close(proc.tailDone)
 			return
@@ -558,22 +563,24 @@ func (pm *ProcessManager) readAndBroadcast(file *os.File, buf []byte, proc *Proc
 		copy(writers, proc.logWriters)
 		proc.logLock.Unlock()
 
+		// Send to log writers for streaming (outside logLock to avoid
+		// blocking readers when a streaming client is slow to drain).
+		for _, w := range writers {
+			writeToLogWriter(w, streamType, dataCopy)
+		}
+
+		// Split once and reuse for both combinedFile and logrus.
+		lines := strings.SplitAfter(string(dataCopy), "\n")
+
 		// Write prefixed content to combined log file (outside logLock
 		// because combinedFile is only accessed from the tailLogFiles
 		// goroutine — no cross-goroutine synchronisation needed).
 		if combinedFile != nil {
-			lines := strings.SplitAfter(string(dataCopy), "\n")
 			for _, line := range lines {
 				if line != "" {
 					combinedFile.WriteString(streamType + ":" + line)
 				}
 			}
-		}
-
-		// Send to log writers for streaming (outside logLock to avoid
-		// blocking readers when a streaming client is slow to drain).
-		for _, w := range writers {
-			writeToLogWriter(w, streamType, dataCopy)
 		}
 
 		// Export process logs to stdout for telemetry collection.
@@ -585,8 +592,7 @@ func (pm *ProcessManager) readAndBroadcast(file *os.File, buf []byte, proc *Proc
 			"process-pid":  proc.PID,
 			"stream":       streamType,
 		})
-		logLines := strings.SplitAfter(string(dataCopy), "\n")
-		for _, line := range logLines {
+		for _, line := range lines {
 			trimmed := strings.TrimSuffix(line, "\n")
 			if trimmed == "" {
 				continue
@@ -1105,8 +1111,14 @@ func (pm *ProcessManager) GetProcessOutput(identifier string) (ProcessLogs, erro
 	if !exists {
 		return ProcessLogs{}, fmt.Errorf("process with PID %s not found", identifier)
 	}
+	return pm.ReadProcessOutputFor(process), nil
+}
 
-	// Try to read from separate log files if available
+// ReadProcessOutputFor reads process output from log files, falling back to
+// in-memory buffers. Use this when the caller already has the *ProcessInfo to
+// avoid a redundant GetProcessByIdentifier lookup (and its extra logLock
+// acquisition that can stall during the drain loop).
+func (pm *ProcessManager) ReadProcessOutputFor(process *ProcessInfo) ProcessLogs {
 	var stdout, stderr, logs string
 
 	// Read stdout from file or memory
@@ -1114,10 +1126,14 @@ func (pm *ProcessManager) GetProcessOutput(identifier string) (ProcessLogs, erro
 		if content, err := os.ReadFile(process.StdoutFile); err == nil {
 			stdout = string(content)
 		} else {
+			process.logLock.RLock()
 			stdout = process.stdout.String()
+			process.logLock.RUnlock()
 		}
-	} else {
+	} else if process.stdout != nil {
+		process.logLock.RLock()
 		stdout = process.stdout.String()
+		process.logLock.RUnlock()
 	}
 
 	// Read stderr from file or memory
@@ -1125,10 +1141,14 @@ func (pm *ProcessManager) GetProcessOutput(identifier string) (ProcessLogs, erro
 		if content, err := os.ReadFile(process.StderrFile); err == nil {
 			stderr = string(content)
 		} else {
+			process.logLock.RLock()
 			stderr = process.stderr.String()
+			process.logLock.RUnlock()
 		}
-	} else {
+	} else if process.stderr != nil {
+		process.logLock.RLock()
 		stderr = process.stderr.String()
+		process.logLock.RUnlock()
 	}
 
 	// Combined logs
@@ -1138,7 +1158,7 @@ func (pm *ProcessManager) GetProcessOutput(identifier string) (ProcessLogs, erro
 		Stdout: stdout,
 		Stderr: stderr,
 		Logs:   logs,
-	}, nil
+	}
 }
 
 func (pm *ProcessManager) StreamProcessOutput(identifier string, w io.Writer) error {
