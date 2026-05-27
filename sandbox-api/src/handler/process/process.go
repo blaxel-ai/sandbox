@@ -84,7 +84,6 @@ type ProcessInfo struct {
 	MaxRestarts      int                     `json:"maxRestarts"`
 	RestartCount     int                     `json:"restartCount"`
 	KeepAlive        bool                    `json:"keepAlive"`
-	DisableLogging   bool                    `json:"disableLogging"`
 	Timeout          int                     `json:"-"` // Internal: timeout in seconds for keepAlive processes
 	LogFile          string                  `json:"-"` // Path to combined log file
 	StdoutFile       string                  `json:"-"` // Path to stdout log file
@@ -104,9 +103,17 @@ type ProcessInfo struct {
 // Can be configured via SANDBOX_LOG_DIR environment variable
 var ProcessLogDir = "/var/log/sandbox-api"
 
+// disableProcessLogging controls whether process output is exported to
+// structured telemetry logs. Set SANDBOX_DISABLE_PROCESS_LOGGING=true to
+// suppress logrus output while keeping file-based logs and streaming.
+var disableProcessLogging = false
+
 func init() {
 	if dir := os.Getenv("SANDBOX_LOG_DIR"); dir != "" {
 		ProcessLogDir = dir
+	}
+	if v := os.Getenv("SANDBOX_DISABLE_PROCESS_LOGGING"); v == "true" || v == "1" {
+		disableProcessLogging = true
 	}
 }
 
@@ -144,12 +151,12 @@ func GetProcessManager() *ProcessManager {
 	return processManager
 }
 
-func (pm *ProcessManager) StartProcess(command string, workingDir string, env map[string]string, restartOnFailure bool, maxRestarts int, keepAlive bool, timeout int, disableLogging bool, callback func(process *ProcessInfo)) (string, error) {
+func (pm *ProcessManager) StartProcess(command string, workingDir string, env map[string]string, restartOnFailure bool, maxRestarts int, keepAlive bool, timeout int, callback func(process *ProcessInfo)) (string, error) {
 	name := GenerateRandomName(8)
-	return pm.StartProcessWithName(command, workingDir, name, env, restartOnFailure, maxRestarts, keepAlive, timeout, disableLogging, callback)
+	return pm.StartProcessWithName(command, workingDir, name, env, restartOnFailure, maxRestarts, keepAlive, timeout, callback)
 }
 
-func (pm *ProcessManager) StartProcessWithName(command string, workingDir string, name string, env map[string]string, restartOnFailure bool, maxRestarts int, keepAlive bool, timeout int, disableLogging bool, callback func(process *ProcessInfo)) (string, error) {
+func (pm *ProcessManager) StartProcessWithName(command string, workingDir string, name string, env map[string]string, restartOnFailure bool, maxRestarts int, keepAlive bool, timeout int, callback func(process *ProcessInfo)) (string, error) {
 	// Always use shell to execute commands
 	// This ensures shell built-ins (cd, export, alias) work properly
 	// Use SHELL and SHELL_ARGS environment variables if set
@@ -255,7 +262,6 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 		MaxRestarts:      maxRestarts,
 		RestartCount:     0,
 		KeepAlive:        keepAlive,
-		DisableLogging:   disableLogging,
 		Timeout:          timeout,
 		LogFile:          combinedPath,
 		StdoutFile:       stdoutPath,
@@ -563,7 +569,7 @@ func (pm *ProcessManager) readAndBroadcast(file *os.File, buf []byte, proc *Proc
 		// Export process logs to stdout for telemetry collection.
 		// Uses structured log attributes so the telemetry collector can
 		// distinguish process logs from access logs.
-		if !proc.DisableLogging {
+		if !disableProcessLogging {
 			logEntry := logrus.WithFields(logrus.Fields{
 				"source":       "process",
 				"process-name": proc.Name,
