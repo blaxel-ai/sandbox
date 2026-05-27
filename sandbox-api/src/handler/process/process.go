@@ -572,26 +572,32 @@ func (pm *ProcessManager) readAndBroadcast(file *os.File, buf []byte, proc *Proc
 		// Split once and reuse for both combinedFile and logrus.
 		lines := strings.SplitAfter(string(dataCopy), "\n")
 
-		// Write prefixed content to combined log file (outside logLock
-		// because combinedFile is only accessed from the tailLogFiles
-		// goroutine — no cross-goroutine synchronisation needed).
+		// Write prefixed content to combined log file in a single
+		// syscall per chunk (outside logLock because combinedFile is
+		// only accessed from the tailLogFiles goroutine).
 		if combinedFile != nil {
+			var cb strings.Builder
+			prefix := streamType + ":"
 			for _, line := range lines {
 				if line != "" {
-					combinedFile.WriteString(streamType + ":" + line)
+					cb.WriteString(prefix)
+					cb.WriteString(line)
 				}
 			}
+			combinedFile.WriteString(cb.String())
 		}
 
 		// Export process logs to stdout for telemetry collection.
 		// Performed outside logLock to avoid blocking GET /process/{pid}
-		// readers during large log drains.
+		// readers during large log drains.  Yields every 64 lines so
+		// HTTP handler goroutines can be scheduled on single-vCPU VMs.
 		logEntry := logrus.WithFields(logrus.Fields{
 			"source":       "process",
 			"process-name": proc.Name,
 			"process-pid":  proc.PID,
 			"stream":       streamType,
 		})
+		lineCount := 0
 		for _, line := range lines {
 			trimmed := strings.TrimSuffix(line, "\n")
 			if trimmed == "" {
@@ -601,6 +607,10 @@ func (pm *ProcessManager) readAndBroadcast(file *os.File, buf []byte, proc *Proc
 				logEntry.Error(trimmed)
 			} else {
 				logEntry.Info(trimmed)
+			}
+			lineCount++
+			if lineCount%64 == 0 {
+				runtime.Gosched()
 			}
 		}
 	}
