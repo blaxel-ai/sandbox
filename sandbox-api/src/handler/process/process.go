@@ -103,9 +103,17 @@ type ProcessInfo struct {
 // Can be configured via SANDBOX_LOG_DIR environment variable
 var ProcessLogDir = "/var/log/sandbox-api"
 
+// disableProcessLogging controls whether process output is exported to
+// structured telemetry logs. Set SANDBOX_DISABLE_PROCESS_LOGGING=true to
+// suppress logrus output while keeping file-based logs and streaming.
+var disableProcessLogging = false
+
 func init() {
 	if dir := os.Getenv("SANDBOX_LOG_DIR"); dir != "" {
 		ProcessLogDir = dir
+	}
+	if v := os.Getenv("SANDBOX_DISABLE_PROCESS_LOGGING"); v == "true" || v == "1" {
+		disableProcessLogging = true
 	}
 }
 
@@ -561,23 +569,25 @@ func (pm *ProcessManager) readAndBroadcast(file *os.File, buf []byte, proc *Proc
 		// Export process logs to stdout for telemetry collection.
 		// Uses structured log attributes so the telemetry collector can
 		// distinguish process logs from access logs.
-		logEntry := logrus.WithFields(logrus.Fields{
-			"source":       "process",
-			"process-name": proc.Name,
-			"process-pid":  proc.PID,
-			"stream":       streamType,
-		})
-		// Log each line separately for clean telemetry ingestion
-		logLines := strings.SplitAfter(string(data), "\n")
-		for _, line := range logLines {
-			trimmed := strings.TrimSuffix(line, "\n")
-			if trimmed == "" {
-				continue
-			}
-			if streamType == "stderr" {
-				logEntry.Error(trimmed)
-			} else {
-				logEntry.Info(trimmed)
+		if !disableProcessLogging {
+			logEntry := logrus.WithFields(logrus.Fields{
+				"source":       "process",
+				"process-name": proc.Name,
+				"process-pid":  proc.PID,
+				"stream":       streamType,
+			})
+			// Log each line separately for clean telemetry ingestion
+			logLines := strings.SplitAfter(string(data), "\n")
+			for _, line := range logLines {
+				trimmed := strings.TrimSuffix(line, "\n")
+				if trimmed == "" {
+					continue
+				}
+				if streamType == "stderr" {
+					logEntry.Error(trimmed)
+				} else {
+					logEntry.Info(trimmed)
+				}
 			}
 		}
 		// Send to log writers for streaming
