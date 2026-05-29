@@ -95,6 +95,7 @@ type ProcessInfo struct {
 	logs             *strings.Builder
 	logWriters       []io.Writer
 	logLock          sync.RWMutex
+	ioLock           sync.Mutex   // Serializes writer I/O outside logLock
 	stopTimeout      chan struct{} // Channel to signal timeout goroutine to stop
 	stopTimeoutOnce  sync.Once    // Protects stopTimeout channel from double-close
 }
@@ -385,6 +386,9 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 			process.logLock.Lock()
 			process.stdout.WriteString(restartMsg)
 			process.logs.WriteString(restartMsg)
+			restartWriters := make([]io.Writer, len(process.logWriters))
+			copy(restartWriters, process.logWriters)
+			process.logLock.Unlock()
 
 			// Append restart message to log files
 			if process.StdoutFile != "" {
@@ -394,14 +398,14 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 				}
 			}
 
-			// Notify log writers about the restart
-			for _, w := range process.logWriters {
+			process.ioLock.Lock()
+			for _, w := range restartWriters {
 				_, _ = w.Write([]byte(restartMsg))
 				if f, ok := w.(interface{ Flush() }); ok {
 					f.Flush()
 				}
 			}
-			process.logLock.Unlock()
+			process.ioLock.Unlock()
 
 			// Increment restart count
 			process.RestartCount++
@@ -571,10 +575,14 @@ func (pm *ProcessManager) readAndBroadcast(file *os.File, buf []byte, proc *Proc
 				}
 			}
 		}
-		// Send to log writers for streaming.
+		// Send to log writers for streaming. ioLock serializes writer
+		// I/O across goroutines (tailLogFiles vs StopProcess/KillProcess)
+		// without blocking logLock readers.
+		proc.ioLock.Lock()
 		for _, w := range writers {
 			writeToLogWriter(w, streamType, dataCopy)
 		}
+		proc.ioLock.Unlock()
 	}
 	if err != nil && err != io.EOF {
 		// Real error, but we'll keep trying
@@ -749,6 +757,9 @@ func (pm *ProcessManager) restartProcess(oldProcess *ProcessInfo, callback func(
 			oldProcess.logLock.Lock()
 			oldProcess.stdout.WriteString(restartMsg)
 			oldProcess.logs.WriteString(restartMsg)
+			restartWriters := make([]io.Writer, len(oldProcess.logWriters))
+			copy(restartWriters, oldProcess.logWriters)
+			oldProcess.logLock.Unlock()
 
 			// Append restart message to log file
 			if oldProcess.StdoutFile != "" {
@@ -758,14 +769,14 @@ func (pm *ProcessManager) restartProcess(oldProcess *ProcessInfo, callback func(
 				}
 			}
 
-			// Notify log writers about the restart
-			for _, w := range oldProcess.logWriters {
+			oldProcess.ioLock.Lock()
+			for _, w := range restartWriters {
 				_, _ = w.Write([]byte(restartMsg))
 				if f, ok := w.(interface{ Flush() }); ok {
 					f.Flush()
 				}
 			}
-			oldProcess.logLock.Unlock()
+			oldProcess.ioLock.Unlock()
 
 			// Increment restart count
 			oldProcess.RestartCount++
@@ -953,9 +964,11 @@ func (pm *ProcessManager) StopProcess(identifier string) error {
 	copy(writers, process.logWriters)
 	process.logLock.Unlock()
 
+	process.ioLock.Lock()
 	for _, w := range writers {
 		_, _ = w.Write(terminationMsg)
 	}
+	process.ioLock.Unlock()
 
 	// Clear KeepAlive BEFORE the signal under lock: the completion goroutine
 	// reads KeepAlive after cmd.Wait() returns, so we must ensure it sees false
@@ -1022,9 +1035,11 @@ func (pm *ProcessManager) KillProcess(identifier string) error {
 	copy(writers, process.logWriters)
 	process.logLock.Unlock()
 
+	process.ioLock.Lock()
 	for _, w := range writers {
 		_, _ = w.Write(terminationMsg)
 	}
+	process.ioLock.Unlock()
 
 	// Clear KeepAlive BEFORE the kill under lock: the completion goroutine
 	// reads KeepAlive under the same lock after cmd.Wait() returns, so it will
