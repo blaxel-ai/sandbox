@@ -47,7 +47,7 @@ type ProcessState struct {
 	RestartOnFailure bool                    `json:"restartOnFailure"`
 	MaxRestarts      int                     `json:"maxRestarts"`
 	RestartCount     int                     `json:"restartCount"`
-	Env              []string                `json:"env,omitempty"` // Resolved environment (system + custom) for restart-on-failure
+	Env              map[string]string       `json:"env,omitempty"` // Custom env vars provided at start, reused on restart-on-failure
 }
 
 // ManagerState represents the full state of the process manager

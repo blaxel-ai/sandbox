@@ -10,6 +10,18 @@ import (
 	"time"
 )
 
+// waitForProcessDone blocks until the process completion signal fires or the
+// timeout elapses. It makes post-completion assertions deterministic instead of
+// relying on a fixed sleep, which is racy under load.
+func waitForProcessDone(t *testing.T, done <-chan struct{}, timeout time.Duration) {
+	t.Helper()
+	select {
+	case <-done:
+	case <-time.After(timeout):
+		t.Fatal("Timeout waiting for process to complete")
+	}
+}
+
 // TestProcessManagerIntegration tests the complete functionality of the process manager
 // This is an integration test that verifies that real processes can be started, monitored, and stopped
 func TestProcessManagerIntegrationWithPID(t *testing.T) {
@@ -66,16 +78,17 @@ func TestProcessManagerIntegrationWithPID(t *testing.T) {
 	// Test process with output
 	t.Run("ProcessWithOutput", func(t *testing.T) {
 		expectedOutput := "Hello, Process Manager!"
+		done := make(chan struct{})
 		echoPID, err := pm.StartProcess("echo '"+expectedOutput+"'", "", nil, false, 0, false, 0, func(process *ProcessInfo) {
-			t.Logf("Process: %+v", process.stderr)
+			close(done)
 		})
 		if err != nil {
 			t.Fatalf("Error starting echo process: %v", err)
 		}
 		t.Logf("Started echo process with PID: %s", echoPID)
 
-		// Wait for process to complete (shell wrapper needs more time)
-		time.Sleep(20 * time.Millisecond)
+		// Wait for process to complete
+		waitForProcessDone(t, done, 5*time.Second)
 
 		// Get and verify output
 		logs, err := pm.GetProcessOutput(echoPID)
@@ -106,16 +119,17 @@ func TestProcessManagerIntegrationWithPID(t *testing.T) {
 
 	// Test process with working directory
 	t.Run("ProcessWithWorkingDirectory", func(t *testing.T) {
+		done := make(chan struct{})
 		lsPID, err := pm.StartProcess("ls -la", "/tmp", nil, false, 0, false, 0, func(process *ProcessInfo) {
-			t.Logf("Process: %+v", process.stderr)
+			close(done)
 		})
 		if err != nil {
 			t.Fatalf("Error starting ls process: %v", err)
 		}
 		t.Logf("Started ls process with PID: %s in /tmp directory", lsPID)
 
-		// Wait for process to complete (shell wrapper needs more time)
-		time.Sleep(20 * time.Millisecond)
+		// Wait for process to complete
+		waitForProcessDone(t, done, 5*time.Second)
 
 		// Get and verify output
 		logs, err := pm.GetProcessOutput(lsPID)
