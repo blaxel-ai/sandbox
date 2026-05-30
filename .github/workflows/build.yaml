@@ -25,6 +25,7 @@ on:
           - lightpanda
           - nextjs
           - node
+          - node-slim
           - playwright-chromium
           - playwright-firefox
           - py-app
