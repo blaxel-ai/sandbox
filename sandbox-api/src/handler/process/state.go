@@ -47,7 +47,7 @@ type ProcessState struct {
 	RestartOnFailure bool                    `json:"restartOnFailure"`
 	MaxRestarts      int                     `json:"maxRestarts"`
 	RestartCount     int                     `json:"restartCount"`
-	Env              map[string]string       `json:"env,omitempty"`
+	Env              map[string]string       `json:"env,omitempty"` // Custom env vars provided at start, reused on restart-on-failure
 }
 
 // ManagerState represents the full state of the process manager
@@ -112,6 +112,7 @@ func (pm *ProcessManager) SaveState() error {
 			RestartOnFailure: proc.RestartOnFailure,
 			MaxRestarts:      proc.MaxRestarts,
 			RestartCount:     proc.RestartCount,
+			Env:              proc.Env,
 		}
 
 		logrus.WithFields(logrus.Fields{
@@ -221,6 +222,7 @@ func (pm *ProcessManager) LoadState() error {
 			RestartOnFailure: procState.RestartOnFailure,
 			MaxRestarts:      procState.MaxRestarts,
 			RestartCount:     procState.RestartCount,
+			Env:              procState.Env,
 			Done:             make(chan struct{}),
 			stdout:           &strings.Builder{},
 			stderr:           &strings.Builder{},

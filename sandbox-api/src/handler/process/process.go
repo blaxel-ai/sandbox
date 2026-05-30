@@ -77,6 +77,7 @@ type ProcessInfo struct {
 	ExitCode         int                     `json:"exitCode"`
 	Status           constants.ProcessStatus `json:"status"`
 	WorkingDir       string                  `json:"workingDir"`
+	Env              map[string]string       `json:"-"` // Custom env vars provided at start, reused (re-merged with os.Environ()) on restart
 	Logs             *string                 `json:"logs"`
 	Stdout           *string                 `json:"stdout"`
 	Stderr           *string                 `json:"stderr"`
@@ -115,6 +116,54 @@ func init() {
 	if v := os.Getenv("SANDBOX_DISABLE_PROCESS_LOGGING"); v == "true" || v == "1" {
 		disableProcessLogging = true
 	}
+}
+
+// shouldRestart reports whether a failed process is eligible for another
+// restart attempt. A negative MaxRestarts means unlimited restarts.
+func shouldRestart(p *ProcessInfo) bool {
+	return p.Status == StatusFailed && p.RestartOnFailure &&
+		(p.MaxRestarts < 0 || p.RestartCount < p.MaxRestarts)
+}
+
+// restartLimitLabel renders the max-restarts part of a log message,
+// showing "unlimited" when MaxRestarts is negative.
+func restartLimitLabel(maxRestarts int) string {
+	if maxRestarts < 0 {
+		return "unlimited"
+	}
+	return strconv.Itoa(maxRestarts)
+}
+
+// buildProcessEnv merges the current system environment with the caller's
+// custom environment variables, letting custom vars override system ones.
+// The system environment is read fresh from os.Environ() so only the custom
+// vars need to be stored/persisted for a later restart.
+func buildProcessEnv(custom map[string]string) []string {
+	systemEnv := os.Environ()
+
+	// Track which keys the custom env overrides.
+	overrides := make(map[string]bool, len(custom))
+	for k := range custom {
+		overrides[k] = true
+	}
+
+	finalEnv := make([]string, 0, len(systemEnv)+len(custom))
+
+	// Keep system vars that are not being overridden.
+	for _, envVar := range systemEnv {
+		if idx := strings.IndexByte(envVar, '='); idx > 0 {
+			if !overrides[envVar[:idx]] {
+				finalEnv = append(finalEnv, envVar)
+			}
+		}
+	}
+
+	// Custom vars take priority.
+	for k, v := range custom {
+		finalEnv = append(finalEnv, k+"="+v)
+	}
+
+	return finalEnv
 }
 
 // getLogFilePaths returns the log file paths for a process (stdout, stderr, combined)
@@ -194,36 +243,7 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 		Setpgid: true,
 	}
 
-	// Start with system environment
-	systemEnv := os.Environ()
-
-	// Create a map to track which env vars we're overriding
-	envOverrides := make(map[string]bool)
-	for k := range env {
-		envOverrides[k] = true
-	}
-
-	// Build the final environment
-	finalEnv := make([]string, 0, len(systemEnv)+len(env))
-
-	// Add system environment variables that are not being overridden
-	for _, envVar := range systemEnv {
-		// Find the key part (everything before the first '=')
-		idx := strings.IndexByte(envVar, '=')
-		if idx > 0 {
-			key := envVar[:idx]
-			if !envOverrides[key] {
-				finalEnv = append(finalEnv, envVar)
-			}
-		}
-	}
-
-	// Add all custom environment variables (these take priority)
-	for k, v := range env {
-		finalEnv = append(finalEnv, k+"="+v)
-	}
-
-	cmd.Env = finalEnv
+	cmd.Env = buildProcessEnv(env)
 
 	// Ensure log directory exists
 	if err := ensureLogDir(); err != nil {
@@ -258,6 +278,7 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 		CompletedAt:      nil,
 		Status:           StatusRunning,
 		WorkingDir:       workingDir,
+		Env:              env,
 		RestartOnFailure: restartOnFailure,
 		MaxRestarts:      maxRestarts,
 		RestartCount:     0,
@@ -385,10 +406,10 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 		}
 
 		// Check if we should restart on failure
-		if process.Status == StatusFailed && process.RestartOnFailure && process.RestartCount < process.MaxRestarts {
+		if shouldRestart(process) {
 			// Log the failure and restart attempt
-			restartMsg := fmt.Sprintf("\n[Process failed with exit code %d. Attempting restart %d/%d...]\n",
-				process.ExitCode, process.RestartCount+1, process.MaxRestarts)
+			restartMsg := fmt.Sprintf("\n[Process failed with exit code %d. Attempting restart %d/%s...]\n",
+				process.ExitCode, process.RestartCount+1, restartLimitLabel(process.MaxRestarts))
 
 			process.logLock.Lock()
 			process.stdout.WriteString(restartMsg)
@@ -643,8 +664,10 @@ func (pm *ProcessManager) restartProcess(oldProcess *ProcessInfo, callback func(
 		Setpgid: true,
 	}
 
-	// Use the same environment as the original process
-	cmd.Env = os.Environ()
+	// Re-merge the custom env vars provided at the original start with the
+	// current system environment. Using os.Environ() alone here would drop any
+	// custom env vars the caller passed when first starting the process.
+	cmd.Env = buildProcessEnv(oldProcess.Env)
 
 	// Open log files for appending - child writes directly to files
 	stdoutFile, err := os.OpenFile(oldProcess.StdoutFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
@@ -761,10 +784,10 @@ func (pm *ProcessManager) restartProcess(oldProcess *ProcessInfo, callback func(
 		}
 
 		// Check if we should restart again on failure
-		if oldProcess.Status == StatusFailed && oldProcess.RestartOnFailure && oldProcess.RestartCount < oldProcess.MaxRestarts {
+		if shouldRestart(oldProcess) {
 			// Log the failure and restart attempt
-			restartMsg := fmt.Sprintf("\n[Process failed with exit code %d. Attempting restart %d/%d...]\n",
-				oldProcess.ExitCode, oldProcess.RestartCount+1, oldProcess.MaxRestarts)
+			restartMsg := fmt.Sprintf("\n[Process failed with exit code %d. Attempting restart %d/%s...]\n",
+				oldProcess.ExitCode, oldProcess.RestartCount+1, restartLimitLabel(oldProcess.MaxRestarts))
 
 			oldProcess.logLock.Lock()
 			oldProcess.stdout.WriteString(restartMsg)

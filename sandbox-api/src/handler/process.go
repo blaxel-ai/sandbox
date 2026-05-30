@@ -55,7 +55,7 @@ type ProcessRequest struct {
 	Timeout           *int              `json:"timeout,omitempty" example:"30"` // Timeout in seconds. When keepAlive is true, defaults to 600s (10 minutes). Set to 0 for infinite (no auto-kill).
 	WaitForPorts      []int             `json:"waitForPorts" example:"3000,8080"`
 	RestartOnFailure  bool              `json:"restartOnFailure" example:"true"`
-	MaxRestarts       int               `json:"maxRestarts" example:"3"`
+	MaxRestarts       int               `json:"maxRestarts" example:"3"`   // Maximum number of restarts on failure. Set to a negative value (e.g. -1) for unlimited restarts.
 	KeepAlive         bool              `json:"keepAlive" example:"false"` // Disable scale-to-zero while process runs. Default timeout is 600s (10 minutes). Set timeout to 0 for infinite.
 } // @name ProcessRequest
 
