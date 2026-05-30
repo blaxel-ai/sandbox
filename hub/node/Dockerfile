@@ -1,7 +1,7 @@
 ARG SANDBOX_VERSION=latest
 FROM ghcr.io/blaxel-ai/sandbox:${SANDBOX_VERSION} AS sandbox-api
 
-FROM node:23-alpine
+FROM node:24-alpine
 
 RUN apk update && apk add --no-cache \
   bash \
