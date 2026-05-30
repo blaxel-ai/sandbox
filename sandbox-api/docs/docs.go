@@ -2429,6 +2429,7 @@ const docTemplate = `{
                     "example": false
                 },
                 "maxRestarts": {
+                    "description": "Maximum number of restarts on failure. Set to a negative value (e.g. -1) for unlimited restarts.",
                     "type": "integer",
                     "example": 3
                 },

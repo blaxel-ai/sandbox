@@ -3,6 +3,7 @@ package process
 import (
 	"bytes"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -603,6 +604,98 @@ func TestProcessRestartOnFailure(t *testing.T) {
 			}
 		case <-time.After(10 * time.Second):
 			t.Fatal("Timeout waiting for process to complete with restarts")
+		}
+	})
+
+	t.Run("RestartPreservesEnvironment", func(t *testing.T) {
+		// The original environment (including custom env vars) must be reused
+		// when a process is restarted on failure. The command prints a custom
+		// env var on every attempt, fails the first time, then succeeds.
+		counterFile := "/tmp/restart_env_counter"
+		_ = os.Remove(counterFile)
+		command := `printf "VAR=[%s]\n" "$MY_RESTART_VAR"; if [ ! -f ` + counterFile + ` ]; then echo 1 > ` + counterFile + `; exit 1; else rm -f ` + counterFile + `; exit 0; fi`
+
+		env := map[string]string{"MY_RESTART_VAR": "preserved_value_42"}
+
+		completionChan := make(chan *ProcessInfo, 1)
+
+		pid, err := pm.StartProcess(command, "", env, true, 3, false, 0, func(process *ProcessInfo) {
+			completionChan <- process
+		})
+		if err != nil {
+			t.Fatalf("Error starting process: %v", err)
+		}
+		t.Logf("Started process with PID: %s", pid)
+
+		select {
+		case process := <-completionChan:
+			if process.Status != StatusCompleted {
+				t.Errorf("Expected process to complete successfully, got status: %s", process.Status)
+			}
+			if process.RestartCount != 1 {
+				t.Errorf("Expected 1 restart, got: %d", process.RestartCount)
+			}
+
+			logs, err := pm.GetProcessOutput(process.PID)
+			if err != nil {
+				t.Fatalf("Error getting process output: %v", err)
+			}
+
+			// The custom env var must be present on BOTH the initial run and
+			// the restarted run. Before the fix, the restart used os.Environ()
+			// and the second occurrence would be empty (VAR=[]).
+			occurrences := strings.Count(logs.Stdout, "VAR=[preserved_value_42]")
+			if occurrences != 2 {
+				t.Errorf("Expected custom env var to survive restart (2 occurrences), got %d. Stdout:\n%s", occurrences, logs.Stdout)
+			}
+			if strings.Contains(logs.Stdout, "VAR=[]") {
+				t.Errorf("Custom env var was lost on restart (found empty VAR=[]). Stdout:\n%s", logs.Stdout)
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatal("Timeout waiting for process to complete with restarts")
+		}
+	})
+
+	t.Run("UnlimitedRestartsWithNegativeMax", func(t *testing.T) {
+		// A negative maxRestarts means unlimited restarts. The command fails
+		// 3 times then succeeds, which is more than any small positive cap would
+		// be needed for, but the point is that a negative value never blocks.
+		counterFile := "/tmp/restart_unlimited_counter"
+		_ = os.Remove(counterFile)
+		command := `if [ ! -f ` + counterFile + ` ]; then echo 1 > ` + counterFile + `; else count=$(cat ` + counterFile + `); echo $((count + 1)) > ` + counterFile + `; fi; count=$(cat ` + counterFile + `); echo "Attempt $count"; if [ $count -lt 4 ]; then exit 1; else rm -f ` + counterFile + `; exit 0; fi`
+
+		completionChan := make(chan *ProcessInfo, 1)
+
+		pid, err := pm.StartProcess(command, "", nil, true, -1, false, 0, func(process *ProcessInfo) {
+			completionChan <- process
+		})
+		if err != nil {
+			t.Fatalf("Error starting process: %v", err)
+		}
+		t.Logf("Started process with PID: %s", pid)
+
+		select {
+		case process := <-completionChan:
+			if process.Status != StatusCompleted {
+				t.Errorf("Expected process to complete successfully, got status: %s", process.Status)
+			}
+			if process.RestartCount != 3 {
+				t.Errorf("Expected 3 restarts before success, got: %d", process.RestartCount)
+			}
+
+			logs, err := pm.GetProcessOutput(process.PID)
+			if err != nil {
+				t.Fatalf("Error getting process output: %v", err)
+			}
+			// The "unlimited" label should appear in the restart message.
+			if !strings.Contains(logs.Stdout, "Attempting restart 1/unlimited") {
+				t.Errorf("Expected 'unlimited' restart label in logs. Stdout:\n%s", logs.Stdout)
+			}
+			if !strings.Contains(logs.Stdout, "Attempt 4") {
+				t.Errorf("Expected to reach 'Attempt 4'. Stdout:\n%s", logs.Stdout)
+			}
+		case <-time.After(15 * time.Second):
+			t.Fatal("Timeout waiting for process to complete with unlimited restarts")
 		}
 	})
 

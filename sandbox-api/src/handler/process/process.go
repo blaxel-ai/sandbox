@@ -77,6 +77,7 @@ type ProcessInfo struct {
 	ExitCode         int                     `json:"exitCode"`
 	Status           constants.ProcessStatus `json:"status"`
 	WorkingDir       string                  `json:"workingDir"`
+	Env              []string                `json:"-"` // Resolved environment (system + custom) used to (re)start the process
 	Logs             *string                 `json:"logs"`
 	Stdout           *string                 `json:"stdout"`
 	Stderr           *string                 `json:"stderr"`
@@ -115,6 +116,22 @@ func init() {
 	if v := os.Getenv("SANDBOX_DISABLE_PROCESS_LOGGING"); v == "true" || v == "1" {
 		disableProcessLogging = true
 	}
+}
+
+// shouldRestart reports whether a failed process is eligible for another
+// restart attempt. A negative MaxRestarts means unlimited restarts.
+func shouldRestart(p *ProcessInfo) bool {
+	return p.Status == StatusFailed && p.RestartOnFailure &&
+		(p.MaxRestarts < 0 || p.RestartCount < p.MaxRestarts)
+}
+
+// restartLimitLabel renders the max-restarts part of a log message,
+// showing "unlimited" when MaxRestarts is negative.
+func restartLimitLabel(maxRestarts int) string {
+	if maxRestarts < 0 {
+		return "unlimited"
+	}
+	return strconv.Itoa(maxRestarts)
 }
 
 // getLogFilePaths returns the log file paths for a process (stdout, stderr, combined)
@@ -258,6 +275,7 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 		CompletedAt:      nil,
 		Status:           StatusRunning,
 		WorkingDir:       workingDir,
+		Env:              finalEnv,
 		RestartOnFailure: restartOnFailure,
 		MaxRestarts:      maxRestarts,
 		RestartCount:     0,
@@ -385,10 +403,10 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 		}
 
 		// Check if we should restart on failure
-		if process.Status == StatusFailed && process.RestartOnFailure && process.RestartCount < process.MaxRestarts {
+		if shouldRestart(process) {
 			// Log the failure and restart attempt
-			restartMsg := fmt.Sprintf("\n[Process failed with exit code %d. Attempting restart %d/%d...]\n",
-				process.ExitCode, process.RestartCount+1, process.MaxRestarts)
+			restartMsg := fmt.Sprintf("\n[Process failed with exit code %d. Attempting restart %d/%s...]\n",
+				process.ExitCode, process.RestartCount+1, restartLimitLabel(process.MaxRestarts))
 
 			process.logLock.Lock()
 			process.stdout.WriteString(restartMsg)
@@ -643,8 +661,14 @@ func (pm *ProcessManager) restartProcess(oldProcess *ProcessInfo, callback func(
 		Setpgid: true,
 	}
 
-	// Use the same environment as the original process
-	cmd.Env = os.Environ()
+	// Reuse the exact environment (system + custom vars) resolved at the
+	// original start. Falling back to os.Environ() would drop any custom env
+	// vars the caller passed when first starting the process.
+	if oldProcess.Env != nil {
+		cmd.Env = oldProcess.Env
+	} else {
+		cmd.Env = os.Environ()
+	}
 
 	// Open log files for appending - child writes directly to files
 	stdoutFile, err := os.OpenFile(oldProcess.StdoutFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
@@ -761,10 +785,10 @@ func (pm *ProcessManager) restartProcess(oldProcess *ProcessInfo, callback func(
 		}
 
 		// Check if we should restart again on failure
-		if oldProcess.Status == StatusFailed && oldProcess.RestartOnFailure && oldProcess.RestartCount < oldProcess.MaxRestarts {
+		if shouldRestart(oldProcess) {
 			// Log the failure and restart attempt
-			restartMsg := fmt.Sprintf("\n[Process failed with exit code %d. Attempting restart %d/%d...]\n",
-				oldProcess.ExitCode, oldProcess.RestartCount+1, oldProcess.MaxRestarts)
+			restartMsg := fmt.Sprintf("\n[Process failed with exit code %d. Attempting restart %d/%s...]\n",
+				oldProcess.ExitCode, oldProcess.RestartCount+1, restartLimitLabel(oldProcess.MaxRestarts))
 
 			oldProcess.logLock.Lock()
 			oldProcess.stdout.WriteString(restartMsg)
