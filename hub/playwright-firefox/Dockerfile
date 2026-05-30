@@ -1,7 +1,7 @@
 ARG SANDBOX_VERSION=latest
 FROM ghcr.io/blaxel-ai/sandbox:${SANDBOX_VERSION} AS sandbox-api
 
-FROM node:20-bookworm
+FROM node:24-bookworm
 
 WORKDIR /home/playwright
 
