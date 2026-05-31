@@ -12,13 +12,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential net-tools \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Playwright globally (for CLI) and locally (for require())
+# Install Playwright globally (for CLI) and locally (for require()).
+# Pinned to 1.60.0: on node:24-bookworm, playwright <= 1.59.x hangs forever
+# while extracting the downloaded browser archive (the download itself
+# succeeds). 1.60.0 fixes the extraction, so the image builds again.
 RUN npm cache clean --force && \
-    npm i -g playwright@1.58.2 playwright-core@1.58.2 && \
+    npm i -g playwright@1.60.0 playwright-core@1.60.0 && \
     npm i -g happy-eyeballs && \
     playwright install --with-deps chromium
 
-RUN npm init -y && npm i playwright-core@1.58.2
+RUN npm init -y && npm i playwright-core@1.60.0
 
 COPY --from=sandbox-api /sandbox-api /usr/local/bin/sandbox-api
 
