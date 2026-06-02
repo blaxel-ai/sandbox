@@ -33,6 +33,23 @@ type UploadedPart struct {
 	UploadedAt time.Time `json:"uploadedAt"`
 }
 
+// expectedPartsDir returns the canonical parts directory for a given
+// destination path and upload ID.
+func expectedPartsDir(destPath, uploadID string) string {
+	return filepath.Join(filepath.Dir(destPath), ".blaxel-uploads", uploadID)
+}
+
+// validatePartsDir checks that partsDir is safe for destructive operations.
+// A valid parts directory must end with /.blaxel-uploads/<uploadID>.
+func validatePartsDir(partsDir, uploadID string) bool {
+	if partsDir == "" || uploadID == "" {
+		return false
+	}
+	cleaned := filepath.Clean(partsDir)
+	return filepath.Base(cleaned) == uploadID &&
+		filepath.Base(filepath.Dir(cleaned)) == ".blaxel-uploads"
+}
+
 // MultipartManager manages multipart upload sessions
 type MultipartManager struct {
 	uploads    map[string]*MultipartUpload
@@ -232,7 +249,7 @@ func (m *MultipartManager) AbortUpload(uploadID string) error {
 	}
 
 	// Remove part data (on destination filesystem)
-	if upload.PartsDir != "" {
+	if validatePartsDir(upload.PartsDir, uploadID) {
 		_ = os.RemoveAll(upload.PartsDir)
 		// Try to remove the parent .blaxel-uploads dir if empty
 		parent := filepath.Dir(upload.PartsDir)
@@ -348,12 +365,12 @@ func (m *MultipartManager) LoadUploads() error {
 			continue
 		}
 
-		// Recreate the parts directory in case it was lost across restarts.
-		if upload.PartsDir != "" {
-			if err := os.MkdirAll(upload.PartsDir, 0755); err != nil {
-				// Parts directory unrecoverable (e.g. volume not mounted); skip upload.
-				continue
-			}
+		// Recompute PartsDir from the upload's destination path to prevent
+		// arbitrary-path attacks via tampered metadata.
+		upload.PartsDir = expectedPartsDir(upload.Path, upload.UploadID)
+		if err := os.MkdirAll(upload.PartsDir, 0755); err != nil {
+			// Parts directory unrecoverable (e.g. volume not mounted); skip upload.
+			continue
 		}
 
 		m.uploads[upload.UploadID] = &upload
@@ -382,7 +399,7 @@ func (m *MultipartManager) CleanupExpired(maxAge time.Duration) error {
 
 	for _, uploadID := range expired {
 		upload := m.uploads[uploadID]
-		if upload.PartsDir != "" {
+		if validatePartsDir(upload.PartsDir, uploadID) {
 			_ = os.RemoveAll(upload.PartsDir)
 			parent := filepath.Dir(upload.PartsDir)
 			_ = os.Remove(parent)
