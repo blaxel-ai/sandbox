@@ -376,17 +376,41 @@ func (fs *Filesystem) ListDirectory(path string) (*Directory, error) {
 
 	// Use the resolved display path for the directory
 	displayPath := fs.ResolveDisplayPath(path)
-	dir := NewDirectory(displayPath)
 
 	entries, err := os.ReadDir(absPath)
 	if err != nil {
 		return nil, err
 	}
 
+	numEntries := len(entries)
+
+	// Pre-allocate the directory with capacity hints to avoid repeated slice growth
+	dir := &Directory{
+		Path:           displayPath,
+		Name:           filepath.Base(displayPath),
+		Files:          make([]*File, 0, numEntries),
+		Subdirectories: make([]*Subdirectory, 0, numEntries),
+	}
+
+	// Batch-allocate backing arrays so each File/Subdirectory is not a separate
+	// heap object. This significantly reduces GC pressure for large directories.
+	fileBacking := make([]File, 0, numEntries)
+	subdirBacking := make([]Subdirectory, 0, numEntries)
+
 	for _, entry := range entries {
-		// Use displayPath for the entry paths too
-		entryPath := filepath.Join(displayPath, entry.Name())
-		absEntryPath := filepath.Join(absPath, entry.Name())
+		entryName := entry.Name()
+		entryPath := filepath.Join(displayPath, entryName)
+
+		// For directory entries, DirEntry.IsDir() already knows the type from
+		// getdents without an extra syscall — skip the expensive os.Lstat call.
+		if entry.IsDir() {
+			subdirBacking = append(subdirBacking, Subdirectory{Path: entryPath, Name: entryName})
+			dir.Subdirectories = append(dir.Subdirectories, &subdirBacking[len(subdirBacking)-1])
+			continue
+		}
+
+		// For non-directory entries (files, symlinks), we need full stat info.
+		absEntryPath := filepath.Join(absPath, entryName)
 
 		// Use os.Lstat to get info about the symlink itself, not its target
 		// This prevents errors when symlinks point to non-existent targets
@@ -395,18 +419,33 @@ func (fs *Filesystem) ListDirectory(path string) (*Directory, error) {
 			return nil, err
 		}
 
+		// Handle the rare case where DirEntry type was unknown (DT_UNKNOWN)
+		// but the entry is actually a directory
 		if info.IsDir() {
-			dir.AddSubdirectory(&Subdirectory{Path: entryPath, Name: entry.Name()})
-		} else {
-			// It's a file or symlink
-			owner, group, err := fs.getFileOwnerAndGroup(absEntryPath)
-			if err != nil {
-				return nil, err
-			}
-
-			file := &File{Path: entryPath, Name: entry.Name(), Permissions: fmt.Sprintf("%o", info.Mode()), Size: info.Size(), LastModified: info.ModTime(), Owner: owner, Group: group}
-			dir.AddFile(file)
+			subdirBacking = append(subdirBacking, Subdirectory{Path: entryPath, Name: entryName})
+			dir.Subdirectories = append(dir.Subdirectories, &subdirBacking[len(subdirBacking)-1])
+			continue
 		}
+
+		// It's a file or symlink — get owner/group from the already-obtained stat
+		stat, ok := info.Sys().(*syscall.Stat_t)
+		if !ok {
+			return nil, errors.New("failed to get file stat")
+		}
+
+		owner := fs.lookupUsername(stat.Uid)
+		group := fs.lookupGroupname(stat.Gid)
+
+		fileBacking = append(fileBacking, File{
+			Path:         entryPath,
+			Name:         entryName,
+			Permissions:  strconv.FormatUint(uint64(info.Mode()), 8),
+			Size:         info.Size(),
+			LastModified: info.ModTime(),
+			Owner:        owner,
+			Group:        group,
+		})
+		dir.Files = append(dir.Files, &fileBacking[len(fileBacking)-1])
 	}
 
 	return dir, nil
@@ -509,6 +548,26 @@ func (fs *Filesystem) MoveFile(src, dst string) error {
 }
 
 // getFileOwnerAndGroup returns the owner and group of a file
+// lookupUsername resolves a UID to a username, falling back to the numeric string
+func (fs *Filesystem) lookupUsername(uid uint32) string {
+	uidStr := strconv.FormatUint(uint64(uid), 10)
+	u, err := user.LookupId(uidStr)
+	if err != nil {
+		return uidStr
+	}
+	return u.Username
+}
+
+// lookupGroupname resolves a GID to a group name, falling back to the numeric string
+func (fs *Filesystem) lookupGroupname(gid uint32) string {
+	gidStr := strconv.FormatUint(uint64(gid), 10)
+	g, err := user.LookupGroupId(gidStr)
+	if err != nil {
+		return gidStr
+	}
+	return g.Name
+}
+
 func (fs *Filesystem) getFileOwnerAndGroup(path string) (string, string, error) {
 	// Use Lstat to get info about the symlink itself, not its target
 	info, err := os.Lstat(path)
