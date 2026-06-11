@@ -96,6 +96,7 @@ type ProcessInfo struct {
 	logs             *strings.Builder
 	logWriters       []io.Writer
 	logLock          sync.RWMutex
+	ioLock           sync.Mutex   // Serializes writer I/O outside logLock
 	stopTimeout      chan struct{} // Channel to signal timeout goroutine to stop
 	stopTimeoutOnce  sync.Once    // Protects stopTimeout channel from double-close
 }
@@ -104,17 +105,9 @@ type ProcessInfo struct {
 // Can be configured via SANDBOX_LOG_DIR environment variable
 var ProcessLogDir = "/var/log/sandbox-api"
 
-// disableProcessLogging controls whether process output is exported to
-// structured telemetry logs. Set SANDBOX_DISABLE_PROCESS_LOGGING=true to
-// suppress logrus output while keeping file-based logs and streaming.
-var disableProcessLogging = false
-
 func init() {
 	if dir := os.Getenv("SANDBOX_LOG_DIR"); dir != "" {
 		ProcessLogDir = dir
-	}
-	if v := os.Getenv("SANDBOX_DISABLE_PROCESS_LOGGING"); v == "true" || v == "1" {
-		disableProcessLogging = true
 	}
 }
 
@@ -414,6 +407,9 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 			process.logLock.Lock()
 			process.stdout.WriteString(restartMsg)
 			process.logs.WriteString(restartMsg)
+			restartWriters := make([]io.Writer, len(process.logWriters))
+			copy(restartWriters, process.logWriters)
+			process.logLock.Unlock()
 
 			// Append restart message to log files
 			if process.StdoutFile != "" {
@@ -423,14 +419,14 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 				}
 			}
 
-			// Notify log writers about the restart
-			for _, w := range process.logWriters {
+			process.ioLock.Lock()
+			for _, w := range restartWriters {
 				_, _ = w.Write([]byte(restartMsg))
 				if f, ok := w.(interface{ Flush() }); ok {
 					f.Flush()
 				}
 			}
-			process.logLock.Unlock()
+			process.ioLock.Unlock()
 
 			// Increment restart count
 			process.RestartCount++
@@ -567,10 +563,19 @@ func (pm *ProcessManager) tailLogFiles(proc *ProcessInfo) {
 
 // readAndBroadcast reads from a file and broadcasts to log writers.
 // Returns the number of bytes read.
+//
+// Only in-memory buffer updates are performed under logLock. All disk
+// and network I/O (combined log file, streaming writers) runs after
+// the lock is released so that slow I/O never blocks API readers
+// (e.g. GET /process/{pid}).
 func (pm *ProcessManager) readAndBroadcast(file *os.File, buf []byte, proc *ProcessInfo, streamType string, combinedFile *os.File) int {
 	n, err := file.Read(buf)
 	if n > 0 {
 		data := buf[:n]
+		// Copy data for use after releasing the lock.
+		dataCopy := make([]byte, n)
+		copy(dataCopy, data)
+
 		proc.logLock.Lock()
 		if streamType == "stdout" {
 			proc.stdout.Write(data)
@@ -578,44 +583,27 @@ func (pm *ProcessManager) readAndBroadcast(file *os.File, buf []byte, proc *Proc
 			proc.stderr.Write(data)
 		}
 		proc.logs.Write(data)
-		// Write prefixed content to combined log file (preserves interleaved order)
+		writers := make([]io.Writer, len(proc.logWriters))
+		copy(writers, proc.logWriters)
+		proc.logLock.Unlock()
+
+		// Write prefixed content to combined log file (preserves interleaved order).
 		if combinedFile != nil {
-			lines := strings.SplitAfter(string(data), "\n")
+			lines := strings.SplitAfter(string(dataCopy), "\n")
 			for _, line := range lines {
 				if line != "" {
 					combinedFile.WriteString(streamType + ":" + line)
 				}
 			}
 		}
-		// Export process logs to stdout for telemetry collection.
-		// Uses structured log attributes so the telemetry collector can
-		// distinguish process logs from access logs.
-		if !disableProcessLogging {
-			logEntry := logrus.WithFields(logrus.Fields{
-				"source":       "process",
-				"process-name": proc.Name,
-				"process-pid":  proc.PID,
-				"stream":       streamType,
-			})
-			// Log each line separately for clean telemetry ingestion
-			logLines := strings.SplitAfter(string(data), "\n")
-			for _, line := range logLines {
-				trimmed := strings.TrimSuffix(line, "\n")
-				if trimmed == "" {
-					continue
-				}
-				if streamType == "stderr" {
-					logEntry.Error(trimmed)
-				} else {
-					logEntry.Info(trimmed)
-				}
-			}
+		// Send to log writers for streaming. ioLock serializes writer
+		// I/O across goroutines (tailLogFiles vs StopProcess/KillProcess)
+		// without blocking logLock readers.
+		proc.ioLock.Lock()
+		for _, w := range writers {
+			writeToLogWriter(w, streamType, dataCopy)
 		}
-		// Send to log writers for streaming
-		for _, w := range proc.logWriters {
-			writeToLogWriter(w, streamType, data)
-		}
-		proc.logLock.Unlock()
+		proc.ioLock.Unlock()
 	}
 	if err != nil && err != io.EOF {
 		// Real error, but we'll keep trying
@@ -792,6 +780,9 @@ func (pm *ProcessManager) restartProcess(oldProcess *ProcessInfo, callback func(
 			oldProcess.logLock.Lock()
 			oldProcess.stdout.WriteString(restartMsg)
 			oldProcess.logs.WriteString(restartMsg)
+			restartWriters := make([]io.Writer, len(oldProcess.logWriters))
+			copy(restartWriters, oldProcess.logWriters)
+			oldProcess.logLock.Unlock()
 
 			// Append restart message to log file
 			if oldProcess.StdoutFile != "" {
@@ -801,14 +792,14 @@ func (pm *ProcessManager) restartProcess(oldProcess *ProcessInfo, callback func(
 				}
 			}
 
-			// Notify log writers about the restart
-			for _, w := range oldProcess.logWriters {
+			oldProcess.ioLock.Lock()
+			for _, w := range restartWriters {
 				_, _ = w.Write([]byte(restartMsg))
 				if f, ok := w.(interface{ Flush() }); ok {
 					f.Flush()
 				}
 			}
-			oldProcess.logLock.Unlock()
+			oldProcess.ioLock.Unlock()
 
 			// Increment restart count
 			oldProcess.RestartCount++
@@ -989,16 +980,18 @@ func (pm *ProcessManager) StopProcess(identifier string) error {
 		return fmt.Errorf("process with Identifier %s has no OS process", identifier)
 	}
 
-	// Notify log writers about termination
-	process.logLock.RLock()
 	terminationMsg := []byte("\n[Process is being gracefully terminated]\n")
-	for _, w := range process.logWriters {
+	process.logLock.Lock()
+	process.stdout.Write(terminationMsg)
+	writers := make([]io.Writer, len(process.logWriters))
+	copy(writers, process.logWriters)
+	process.logLock.Unlock()
+
+	process.ioLock.Lock()
+	for _, w := range writers {
 		_, _ = w.Write(terminationMsg)
 	}
-	process.logLock.RUnlock()
-
-	// Add termination message to output buffers
-	process.stdout.Write(terminationMsg)
+	process.ioLock.Unlock()
 
 	// Clear KeepAlive BEFORE the signal under lock: the completion goroutine
 	// reads KeepAlive after cmd.Wait() returns, so we must ensure it sees false
@@ -1058,16 +1051,18 @@ func (pm *ProcessManager) KillProcess(identifier string) error {
 		return fmt.Errorf("process with Identifier %s has no OS process", identifier)
 	}
 
-	// Notify log writers about forceful termination
-	process.logLock.RLock()
 	terminationMsg := []byte("\n[Process is being forcefully killed]\n")
-	for _, w := range process.logWriters {
+	process.logLock.Lock()
+	process.stdout.Write(terminationMsg)
+	writers := make([]io.Writer, len(process.logWriters))
+	copy(writers, process.logWriters)
+	process.logLock.Unlock()
+
+	process.ioLock.Lock()
+	for _, w := range writers {
 		_, _ = w.Write(terminationMsg)
 	}
-	process.logLock.RUnlock()
-
-	// Add termination message to output buffers
-	process.stdout.Write(terminationMsg)
+	process.ioLock.Unlock()
 
 	// Clear KeepAlive BEFORE the kill under lock: the completion goroutine
 	// reads KeepAlive under the same lock after cmd.Wait() returns, so it will
