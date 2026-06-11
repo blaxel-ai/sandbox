@@ -90,7 +90,7 @@ type ProcessInfo struct {
 	StdoutFile       string                  `json:"-"` // Path to stdout log file
 	StderrFile       string                  `json:"-"` // Path to stderr log file
 	Done             chan struct{}
-	tailDone         chan struct{} // Closed when tailLogFiles finishes its final reads
+	TailDone         chan struct{} // Closed when tailLogFiles finishes its final reads
 	stdout           *strings.Builder
 	stderr           *strings.Builder
 	logs             *strings.Builder
@@ -288,7 +288,7 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 		StdoutFile:       stdoutPath,
 		StderrFile:       stderrPath,
 		Done:             make(chan struct{}),
-		tailDone:         make(chan struct{}),
+		TailDone:         make(chan struct{}),
 		stdout:           stdout,
 		stderr:           stderr,
 		logs:             logs,
@@ -437,7 +437,7 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 
 			// Let the current tailLogFiles goroutine finish before restarting
 			close(process.Done)
-			<-process.tailDone
+			<-process.TailDone
 
 			// Small delay before restart to avoid rapid restart loops
 			time.Sleep(1 * time.Second)
@@ -471,7 +471,7 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 				// Clean up resources
 				// Signal tailLogFiles to do final reads, then wait for it to finish
 				close(process.Done)
-				<-process.tailDone
+				<-process.TailDone
 
 				process.logLock.Lock()
 				process.logWriters = nil
@@ -501,7 +501,7 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 			// Clean up resources
 			// Signal tailLogFiles to do final reads, then wait for it to finish
 			close(process.Done)
-			<-process.tailDone
+			<-process.TailDone
 
 			process.logLock.Lock()
 			process.logWriters = nil
@@ -555,7 +555,7 @@ func (pm *ProcessManager) tailLogFiles(proc *ProcessInfo) {
 					break
 				}
 			}
-			close(proc.tailDone)
+			close(proc.TailDone)
 			return
 		default:
 			pm.readAndBroadcast(stdoutFile, stdoutBuf, proc, "stdout", combinedFile)
@@ -693,7 +693,7 @@ func (pm *ProcessManager) restartProcess(oldProcess *ProcessInfo, callback func(
 	oldProcess.stopTimeout = make(chan struct{})
 	oldProcess.stopTimeoutOnce = sync.Once{}
 	oldProcess.Done = make(chan struct{})
-	oldProcess.tailDone = make(chan struct{})
+	oldProcess.TailDone = make(chan struct{})
 
 	// Start the process
 	if err := cmd.Start(); err != nil {
@@ -815,7 +815,7 @@ func (pm *ProcessManager) restartProcess(oldProcess *ProcessInfo, callback func(
 
 			// Let the current tailLogFiles goroutine finish before restarting
 			close(oldProcess.Done)
-			<-oldProcess.tailDone
+			<-oldProcess.TailDone
 
 			// Small delay before restart to avoid rapid restart loops
 			time.Sleep(1 * time.Second)
@@ -849,7 +849,7 @@ func (pm *ProcessManager) restartProcess(oldProcess *ProcessInfo, callback func(
 				// Clean up resources
 				// Signal tailLogFiles to do final reads, then wait for it to finish
 				close(oldProcess.Done)
-				<-oldProcess.tailDone
+				<-oldProcess.TailDone
 
 				oldProcess.logLock.Lock()
 				oldProcess.logWriters = nil
@@ -879,7 +879,7 @@ func (pm *ProcessManager) restartProcess(oldProcess *ProcessInfo, callback func(
 			// Clean up resources
 			// Signal tailLogFiles to do final reads, then wait for it to finish
 			close(oldProcess.Done)
-			<-oldProcess.tailDone
+			<-oldProcess.TailDone
 
 			oldProcess.logLock.Lock()
 			oldProcess.logWriters = nil

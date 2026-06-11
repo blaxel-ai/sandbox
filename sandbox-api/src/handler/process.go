@@ -410,8 +410,7 @@ func (h *ProcessHandler) handleExecuteCommandStream(c *gin.Context) {
 done:
 
 	// Wait for tailLogFiles to complete its final reads
-	// The 150ms delay gives it time to flush all content to log writers
-	time.Sleep(150 * time.Millisecond)
+	<-proc.TailDone
 
 	// Detach the writer before reading final content
 	h.RemoveLogWriter(processInfo.PID, jw)
@@ -525,24 +524,15 @@ func (h *ProcessHandler) HandleGetProcessLogsStream(c *gin.Context) {
 	if !exists {
 		return
 	}
-	for proc.Status == constants.ProcessStatusRunning {
-		time.Sleep(200 * time.Millisecond)
-		// If client disconnects, break
-		select {
-		case <-c.Request.Context().Done():
-			h.RemoveLogWriter(identifier, rw)
-			return
-		default:
-		}
-		// Refresh process status
-		proc, exists = h.processManager.GetProcessByIdentifier(identifier)
-		if !exists {
-			break
-		}
+	select {
+	case <-proc.Done:
+	case <-c.Request.Context().Done():
+		h.RemoveLogWriter(identifier, rw)
+		return
 	}
 
 	// Wait for tailLogFiles to complete its final reads
-	time.Sleep(150 * time.Millisecond)
+	<-proc.TailDone
 
 	// Detach the writer
 	h.RemoveLogWriter(identifier, rw)
