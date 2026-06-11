@@ -292,8 +292,9 @@ func (fs *Filesystem) ReadFile(path string) (*FileWithContentByte, error) {
 		return nil, err
 	}
 
-	// Get owner and group
-	owner, group, err := fs.getFileOwnerAndGroup(absPath)
+	// Get owner and group from the already-obtained file info,
+	// avoiding a redundant os.Lstat call
+	owner, group, err := getOwnerAndGroupFromInfo(info)
 	if err != nil {
 		return nil, err
 	}
@@ -386,20 +387,26 @@ func (fs *Filesystem) ListDirectory(path string) (*Directory, error) {
 	for _, entry := range entries {
 		// Use displayPath for the entry paths too
 		entryPath := filepath.Join(displayPath, entry.Name())
-		absEntryPath := filepath.Join(absPath, entry.Name())
 
-		// Use os.Lstat to get info about the symlink itself, not its target
-		// This prevents errors when symlinks point to non-existent targets
-		info, err := os.Lstat(absEntryPath)
-		if err != nil {
-			return nil, err
-		}
-
-		if info.IsDir() {
+		// Use entry.IsDir() from DirEntry which uses the file type cached
+		// by os.ReadDir (from getdents64 on Linux), avoiding an os.Lstat syscall
+		// for directory entries entirely.
+		if entry.IsDir() {
 			dir.AddSubdirectory(&Subdirectory{Path: entryPath, Name: entry.Name()})
 		} else {
-			// It's a file or symlink
-			owner, group, err := fs.getFileOwnerAndGroup(absEntryPath)
+			// For files and symlinks, we need stat info for metadata
+			absEntryPath := filepath.Join(absPath, entry.Name())
+
+			// Use os.Lstat to get info about the symlink itself, not its target
+			// This prevents errors when symlinks point to non-existent targets
+			info, err := os.Lstat(absEntryPath)
+			if err != nil {
+				return nil, err
+			}
+
+			// Extract owner and group from the already-obtained FileInfo,
+			// avoiding a redundant os.Lstat call in getFileOwnerAndGroup
+			owner, group, err := getOwnerAndGroupFromInfo(info)
 			if err != nil {
 				return nil, err
 			}
@@ -508,14 +515,10 @@ func (fs *Filesystem) MoveFile(src, dst string) error {
 	return os.Rename(srcAbs, dstAbs)
 }
 
-// getFileOwnerAndGroup returns the owner and group of a file
-func (fs *Filesystem) getFileOwnerAndGroup(path string) (string, string, error) {
-	// Use Lstat to get info about the symlink itself, not its target
-	info, err := os.Lstat(path)
-	if err != nil {
-		return "", "", err
-	}
-
+// getOwnerAndGroupFromInfo extracts the owner and group from an already-obtained
+// os.FileInfo, avoiding a redundant os.Lstat syscall. This is used by callers
+// that have already stat'd the file (ListDirectory, ReadFile, GetFileInfo).
+func getOwnerAndGroupFromInfo(info os.FileInfo) (string, string, error) {
 	stat, ok := info.Sys().(*syscall.Stat_t)
 	if !ok {
 		return "", "", errors.New("failed to get file stat")
@@ -541,6 +544,17 @@ func (fs *Filesystem) getFileOwnerAndGroup(path string) (string, string, error) 
 	return ownerName, groupName, nil
 }
 
+// getFileOwnerAndGroup returns the owner and group of a file
+func (fs *Filesystem) getFileOwnerAndGroup(path string) (string, string, error) {
+	// Use Lstat to get info about the symlink itself, not its target
+	info, err := os.Lstat(path)
+	if err != nil {
+		return "", "", err
+	}
+
+	return getOwnerAndGroupFromInfo(info)
+}
+
 // GetFileInfo returns file information without reading its content
 func (fs *Filesystem) GetFileInfo(path string) (*FileByte, error) {
 	absPath, err := fs.GetAbsolutePath(path)
@@ -557,7 +571,9 @@ func (fs *Filesystem) GetFileInfo(path string) (*FileByte, error) {
 		return nil, errors.New("path points to a directory, not a file")
 	}
 
-	owner, group, err := fs.getFileOwnerAndGroup(absPath)
+	// Get owner and group from the already-obtained file info,
+	// avoiding a redundant os.Lstat call
+	owner, group, err := getOwnerAndGroupFromInfo(info)
 	if err != nil {
 		return nil, err
 	}
