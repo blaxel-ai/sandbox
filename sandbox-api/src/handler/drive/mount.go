@@ -167,10 +167,18 @@ func MountDrive(driveName, mountPath, drivePath string, readOnly bool, uidMap, g
 		return "", "", fmt.Errorf("failed to start blfs mount: %w", err)
 	}
 
+	pid := cmd.Process.Pid
 	logrus.WithFields(logrus.Fields{
-		"pid":        cmd.Process.Pid,
+		"pid":        pid,
 		"mount_path": mountPath,
 	}).Info("Started blfs mount process")
+
+	// Wait for the process in a goroutine so we can detect early exit.
+	// cmd.ProcessState is only populated after Wait() returns.
+	exitCh := make(chan error, 1)
+	go func() {
+		exitCh <- cmd.Wait()
+	}()
 
 	// Poll until the mount point is ready or timeout.
 	// Two-phase check: first wait for the kernel FUSE mount to appear in
@@ -179,8 +187,19 @@ func MountDrive(driveName, mountPath, drivePath string, readOnly bool, uidMap, g
 	startTime := time.Now()
 	mountDetected := false
 	for time.Since(startTime) < mountTimeout {
-		if cmd.ProcessState != nil && cmd.ProcessState.Exited() {
-			return "", "", fmt.Errorf("blfs mount process exited unexpectedly: %s", cmd.ProcessState.String())
+		// Check if blfs exited early (e.g. ACL denied, config error)
+		select {
+		case waitErr := <-exitCh:
+			msg := "blfs mount process exited unexpectedly"
+			if waitErr != nil {
+				msg = fmt.Sprintf("%s: %v", msg, waitErr)
+			}
+			logrus.WithFields(logrus.Fields{
+				"pid":        pid,
+				"mount_path": mountPath,
+			}).Warn(msg)
+			return "", "", fmt.Errorf("failed to mount drive: %s", msg)
+		default:
 		}
 
 		if !mountDetected {
@@ -202,13 +221,11 @@ func MountDrive(driveName, mountPath, drivePath string, readOnly bool, uidMap, g
 		time.Sleep(pollInterval)
 	}
 
-	// Timeout - kill the process, reap it, and try to clean up any partial mount
-	if err := cmd.Process.Kill(); err != nil {
-		logrus.WithError(err).Warn("Failed to kill blfs mount process after timeout")
-	}
-	_ = cmd.Wait() // Reap the process to avoid zombie
+	// Timeout — kill the process and clean up
+	_ = syscall.Kill(pid, syscall.SIGKILL)
+	<-exitCh // drain the channel to reap the process
 	if isMountPoint(mountPath) {
-		_ = UnmountDrive(mountPath) // Best-effort cleanup of partial mount
+		_ = UnmountDrive(mountPath)
 	}
 	return "", "", fmt.Errorf("timeout waiting for mount point to be ready after %s", mountTimeout)
 }
