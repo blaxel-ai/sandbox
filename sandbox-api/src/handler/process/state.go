@@ -47,7 +47,7 @@ type ProcessState struct {
 	RestartOnFailure bool                    `json:"restartOnFailure"`
 	MaxRestarts      int                     `json:"maxRestarts"`
 	RestartCount     int                     `json:"restartCount"`
-	Env              map[string]string       `json:"env,omitempty"`
+	Env              map[string]string       `json:"env,omitempty"` // Custom env vars provided at start, reused on restart-on-failure
 }
 
 // ManagerState represents the full state of the process manager
@@ -112,6 +112,7 @@ func (pm *ProcessManager) SaveState() error {
 			RestartOnFailure: proc.RestartOnFailure,
 			MaxRestarts:      proc.MaxRestarts,
 			RestartCount:     proc.RestartCount,
+			Env:              proc.Env,
 		}
 
 		logrus.WithFields(logrus.Fields{
@@ -221,7 +222,9 @@ func (pm *ProcessManager) LoadState() error {
 			RestartOnFailure: procState.RestartOnFailure,
 			MaxRestarts:      procState.MaxRestarts,
 			RestartCount:     procState.RestartCount,
+			Env:              procState.Env,
 			Done:             make(chan struct{}),
+			TailDone:         make(chan struct{}),
 			stdout:           &strings.Builder{},
 			stderr:           &strings.Builder{},
 			logs:             &strings.Builder{},
@@ -277,6 +280,7 @@ func (pm *ProcessManager) LoadState() error {
 				proc.CompletedAt = &now
 				proc.ExitCode = -1
 				close(proc.Done)
+				close(proc.TailDone)
 				deadCount++
 				pm.processes[pid] = proc
 				continue
@@ -317,8 +321,9 @@ func (pm *ProcessManager) LoadState() error {
 			proc.ExitCode = -1 // Unknown exit code
 			deadCount++
 
-			// Close the Done channel since process is no longer running
+			// Close the Done and TailDone channels since process is no longer running
 			close(proc.Done)
+			close(proc.TailDone)
 
 			logrus.WithFields(logrus.Fields{
 				"pid":     proc.PID,
@@ -329,6 +334,7 @@ func (pm *ProcessManager) LoadState() error {
 			// Process was already completed/failed/stopped - just restore state
 			if proc.CompletedAt != nil {
 				close(proc.Done)
+				close(proc.TailDone)
 			}
 		}
 
@@ -598,6 +604,7 @@ func (pm *ProcessManager) monitorAdoptedProcess(proc *ProcessInfo) {
 
 				// Signal that the process is done
 				close(proc.Done)
+				close(proc.TailDone)
 
 				logrus.WithFields(logrus.Fields{
 					"pid":        proc.PID,
@@ -611,6 +618,7 @@ func (pm *ProcessManager) monitorAdoptedProcess(proc *ProcessInfo) {
 			}
 		case <-proc.Done:
 			// Process was killed/stopped through our API
+			close(proc.TailDone)
 			logrus.WithFields(logrus.Fields{
 				"pid":  proc.PID,
 				"name": proc.Name,

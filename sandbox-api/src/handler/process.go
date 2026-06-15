@@ -55,7 +55,7 @@ type ProcessRequest struct {
 	Timeout           *int              `json:"timeout,omitempty" example:"30"` // Timeout in seconds. When keepAlive is true, defaults to 600s (10 minutes). Set to 0 for infinite (no auto-kill).
 	WaitForPorts      []int             `json:"waitForPorts" example:"3000,8080"`
 	RestartOnFailure  bool              `json:"restartOnFailure" example:"true"`
-	MaxRestarts       int               `json:"maxRestarts" example:"3"`
+	MaxRestarts       int               `json:"maxRestarts" example:"3"`   // Maximum number of restarts on failure. Set to a negative value (e.g. -1) for unlimited restarts.
 	KeepAlive         bool              `json:"keepAlive" example:"false"` // Disable scale-to-zero while process runs. Default timeout is 600s (10 minutes). Set timeout to 0 for infinite.
 	EnableLogging     bool              `json:"enableLogging" example:"false"` // Enable logrus export to stdout for this process. Defaults to false.
 } // @name ProcessRequest
@@ -404,8 +404,7 @@ func (h *ProcessHandler) handleExecuteCommandStream(c *gin.Context) {
 done:
 
 	// Wait for tailLogFiles to complete its final reads
-	// The 150ms delay gives it time to flush all content to log writers
-	time.Sleep(150 * time.Millisecond)
+	<-proc.TailDone
 
 	// Detach the writer before reading final content
 	h.RemoveLogWriter(processInfo.PID, jw)
@@ -519,24 +518,15 @@ func (h *ProcessHandler) HandleGetProcessLogsStream(c *gin.Context) {
 	if !exists {
 		return
 	}
-	for proc.Status == constants.ProcessStatusRunning {
-		time.Sleep(200 * time.Millisecond)
-		// If client disconnects, break
-		select {
-		case <-c.Request.Context().Done():
-			h.RemoveLogWriter(identifier, rw)
-			return
-		default:
-		}
-		// Refresh process status
-		proc, exists = h.processManager.GetProcessByIdentifier(identifier)
-		if !exists {
-			break
-		}
+	select {
+	case <-proc.Done:
+	case <-c.Request.Context().Done():
+		h.RemoveLogWriter(identifier, rw)
+		return
 	}
 
 	// Wait for tailLogFiles to complete its final reads
-	time.Sleep(150 * time.Millisecond)
+	<-proc.TailDone
 
 	// Detach the writer
 	h.RemoveLogWriter(identifier, rw)

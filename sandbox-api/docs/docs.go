@@ -1748,7 +1748,7 @@ const docTemplate = `{
         },
         "/upgrade": {
             "post": {
-                "description": "Triggers an upgrade of the sandbox-api process. Returns 200 immediately before upgrading.\nThe upgrade will: download the specified binary from GitHub releases, validate it, and restart.\nAll running processes will be preserved across the upgrade.\nAvailable versions: \"develop\" (default), \"main\", \"latest\", or specific tag like \"v1.0.0\"\nYou can also specify a custom baseUrl for forks (defaults to https://github.com/blaxel-ai/sandbox/releases)",
+                "description": "Triggers an upgrade of the sandbox-api process. Returns 200 immediately before upgrading.\nThe upgrade will: download the specified binary from GitHub releases, validate it, and restart.\nAll running processes will be preserved across the upgrade.\nAvailable versions: \"latest\" (default, most recent release), \"develop\", \"main\", or specific tag like \"v1.0.0\"\nYou can also specify a custom baseUrl for forks (defaults to https://github.com/blaxel-ai/sandbox/releases)",
                 "consumes": [
                     "application/json"
                 ],
@@ -2492,6 +2492,7 @@ const docTemplate = `{
                     "example": false
                 },
                 "maxRestarts": {
+                    "description": "Maximum number of restarts on failure. Set to a negative value (e.g. -1) for unlimited restarts.",
                     "type": "integer",
                     "example": 3
                 },
@@ -2715,9 +2716,9 @@ const docTemplate = `{
                     "example": "https://github.com/blaxel-ai/sandbox/releases"
                 },
                 "version": {
-                    "description": "Version to upgrade to: \"develop\", \"main\", \"latest\", or specific tag like \"v1.0.0\"",
+                    "description": "Version to upgrade to: \"latest\" (default), \"develop\", \"main\", or specific tag like \"v1.0.0\"",
                     "type": "string",
-                    "example": "develop"
+                    "example": "latest"
                 }
             }
         },

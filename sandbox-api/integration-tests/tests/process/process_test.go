@@ -795,6 +795,97 @@ func TestProcessRestartOnFailureEventualSuccess(t *testing.T) {
 	}
 }
 
+// TestProcessRestartPreservesEnvironment verifies that custom environment
+// variables provided at start are reused when the process is restarted on failure.
+func TestProcessRestartPreservesEnvironment(t *testing.T) {
+	t.Log("=== Testing environment is preserved across restart on failure ===")
+
+	counterFile := "/tmp/test_restart_env_counter.txt"
+	setupCmd := "rm -f " + counterFile
+	resp, err := common.MakeRequest(http.MethodPost, "/process", map[string]interface{}{
+		"command":           setupCmd,
+		"waitForCompletion": true,
+	})
+	require.NoError(t, err)
+	resp.Body.Close()
+
+	// Prints the custom env var on every attempt, fails the first time, then succeeds.
+	processRequest := map[string]interface{}{
+		"name":              fmt.Sprintf("test-restart-env-%d", time.Now().UnixNano()),
+		"command":           "printf 'VAR=[%s]\\n' \"$MY_RESTART_VAR\"; if [ ! -f " + counterFile + " ]; then echo 1 > " + counterFile + "; exit 1; else rm -f " + counterFile + "; exit 0; fi",
+		"cwd":               "/",
+		"env":               map[string]string{"MY_RESTART_VAR": "preserved_value_42"},
+		"waitForCompletion": true,
+		"restartOnFailure":  true,
+		"maxRestarts":       3,
+		"timeout":           15,
+	}
+
+	resp, err = common.MakeRequest(http.MethodPost, "/process", processRequest)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusOK, resp.StatusCode, "Process creation should succeed")
+
+	var processResponse map[string]interface{}
+	err = json.NewDecoder(resp.Body).Decode(&processResponse)
+	require.NoError(t, err)
+
+	assert.Equal(t, "completed", processResponse["status"], "Process should eventually complete")
+	assert.Equal(t, float64(1), processResponse["restartCount"], "Process should have restarted once")
+
+	logs, ok := processResponse["logs"].(string)
+	require.True(t, ok, "Response should contain logs")
+	t.Logf("Process logs:\n%s", logs)
+	// The custom env var must survive the restart: present on both runs, never empty.
+	occurrences := strings.Count(logs, "VAR=[preserved_value_42]")
+	assert.Equal(t, 2, occurrences, "Custom env var should be present on both initial run and restart")
+	assert.NotContains(t, logs, "VAR=[]", "Custom env var must not be lost on restart")
+}
+
+// TestProcessUnlimitedRestarts verifies that a negative maxRestarts allows
+// the process to keep restarting until it eventually succeeds.
+func TestProcessUnlimitedRestarts(t *testing.T) {
+	t.Log("=== Testing unlimited restarts with negative maxRestarts ===")
+
+	counterFile := "/tmp/test_unlimited_restart_counter.txt"
+	setupCmd := "rm -f " + counterFile + " && echo 0 > " + counterFile
+	resp, err := common.MakeRequest(http.MethodPost, "/process", map[string]interface{}{
+		"command":           setupCmd,
+		"waitForCompletion": true,
+	})
+	require.NoError(t, err)
+	resp.Body.Close()
+
+	// Fails 3 times then succeeds. maxRestarts is -1 (unlimited).
+	processRequest := map[string]interface{}{
+		"name":              fmt.Sprintf("test-unlimited-restart-%d", time.Now().UnixNano()),
+		"command":           "COUNT=$(cat " + counterFile + "); NEW_COUNT=$((COUNT + 1)); echo $NEW_COUNT > " + counterFile + "; echo \"Attempt $NEW_COUNT\"; if [ $NEW_COUNT -lt 4 ]; then exit 1; else exit 0; fi",
+		"cwd":               "/",
+		"waitForCompletion": true,
+		"restartOnFailure":  true,
+		"maxRestarts":       -1,
+		"timeout":           20,
+	}
+
+	resp, err = common.MakeRequest(http.MethodPost, "/process", processRequest)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusOK, resp.StatusCode, "Process creation should succeed")
+
+	var processResponse map[string]interface{}
+	err = json.NewDecoder(resp.Body).Decode(&processResponse)
+	require.NoError(t, err)
+
+	assert.Equal(t, "completed", processResponse["status"], "Process should eventually complete")
+	assert.Equal(t, float64(3), processResponse["restartCount"], "Process should have restarted 3 times before succeeding")
+
+	if logs, ok := processResponse["logs"].(string); ok {
+		t.Logf("Process logs:\n%s", logs)
+		assert.Contains(t, logs, "Attempting restart 1/unlimited", "Logs should show the unlimited restart label")
+		assert.Contains(t, logs, "Attempt 4", "Process should have reached the successful attempt")
+	}
+}
+
 // TestProcessRestartPIDStaysTheSame tests that PIDs remain constant across restarts
 func TestProcessRestartPIDStaysTheSame(t *testing.T) {
 	t.Log("=== Testing PID stability across restarts ===")
