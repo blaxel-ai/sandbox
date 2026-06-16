@@ -1,0 +1,20 @@
+{
+  "name": "codex",
+  "displayName": "Codex",
+  "categories": [],
+  "description": "A sandbox image with Codex pre-installed for agentic coding workflows.",
+  "longDescription": "The Codex sandbox image provides a Blaxel sandbox runtime with OpenAI Codex installed and available on PATH as `codex`. Use it to create SDK-managed sandboxes where Codex can inspect files, run commands, and connect to other sandbox MCP servers without installing the CLI at runtime.",
+  "url": "https://github.com/openai/codex",
+  "icon": "https://blaxel.ai/logo.png",
+  "memory": 8192,
+  "ports": [
+    {
+      "name": "sandbox-api",
+      "target": 8080,
+      "protocol": "HTTP"
+    }
+  ],
+  "enterprise": false,
+  "coming_soon": false,
+  "hidden": true
+}

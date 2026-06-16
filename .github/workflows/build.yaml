@@ -18,6 +18,8 @@ on:
           - app-runner
           - astro
           - base-image
+          - claude-code
+          - codex
           - chromium
           - cua-xfce
           - docker-in-sandbox
