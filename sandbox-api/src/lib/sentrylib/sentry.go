@@ -19,7 +19,7 @@ var DSN = ""
 //
 // Control flags:
 //
-//	disabled parameter   → opt-out via --disable-sentry CLI flag
+//	disabled parameter   → opt-out via --disable-telemetry CLI flag
 //	SENTRY_ENABLED=false → opt-out via environment variable
 //	SENTRY_DSN env var   → overrides build-time DSN; if both empty, Sentry is a no-op
 //
@@ -31,7 +31,7 @@ var DSN = ""
 // Returns a flush function to call on graceful shutdown (non-blocking, 2 s max).
 func Init(disabled bool) func() {
 	if disabled || os.Getenv("SENTRY_ENABLED") == "false" {
-		logrus.Info("Sentry error reporting is disabled.")
+		logrus.Info("Telemetry is disabled.")
 		return func() {}
 	}
 
@@ -72,12 +72,12 @@ func Init(disabled bool) func() {
 
 	logrus.Infof("")
 	logrus.Infof("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-	logrus.Infof("  Anonymous error reporting is ENABLED (mode: %s)", mode)
+	logrus.Infof("  Telemetry is ENABLED (mode: %s)", mode)
 	logrus.Infof("  This helps the Blaxel team detect and fix crashes faster.")
 	logrus.Infof("  No personal data, file contents, or process output is ever sent.")
 	logrus.Infof("")
 	logrus.Infof("  To opt out, use any of the following:")
-	logrus.Infof("    • Run with --disable-sentry flag")
+	logrus.Infof("    • Run with --disable-telemetry flag")
 	logrus.Infof("    • Set SENTRY_ENABLED=false in your environment")
 	logrus.Infof("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 	logrus.Infof("")

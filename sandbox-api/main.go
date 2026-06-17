@@ -47,10 +47,10 @@ func main() {
 	shortPort := flag.Int("p", 8080, "Port to listen on (shorthand)")
 	command := flag.String("command", "", "Command to execute")
 	shortCommand := flag.String("c", "", "Command to execute (shorthand)")
-	disableSentry := flag.Bool("disable-sentry", false, "Disable anonymous error reporting to Sentry")
+	disableTelemetry := flag.Bool("disable-telemetry", false, "Disable anonymous error reporting")
 	flag.Parse()
 
-	sentryFlush := sentrylib.Init(*disableSentry)
+	sentryFlush := sentrylib.Init(*disableTelemetry)
 	defer sentryFlush()
 
 	ctx, cancel := context.WithCancel(context.Background())
