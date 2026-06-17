@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -18,6 +19,7 @@ import (
 	"github.com/blaxel-ai/sandbox-api/src/lib/blaxel"
 	"github.com/blaxel-ai/sandbox-api/src/lib/networking"
 	"github.com/blaxel-ai/sandbox-api/src/lib/proxy"
+	"github.com/blaxel-ai/sandbox-api/src/lib/sentrylib"
 	"github.com/blaxel-ai/sandbox-api/src/mcp"
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
@@ -40,6 +42,16 @@ func main() {
 	// Load .env file
 	_ = godotenv.Load()
 
+	// Define command-line flags
+	port := flag.Int("port", 8080, "Port to listen on")
+	shortPort := flag.Int("p", 8080, "Port to listen on (shorthand)")
+	command := flag.String("command", "", "Command to execute")
+	shortCommand := flag.String("c", "", "Command to execute (shorthand)")
+	flag.Parse()
+
+	sentryFlush := sentrylib.Init()
+	defer sentryFlush()
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -48,26 +60,40 @@ func main() {
 	// so rotated credentials are picked up before they expire.
 	proxy.StartProxyTokenRefresh(ctx)
 
-	// Merge extra CA certificates (SANDBOX_EXTRA_CA_CERTS) with the system
-	// trust store so TLS-intercepting proxies are trusted by every runtime.
-	if err := proxy.MergeCABundle(); err != nil {
-		logrus.WithError(err).Error("Failed to merge CA bundle – TLS connections through the proxy may fail")
-	}
+	// Parallel: all four tasks are independent of each other
+	pm := process.GetProcessManager()
+	var wg sync.WaitGroup
+	wg.Add(4)
 
-	// Initialize WireGuard client if configuration is present.
-	// If config is provided but initialization fails, the sandbox will have no egress
-	// (no outbound internet connectivity), but inbound connections will still work.
-	if err := networking.StartWireGuardFromEnv(); err != nil {
-		logrus.WithError(err).Warn("WireGuard initialization failed - the sandbox will NOT have outbound internet connectivity (no egress). Inbound connections to the sandbox will still work. You can check the tunnel status via the /network/tunnel endpoints.")
-	}
+	go func() {
+		defer wg.Done()
+		if err := proxy.MergeCABundle(); err != nil {
+			logrus.WithError(err).Error("Failed to merge CA bundle – TLS connections through the proxy may fail")
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		if err := networking.StartWireGuardFromEnv(); err != nil {
+			logrus.WithError(err).Warn("WireGuard initialization failed - the sandbox will NOT have outbound internet connectivity (no egress). Inbound connections to the sandbox will still work. You can check the tunnel status via the /network/tunnel endpoints.")
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		if err := blaxel.ScaleReset(); err != nil {
+			logrus.Warnf("Failed to reset scale-to-zero counter on startup: %v", err)
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		if err := pm.LoadState(); err != nil {
+			logrus.WithError(err).Warn("Failed to load process state from disk")
+		}
+	}()
 
-	// Reset scale-to-zero counter on startup (crash recovery)
-	// If sandbox-api crashed while keepAlive processes were running,
-	// the counter would be left in a bad state - this resets it to 0
-	if err := blaxel.ScaleReset(); err != nil {
-		logrus.Warnf("Failed to reset scale-to-zero counter on startup: %v", err)
-	}
+	wg.Wait()
 
+	// Swagger docs setup
+	blEnv := os.Getenv("BL_ENV")
 	workspace := os.Getenv("BL_WORKSPACE")
 	name := os.Getenv("BL_NAME")
 
@@ -75,10 +101,10 @@ func main() {
 		docs.SwaggerInfo.BasePath = fmt.Sprintf("/%s/sandboxes/%s", workspace, name)
 	}
 
-	if os.Getenv("BL_ENV") == "prod" {
+	if blEnv == "prod" {
 		docs.SwaggerInfo.Host = "run.blaxel.ai"
 		docs.SwaggerInfo.Schemes = []string{"https"}
-	} else if os.Getenv("BL_ENV") == "dev" {
+	} else if blEnv == "dev" {
 		docs.SwaggerInfo.Host = "run.blaxel.dev"
 		docs.SwaggerInfo.Schemes = []string{"https"}
 	} else {
@@ -86,15 +112,10 @@ func main() {
 		docs.SwaggerInfo.BasePath = "/"
 		docs.SwaggerInfo.Schemes = []string{"http"}
 	}
+
 	gin.SetMode(gin.ReleaseMode)
 	disableRequestLogging := os.Getenv("DISABLE_REQUEST_LOGGING") == "true"
 	enableProcessingTime := os.Getenv("ENABLE_PROCESSING_TIME") == "true"
-	// Define command-line flags
-	port := flag.Int("port", 8080, "Port to listen on")
-	shortPort := flag.Int("p", 8080, "Port to listen on (shorthand)")
-	command := flag.String("command", "", "Command to execute")
-	shortCommand := flag.String("c", "", "Command to execute (shorthand)")
-	flag.Parse()
 
 	// Use the port provided by either flag
 	portValue := *port
@@ -115,76 +136,17 @@ func main() {
 		logrus.Infof("Shell args: %s", os.Getenv("SHELL_ARGS"))
 	}
 
-	// Check for command after the flags
+	// Start background command if specified
 	if commandValue != "" {
-		// Join all remaining arguments as they may form the command
-		logrus.Infof("Executing command: %s", commandValue)
-
-		// Create the command with the context
-		// Use SHELL and SHELL_ARGS environment variables if set
-		shell := os.Getenv("SHELL")
-		if shell == "" {
-			shell = "sh"
-		}
-
-		shellArgs := os.Getenv("SHELL_ARGS")
-		if shellArgs == "" {
-			shellArgs = "-c"
-		}
-
-		// Build command arguments
-		cmdArgs := []string{}
-		if shellArgs != "" {
-			cmdArgs = append(cmdArgs, strings.Fields(shellArgs)...)
-		}
-		cmdArgs = append(cmdArgs, commandValue)
-
-		cmd := exec.CommandContext(ctx, shell, cmdArgs...)
-		cmd.Stdout = logrus.StandardLogger().Out
-		cmd.Stderr = logrus.StandardLogger().Out
-
-		cmd.Dir = "/"
-
-		// Start the command in a goroutine so it doesn't block the server
-		go func() {
-			// Start the command
-			if err := cmd.Start(); err != nil {
-				logrus.Fatalf("Failed to start command: %v", err)
-				return
-			}
-			logrus.Infof("Command started successfully")
-
-			// Wait for the command to complete
-			if err := cmd.Wait(); err != nil {
-				// Check if context was cancelled
-				select {
-				case <-ctx.Done():
-					logrus.Infof("Command was cancelled")
-				default:
-					logrus.Infof("Command exited with error: %v", err)
-				}
-			} else {
-				logrus.Infof("Command completed successfully")
-			}
-		}()
+		startBackgroundCommand(ctx, commandValue)
 	}
 
 	// Set up the router with all our API routes
 	router := api.SetupRouter(disableRequestLogging, enableProcessingTime)
 
-	// Try to recover process state from a previous instance (hot-reload support)
-	pm := process.GetProcessManager()
-	if err := pm.LoadState(); err != nil {
-		logrus.WithError(err).Warn("Failed to load process state from disk")
-	}
-
-	mcpServer, err := mcp.NewServer(router)
-	if err != nil {
+	// Route registration happens inside the NewServer constructor
+	if _, err := mcp.NewServer(router); err != nil {
 		logrus.Fatalf("Failed to create MCP server: %v", err)
-	}
-	// Start the server
-	if err := mcpServer.Serve(); err != nil {
-		logrus.Fatalf("Failed to start MCP server: %v", err)
 	}
 
 	// Start the server with custom timeout configuration for large file uploads
@@ -230,4 +192,52 @@ func main() {
 	}
 
 	logrus.Info("Server stopped")
+}
+
+// startBackgroundCommand runs the given command string in a goroutine using the
+// configured SHELL and SHELL_ARGS environment variables.
+func startBackgroundCommand(ctx context.Context, command string) {
+	logrus.Infof("Executing command: %s", command)
+
+	shell := os.Getenv("SHELL")
+	if shell == "" {
+		shell = "sh"
+	}
+
+	shellArgs := os.Getenv("SHELL_ARGS")
+	if shellArgs == "" {
+		shellArgs = "-c"
+	}
+
+	// Build command arguments
+	cmdArgs := []string{}
+	if shellArgs != "" {
+		cmdArgs = append(cmdArgs, strings.Fields(shellArgs)...)
+	}
+	cmdArgs = append(cmdArgs, command)
+
+	cmd := exec.CommandContext(ctx, shell, cmdArgs...)
+	cmd.Stdout = logrus.StandardLogger().Out
+	cmd.Stderr = logrus.StandardLogger().Out
+	cmd.Dir = "/"
+
+	// Start the command in a goroutine so it doesn't block the server
+	go func() {
+		if err := cmd.Start(); err != nil {
+			logrus.Fatalf("Failed to start command: %v", err)
+			return
+		}
+		logrus.Infof("Command started successfully")
+
+		if err := cmd.Wait(); err != nil {
+			select {
+			case <-ctx.Done():
+				logrus.Infof("Command was cancelled")
+			default:
+				logrus.Infof("Command exited with error: %v", err)
+			}
+		} else {
+			logrus.Infof("Command completed successfully")
+		}
+	}()
 }
