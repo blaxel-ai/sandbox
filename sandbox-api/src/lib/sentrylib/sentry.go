@@ -19,8 +19,9 @@ var DSN = ""
 //
 // Control flags:
 //
-//	SENTRY_ENABLED=false  → opt-out (default is enabled)
-//	SENTRY_DSN env var    → overrides build-time DSN; if both empty, Sentry is a no-op
+//	disabled parameter   → opt-out via --disable-sentry CLI flag
+//	SENTRY_ENABLED=false → opt-out via environment variable
+//	SENTRY_DSN env var   → overrides build-time DSN; if both empty, Sentry is a no-op
 //
 // Anonymous mode:
 //
@@ -28,9 +29,9 @@ var DSN = ""
 //	and user/IP data is stripped from all events.
 //
 // Returns a flush function to call on graceful shutdown (non-blocking, 2 s max).
-func Init() func() {
-	if os.Getenv("SENTRY_ENABLED") == "false" {
-		logrus.Info("Sentry disabled via SENTRY_ENABLED=false")
+func Init(disabled bool) func() {
+	if disabled || os.Getenv("SENTRY_ENABLED") == "false" {
+		logrus.Info("Sentry error reporting is disabled.")
 		return func() {}
 	}
 
@@ -64,11 +65,22 @@ func Init() func() {
 		return func() {}
 	}
 
-	mode := "anonymous"
+	mode := "anonymous (no PII collected)"
 	if isBlaxelCloud {
 		mode = "identified"
 	}
-	logrus.Infof("Sentry initialised (env=%s, mode=%s)", blEnv, mode)
+
+	logrus.Infof("")
+	logrus.Infof("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+	logrus.Infof("  Anonymous error reporting is ENABLED (mode: %s)", mode)
+	logrus.Infof("  This helps the Blaxel team detect and fix crashes faster.")
+	logrus.Infof("  No personal data, file contents, or process output is ever sent.")
+	logrus.Infof("")
+	logrus.Infof("  To opt out, use any of the following:")
+	logrus.Infof("    • Run with --disable-sentry flag")
+	logrus.Infof("    • Set SENTRY_ENABLED=false in your environment")
+	logrus.Infof("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+	logrus.Infof("")
 
 	return func() {
 		defer func() { _ = recover() }()
