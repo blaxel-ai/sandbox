@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/getsentry/sentry-go"
+	sentrygin "github.com/getsentry/sentry-go/gin"
 	"github.com/gin-gonic/gin"
 	"github.com/sirupsen/logrus"
 	swaggerFiles "github.com/swaggo/files"
@@ -30,7 +30,7 @@ func SetupRouter(disableRequestLogging bool, enableProcessingTime bool) *gin.Eng
 
 	// Add recovery middleware
 	r.Use(gin.Recovery())
-	r.Use(sentryRecoveryMiddleware())
+	r.Use(sentrygin.New(sentrygin.Options{Repanic: true}))
 
 	// Add middleware for CORS
 	r.Use(corsMiddleware())
@@ -223,23 +223,7 @@ func SetupRouter(disableRequestLogging bool, enableProcessingTime bool) *gin.Eng
 	return r
 }
 
-// sentryRecoveryMiddleware captures panics to Sentry non-blocking, then
-// re-panics so gin.Recovery() still handles the HTTP 500 response.
-func sentryRecoveryMiddleware() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		defer func() {
-			if r := recover(); r != nil {
-				go func() {
-					defer func() { _ = recover() }()
-					sentry.CurrentHub().Recover(r)
-					sentry.Flush(2 * time.Second)
-				}()
-				panic(r) // re-panic so gin.Recovery() sends the 500
-			}
-		}()
-		c.Next()
-	}
-}
+
 
 // corsMiddleware adds CORS headers to all responses
 func corsMiddleware() gin.HandlerFunc {

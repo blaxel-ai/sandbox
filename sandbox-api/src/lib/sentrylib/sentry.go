@@ -15,6 +15,14 @@ import (
 // It can be overridden at runtime by setting the SENTRY_DSN environment variable.
 var DSN = ""
 
+// Environment is injected at build time via:
+//
+//	-ldflags "-X github.com/blaxel-ai/sandbox-api/src/lib/sentrylib.Environment=<value>"
+//
+// Set to "prod" for main branch builds, "dev" for develop branch builds.
+// Falls back to BL_ENV at runtime if empty.
+var Environment = ""
+
 // Init initialises Sentry according to environment configuration.
 //
 // Control flags:
@@ -44,12 +52,15 @@ func Init(disabled bool) func() {
 		return func() {}
 	}
 
-	blEnv := os.Getenv("BL_ENV")
-	isBlaxelCloud := blEnv == "prod" || blEnv == "dev"
+	env := Environment
+	if env == "" {
+		env = os.Getenv("BL_ENV")
+	}
+	isBlaxelCloud := env == "prod" || env == "dev"
 
 	err := sentry.Init(sentry.ClientOptions{
 		Dsn:              dsn,
-		Environment:      blEnv,
+		Environment:      env,
 		SendDefaultPII:   isBlaxelCloud,
 		AttachStacktrace: true,
 		BeforeSend: func(event *sentry.Event, hint *sentry.EventHint) *sentry.Event {
