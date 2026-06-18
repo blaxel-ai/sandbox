@@ -1,7 +1,6 @@
 package sentrylib
 
 import (
-	"context"
 	"os"
 	"time"
 
@@ -62,6 +61,11 @@ func Init(disabled bool) func() {
 	}
 	isBlaxelCloud := env == "prod" || env == "dev"
 
+	traceRate := 0.01
+	if env == "dev" {
+		traceRate = 1.0
+	}
+
 	err := sentry.Init(sentry.ClientOptions{
 		Dsn:              dsn,
 		Environment:      env,
@@ -69,7 +73,7 @@ func Init(disabled bool) func() {
 		SendDefaultPII:   isBlaxelCloud,
 		AttachStacktrace: true,
 		EnableTracing:    true,
-		TracesSampleRate: 0.01,
+		TracesSampleRate: traceRate,
 		BeforeSend: func(event *sentry.Event, hint *sentry.EventHint) *sentry.Event {
 			if !isBlaxelCloud {
 				event.User = sentry.User{}
@@ -129,9 +133,3 @@ func CaptureException(err error) {
 	}()
 }
 
-// StartSpan creates a new Sentry span for performance monitoring.
-// Returns the span and a child context. Call span.Finish() when the operation completes.
-func StartSpan(ctx context.Context, operation string) (*sentry.Span, context.Context) {
-	span := sentry.StartSpan(ctx, operation)
-	return span, span.Context()
-}
