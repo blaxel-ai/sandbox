@@ -34,10 +34,7 @@ var Version = "dev"
 //	TELEMETRY_ENABLED=false → opt-out via environment variable
 //	SENTRY_DSN env var      → overrides build-time DSN; if both empty, Sentry is a no-op
 //
-// Anonymous mode:
-//
-//	When BL_ENV is not "prod" or "dev" (OSS / self-hosted), SendDefaultPII is false
-//	and user/IP data is stripped from all events.
+// PII is never collected (SendDefaultPII is always false).
 //
 // Returns a flush function to call on graceful shutdown (non-blocking, 2 s max).
 func Init(disabled bool) func() {
@@ -59,8 +56,6 @@ func Init(disabled bool) func() {
 	if env == "" {
 		env = os.Getenv("BL_ENV")
 	}
-	isBlaxelCloud := env == "prod" || env == "dev"
-
 	traceRate := 0.01
 	if env == "dev" {
 		traceRate = 1.0
@@ -70,17 +65,9 @@ func Init(disabled bool) func() {
 		Dsn:              dsn,
 		Environment:      env,
 		Release:          "sandbox-api@" + Version,
-		SendDefaultPII:   isBlaxelCloud,
 		AttachStacktrace: true,
 		EnableTracing:    true,
 		TracesSampleRate: traceRate,
-		BeforeSend: func(event *sentry.Event, hint *sentry.EventHint) *sentry.Event {
-			if !isBlaxelCloud {
-				event.User = sentry.User{}
-				event.Request = nil
-			}
-			return event
-		},
 	})
 	if err != nil {
 		logrus.WithError(err).Warn("Sentry initialisation failed – continuing without Sentry")
@@ -99,14 +86,9 @@ func Init(disabled bool) func() {
 		}
 	})
 
-	mode := "anonymous (no PII collected)"
-	if isBlaxelCloud {
-		mode = "identified"
-	}
-
 	logrus.Infof("")
 	logrus.Infof("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-	logrus.Infof("  Telemetry is ENABLED (mode: %s)", mode)
+	logrus.Infof("  Telemetry is ENABLED (anonymous — no PII collected)")
 	logrus.Infof("  This helps the Blaxel team detect and fix crashes faster.")
 	logrus.Infof("  No personal data, file contents, or process output is ever sent.")
 	logrus.Infof("")
