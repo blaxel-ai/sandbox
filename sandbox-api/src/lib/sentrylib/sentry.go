@@ -1,10 +1,12 @@
 package sentrylib
 
 import (
+	"context"
 	"os"
 	"time"
 
 	"github.com/getsentry/sentry-go"
+	"github.com/getsentry/sentry-go/attribute"
 	"github.com/sirupsen/logrus"
 )
 
@@ -61,13 +63,23 @@ func Init(disabled bool) func() {
 		traceRate = 1.0
 	}
 
+	// stripRequest removes all request context (URL, headers, body) and user
+	// geo data from events to ensure no process logs or customer data leaks.
+	stripRequest := func(event *sentry.Event, _ *sentry.EventHint) *sentry.Event {
+		event.Request = nil
+		event.User = sentry.User{}
+		return event
+	}
+
 	err := sentry.Init(sentry.ClientOptions{
-		Dsn:              dsn,
-		Environment:      env,
-		Release:          "sandbox-api@" + Version,
-		AttachStacktrace: true,
-		EnableTracing:    true,
-		TracesSampleRate: traceRate,
+		Dsn:                    dsn,
+		Environment:            env,
+		Release:                "sandbox-api@" + Version,
+		AttachStacktrace:       true,
+		EnableTracing:          true,
+		TracesSampleRate:       traceRate,
+		BeforeSend:             stripRequest,
+		BeforeSendTransaction:  stripRequest,
 	})
 	if err != nil {
 		logrus.WithError(err).Warn("Sentry initialisation failed – continuing without Sentry")
@@ -113,5 +125,53 @@ func CaptureException(err error) {
 		defer func() { _ = recover() }()
 		sentry.CaptureException(err)
 	}()
+}
+
+// --- Metrics ---
+
+var meter sentry.Meter
+
+// InitMeter creates the global Sentry meter. Call after Init().
+func InitMeter(ctx context.Context) {
+	meter = sentry.NewMeter(ctx)
+}
+
+// CountMetric increments a counter metric.
+func CountMetric(name string, value int64, attrs ...attribute.Builder) {
+	if meter == nil {
+		return
+	}
+	defer func() { _ = recover() }()
+	opts := make([]sentry.MeterOption, 0, len(attrs))
+	if len(attrs) > 0 {
+		opts = append(opts, sentry.WithAttributes(attrs...))
+	}
+	meter.Count(name, value, opts...)
+}
+
+// GaugeMetric records a gauge metric.
+func GaugeMetric(name string, value float64, attrs ...attribute.Builder) {
+	if meter == nil {
+		return
+	}
+	defer func() { _ = recover() }()
+	opts := make([]sentry.MeterOption, 0, len(attrs))
+	if len(attrs) > 0 {
+		opts = append(opts, sentry.WithAttributes(attrs...))
+	}
+	meter.Gauge(name, value, opts...)
+}
+
+// DistributionMetric records a distribution metric.
+func DistributionMetric(name string, value float64, unit string, attrs ...attribute.Builder) {
+	if meter == nil {
+		return
+	}
+	defer func() { _ = recover() }()
+	opts := []sentry.MeterOption{sentry.WithUnit(unit)}
+	if len(attrs) > 0 {
+		opts = append(opts, sentry.WithAttributes(attrs...))
+	}
+	meter.Distribution(name, value, opts...)
 }
 
