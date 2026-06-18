@@ -27,9 +27,9 @@ var Environment = ""
 //
 // Control flags:
 //
-//	disabled parameter   → opt-out via --disable-telemetry CLI flag
-//	SENTRY_ENABLED=false → opt-out via environment variable
-//	SENTRY_DSN env var   → overrides build-time DSN; if both empty, Sentry is a no-op
+//	disabled parameter      → opt-out via --disable-telemetry CLI flag
+//	TELEMETRY_ENABLED=false → opt-out via environment variable
+//	SENTRY_DSN env var      → overrides build-time DSN; if both empty, Sentry is a no-op
 //
 // Anonymous mode:
 //
@@ -38,7 +38,7 @@ var Environment = ""
 //
 // Returns a flush function to call on graceful shutdown (non-blocking, 2 s max).
 func Init(disabled bool) func() {
-	if disabled || os.Getenv("SENTRY_ENABLED") == "false" {
+	if disabled || os.Getenv("TELEMETRY_ENABLED") == "false" {
 		logrus.Info("Telemetry is disabled.")
 		return func() {}
 	}
@@ -89,7 +89,7 @@ func Init(disabled bool) func() {
 	logrus.Infof("")
 	logrus.Infof("  To opt out, use any of the following:")
 	logrus.Infof("    • Run with --disable-telemetry flag")
-	logrus.Infof("    • Set SENTRY_ENABLED=false in your environment")
+	logrus.Infof("    • Set TELEMETRY_ENABLED=false in your environment")
 	logrus.Infof("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 	logrus.Infof("")
 
