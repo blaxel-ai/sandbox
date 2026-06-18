@@ -1,6 +1,7 @@
 package sentrylib
 
 import (
+	"context"
 	"os"
 	"time"
 
@@ -22,6 +23,9 @@ var DSN = ""
 // Set to "prod" for main branch builds, "dev" for develop branch builds.
 // Falls back to BL_ENV at runtime if empty.
 var Environment = ""
+
+// Version is set by the caller after Init to attach release info to events.
+var Version = "dev"
 
 // Init initialises Sentry according to environment configuration.
 //
@@ -61,8 +65,11 @@ func Init(disabled bool) func() {
 	err := sentry.Init(sentry.ClientOptions{
 		Dsn:              dsn,
 		Environment:      env,
+		Release:          "sandbox-api@" + Version,
 		SendDefaultPII:   isBlaxelCloud,
 		AttachStacktrace: true,
+		EnableTracing:    true,
+		TracesSampleRate: 0.01,
 		BeforeSend: func(event *sentry.Event, hint *sentry.EventHint) *sentry.Event {
 			if !isBlaxelCloud {
 				event.User = sentry.User{}
@@ -75,6 +82,18 @@ func Init(disabled bool) func() {
 		logrus.WithError(err).Warn("Sentry initialisation failed – continuing without Sentry")
 		return func() {}
 	}
+
+	// Set global tags for all events
+	sentry.ConfigureScope(func(scope *sentry.Scope) {
+		scope.SetTag("sandbox.env", env)
+		scope.SetTag("sandbox.version", Version)
+		if name := os.Getenv("BL_NAME"); name != "" {
+			scope.SetTag("sandbox.name", name)
+		}
+		if workspace := os.Getenv("BL_WORKSPACE"); workspace != "" {
+			scope.SetTag("sandbox.workspace", workspace)
+		}
+	})
 
 	mode := "anonymous (no PII collected)"
 	if isBlaxelCloud {
@@ -108,4 +127,11 @@ func CaptureException(err error) {
 		defer func() { _ = recover() }()
 		sentry.CaptureException(err)
 	}()
+}
+
+// StartSpan creates a new Sentry span for performance monitoring.
+// Returns the span and a child context. Call span.Finish() when the operation completes.
+func StartSpan(ctx context.Context, operation string) (*sentry.Span, context.Context) {
+	span := sentry.StartSpan(ctx, operation)
+	return span, span.Context()
 }
