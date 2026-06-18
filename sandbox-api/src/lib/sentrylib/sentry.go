@@ -24,7 +24,7 @@ var DSN = ""
 // Falls back to BL_ENV at runtime if empty.
 var Environment = ""
 
-// Version is set by the caller after Init to attach release info to events.
+// Version is set by the caller before Init to attach release info to events.
 var Version = "dev"
 
 // Init initialises Sentry according to environment configuration.
