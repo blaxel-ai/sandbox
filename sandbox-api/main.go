@@ -15,6 +15,9 @@ import (
 
 	"github.com/blaxel-ai/sandbox-api/docs" // swagger generated docs
 	"github.com/blaxel-ai/sandbox-api/src/api"
+	"github.com/getsentry/sentry-go"
+
+	"github.com/blaxel-ai/sandbox-api/src/handler"
 	"github.com/blaxel-ai/sandbox-api/src/handler/process"
 	"github.com/blaxel-ai/sandbox-api/src/lib/blaxel"
 	"github.com/blaxel-ai/sandbox-api/src/lib/networking"
@@ -50,6 +53,7 @@ func main() {
 	disableTelemetry := flag.Bool("disable-telemetry", false, "Disable anonymous error reporting")
 	flag.Parse()
 
+	sentrylib.Version = handler.Version
 	sentryFlush := sentrylib.Init(*disableTelemetry)
 	defer sentryFlush()
 
@@ -63,35 +67,45 @@ func main() {
 
 	// Parallel: all four tasks are independent of each other
 	pm := process.GetProcessManager()
+	txn := sentry.StartSpan(ctx, "startup")
 	var wg sync.WaitGroup
 	wg.Add(4)
 
 	go func() {
 		defer wg.Done()
+		span := txn.StartChild("startup.merge_ca_bundle")
+		defer span.Finish()
 		if err := proxy.MergeCABundle(); err != nil {
 			logrus.WithError(err).Error("Failed to merge CA bundle – TLS connections through the proxy may fail")
 		}
 	}()
 	go func() {
 		defer wg.Done()
+		span := txn.StartChild("startup.wireguard")
+		defer span.Finish()
 		if err := networking.StartWireGuardFromEnv(); err != nil {
 			logrus.WithError(err).Warn("WireGuard initialization failed - the sandbox will NOT have outbound internet connectivity (no egress). Inbound connections to the sandbox will still work. You can check the tunnel status via the /network/tunnel endpoints.")
 		}
 	}()
 	go func() {
 		defer wg.Done()
+		span := txn.StartChild("startup.scale_reset")
+		defer span.Finish()
 		if err := blaxel.ScaleReset(); err != nil {
 			logrus.Warnf("Failed to reset scale-to-zero counter on startup: %v", err)
 		}
 	}()
 	go func() {
 		defer wg.Done()
+		span := txn.StartChild("startup.load_state")
+		defer span.Finish()
 		if err := pm.LoadState(); err != nil {
 			logrus.WithError(err).Warn("Failed to load process state from disk")
 		}
 	}()
 
 	wg.Wait()
+	txn.Finish()
 
 	// Swagger docs setup
 	blEnv := os.Getenv("BL_ENV")

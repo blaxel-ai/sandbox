@@ -194,6 +194,13 @@ func SetupRouter(disableRequestLogging bool, enableProcessingTime bool) *gin.Eng
 	r.GET("/health", systemHandler.HandleHealth)
 	r.HEAD("/health", head)
 
+	// Debug routes (dev environment only)
+	if os.Getenv("BL_ENV") == "dev" {
+		r.GET("/debug/panic", func(c *gin.Context) {
+			panic("test panic for sentry verification")
+		})
+	}
+
 	// Drive routes (for mounting/unmounting agent drives)
 	// GET /drives/mount list, POST /drives/mount attach, DELETE /drives/mount/*mountPath detach
 	r.GET("/drives/mount", driveHandler.ListMounts)
