@@ -60,6 +60,9 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	sentrylib.InitMeter(ctx)
+	startupStart := time.Now()
+
 	// Resolve {{file(...)}} directives in HTTP_PROXY / HTTPS_PROXY and
 	// start a background goroutine that re-reads the token file periodically
 	// so rotated credentials are picked up before they expire.
@@ -106,6 +109,7 @@ func main() {
 
 	wg.Wait()
 	txn.Finish()
+	sentrylib.DistributionMetric("sandbox.startup_duration", float64(time.Since(startupStart).Milliseconds()), sentry.UnitMillisecond)
 
 	// Swagger docs setup
 	blEnv := os.Getenv("BL_ENV")
