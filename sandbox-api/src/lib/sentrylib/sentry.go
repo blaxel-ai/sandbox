@@ -63,13 +63,23 @@ func Init(disabled bool) func() {
 		traceRate = 1.0
 	}
 
+	// stripRequest removes all request context (URL, headers, body) and user
+	// geo data from events to ensure no process logs or customer data leaks.
+	stripRequest := func(event *sentry.Event, _ *sentry.EventHint) *sentry.Event {
+		event.Request = nil
+		event.User = sentry.User{}
+		return event
+	}
+
 	err := sentry.Init(sentry.ClientOptions{
-		Dsn:              dsn,
-		Environment:      env,
-		Release:          "sandbox-api@" + Version,
-		AttachStacktrace: true,
-		EnableTracing:    true,
-		TracesSampleRate: traceRate,
+		Dsn:                    dsn,
+		Environment:            env,
+		Release:                "sandbox-api@" + Version,
+		AttachStacktrace:       true,
+		EnableTracing:          true,
+		TracesSampleRate:       traceRate,
+		BeforeSend:             stripRequest,
+		BeforeSendTransaction:  stripRequest,
 	})
 	if err != nil {
 		logrus.WithError(err).Warn("Sentry initialisation failed – continuing without Sentry")
