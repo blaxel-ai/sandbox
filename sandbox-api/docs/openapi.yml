@@ -1402,7 +1402,7 @@ paths:
 
         All running processes will be preserved across the upgrade.
 
-        Available versions: "develop" (default), "main", "latest", or specific tag like "v1.0.0"
+        Available versions: "latest" (default, most recent release), "develop", "main", or specific tag like "v1.0.0"
 
         You can also specify a custom baseUrl for forks (defaults to https://github.com/blaxel-ai/sandbox/releases)
       requestBody:
@@ -2106,8 +2106,8 @@ components:
           example: https://github.com/blaxel-ai/sandbox/releases
           type: string
         version:
-          description: 'Version to upgrade to: "develop", "main", "latest", or specific tag like "v1.0.0"'
-          example: develop
+          description: 'Version to upgrade to: "latest" (default), "develop", "main", or specific tag like "v1.0.0"'
+          example: latest
           type: string
       type: object
     UpgradeStatus:

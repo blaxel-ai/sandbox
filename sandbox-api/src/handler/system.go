@@ -93,16 +93,32 @@ func (h *SystemHandler) HandleHealth(c *gin.Context) {
 
 // UpgradeRequest represents the request body for the upgrade endpoint
 type UpgradeRequest struct {
-	Version string `json:"version" example:"develop"`                                        // Version to upgrade to: "develop", "main", "latest", or specific tag like "v1.0.0"
+	Version string `json:"version" example:"latest"`                                         // Version to upgrade to: "latest" (default), "develop", "main", or specific tag like "v1.0.0"
 	BaseURL string `json:"baseUrl" example:"https://github.com/blaxel-ai/sandbox/releases"` // Base URL for releases (useful for forks)
 } // @name UpgradeRequest
+
+// defaultUpgradeVersion is the version used when an upgrade request omits one.
+// "latest" resolves to the most recent published release, the safe production
+// default. It replaces the former "develop" default, which tracked the dev
+// branch HEAD and could be older than the running binary, silently downgrading
+// the sandbox (ENG-2974).
+const defaultUpgradeVersion = "latest"
+
+// resolveUpgradeVersion returns the requested version, falling back to the
+// default when none is provided.
+func resolveUpgradeVersion(requested string) string {
+	if requested == "" {
+		return defaultUpgradeVersion
+	}
+	return requested
+}
 
 // HandleUpgrade handles POST requests to /upgrade
 // @Summary Upgrade the sandbox-api
 // @Description Triggers an upgrade of the sandbox-api process. Returns 200 immediately before upgrading.
 // @Description The upgrade will: download the specified binary from GitHub releases, validate it, and restart.
 // @Description All running processes will be preserved across the upgrade.
-// @Description Available versions: "develop" (default), "main", "latest", or specific tag like "v1.0.0"
+// @Description Available versions: "latest" (default, most recent release), "develop", "main", or specific tag like "v1.0.0"
 // @Description You can also specify a custom baseUrl for forks (defaults to https://github.com/blaxel-ai/sandbox/releases)
 // @Tags system
 // @Accept json
@@ -116,11 +132,8 @@ func (h *SystemHandler) HandleUpgrade(c *gin.Context) {
 	var req UpgradeRequest
 	c.ShouldBindJSON(&req) // Ignore errors - empty body is valid
 
-	// Default to "develop" if no version specified
-	version := req.Version
-	if version == "" {
-		version = "develop"
-	}
+	// Default to "latest" if no version specified (see resolveUpgradeVersion).
+	version := resolveUpgradeVersion(req.Version)
 
 	// Default base URL
 	baseURL := req.BaseURL

@@ -2,6 +2,8 @@ FROM golang:1.25.0-bookworm as build
 
 ARG VERSION=dev
 ARG GIT_COMMIT=unknown
+ARG SENTRY_DSN=""
+ARG SENTRY_ENVIRONMENT=""
 
 WORKDIR /blaxel/sandbox-api
 
@@ -15,7 +17,9 @@ RUN set -xe; \
   -ldflags "-linkmode external -extldflags -static-pie \
     -X github.com/blaxel-ai/sandbox-api/src/handler.Version=${VERSION} \
     -X github.com/blaxel-ai/sandbox-api/src/handler.GitCommit=${GIT_COMMIT} \
-    -X github.com/blaxel-ai/sandbox-api/src/handler.BuildTime=${BUILD_TIME}" \
+    -X github.com/blaxel-ai/sandbox-api/src/handler.BuildTime=${BUILD_TIME} \
+    -X github.com/blaxel-ai/sandbox-api/src/lib/sentrylib.DSN=${SENTRY_DSN} \
+    -X github.com/blaxel-ai/sandbox-api/src/lib/sentrylib.Environment=${SENTRY_ENVIRONMENT}" \
   -tags netgo \
   -o sandbox-api .
 

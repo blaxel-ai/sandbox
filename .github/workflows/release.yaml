@@ -58,6 +58,8 @@ jobs:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: 0
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+          SENTRY_ENVIRONMENT: ${{ github.ref_name == 'develop' && 'dev' || 'prod' }}
         run: |
           VERSION=${{ steps.version.outputs.version }}
           GIT_COMMIT=${{ github.sha }}
@@ -67,7 +69,9 @@ jobs:
             -ldflags "-s -w \
               -X github.com/blaxel-ai/sandbox-api/src/handler.Version=${VERSION} \
               -X github.com/blaxel-ai/sandbox-api/src/handler.GitCommit=${GIT_COMMIT} \
-              -X github.com/blaxel-ai/sandbox-api/src/handler.BuildTime=${BUILD_TIME}" \
+              -X github.com/blaxel-ai/sandbox-api/src/handler.BuildTime=${BUILD_TIME} \
+              -X github.com/blaxel-ai/sandbox-api/src/lib/sentrylib.DSN=${SENTRY_DSN} \
+              -X github.com/blaxel-ai/sandbox-api/src/lib/sentrylib.Environment=${SENTRY_ENVIRONMENT}" \
             -o sandbox-api-${{ matrix.suffix }} .
 
       - name: Upload artifact

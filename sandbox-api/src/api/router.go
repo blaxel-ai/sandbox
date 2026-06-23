@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	sentrygin "github.com/getsentry/sentry-go/gin"
 	"github.com/gin-gonic/gin"
 	"github.com/sirupsen/logrus"
 	swaggerFiles "github.com/swaggo/files"
@@ -29,6 +30,7 @@ func SetupRouter(disableRequestLogging bool, enableProcessingTime bool) *gin.Eng
 
 	// Add recovery middleware
 	r.Use(gin.Recovery())
+	r.Use(sentrygin.New(sentrygin.Options{Repanic: true}))
 
 	// Add middleware for CORS
 	r.Use(corsMiddleware())
@@ -192,6 +194,13 @@ func SetupRouter(disableRequestLogging bool, enableProcessingTime bool) *gin.Eng
 	r.GET("/health", systemHandler.HandleHealth)
 	r.HEAD("/health", head)
 
+	// Debug routes (dev environment only)
+	if os.Getenv("BL_ENV") == "dev" {
+		r.GET("/debug/panic", func(c *gin.Context) {
+			panic("test panic for sentry verification")
+		})
+	}
+
 	// Drive routes (for mounting/unmounting agent drives)
 	// GET /drives/mount list, POST /drives/mount attach, DELETE /drives/mount/*mountPath detach
 	r.GET("/drives/mount", driveHandler.ListMounts)
@@ -220,6 +229,8 @@ func SetupRouter(disableRequestLogging bool, enableProcessingTime bool) *gin.Eng
 
 	return r
 }
+
+
 
 // corsMiddleware adds CORS headers to all responses
 func corsMiddleware() gin.HandlerFunc {
