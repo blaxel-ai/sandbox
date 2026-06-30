@@ -130,6 +130,21 @@ func MountDrive(driveName, mountPath, drivePath string, readOnly bool, uidMap, g
 		args = append(args, "-writebackCache=true")
 	}
 
+	// Open read-only files with FUSE direct IO to bypass the kernel page cache. Keeps
+	// memory flat during bulk reads of large files (no page cache growth), at the cost of
+	// per-file caching and mmap on read-only handles. Forces writebackCache off (the two
+	// are mutually exclusive). Linux only.
+	if os.Getenv("BLFS_READ_DIRECT_IO") == "true" {
+		args = append(args, "-readDirectIO=true")
+	}
+
+	// When a file's last handle is closed, drop its kernel page cache so clean read data
+	// does not accumulate across many files until OOM. Keeps writeback caching enabled.
+	// Long-open files (e.g. SQLite DB) keep their cache.
+	if os.Getenv("BLFS_EVICT_PAGE_CACHE_ON_CLOSE") == "true" {
+		args = append(args, "-evictPageCacheOnClose=true")
+	}
+
 	if readOnly {
 		args = append(args, "-readOnly=true")
 	}
