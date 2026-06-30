@@ -263,7 +263,7 @@ jobs:
         run: |
 
           # Get list of all Sandbox files
-          all_sandboxes=$(tree -J -L 1 hub | jq -c '.[0].contents | map(select(.name) | .name)')
+          all_sandboxes=$(tree -J -L 1 hub | jq -c '.[0].contents | map(select(.type == "directory") | .name)')
 
 
           if [[ "${{ inputs.sandbox }}" == "all" ]]; then
