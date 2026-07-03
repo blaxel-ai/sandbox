@@ -1,7 +1,9 @@
 {
   "name": "py-app",
   "displayName": "Python App",
-  "categories": ["backend"],
+  "categories": [
+    "backend"
+  ],
   "description": "A Python development environment with pip package manager and common development libraries.",
   "longDescription": "The Python App micro VM provides a complete development environment for Python applications. It includes Python runtime, pip package manager, and common development libraries. Ideal for developing web applications, data science projects, automation scripts, and machine learning applications with Python's rich ecosystem of packages and tools. Built on Debian (slim) with Python 3.12, and ships with git and pip pre-installed.",
   "url": "https://github.com/python",
@@ -20,5 +22,9 @@
     }
   ],
   "enterprise": false,
-  "coming_soon": false
+  "coming_soon": false,
+  "autoDownload": {
+    "regions": [],
+    "hostClass": ""
+  }
 }

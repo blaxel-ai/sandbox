@@ -1,7 +1,9 @@
 {
   "name": "xfce-vnc",
   "displayName": "XFCE VNC Desktop",
-  "categories": ["computer-use"],
+  "categories": [
+    "computer-use"
+  ],
   "description": "A full XFCE desktop environment accessible via VNC and noVNC for remote desktop workflows.",
   "longDescription": "The XFCE VNC Desktop sandbox provides a complete XFCE desktop environment accessible via VNC and noVNC (HTML5 browser client). It offers a lightweight, full-featured Linux desktop for running GUI applications, browsers, and desktop tools remotely. Managed by supervisord for reliable multi-service orchestration. Built on Ubuntu with the XFCE desktop environment, TigerVNC, noVNC, and Python pre-installed.",
   "url": "https://xfce.org",
@@ -23,5 +25,9 @@
     "slim": false
   },
   "enterprise": false,
-  "coming_soon": false
+  "coming_soon": false,
+  "autoDownload": {
+    "regions": [],
+    "hostClass": ""
+  }
 }

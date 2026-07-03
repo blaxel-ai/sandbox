@@ -222,6 +222,15 @@ fi
 # Extract the registry URL from SRC_REGISTRY
 REGISTRY_URL=$(echo "$SRC_REGISTRY" | cut -d'/' -f1)
 
+# Read autoDownload config from template.json if present
+AUTO_DOWNLOAD_JSON="null"
+if [ -f "$TEMPLATE_FILE" ]; then
+    AUTO_DOWNLOAD_JSON=$(jq '.autoDownload // empty' "$TEMPLATE_FILE" 2>/dev/null || echo "null")
+    if [ -z "$AUTO_DOWNLOAD_JSON" ]; then
+        AUTO_DOWNLOAD_JSON="null"
+    fi
+fi
+
 # Prepare the JSON payload for the API
 API_PAYLOAD=$(jq -n \
   --arg registry "$REGISTRY_URL" \
@@ -233,6 +242,7 @@ API_PAYLOAD=$(jq -n \
   --arg original "sbx/$SANDBOX_NAME:$IMAGE_TAG" \
   --arg region "$BATCH_REGION" \
   --arg bucket "$IMAGE_BUCKET_MK3" \
+  --argjson autoDownload "$AUTO_DOWNLOAD_JSON" \
   '{
     registry: $registry,
     workspace: $workspace,
@@ -243,7 +253,7 @@ API_PAYLOAD=$(jq -n \
     region: $region,
     bucket: $bucket,
     mk3: $mk3
-  }')
+  } + (if $autoDownload != null then {autoDownload: $autoDownload} else {} end)')
 
 echo "Calling Blaxel API to register image..."
 echo "URL: $BL_API_URL/admin/images"

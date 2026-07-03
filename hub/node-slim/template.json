@@ -1,7 +1,9 @@
 {
   "name": "node-slim",
   "displayName": "Node Slim",
-  "categories": ["backend"],
+  "categories": [
+    "backend"
+  ],
   "description": "A development environment for Node.js applications built on Debian slim (glibc).",
   "longDescription": "The Node Slim micro VM provides a complete Node.js development environment built on Debian slim (glibc) instead of Alpine (musl). This matters for heavy native npm modules such as duckdb, canvas, and sharp: on Alpine/musl they fall back to compiling from source because no musl prebuilt binaries are published, which is slow and frequently fails on constrained sandboxes. On Debian glibc these modules install official prebuilt binaries instead, so installs are fast and reliable. It ships Node.js 24, npm, git, and bash pre-installed.",
   "url": "https://nodejs.org/en",
@@ -16,5 +18,9 @@
   ],
   "enterprise": false,
   "coming_soon": false,
-  "hidden": true
+  "hidden": true,
+  "autoDownload": {
+    "regions": [],
+    "hostClass": ""
+  }
 }

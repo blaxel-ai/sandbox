@@ -1,7 +1,9 @@
 {
   "name": "jupyter-server",
   "displayName": "Jupyter Server",
-  "categories": ["data-science"],
+  "categories": [
+    "data-science"
+  ],
   "description": "Interactive Python development environment with Jupyter Server for notebook execution",
   "longDescription": "Jupyter Notebook provides an interactive computing environment where you can create and share documents containing live code, equations, visualizations, and narrative text. This sandbox includes Jupyter Server, enabling remote execution and RESTful access to Jupyter server. Built on Debian (slim) with Python 3.12, and ships with git, curl, uv, pip, Jupyter Server, and a comprehensive data science stack (numpy, pandas, matplotlib, scikit-learn, scipy, seaborn, plotly, OpenCV, and more) pre-installed.",
   "url": "https://jupyter.org",
@@ -19,5 +21,9 @@
       "protocol": "HTTP"
     }
   ],
-  "hidden": true
+  "hidden": true,
+  "autoDownload": {
+    "regions": [],
+    "hostClass": ""
+  }
 }
