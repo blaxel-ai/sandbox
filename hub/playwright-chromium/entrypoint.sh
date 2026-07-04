@@ -3,7 +3,7 @@
 /usr/local/bin/sandbox-api &
 SANDBOX_API_PID=$!
 
-/usr/local/bin/playwright run-server --port 8081 --host 0.0.0.0 &
+/usr/local/bin/playwright run-server --port 8081 --host :: &
 PLAYWRIGHT_PID=$!
 
 trap 'kill $SANDBOX_API_PID $PLAYWRIGHT_PID 2>/dev/null' EXIT
