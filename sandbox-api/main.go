@@ -68,6 +68,10 @@ func main() {
 	// so rotated credentials are picked up before they expire.
 	proxy.StartProxyTokenRefresh(ctx)
 
+	// Auto-forward IPv6 traffic to IPv4-only listeners so agent-written
+	// servers bound to 0.0.0.0/127.0.0.1 stay reachable from the gateway.
+	networking.StartDualStackForwarder(ctx)
+
 	// Parallel: all four tasks are independent of each other
 	pm := process.GetProcessManager()
 	txn := sentry.StartSpan(ctx, "startup")
