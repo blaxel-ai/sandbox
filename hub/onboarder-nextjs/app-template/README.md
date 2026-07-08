@@ -1,6 +1,6 @@
 # Blaxel Sandbox Lab
 
-This app is the default `blaxel/nextjs:latest` sandbox starter. It is intentionally Blaxel-native: it gives agents a safe runtime with files, processes, a live system fingerprint, and docs links into the broader Blaxel platform.
+This app is the `blaxel/onboarder-nextjs:latest` sandbox image, a platform-managed template used by the onboarder's first-sandbox flow (see `HELLO_WORLD_IMAGE` in controlplane). It is not the general-purpose `blaxel/nextjs` template — it's hidden from the template picker. It is intentionally Blaxel-native: it gives agents a safe runtime with files, processes, a live system fingerprint, and docs links into the broader Blaxel platform.
 
 Run locally inside the image with:
 
