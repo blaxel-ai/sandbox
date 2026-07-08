@@ -4,7 +4,7 @@ go 1.25.0
 
 require (
 	github.com/creack/pty v1.1.24
-	github.com/fsnotify/fsnotify v1.9.0
+	github.com/fsnotify/fsnotify v1.10.1
 	github.com/getsentry/sentry-go v0.47.0
 	github.com/getsentry/sentry-go/gin v0.47.0
 	github.com/gin-gonic/gin v1.10.0
@@ -14,9 +14,9 @@ require (
 	github.com/json-iterator/go v1.1.12
 	github.com/junegunn/fzf v0.67.0
 	github.com/modelcontextprotocol/go-sdk v1.6.1
-	github.com/sirupsen/logrus v1.9.3
+	github.com/sirupsen/logrus v1.9.4
 	github.com/swaggo/files v1.0.1
-	github.com/swaggo/gin-swagger v1.6.0
+	github.com/swaggo/gin-swagger v1.6.1
 	github.com/swaggo/swag v1.16.4
 	github.com/vishvananda/netlink v1.3.1
 	golang.org/x/crypto v0.52.0
