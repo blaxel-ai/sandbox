@@ -34,11 +34,23 @@ export async function GET() {
   // panel never shows a number that undercuts its own "this is real" point.
   const rssBytes = memory.rss || memory.heapUsed + memory.external;
 
+  // Real Blaxel sandboxes set BL_NAME (the sandbox's actual name) but do not
+  // give the container a meaningful kernel hostname — `hostname`/os.hostname()
+  // genuinely returns the literal string "(none)" there. Prefer BL_NAME (and
+  // its BLAXEL_* alias) so the panel shows a real identifier instead of that
+  // placeholder; only fall back to os.hostname() outside Blaxel (e.g. local
+  // dev/Docker), and never surface the literal "(none)" placeholder itself.
+  const osHostname = os.hostname();
+  const sandboxName =
+    firstEnv('BL_NAME', 'BLAXEL_NAME', 'BL_SANDBOX_NAME', 'BLAXEL_SANDBOX_NAME') ||
+    (osHostname !== '(none)' ? osHostname : '');
+  const hostname = sandboxName || (osHostname !== '(none)' ? osHostname : 'unavailable');
+
   return NextResponse.json({
     bootTimestamp,
     cwd: process.cwd(),
     freeMemoryMb: bytesToMb(os.freemem()),
-    hostname: os.hostname(),
+    hostname,
     loadAverage: os.loadavg().map((value) => Math.round(value * 100) / 100),
     node: process.version,
     pid: process.pid,
@@ -47,7 +59,7 @@ export async function GET() {
     region: firstEnv('BL_REGION', 'BLAXEL_REGION', 'REGION') || 'detected at runtime',
     requestCount,
     rssMemoryMb: bytesToMb(rssBytes),
-    sandboxName: firstEnv('BL_SANDBOX_NAME', 'BLAXEL_SANDBOX_NAME', 'HOSTNAME') || os.hostname(),
+    sandboxName: sandboxName || 'current sandbox',
     timestamp: new Date().toISOString(),
     totalMemoryMb: bytesToMb(os.totalmem()),
     uptimeSeconds: Math.round(process.uptime()),
