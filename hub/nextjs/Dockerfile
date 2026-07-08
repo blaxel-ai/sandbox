@@ -14,11 +14,14 @@ WORKDIR /blaxel
 
 COPY --from=sandbox-api /sandbox-api /usr/local/bin/sandbox-api
 
-# Start with a fresh Next.js project
+# Ship a Blaxel-native starter instead of generating the generic Next.js/Vercel template.
 RUN mkdir -p /blaxel/app
 
-RUN npx create-next-app@latest /blaxel/app --use-npm --typescript --eslint --tailwind --src-dir --app --import-alias "@/*" --no-git --yes --no-turbopack
+COPY /hub/nextjs/app-template/package.json /blaxel/app/package.json
+COPY /hub/nextjs/app-template/package-lock.json /blaxel/app/package-lock.json
+RUN cd /blaxel/app && npm ci
 
+COPY /hub/nextjs/app-template/ /blaxel/app/
 COPY /hub/nextjs/next.config.ts /blaxel/app/next.config.ts
 
 COPY /hub/nextjs/entrypoint.sh /entrypoint.sh
