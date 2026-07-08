@@ -66,8 +66,13 @@ export function SandboxFingerprint() {
     };
   }, [isLive]);
 
+  // Show RSS against a fixed, sensible ceiling for this kind of small dev
+  // server rather than against total system/container memory — comparing to
+  // total memory produces a near-invisible bar on a large host and a
+  // misleadingly maxed-out bar on a small one.
+  const memoryBarCeilingMb = 512;
   const memoryUsedPct = info
-    ? Math.min(100, Math.round((info.rssMemoryMb / info.totalMemoryMb) * 100 * 8))
+    ? Math.min(100, Math.round((info.rssMemoryMb / memoryBarCeilingMb) * 100))
     : 0;
 
   return (

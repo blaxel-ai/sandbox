@@ -29,7 +29,10 @@ export type TerminalBrowserCommand =
   (typeof TERMINAL_BROWSER_COMMANDS)[number]['command'];
 
 export function findSandboxCommandByCommand(command: string) {
-  return SANDBOX_COMMANDS.find((candidate) => candidate.command === command);
+  const normalized = command.toLowerCase();
+  return SANDBOX_COMMANDS.find(
+    (candidate) => candidate.command.toLowerCase() === normalized,
+  );
 }
 
 export function findTerminalBrowserCommand(command: string) {
