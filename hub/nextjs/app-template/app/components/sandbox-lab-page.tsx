@@ -247,7 +247,12 @@ export function SandboxLabPage() {
       });
 
       if (!response.ok) {
-        throw new Error(`Request failed with ${response.status}`);
+        const errorBody = (await response.json().catch(() => null)) as {
+          error?: string;
+        } | null;
+        throw new Error(
+          errorBody?.error ?? `Request failed with ${response.status}`,
+        );
       }
 
       const data = (await response.json()) as { result?: RunCommandResult };
