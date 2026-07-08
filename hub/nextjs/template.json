@@ -1,11 +1,11 @@
 {
   "name": "nextjs",
-  "displayName": "Next.js Sandbox Lab",
-  "categories": ["web", "agent"],
-  "description": "A Blaxel-native Next.js sandbox that shows live previews, filesystem writes, safe command checks, and agent handoff prompts.",
-  "icon": "https://blaxel.ai/favicon.ico",
-  "longDescription": "A polished Next.js development environment built for Blaxel sandboxes. It starts a live app on port 3000, exposes it through a secure preview URL, and includes a Sandbox Lab page that proves the runtime has real processes, filesystem access, networked preview, and agent-ready workflows. Built on Alpine Linux with Node.js 24, sandbox-api, git, curl, and npm pre-installed.",
-  "url": "https://docs.blaxel.ai/Sandboxes/Overview",
+  "displayName": "Next.js",
+  "categories": ["web"],
+  "description": "A complete development environment for React applications using Next.js framework.",
+  "icon": "https://assets.vercel.com/image/upload/v1662130559/nextjs/Icon_dark_background.png",
+  "longDescription": "Next.js is a React framework for building server-side rendered (SSR), static site generation (SSG), and hybrid client-side rendered (CSR) web applications using React. It includes a routing system, a build optimizer, and a development server. Built on Alpine Linux with Node.js 24, and ships with git, curl, and npm pre-installed.",
+  "url": "https://github.com/vercel/next.js",
   "memory": 4096,
   "ports": [
     {
