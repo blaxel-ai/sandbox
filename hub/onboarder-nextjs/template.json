@@ -3,7 +3,7 @@
   "displayName": "Onboarder Sandbox Lab",
   "categories": ["web", "agent"],
   "description": "Platform-managed Next.js sandbox used by the onboarder's first-sandbox flow. Not a general-purpose template.",
-  "icon": "https://blaxel.ai/favicon.ico",
+  "icon": "https://blaxel.ai/logo.png",
   "longDescription": "A Blaxel-native Next.js sandbox built specifically for the onboarder's first-sandbox experience. It starts a live app on port 3000 and includes a Sandbox Lab page that proves the runtime has real processes, filesystem access, networked preview, and agent-ready workflows. Built on Alpine Linux with Node.js 24, sandbox-api, git, curl, and npm pre-installed.",
   "url": "https://docs.blaxel.ai/Sandboxes/Overview",
   "memory": 4096,
