@@ -61,6 +61,28 @@ services:
       - "8081:8081"
       - "3010:3010"
 
+  nextjs:
+    platform: linux/amd64
+    build:
+      context: .
+      dockerfile: hub/nextjs/Dockerfile
+    env_file:
+      - .env
+    ports:
+      - "8080:8080"
+      - "3000:3000"
+
+  onboarder-nextjs:
+    platform: linux/amd64
+    build:
+      context: .
+      dockerfile: hub/onboarder-nextjs/Dockerfile
+    env_file:
+      - .env
+    ports:
+      - "8080:8080"
+      - "3000:3000"
+
   dev-slim:
     build:
       context: .
