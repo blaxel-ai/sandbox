@@ -149,10 +149,14 @@ func GetCounter() (int, error) {
 	// "=3+"); read the leading count and ignore any trailing commands.
 	if content[0] == '=' && len(content) > 1 {
 		end := 1
+		if content[end] == '-' {
+			end++
+		}
+		digitsStart := end
 		for end < len(content) && (content[end] >= '0' && content[end] <= '9') {
 			end++
 		}
-		if end == 1 {
+		if end == digitsStart {
 			return -1, nil
 		}
 		value, err := strconv.Atoi(content[1:end])
