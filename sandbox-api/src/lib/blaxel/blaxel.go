@@ -52,8 +52,13 @@ func writeWithLock(operation string) error {
 
 	scaleFile := GetScaleFile()
 
-	// Open or create the file (same as async-sidecar)
-	file, err := os.OpenFile(scaleFile, os.O_RDWR|os.O_CREATE, 0644)
+	// Open in append mode so concurrent workers' commands accumulate instead of
+	// overwriting each other at offset 0. On Unikraft Cloud the file is a libukp
+	// pseudo-file that treats each write() as a command regardless of offset, so
+	// O_APPEND is a no-op there; on mk3.1 the file is a real file drained by the
+	// guest init, which relies on commands being appended (see
+	// executionplane initrd/scale_to_zero.c).
+	file, err := os.OpenFile(scaleFile, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0644)
 	if err != nil {
 		logrus.Debugf("[Scale] Failed to open scale control file (error: %v)", err)
 		return err
@@ -139,9 +144,18 @@ func GetCounter() (int, error) {
 		return -1, nil
 	}
 
-	// Parse the value (format is "=X" where X is the counter)
+	// Parse the value (canonical read format is "=X"). On mk3.1 the file may also
+	// hold not-yet-consumed commands appended after the canonical value (e.g.
+	// "=3+"); read the leading count and ignore any trailing commands.
 	if content[0] == '=' && len(content) > 1 {
-		value, err := strconv.Atoi(content[1:])
+		end := 1
+		for end < len(content) && (content[end] >= '0' && content[end] <= '9') {
+			end++
+		}
+		if end == 1 {
+			return -1, nil
+		}
+		value, err := strconv.Atoi(content[1:end])
 		if err != nil {
 			return -1, err
 		}
