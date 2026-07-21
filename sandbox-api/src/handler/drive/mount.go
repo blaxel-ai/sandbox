@@ -130,6 +130,12 @@ func MountDrive(driveName, mountPath, drivePath string, readOnly bool, uidMap, g
 		args = append(args, "-writebackCache=true")
 	}
 
+	if os.Getenv("BLFS_CROSS_MOUNT_CACHE_COHERENCE") == "true" {
+		args = append(args, "-crossMountCacheCoherence=true")
+	} else {
+		args = append(args, "-crossMountCacheCoherence=false")
+	}
+
 	// Open read-only files with FUSE direct IO to bypass the kernel page cache. Keeps
 	// memory flat during bulk reads of large files (no page cache growth), at the cost of
 	// per-file caching and mmap on read-only handles. Forces writebackCache off (the two
