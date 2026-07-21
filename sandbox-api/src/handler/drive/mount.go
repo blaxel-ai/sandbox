@@ -2,6 +2,7 @@ package drive
 
 import (
 	"fmt"
+	"net/netip"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -113,7 +114,7 @@ func MountDrive(driveName, mountPath, drivePath string, readOnly bool, uidMap, g
 	// Build blfs mount command
 	args := []string{
 		"mount",
-		fmt.Sprintf("-filer=%s:49200.49201", filerAddress),
+		fmt.Sprintf("-filer=%s", formatFilerServerAddress(filerAddress)),
 		"-asyncDio=true",
 		"-cacheSymlink=true",
 		fmt.Sprintf("-auth.tokenFile=%s", getAuthTokenPath()),
@@ -252,26 +253,33 @@ func getFilerAddress() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("failed to read /etc/resolv.conf: %w", err)
 	}
+	return parseFilerAddress(resolvConf)
+}
 
+func parseFilerAddress(resolvConf []byte) (string, error) {
 	lines := strings.Split(string(resolvConf), "\n")
 	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		// Look for nameserver lines
-		if strings.HasPrefix(line, "nameserver") {
-			fields := strings.Fields(line)
-			if len(fields) >= 2 {
-				filerIP := fields[1]
-				// Validate it's an IPv4 address
-				parts := strings.Split(filerIP, ".")
-				if len(parts) == 4 {
-					logrus.WithField("filer_ip", filerIP).Debug("Found filer IP from resolv.conf")
-					return filerIP, nil
-				}
-			}
+		fields := strings.Fields(line)
+		if len(fields) < 2 || fields[0] != "nameserver" {
+			continue
+		}
+
+		address, err := netip.ParseAddr(fields[1])
+		if err == nil {
+			filerAddress := address.String()
+			logrus.WithField("filer_address", filerAddress).Debug("Found filer address from resolv.conf")
+			return filerAddress, nil
 		}
 	}
 
 	return "", fmt.Errorf("no valid nameserver found in /etc/resolv.conf")
+}
+
+// formatFilerServerAddress preserves SeaweedFS's host:http.grpc address format.
+// Its parser splits on the final colon, so an IPv6 literal must remain unbracketed
+// here; SeaweedFS adds brackets when constructing the HTTP and gRPC endpoints.
+func formatFilerServerAddress(address string) string {
+	return fmt.Sprintf("%s:49200.49201", address)
 }
 
 // isMountPoint checks if a directory is a mount point by checking /proc/mounts
