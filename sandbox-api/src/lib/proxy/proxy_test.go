@@ -273,6 +273,37 @@ func TestLoadState_CorruptFile(t *testing.T) {
 	}
 }
 
+func TestEnsureLoopbackBypass(t *testing.T) {
+	tests := []struct {
+		name    string
+		initial string
+		want    string
+	}{
+		{name: "empty", initial: "", want: "localhost,127.0.0.1,::1"},
+		{name: "appends missing", initial: "10.0.0.0/8,localhost", want: "10.0.0.0/8,localhost,127.0.0.1,::1"},
+		{name: "already complete", initial: "localhost,127.0.0.1,::1", want: "localhost,127.0.0.1,::1"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("NO_PROXY", tt.initial)
+			t.Setenv("no_proxy", "")
+
+			ensureLoopbackBypass()
+
+			for _, name := range []string{"NO_PROXY", "no_proxy"} {
+				got := os.Getenv(name)
+				if tt.initial == tt.want && name == "no_proxy" {
+					continue // untouched when nothing had to be added
+				}
+				if got != tt.want {
+					t.Errorf("%s = %q, want %q", name, got, tt.want)
+				}
+			}
+		})
+	}
+}
+
 // freePort returns a port that is currently unused, so parallel test runs and
 // developer machines never collide on the default shim port.
 func freePort(t *testing.T) int {

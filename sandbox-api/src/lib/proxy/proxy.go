@@ -117,6 +117,8 @@ func startShim(ctx context.Context, templates []envTemplate, port int) error {
 		}
 	}
 
+	ensureLoopbackBypass()
+
 	logrus.Infof("proxy: local proxy listening on %s, forwarding to %s with credentials from %s",
 		localURL, up.Addr, up.TokenFile)
 
@@ -124,6 +126,48 @@ func startShim(ctx context.Context, templates []envTemplate, port int) error {
 		logrus.WithError(err).Warn("proxy: failed to persist proxy state")
 	}
 	return nil
+}
+
+// loopbackHosts must never be proxied: a client that sends a loopback request
+// to the shim would have it forwarded to the upstream proxy, which cannot route
+// back into the sandbox.
+var loopbackHosts = []string{"localhost", "127.0.0.1", "::1"}
+
+// ensureLoopbackBypass adds the loopback hosts to NO_PROXY. The control plane
+// already sets them, but the shim's correctness depends on it, so it is
+// enforced here rather than assumed.
+func ensureLoopbackBypass() {
+	current := os.Getenv("NO_PROXY")
+	if current == "" {
+		current = os.Getenv("no_proxy")
+	}
+
+	existing := make(map[string]bool)
+	for _, entry := range strings.Split(current, ",") {
+		existing[strings.TrimSpace(entry)] = true
+	}
+
+	entries := current
+	for _, host := range loopbackHosts {
+		if existing[host] {
+			continue
+		}
+		if entries == "" {
+			entries = host
+		} else {
+			entries += "," + host
+		}
+	}
+	if entries == current {
+		return
+	}
+
+	logrus.Infof("proxy: adding loopback hosts to NO_PROXY")
+	for _, name := range []string{"NO_PROXY", "no_proxy"} {
+		if err := os.Setenv(name, entries); err != nil {
+			logrus.WithError(err).Warnf("proxy: failed to set %s", name)
+		}
+	}
 }
 
 // startEnvRefresh is the fallback path: resolve the token into the environment
