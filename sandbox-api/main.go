@@ -63,10 +63,10 @@ func main() {
 	sentrylib.InitMeter(ctx)
 	startupStart := time.Now()
 
-	// Resolve {{file(...)}} directives in HTTP_PROXY / HTTPS_PROXY and
-	// start a background goroutine that re-reads the token file periodically
-	// so rotated credentials are picked up before they expire.
-	proxy.StartProxyTokenRefresh(ctx)
+	// Point HTTP_PROXY / HTTPS_PROXY at a loopback proxy that injects the
+	// identity token on every request, so rotated credentials are picked up by
+	// every process, including ones started before the rotation.
+	proxy.Start(ctx)
 
 	// Parallel: all four tasks are independent of each other
 	pm := process.GetProcessManager()

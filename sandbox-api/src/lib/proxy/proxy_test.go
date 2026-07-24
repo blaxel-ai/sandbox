@@ -2,8 +2,11 @@ package proxy
 
 import (
 	"context"
+	"net"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -129,7 +132,7 @@ func TestRefreshLoop_UpdatesOnTokenChange(t *testing.T) {
 	}
 }
 
-func TestStartProxyTokenRefresh_NoOp(t *testing.T) {
+func TestStart_NoOp(t *testing.T) {
 	t.Setenv("HTTP_PROXY", "http://plain:3128")
 	t.Setenv("HTTPS_PROXY", "")
 	t.Setenv("SANDBOX_PROXY_STATE_FILE", filepath.Join(t.TempDir(), "state.json"))
@@ -137,30 +140,48 @@ func TestStartProxyTokenRefresh_NoOp(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 
-	StartProxyTokenRefresh(ctx)
+	Start(ctx)
 	<-ctx.Done()
+
+	if got := os.Getenv("HTTP_PROXY"); got != "http://plain:3128" {
+		t.Errorf("a proxy url without a directive must be left alone, got %q", got)
+	}
 }
 
-func TestStartProxyTokenRefresh_WithDirective(t *testing.T) {
+func TestStart_PointsEnvAtLocalProxy(t *testing.T) {
 	dir := t.TempDir()
 	tokenFile := filepath.Join(dir, "token")
 	if err := os.WriteFile(tokenFile, []byte("my-token"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
+	port := freePort(t)
+	t.Setenv("SANDBOX_LOCAL_PROXY_PORT", strconv.Itoa(port))
 	t.Setenv("HTTP_PROXY", "http://u:{{file("+tokenFile+")}}@host:3128")
-	t.Setenv("HTTPS_PROXY", "")
+	t.Setenv("HTTPS_PROXY", "http://u:{{file("+tokenFile+")}}@host:3128")
 	t.Setenv("SANDBOX_PROXY_STATE_FILE", filepath.Join(dir, "state.json"))
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	StartProxyTokenRefresh(ctx)
+	Start(ctx)
 
-	got := os.Getenv("HTTP_PROXY")
-	want := "http://u:my-token@host:3128"
-	if got != want {
-		t.Errorf("got %q, want %q", got, want)
+	want := "http://127.0.0.1:" + strconv.Itoa(port)
+	for _, name := range []string{"HTTP_PROXY", "HTTPS_PROXY"} {
+		if got := os.Getenv(name); got != want {
+			t.Errorf("%s = %q, want %q", name, got, want)
+		}
+	}
+	if strings.Contains(os.Getenv("HTTP_PROXY"), "my-token") {
+		t.Error("the token must never be published to the environment")
+	}
+
+	state := loadState()
+	if state.Port != port {
+		t.Errorf("state port = %d, want %d", state.Port, port)
+	}
+	if len(state.Templates) != 2 {
+		t.Errorf("expected 2 persisted templates, got %d", len(state.Templates))
 	}
 }
 
@@ -174,23 +195,29 @@ func TestStatePersistence_SaveAndLoad(t *testing.T) {
 		{Name: "HTTPS_PROXY", Template: "https://u:{{file(/tok2)}}@host", FilePath: "/tok2"},
 	}
 
-	if err := saveState(templates); err != nil {
+	if err := saveState(templates, 4242); err != nil {
 		t.Fatalf("saveState: %v", err)
 	}
 
 	loaded := loadState()
-	if len(loaded) != 2 {
-		t.Fatalf("expected 2 templates, got %d", len(loaded))
+	if len(loaded.Templates) != 2 {
+		t.Fatalf("expected 2 templates, got %d", len(loaded.Templates))
 	}
-	if loaded[0].Name != "HTTP_PROXY" || loaded[0].FilePath != "/tok" {
-		t.Errorf("template 0 mismatch: %+v", loaded[0])
+	if loaded.Port != 4242 {
+		t.Errorf("port = %d, want 4242", loaded.Port)
 	}
-	if loaded[1].Name != "HTTPS_PROXY" || loaded[1].FilePath != "/tok2" {
-		t.Errorf("template 1 mismatch: %+v", loaded[1])
+	if loaded.Templates[0].Name != "HTTP_PROXY" || loaded.Templates[0].FilePath != "/tok" {
+		t.Errorf("template 0 mismatch: %+v", loaded.Templates[0])
+	}
+	if loaded.Templates[1].Name != "HTTPS_PROXY" || loaded.Templates[1].FilePath != "/tok2" {
+		t.Errorf("template 1 mismatch: %+v", loaded.Templates[1])
 	}
 }
 
-func TestStatePersistence_RestoreOnRestart(t *testing.T) {
+// A restarted sandbox-api sees resolved env vars with no directive left, so it
+// must recover the upstream configuration AND the port from state: processes
+// started by the previous instance still point at that exact port.
+func TestStatePersistence_RestoreSamePortOnRestart(t *testing.T) {
 	dir := t.TempDir()
 	tokenFile := filepath.Join(dir, "token")
 	stateFile := filepath.Join(dir, "proxy-state.json")
@@ -200,69 +227,37 @@ func TestStatePersistence_RestoreOnRestart(t *testing.T) {
 
 	t.Setenv("SANDBOX_PROXY_STATE_FILE", stateFile)
 
-	original := "http://u:{{file(" + tokenFile + ")}}@host:3128"
+	port := freePort(t)
 	templates := []envTemplate{
-		{Name: "HTTP_PROXY", Template: original, FilePath: tokenFile},
+		{Name: "HTTP_PROXY", Template: "http://u:{{file(" + tokenFile + ")}}@host:3128", FilePath: tokenFile},
 	}
-	if err := saveState(templates); err != nil {
+	if err := saveState(templates, port); err != nil {
 		t.Fatal(err)
 	}
 
 	// Simulate a restart: env vars no longer contain the {{file(...)}} directive
+	// and SANDBOX_LOCAL_PROXY_PORT would resolve to a different default.
+	t.Setenv("SANDBOX_LOCAL_PROXY_PORT", strconv.Itoa(freePort(t)))
 	t.Setenv("HTTP_PROXY", "http://u:old-stale-token@host:3128")
 	t.Setenv("HTTPS_PROXY", "")
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	StartProxyTokenRefresh(ctx)
+	Start(ctx)
 
 	got := os.Getenv("HTTP_PROXY")
-	want := "http://u:restored-tok@host:3128"
+	want := "http://127.0.0.1:" + strconv.Itoa(port)
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
-	}
-}
-
-func TestStatePersistence_ClearedWhenTokenFileRemoved(t *testing.T) {
-	dir := t.TempDir()
-	tokenFile := filepath.Join(dir, "token")
-	stateFile := filepath.Join(dir, "proxy-state.json")
-
-	// Create token file and state, then remove the token file
-	if err := os.WriteFile(tokenFile, []byte("tok"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	templates := []envTemplate{
-		{Name: "HTTP_PROXY", Template: "http://{{file(" + tokenFile + ")}}@h", FilePath: tokenFile},
-	}
-	if err := saveState(templates); err != nil {
-		t.Fatal(err)
-	}
-	os.Remove(tokenFile)
-
-	t.Setenv("SANDBOX_PROXY_STATE_FILE", stateFile)
-	t.Setenv("HTTP_PROXY", "")
-	t.Setenv("HTTPS_PROXY", "")
-	t.Setenv("http_proxy", "")
-	t.Setenv("https_proxy", "")
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	StartProxyTokenRefresh(ctx)
-
-	// State file should have been cleaned up
-	if _, err := os.Stat(stateFile); !os.IsNotExist(err) {
-		t.Error("expected state file to be removed after token file was deleted")
 	}
 }
 
 func TestLoadState_MissingFile(t *testing.T) {
 	t.Setenv("SANDBOX_PROXY_STATE_FILE", "/tmp/does-not-exist-proxy-state.json")
 	loaded := loadState()
-	if loaded != nil {
-		t.Errorf("expected nil, got %+v", loaded)
+	if len(loaded.Templates) != 0 {
+		t.Errorf("expected empty state, got %+v", loaded)
 	}
 }
 
@@ -273,7 +268,19 @@ func TestLoadState_CorruptFile(t *testing.T) {
 	t.Setenv("SANDBOX_PROXY_STATE_FILE", stateFile)
 
 	loaded := loadState()
-	if loaded != nil {
-		t.Errorf("expected nil for corrupt file, got %+v", loaded)
+	if len(loaded.Templates) != 0 {
+		t.Errorf("expected empty state for corrupt file, got %+v", loaded)
 	}
+}
+
+// freePort returns a port that is currently unused, so parallel test runs and
+// developer machines never collide on the default shim port.
+func freePort(t *testing.T) int {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	return ln.Addr().(*net.TCPAddr).Port
 }
