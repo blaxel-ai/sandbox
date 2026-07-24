@@ -166,7 +166,7 @@ func TestStart_PointsEnvAtLocalProxy(t *testing.T) {
 
 	Start(ctx)
 
-	want := "http://127.0.0.1:" + strconv.Itoa(port)
+	want := "http://localhost:" + strconv.Itoa(port)
 	for _, name := range []string{"HTTP_PROXY", "HTTPS_PROXY"} {
 		if got := os.Getenv(name); got != want {
 			t.Errorf("%s = %q, want %q", name, got, want)
@@ -247,7 +247,7 @@ func TestStatePersistence_RestoreSamePortOnRestart(t *testing.T) {
 	Start(ctx)
 
 	got := os.Getenv("HTTP_PROXY")
-	want := "http://127.0.0.1:" + strconv.Itoa(port)
+	want := "http://localhost:" + strconv.Itoa(port)
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}

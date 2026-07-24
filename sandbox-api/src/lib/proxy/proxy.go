@@ -103,14 +103,16 @@ func startShim(ctx context.Context, templates []envTemplate, port int) error {
 		}
 	}
 
-	ln, err := listenShim(port)
+	listeners, err := listenShim(port)
 	if err != nil {
 		return err
 	}
 
-	go (&shim{up: up}).serve(ctx, ln)
+	go (&shim{up: up}).serve(ctx, listeners...)
 
-	localURL := fmt.Sprintf("http://127.0.0.1:%d", port)
+	// localhost rather than a literal address: the shim listens on both
+	// loopback families, so a client is free to resolve it either way.
+	localURL := fmt.Sprintf("http://localhost:%d", port)
 	for _, t := range templates {
 		if err := os.Setenv(t.Name, localURL); err != nil {
 			logrus.WithError(err).Warnf("proxy: failed to set %s", t.Name)
@@ -119,8 +121,12 @@ func startShim(ctx context.Context, templates []envTemplate, port int) error {
 
 	ensureLoopbackBypass()
 
+	addrs := make([]string, 0, len(listeners))
+	for _, ln := range listeners {
+		addrs = append(addrs, ln.Addr().String())
+	}
 	logrus.Infof("proxy: local proxy listening on %s, forwarding to %s with credentials from %s",
-		localURL, up.Addr, up.TokenFile)
+		strings.Join(addrs, " and "), up.Addr, up.TokenFile)
 
 	if err := saveState(templates, port); err != nil {
 		logrus.WithError(err).Warn("proxy: failed to persist proxy state")

@@ -64,7 +64,7 @@ func TestParseUpstream_Invalid(t *testing.T) {
 	}
 }
 
-func TestReadToken_IgnoresTornWrite(t *testing.T) {
+func TestReadToken_KeepsPreviousTokenWhenFileIsEmpty(t *testing.T) {
 	dir := t.TempDir()
 	tokenFile := filepath.Join(dir, "token")
 	const good = "header.payload.signature"
@@ -73,27 +73,46 @@ func TestReadToken_IgnoresTornWrite(t *testing.T) {
 	}
 
 	s := &shim{up: upstreamProxy{TokenFile: tokenFile}}
-	if got, err := s.readToken(); err != nil || got != good {
+	if got, err := s.readToken(false); err != nil || got != good {
 		t.Fatalf("first read: got %q, err %v", got, err)
 	}
 
-	// The workload identity provider rewrites the token in place (O_TRUNC),
-	// so a read can land on an empty or half-written file.
-	for _, torn := range []string{"", "header.pay"} {
-		if err := os.WriteFile(tokenFile, []byte(torn), 0644); err != nil {
-			t.Fatal(err)
-		}
-		s.mu.Lock()
-		s.cached, s.cachedAt = "", time.Time{}
-		s.mu.Unlock()
+	// The workload identity provider rewrites the token in place (O_TRUNC), so
+	// a read can land on the file while it is empty.
+	if err := os.WriteFile(tokenFile, nil, 0644); err != nil {
+		t.Fatal(err)
+	}
 
-		got, err := s.readToken()
-		if err != nil {
-			t.Fatalf("torn read %q: unexpected error %v", torn, err)
-		}
-		if got != good {
-			t.Errorf("torn read %q: got %q, want the last known good token", torn, got)
-		}
+	got, err := s.readToken(true)
+	if err != nil {
+		t.Fatalf("unexpected error %v", err)
+	}
+	if got != good {
+		t.Errorf("got %q, want the previous token", got)
+	}
+}
+
+func TestReadToken_CachesThenReloadsOnDemand(t *testing.T) {
+	dir := t.TempDir()
+	tokenFile := filepath.Join(dir, "token")
+	if err := os.WriteFile(tokenFile, []byte("first"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	s := &shim{up: upstreamProxy{TokenFile: tokenFile}}
+	if _, err := s.readToken(false); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.WriteFile(tokenFile, []byte("second"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if got, _ := s.readToken(false); got != "first" {
+		t.Errorf("cached read: got %q, want the cached token", got)
+	}
+	if got, _ := s.readToken(true); got != "second" {
+		t.Errorf("forced reload: got %q, want the rotated token", got)
 	}
 }
 
@@ -105,7 +124,7 @@ func TestReadToken_PicksUpRotation(t *testing.T) {
 	}
 
 	s := &shim{up: upstreamProxy{TokenFile: tokenFile}}
-	if _, err := s.readToken(); err != nil {
+	if _, err := s.readToken(false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -116,7 +135,7 @@ func TestReadToken_PicksUpRotation(t *testing.T) {
 	s.cached, s.cachedAt = "", time.Time{}
 	s.mu.Unlock()
 
-	got, err := s.readToken()
+	got, err := s.readToken(false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -127,7 +146,7 @@ func TestReadToken_PicksUpRotation(t *testing.T) {
 
 func TestReadToken_MissingFile(t *testing.T) {
 	s := &shim{up: upstreamProxy{TokenFile: "/no/such/token"}}
-	if _, err := s.readToken(); err == nil {
+	if _, err := s.readToken(false); err == nil {
 		t.Error("expected an error when no token was ever read")
 	}
 }
@@ -140,7 +159,7 @@ func TestAuthorization(t *testing.T) {
 	}
 
 	s := &shim{up: upstreamProxy{Username: "none", TokenFile: tokenFile}}
-	got, err := s.authorization()
+	got, err := s.authorization(false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -150,7 +169,7 @@ func TestAuthorization(t *testing.T) {
 	}
 
 	s = &shim{up: upstreamProxy{TokenInUser: true, TokenFile: tokenFile}}
-	got, err = s.authorization()
+	got, err = s.authorization(false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -165,8 +184,11 @@ func TestAuthorization(t *testing.T) {
 type fakeUpstream struct {
 	ln net.Listener
 
-	mu    sync.Mutex
-	auths []string
+	mu sync.Mutex
+	// accept, when set, is the only credential the upstream honours; anything
+	// else is answered with 407 like a real proxy would after a rotation.
+	accept string
+	auths  []string
 }
 
 func newFakeUpstream(t *testing.T) *fakeUpstream {
@@ -184,9 +206,17 @@ func newFakeUpstream(t *testing.T) *fakeUpstream {
 }
 
 func (f *fakeUpstream) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	auth := r.Header.Get("Proxy-Authorization")
+
 	f.mu.Lock()
-	f.auths = append(f.auths, r.Header.Get("Proxy-Authorization"))
+	f.auths = append(f.auths, auth)
+	accept := f.accept
 	f.mu.Unlock()
+
+	if accept != "" && auth != accept {
+		http.Error(w, "bad credentials", http.StatusProxyAuthRequired)
+		return
+	}
 
 	if r.Method == http.MethodConnect {
 		// Echo back over the tunnel so the client can assert it works.
@@ -206,6 +236,12 @@ func (f *fakeUpstream) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	fmt.Fprintf(w, "proxied %s", r.URL.String())
+}
+
+func (f *fakeUpstream) onlyAccept(auth string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.accept = auth
 }
 
 func (f *fakeUpstream) lastAuth(t *testing.T) string {
@@ -375,4 +411,143 @@ func TestShimPort_Override(t *testing.T) {
 	if got := shimPort(); got != defaultShimPort {
 		t.Errorf("got %d, want the default %d", got, defaultShimPort)
 	}
+}
+
+func basicAuth(token string) string {
+	return "Basic " + base64.StdEncoding.EncodeToString([]byte("none:"+token))
+}
+
+// A token can rotate between the shim's last read and the request reaching the
+// upstream. The 407 that follows is recovered from by re-reading the file.
+func TestShim_RetriesOn407WithReloadedToken(t *testing.T) {
+	dir := t.TempDir()
+	tokenFile := filepath.Join(dir, "token")
+	if err := os.WriteFile(tokenFile, []byte("old"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	upstream := newFakeUpstream(t)
+	upstream.onlyAccept(basicAuth("old"))
+	shimURL := startTestShim(t, upstream.ln.Addr().String(), tokenFile)
+
+	proxyURL, err := url.Parse(shimURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := &http.Client{
+		Transport: &http.Transport{Proxy: http.ProxyURL(proxyURL), DisableKeepAlives: true},
+		Timeout:   10 * time.Second,
+	}
+
+	// Prime the shim's credential cache with the current token.
+	resp, err := client.Get("http://example.invalid/first")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("priming request: status %d", resp.StatusCode)
+	}
+
+	// Rotate within the cache window, so the shim's first attempt is stale.
+	if err := os.WriteFile(tokenFile, []byte("new"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	upstream.onlyAccept(basicAuth("new"))
+
+	resp, err = client.Get("http://example.invalid/second")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d (%s), want 200 after the retry", resp.StatusCode, body)
+	}
+	if got, want := upstream.lastAuth(t), basicAuth("new"); got != want {
+		t.Errorf("upstream saw %q on the retry, want %q", got, want)
+	}
+}
+
+func TestShim_ConnectRetriesOn407(t *testing.T) {
+	dir := t.TempDir()
+	tokenFile := filepath.Join(dir, "token")
+	if err := os.WriteFile(tokenFile, []byte("old"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	upstream := newFakeUpstream(t)
+	upstream.onlyAccept(basicAuth("new"))
+	shimURL := startTestShim(t, upstream.ln.Addr().String(), tokenFile)
+
+	conn, err := net.Dial("tcp", strings.TrimPrefix(shimURL, "http://"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+
+	// The rotation lands after the shim read "old" but before the CONNECT is
+	// answered, which is what the retry exists for.
+	if err := os.WriteFile(tokenFile, []byte("new"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	fmt.Fprint(conn, "CONNECT example.invalid:443 HTTP/1.1\r\nHost: example.invalid:443\r\n\r\n")
+
+	status, err := bufio.NewReader(conn).ReadString('\n')
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(status, "200") {
+		t.Fatalf("CONNECT was not retried successfully: %q", status)
+	}
+	if got, want := upstream.lastAuth(t), basicAuth("new"); got != want {
+		t.Errorf("upstream saw %q on the retry, want %q", got, want)
+	}
+}
+
+// Clients resolve "localhost" to either family, so both must answer.
+func TestListenShim_DualStack(t *testing.T) {
+	probe, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := probe.Addr().(*net.TCPAddr).Port
+	probe.Close()
+
+	listeners, err := listenShim(port)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		for _, ln := range listeners {
+			ln.Close()
+		}
+	}()
+
+	bound := make(map[string]bool)
+	for _, ln := range listeners {
+		host, _, err := net.SplitHostPort(ln.Addr().String())
+		if err != nil {
+			t.Fatal(err)
+		}
+		bound[host] = true
+	}
+
+	if !bound["127.0.0.1"] {
+		t.Errorf("no IPv4 loopback listener, bound: %v", bound)
+	}
+	if !bound["::1"] && supportsIPv6Loopback() {
+		t.Errorf("no IPv6 loopback listener, bound: %v", bound)
+	}
+}
+
+func supportsIPv6Loopback() bool {
+	ln, err := net.Listen("tcp", "[::1]:0")
+	if err != nil {
+		return false
+	}
+	ln.Close()
+	return true
 }

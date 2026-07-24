@@ -33,8 +33,6 @@ const (
 	tokenPlaceholder = "blxltoken"
 
 	tokenCacheTTL   = time.Second
-	tornReadRetries = 3
-	tornReadBackoff = 2 * time.Millisecond
 	upstreamTimeout = 30 * time.Second
 )
 
@@ -89,7 +87,6 @@ type shim struct {
 	up upstreamProxy
 
 	mu       sync.Mutex
-	lastGood string
 	cached   string
 	cachedAt time.Time
 }
@@ -104,26 +101,47 @@ func shimPort() int {
 	return defaultShimPort
 }
 
-// listenShim binds the loopback listener, retrying briefly so that a hot
-// upgrade — where the previous sandbox-api still holds the port for a moment —
-// does not permanently lose the proxy.
-func listenShim(port int) (net.Listener, error) {
-	addr := net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
+// loopbackAddrs are the addresses the shim binds. Both families are served so
+// that a client resolving "localhost" to either ::1 or 127.0.0.1 reaches the
+// shim, whichever it happens to pick.
+var loopbackAddrs = []string{"127.0.0.1", "::1"}
 
-	var err error
-	for attempt := 0; attempt < 10; attempt++ {
+// listenShim binds the loopback listeners, retrying briefly so that a hot
+// upgrade — where the previous sandbox-api still holds the port for a moment —
+// does not permanently lose the proxy. A family that the sandbox does not
+// support is skipped as long as the other one binds.
+func listenShim(port int) ([]net.Listener, error) {
+	var listeners []net.Listener
+	var lastErr error
+
+	for _, host := range loopbackAddrs {
+		addr := net.JoinHostPort(host, strconv.Itoa(port))
+
 		var ln net.Listener
-		ln, err = net.Listen("tcp", addr)
-		if err == nil {
-			return ln, nil
+		var err error
+		for attempt := 0; attempt < 10; attempt++ {
+			ln, err = net.Listen("tcp", addr)
+			if err == nil {
+				break
+			}
+			time.Sleep(500 * time.Millisecond)
 		}
-		time.Sleep(500 * time.Millisecond)
+		if err != nil {
+			lastErr = fmt.Errorf("listen on %s: %w", addr, err)
+			logrus.WithError(err).Warnf("proxy: could not listen on %s", addr)
+			continue
+		}
+		listeners = append(listeners, ln)
 	}
-	return nil, fmt.Errorf("listen on %s: %w", addr, err)
+
+	if len(listeners) == 0 {
+		return nil, lastErr
+	}
+	return listeners, nil
 }
 
-// serve runs the shim until ctx is cancelled.
-func (s *shim) serve(ctx context.Context, ln net.Listener) {
+// serve runs the shim on every listener until ctx is cancelled.
+func (s *shim) serve(ctx context.Context, listeners ...net.Listener) {
 	srv := &http.Server{
 		Handler:           s,
 		ReadHeaderTimeout: 30 * time.Second,
@@ -136,9 +154,17 @@ func (s *shim) serve(ctx context.Context, ln net.Listener) {
 		_ = srv.Shutdown(shutdownCtx)
 	}()
 
-	if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
-		logrus.WithError(err).Error("proxy: local proxy stopped")
+	var wg sync.WaitGroup
+	for _, ln := range listeners {
+		wg.Add(1)
+		go func(ln net.Listener) {
+			defer wg.Done()
+			if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
+				logrus.WithError(err).Errorf("proxy: local proxy stopped listening on %s", ln.Addr())
+			}
+		}(ln)
 	}
+	wg.Wait()
 }
 
 func (s *shim) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -150,35 +176,19 @@ func (s *shim) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleConnect tunnels a CONNECT request through the upstream proxy, adding a
-// freshly read Proxy-Authorization header.
+// freshly read Proxy-Authorization header. A 407 means the cached token was
+// rotated out from under us, so the tunnel is retried once with a re-read.
 func (s *shim) handleConnect(w http.ResponseWriter, r *http.Request) {
-	auth, err := s.authorization()
-	if err != nil {
-		logrus.WithError(err).Warn("proxy: cannot build upstream credentials")
-		http.Error(w, "sandbox proxy: identity token unavailable", http.StatusBadGateway)
-		return
-	}
-
-	upConn, err := s.dialUpstream()
-	if err != nil {
-		logrus.WithError(err).Warnf("proxy: cannot reach upstream proxy %s", s.up.Addr)
-		http.Error(w, "sandbox proxy: upstream unreachable", http.StatusBadGateway)
-		return
-	}
-
-	req := fmt.Sprintf("CONNECT %s HTTP/1.1\r\nHost: %s\r\nProxy-Authorization: %s\r\nProxy-Connection: Keep-Alive\r\n\r\n",
-		r.Host, r.Host, auth)
-	if _, err := io.WriteString(upConn, req); err != nil {
+	upConn, upReader, resp, err := s.connect(r.Host, false)
+	if err == nil && resp.StatusCode == http.StatusProxyAuthRequired {
+		resp.Body.Close()
 		upConn.Close()
-		http.Error(w, "sandbox proxy: upstream write failed", http.StatusBadGateway)
-		return
+		logrus.Info("proxy: upstream returned 407 for CONNECT, retrying with a re-read token")
+		upConn, upReader, resp, err = s.connect(r.Host, true)
 	}
-
-	upReader := bufio.NewReader(upConn)
-	resp, err := http.ReadResponse(upReader, r)
 	if err != nil {
-		upConn.Close()
-		http.Error(w, "sandbox proxy: upstream read failed", http.StatusBadGateway)
+		logrus.WithError(err).Warnf("proxy: CONNECT %s failed", r.Host)
+		http.Error(w, "sandbox proxy: "+err.Error(), http.StatusBadGateway)
 		return
 	}
 	if resp.StatusCode != http.StatusOK {
@@ -222,6 +232,35 @@ func (s *shim) handleConnect(w http.ResponseWriter, r *http.Request) {
 	}()
 }
 
+// connect opens a tunnel to host through the upstream proxy and returns the
+// connection together with the upstream's CONNECT response.
+func (s *shim) connect(host string, reloadToken bool) (net.Conn, *bufio.Reader, *http.Response, error) {
+	auth, err := s.authorization(reloadToken)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	conn, err := s.dialUpstream()
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("upstream %s unreachable: %w", s.up.Addr, err)
+	}
+
+	req := fmt.Sprintf("CONNECT %s HTTP/1.1\r\nHost: %s\r\nProxy-Authorization: %s\r\nProxy-Connection: Keep-Alive\r\n\r\n",
+		host, host, auth)
+	if _, err := io.WriteString(conn, req); err != nil {
+		conn.Close()
+		return nil, nil, nil, fmt.Errorf("upstream write failed: %w", err)
+	}
+
+	reader := bufio.NewReader(conn)
+	resp, err := http.ReadResponse(reader, nil)
+	if err != nil {
+		conn.Close()
+		return nil, nil, nil, fmt.Errorf("upstream read failed: %w", err)
+	}
+	return conn, reader, resp, nil
+}
+
 // hopByHopHeaders are stripped before forwarding a plain HTTP request.
 var hopByHopHeaders = []string{
 	"Connection",
@@ -244,39 +283,23 @@ func (s *shim) handleHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	auth, err := s.authorization()
-	if err != nil {
-		logrus.WithError(err).Warn("proxy: cannot build upstream credentials")
-		http.Error(w, "sandbox proxy: identity token unavailable", http.StatusBadGateway)
-		return
-	}
+	// A request carrying a body cannot be replayed without buffering what may
+	// be an arbitrarily large upload, so only bodyless requests are retried.
+	retriable := r.ContentLength == 0
 
-	upConn, err := s.dialUpstream()
+	upConn, resp, err := s.forward(r, false)
+	if err == nil && retriable && resp.StatusCode == http.StatusProxyAuthRequired {
+		resp.Body.Close()
+		upConn.Close()
+		logrus.Info("proxy: upstream returned 407, retrying with a re-read token")
+		upConn, resp, err = s.forward(r, true)
+	}
 	if err != nil {
-		logrus.WithError(err).Warnf("proxy: cannot reach upstream proxy %s", s.up.Addr)
-		http.Error(w, "sandbox proxy: upstream unreachable", http.StatusBadGateway)
+		logrus.WithError(err).Warnf("proxy: %s %s failed", r.Method, r.URL.Host)
+		http.Error(w, "sandbox proxy: "+err.Error(), http.StatusBadGateway)
 		return
 	}
 	defer upConn.Close()
-
-	outReq := r.Clone(r.Context())
-	outReq.RequestURI = ""
-	for _, h := range hopByHopHeaders {
-		outReq.Header.Del(h)
-	}
-	outReq.Header.Set("Proxy-Authorization", auth)
-	outReq.Close = true
-
-	if err := outReq.WriteProxy(upConn); err != nil {
-		http.Error(w, "sandbox proxy: upstream write failed", http.StatusBadGateway)
-		return
-	}
-
-	resp, err := http.ReadResponse(bufio.NewReader(upConn), outReq)
-	if err != nil {
-		http.Error(w, "sandbox proxy: upstream read failed", http.StatusBadGateway)
-		return
-	}
 	defer resp.Body.Close()
 
 	for k, values := range resp.Header {
@@ -286,6 +309,41 @@ func (s *shim) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(resp.StatusCode)
 	_, _ = io.Copy(w, resp.Body)
+}
+
+// forward sends one request to the upstream proxy over its own connection:
+// pooling would pin a credential to a connection, and plain HTTP through the
+// proxy is rare.
+func (s *shim) forward(r *http.Request, reloadToken bool) (net.Conn, *http.Response, error) {
+	auth, err := s.authorization(reloadToken)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	conn, err := s.dialUpstream()
+	if err != nil {
+		return nil, nil, fmt.Errorf("upstream %s unreachable: %w", s.up.Addr, err)
+	}
+
+	outReq := r.Clone(r.Context())
+	outReq.RequestURI = ""
+	for _, h := range hopByHopHeaders {
+		outReq.Header.Del(h)
+	}
+	outReq.Header.Set("Proxy-Authorization", auth)
+	outReq.Close = true
+
+	if err := outReq.WriteProxy(conn); err != nil {
+		conn.Close()
+		return nil, nil, fmt.Errorf("upstream write failed: %w", err)
+	}
+
+	resp, err := http.ReadResponse(bufio.NewReader(conn), outReq)
+	if err != nil {
+		conn.Close()
+		return nil, nil, fmt.Errorf("upstream read failed: %w", err)
+	}
+	return conn, resp, nil
 }
 
 func (s *shim) dialUpstream() (net.Conn, error) {
@@ -310,8 +368,8 @@ func (s *shim) dialUpstream() (net.Conn, error) {
 }
 
 // authorization builds the Proxy-Authorization header from the token on disk.
-func (s *shim) authorization() (string, error) {
-	token, err := s.readToken()
+func (s *shim) authorization(reloadToken bool) (string, error) {
+	token, err := s.readToken(reloadToken)
 	if err != nil {
 		return "", err
 	}
@@ -323,60 +381,32 @@ func (s *shim) authorization() (string, error) {
 	return "Basic " + base64.StdEncoding.EncodeToString([]byte(credentials)), nil
 }
 
-// readToken reads the identity token, tolerating the non-atomic in-place
-// rewrite performed by the workload identity provider: a truncated or empty
-// read is retried, and the last known good token is used as a last resort.
-func (s *shim) readToken() (string, error) {
+// readToken returns the identity token, re-reading the file unless a very
+// recent read is cached. reload forces a read, which is how a 407 is recovered
+// from. The workload identity provider rewrites the file in place, so a read
+// can catch it empty; the last value read is kept for that case.
+func (s *shim) readToken(reload bool) (string, error) {
 	s.mu.Lock()
-	if s.cached != "" && time.Since(s.cachedAt) < tokenCacheTTL {
-		token := s.cached
-		s.mu.Unlock()
-		return token, nil
-	}
-	s.mu.Unlock()
+	defer s.mu.Unlock()
 
-	for attempt := 0; attempt < tornReadRetries; attempt++ {
-		data, err := os.ReadFile(s.up.TokenFile)
-		if err == nil {
-			token := strings.TrimSpace(string(data))
-			if s.plausible(token) {
-				s.mu.Lock()
-				s.lastGood = token
-				s.cached = token
-				s.cachedAt = time.Now()
-				s.mu.Unlock()
-				return token, nil
-			}
+	if !reload && s.cached != "" && time.Since(s.cachedAt) < tokenCacheTTL {
+		return s.cached, nil
+	}
+
+	data, err := os.ReadFile(s.up.TokenFile)
+	token := strings.TrimSpace(string(data))
+	if err != nil || token == "" {
+		if s.cached != "" {
+			logrus.Warnf("proxy: token file %s unreadable or empty, reusing the previous token", s.up.TokenFile)
+			return s.cached, nil
 		}
-		time.Sleep(tornReadBackoff)
+		if err != nil {
+			return "", fmt.Errorf("read %s: %w", s.up.TokenFile, err)
+		}
+		return "", fmt.Errorf("token file %s is empty", s.up.TokenFile)
 	}
 
-	s.mu.Lock()
-	lastGood := s.lastGood
-	s.mu.Unlock()
-	if lastGood != "" {
-		logrus.Warnf("proxy: token file %s unreadable or truncated, reusing last known good token", s.up.TokenFile)
-		return lastGood, nil
-	}
-	return "", fmt.Errorf("token file %s is unreadable or empty", s.up.TokenFile)
-}
-
-// plausible rejects reads that look like they caught the token file mid-write:
-// empty content, a JWT that lost its three-part structure, or a value that
-// suddenly shrank by more than half.
-func (s *shim) plausible(token string) bool {
-	if token == "" {
-		return false
-	}
-
-	s.mu.Lock()
-	lastGood := s.lastGood
-	s.mu.Unlock()
-	if lastGood == "" {
-		return true
-	}
-	if strings.Count(lastGood, ".") == 2 && strings.Count(token, ".") != 2 {
-		return false
-	}
-	return len(token) >= len(lastGood)/2
+	s.cached = token
+	s.cachedAt = time.Now()
+	return token, nil
 }
