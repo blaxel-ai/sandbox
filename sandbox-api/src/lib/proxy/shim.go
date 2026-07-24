@@ -21,10 +21,12 @@ import (
 
 const (
 	// defaultShimPort is the loopback port the credential-injecting proxy
-	// listens on. It must stay stable across sandbox-api restarts: processes
-	// started earlier keep http://127.0.0.1:<port> in their environment for
-	// their whole lifetime.
-	defaultShimPort = 15080
+	// listens on. It sits at the bottom of the IANA dynamic/private range
+	// (49152-65535) so it cannot collide with a user application's service
+	// port. It must stay stable across sandbox-api restarts: processes started
+	// earlier keep http://127.0.0.1:<port> in their environment for their whole
+	// lifetime.
+	defaultShimPort = 49152
 
 	// tokenPlaceholder replaces the {{file(...)}} directive while the proxy URL
 	// is parsed, so that url.Parse sees a syntactically valid userinfo section.
