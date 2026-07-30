@@ -1,6 +1,7 @@
 package drive
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -18,6 +19,38 @@ const (
 	pollInterval = 100 * time.Millisecond
 	mountTimeout = 30 * time.Second
 )
+
+// ErrMountPathBusy indicates the mount path is already occupied by a mount that
+// does not match the requested drive, so mounting would conflict.
+var ErrMountPathBusy = errors.New("mount path already in use")
+
+// normalizeDrivePath ensures the drive subpath has a leading slash and no
+// trailing slash (except for the root "/").
+func normalizeDrivePath(drivePath string) string {
+	if !strings.HasPrefix(drivePath, "/") {
+		drivePath = "/" + drivePath
+	}
+	if drivePath != "/" {
+		drivePath = strings.TrimSuffix(drivePath, "/")
+	}
+	return drivePath
+}
+
+// existingMount returns the blfs mount currently backing mountPath, or nil if
+// none is managed there.
+func existingMount(mountPath string) (*MountInfo, error) {
+	mounts, err := ListMounts()
+	if err != nil {
+		return nil, err
+	}
+	clean := filepath.Clean(mountPath)
+	for i := range mounts {
+		if filepath.Clean(mounts[i].MountPath) == clean {
+			return &mounts[i], nil
+		}
+	}
+	return nil, nil
+}
 
 // getAuthTokenPath returns the path to the identity token based on BL_ENV.
 // Default is prod (blaxel.ai); use blaxel.dev when BL_ENV is "dev".
@@ -79,6 +112,48 @@ func MountDrive(driveName, mountPath, drivePath string, readOnly bool, uidMap, g
 		return "", "", fmt.Errorf("invalid mount path: %w", err)
 	}
 
+	drivePath = normalizeDrivePath(drivePath)
+
+	// Serialize all mount operations targeting the same path. Without this,
+	// duplicate or racing mount requests each spawn a blfs process; the second
+	// process recomputes the identical LevelDB cache directory, fails to flock
+	// the caches the first already holds, and crashes — and later retries then
+	// trip the filesystem's double-mount guard on the still-active mount point.
+	lock := mountLockFor(mountPath)
+	lock.Lock()
+	defer lock.Unlock()
+
+	// Resolve UID/GID mappings (request param > env var > none).
+	effectiveUidMap, err := resolveMapping(uidMap, "BLFS_UID_MAP", "uidMap")
+	if err != nil {
+		return "", "", fmt.Errorf("invalid uidMap: %w", err)
+	}
+	effectiveGidMap, err := resolveMapping(gidMap, "BLFS_GID_MAP", "gidMap")
+	if err != nil {
+		return "", "", fmt.Errorf("invalid gidMap: %w", err)
+	}
+
+	// If the target is already an active mount point, do not launch a second
+	// blfs process for it. Return idempotently when the existing mount already
+	// serves the requested drive, and report a conflict otherwise.
+	if isMountPoint(mountPath) {
+		existing, err := existingMount(mountPath)
+		if err != nil {
+			return "", "", fmt.Errorf("failed to inspect existing mounts: %w", err)
+		}
+		if existing == nil {
+			return "", "", fmt.Errorf("%w: %s is occupied by a non-blfs mount", ErrMountPathBusy, mountPath)
+		}
+		if existing.DriveName != driveName || existing.DrivePath != drivePath {
+			return "", "", fmt.Errorf("%w: %s (drivePath=%s) is already mounted at %s", ErrMountPathBusy, existing.DriveName, existing.DrivePath, mountPath)
+		}
+		logrus.WithFields(logrus.Fields{
+			"drive_name": driveName,
+			"mount_path": mountPath,
+		}).Info("Drive already mounted at path, skipping duplicate mount")
+		return effectiveUidMap, effectiveGidMap, nil
+	}
+
 	// Get workspace ID from environment
 	workspaceID := strings.ToLower(os.Getenv("BL_WORKSPACE_ID"))
 	if workspaceID == "" {
@@ -100,14 +175,6 @@ func MountDrive(driveName, mountPath, drivePath string, readOnly bool, uidMap, g
 	}
 
 	// Build the filer path: /buckets/{infrastructureId}{drivePath}
-	// Ensure drivePath starts with /
-	if !strings.HasPrefix(drivePath, "/") {
-		drivePath = "/" + drivePath
-	}
-	// Remove trailing slash unless it's just "/"
-	if drivePath != "/" {
-		drivePath = strings.TrimSuffix(drivePath, "/")
-	}
 	filerPath := fmt.Sprintf("/buckets/%s%s", infrastructureId, drivePath)
 
 	// Build blfs mount command
@@ -149,15 +216,6 @@ func MountDrive(driveName, mountPath, drivePath string, readOnly bool, uidMap, g
 		args = append(args, "-readOnly=true")
 	}
 
-	// Resolve UID/GID mappings (request param > env var > none)
-	effectiveUidMap, err := resolveMapping(uidMap, "BLFS_UID_MAP", "uidMap")
-	if err != nil {
-		return "", "", fmt.Errorf("invalid uidMap: %w", err)
-	}
-	effectiveGidMap, err := resolveMapping(gidMap, "BLFS_GID_MAP", "gidMap")
-	if err != nil {
-		return "", "", fmt.Errorf("invalid gidMap: %w", err)
-	}
 	if effectiveUidMap != "" {
 		args = append(args, fmt.Sprintf("-map.uid=%s:0", effectiveUidMap))
 	}
@@ -240,7 +298,7 @@ func MountDrive(driveName, mountPath, drivePath string, readOnly bool, uidMap, g
 	_ = syscall.Kill(pid, syscall.SIGKILL)
 	<-exitCh // drain the channel to reap the process
 	if isMountPoint(mountPath) {
-		_ = UnmountDrive(mountPath)
+		_ = unmountDriveLocked(mountPath)
 	}
 	return "", "", fmt.Errorf("timeout waiting for mount point to be ready after %s", mountTimeout)
 }

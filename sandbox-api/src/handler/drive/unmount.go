@@ -13,12 +13,24 @@ const (
 	unmountTimeout = 10 * time.Second
 )
 
-// UnmountDrive unmounts a drive from the specified mount path
+// UnmountDrive unmounts a drive from the specified mount path. It serializes on
+// the mount path so it cannot race a concurrent mount targeting the same path.
 func UnmountDrive(mountPath string) error {
 	mountPath = NormalizeMountPath(mountPath)
 	if err := ValidateMountPath(mountPath); err != nil {
 		return fmt.Errorf("invalid mount path: %w", err)
 	}
+
+	lock := mountLockFor(mountPath)
+	lock.Lock()
+	defer lock.Unlock()
+
+	return unmountDriveLocked(mountPath)
+}
+
+// unmountDriveLocked performs the unmount without acquiring the per-path lock.
+// Callers must already hold mountLockFor(mountPath).
+func unmountDriveLocked(mountPath string) error {
 	// Check if the path exists
 	if _, err := os.Stat(mountPath); err != nil {
 		if os.IsNotExist(err) {
