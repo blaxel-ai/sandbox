@@ -183,21 +183,49 @@ func (n *Network) updatePortsForPID(pid int) error {
 	return nil
 }
 
-// getOpenPortsForPID uses platform-specific commands to get open ports for a specific PID
+// getOpenPortsForPID uses platform-specific commands to get open ports for a specific PID.
+//
+// Ports are attributed across the started process's whole subtree, not just its
+// own PID. A wrapped command such as `sh -c "sleep 2 && node ..."` registers the
+// shell's PID, but the listening socket is owned by the child (node/python)
+// under a different PID; a PID-scoped ss/netstat scan of only the parent never
+// sees it, which is why the PID-based readiness callback silently never fired
+// and waitForPorts fell back entirely to the connect poller. Walking children
+// here matches what getPortsUsingLsof already does on macOS.
 func getOpenPortsForPID(pid int) ([]*PortInfo, error) {
 	// Use different commands based on the operating system
 	if runtime.GOOS == "darwin" {
 		return getPortsUsingLsof(pid)
 	}
 
-	// For Linux systems, try ss command first (newer and more efficient)
-	portsInfo, err := getPortsUsingSS(pid)
-	if err == nil {
-		return portsInfo, nil
+	pidsToCheck := append([]int{pid}, getChildPIDs(pid)...)
+
+	var allPorts []*PortInfo
+	var firstErr error
+	gotResult := false
+	for _, checkPID := range pidsToCheck {
+		// For Linux systems, try ss command first (newer and more efficient)
+		portsInfo, err := getPortsUsingSS(checkPID)
+		if err != nil {
+			// Fall back to netstat if ss fails
+			portsInfo, err = getPortsUsingNetstat(checkPID)
+		}
+		if err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		gotResult = true
+		allPorts = append(allPorts, portsInfo...)
 	}
 
-	// Fall back to netstat if ss fails
-	return getPortsUsingNetstat(pid)
+	// Only surface an error when every attempt failed; a subtree PID that has
+	// already exited (e.g. the `sleep` in `sh -c "sleep 2 && ..."`) is expected.
+	if !gotResult && firstErr != nil {
+		return nil, firstErr
+	}
+	return allPorts, nil
 }
 
 // IsPortOpen checks if a specific port is open and listening.
@@ -251,6 +279,83 @@ func isPortOpenByConnect(port int) bool {
 	return true
 }
 
+// splitHostPort splits an "address:port" token as emitted by ss/netstat,
+// tolerating IPv6 forms ("[::]:3000", ":::3000") and the "*" wildcard the tools
+// use for an unspecified address/port. It returns the host (surrounding
+// brackets stripped, "*" preserved) and the numeric port.
+func splitHostPort(s string) (host string, port int, ok bool) {
+	idx := strings.LastIndex(s, ":")
+	if idx < 0 || idx == len(s)-1 {
+		return "", 0, false
+	}
+	host = s[:idx]
+	p, err := strconv.Atoi(s[idx+1:])
+	if err != nil {
+		// Peer entries often use "*" for the port (e.g. "0.0.0.0:*").
+		return "", 0, false
+	}
+	host = strings.TrimPrefix(host, "[")
+	host = strings.TrimSuffix(host, "]")
+	return host, p, true
+}
+
+// isLoopbackAddr reports whether addr is an IPv4/IPv6 loopback address. The
+// wildcard forms ("*", "0.0.0.0", "::") and concrete routable IPs are not
+// loopback.
+func isLoopbackAddr(addr string) bool {
+	if ip := net.ParseIP(addr); ip != nil {
+		return ip.IsLoopback()
+	}
+	return false
+}
+
+// IsRoutableListener reports whether p is a listening socket bound to an
+// interface reachable from outside the microVM (i.e. not exclusively loopback).
+//
+// This is the crux of the readiness contract: the edge gateway proxies
+// /port/{n} straight to the microVM's routable IP, so a workload that is only
+// bound to 127.0.0.1 is "port-open" on a local connect yet still unreachable
+// through the gateway. Gating readiness on a routable LISTEN socket closes the
+// window where waitForPorts reported ready before the request path could serve.
+func IsRoutableListener(p *PortInfo) bool {
+	if p == nil {
+		return false
+	}
+	// Accept server sockets only: TCP "LISTEN" (ss/netstat/lsof) or UDP bound
+	// "UNCONN" (ss). An empty state is treated as a server socket so we never
+	// regress when the tool omits it. Connected states (ESTAB, TIME_WAIT, ...)
+	// belong to outbound/accepted connections and must not count as ready.
+	switch strings.ToUpper(p.State) {
+	case "", "LISTEN", "UNCONN":
+		return !isLoopbackAddr(p.LocalAddr)
+	default:
+		return false
+	}
+}
+
+// IsPortReady reports whether the given port is served by the process subtree of
+// pid on a routable interface — a stronger signal than IsPortOpen's bare
+// loopback connect. It falls back to the connect probe only when socket
+// enumeration is entirely unavailable, so it never regresses below the previous
+// behavior.
+func IsPortReady(pid, port int) bool {
+	ports, err := getOpenPortsForPID(pid)
+	if err != nil {
+		// Enumeration failed (ss/netstat/lsof unavailable) — degrade to the
+		// historical connect probe so readiness can still make progress.
+		return isPortOpenByConnect(port)
+	}
+	for _, p := range ports {
+		if p.LocalPort == port && IsRoutableListener(p) {
+			return true
+		}
+	}
+	// Enumeration worked but the port is not (yet) a routable listener. Do NOT
+	// fall back to a loopback connect here: a loopback-only bind must not count
+	// as ready, since the gateway could not reach it.
+	return false
+}
+
 // getPortsUsingSS uses the 'ss' command to get port information for a specific PID
 func getPortsUsingSS(pid int) ([]*PortInfo, error) {
 	// Run ss command: ss -tunap | grep <pid>
@@ -284,27 +389,17 @@ func getPortsUsingSS(pid int) ([]*PortInfo, error) {
 		protocol := strings.ToLower(fields[0])
 		state := fields[1]
 
-		// Parse local address
-		localAddrParts := strings.Split(fields[4], ":")
-		if len(localAddrParts) < 2 {
+		// Parse local address (tolerates IPv6 forms such as "[::]:3000").
+		localAddr, localPort, ok := splitHostPort(fields[4])
+		if !ok {
 			continue
 		}
 
-		localAddr := localAddrParts[0]
-		localPort, err := strconv.Atoi(localAddrParts[1])
-		if err != nil {
-			continue
-		}
-
-		// Parse remote address if available
+		// Parse remote address if available (best-effort; peer port is often "*").
 		var remoteAddr string
 		var remotePort int
 		if len(fields) > 5 {
-			remoteAddrParts := strings.Split(fields[5], ":")
-			if len(remoteAddrParts) >= 2 {
-				remoteAddr = remoteAddrParts[0]
-				remotePort, _ = strconv.Atoi(remoteAddrParts[1])
-			}
+			remoteAddr, remotePort, _ = splitHostPort(fields[5])
 		}
 
 		// Extract process name if available
@@ -340,8 +435,15 @@ func getPortsUsingSS(pid int) ([]*PortInfo, error) {
 	return portsInfo, nil
 }
 
-// getChildPIDs returns all child PIDs of a given parent PID (macOS)
+// getChildPIDs returns all descendant PIDs of a given parent PID.
 func getChildPIDs(parentPID int) []int {
+	// Never walk from the process-tree roots: `pgrep -P 0/1` would recursively
+	// enumerate (nearly) every process on the host. Real workload wrappers
+	// always have a concrete PID > 1.
+	if parentPID <= 1 {
+		return []int{}
+	}
+
 	// Use pgrep to find child processes
 	cmd := exec.Command("pgrep", "-P", strconv.Itoa(parentPID))
 	output, err := cmd.Output()
@@ -543,25 +645,14 @@ func getPortsUsingNetstat(pid int) ([]*PortInfo, error) {
 
 		protocol := strings.ToLower(fields[0])
 
-		// Parse local address
-		localAddrParts := strings.Split(fields[3], ":")
-		if len(localAddrParts) < 2 {
+		// Parse local address (tolerates IPv6 forms such as ":::3000").
+		localAddr, localPort, ok := splitHostPort(fields[3])
+		if !ok {
 			continue
 		}
 
-		localAddr := localAddrParts[0]
-		localPort, err := strconv.Atoi(localAddrParts[len(localAddrParts)-1])
-		if err != nil {
-			continue
-		}
-
-		// Parse remote address
-		remoteAddrParts := strings.Split(fields[4], ":")
-		remoteAddr := remoteAddrParts[0]
-		remotePort := 0
-		if len(remoteAddrParts) >= 2 {
-			remotePort, _ = strconv.Atoi(remoteAddrParts[len(remoteAddrParts)-1])
-		}
+		// Parse remote address (best-effort).
+		remoteAddr, remotePort, _ := splitHostPort(fields[4])
 
 		// Parse state
 		state := fields[5]

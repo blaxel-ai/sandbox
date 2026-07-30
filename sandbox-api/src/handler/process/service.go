@@ -92,7 +92,13 @@ func (pm *ProcessManager) ExecuteProcess(
 		ports := make([]int, 0, len(waitForPorts))
 		pidInt, _ := strconv.Atoi(pid)
 		n.RegisterPortOpenCallback(pidInt, func(pid int, port *network.PortInfo) {
-			if slices.Contains(waitForPorts, port.LocalPort) {
+			// Only count a port as ready once it is a listening socket bound to a
+			// routable interface. A loopback-only bind is reachable via a local
+			// connect but not through the edge gateway, so it must not satisfy
+			// waitForPorts.
+			if slices.Contains(waitForPorts, port.LocalPort) &&
+				network.IsRoutableListener(port) &&
+				!slices.Contains(ports, port.LocalPort) {
 				ports = append(ports, port.LocalPort)
 			}
 			if len(ports) == len(waitForPorts) {
@@ -125,7 +131,7 @@ func (pm *ProcessManager) ExecuteProcess(
 				case <-ticker.C:
 					allPortsOpen := true
 					for _, port := range waitForPorts {
-						if !network.IsPortOpen(port) {
+						if !network.IsPortReady(pidInt, port) {
 							allPortsOpen = false
 							break
 						}
