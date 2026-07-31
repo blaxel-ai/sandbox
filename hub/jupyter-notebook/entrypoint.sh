@@ -1,7 +1,7 @@
 #!/bin/sh
 
 # Start jupyter kernelgateway in the background
-jupyter kernelgateway --KernelGatewayApp.ip=0.0.0.0 --KernelGatewayApp.port=8888 --KernelGatewayApp.allow_origin='*' &
+jupyter kernelgateway --KernelGatewayApp.ip='' --KernelGatewayApp.port=8888 --KernelGatewayApp.allow_origin='*' &
 JUPYTER_PID=$!
 
 # Function to wait for port to be available
