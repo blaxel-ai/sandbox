@@ -33,7 +33,6 @@ exec /usr/local/bin/sandbox-api --user "$SANDBOX_USER" "$@"
 ```
 
 Do **not** add a `USER` directive: that is the mechanism this replaces.
-`hub/nonroot/` is a working example of both halves.
 
 If the value cannot be resolved, or resolves to uid 0, the API refuses to start.
 Failing open would hand every workload the privileges the feature exists to
