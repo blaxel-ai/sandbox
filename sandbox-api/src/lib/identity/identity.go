@@ -251,18 +251,6 @@ func (id *Identity) Do(fn func() error) error {
 	return fn()
 }
 
-// setfsuid and setfsgid wrap the raw syscalls because the syscall package
-// discards their return value, which is the previous uid/gid.
-func setfsuid(uid int) int {
-	previous, _, _ := syscall.Syscall(syscall.SYS_SETFSUID, uintptr(uid), 0, 0)
-	return int(previous)
-}
-
-func setfsgid(gid int) int {
-	previous, _, _ := syscall.Syscall(syscall.SYS_SETFSGID, uintptr(gid), 0, 0)
-	return int(previous)
-}
-
 // Do runs fn under the process-wide workload identity when one is configured.
 func Do(fn func() error) error {
 	return Get().Do(fn)
