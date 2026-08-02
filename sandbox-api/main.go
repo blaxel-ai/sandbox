@@ -54,6 +54,10 @@ func main() {
 	disableTelemetry := flag.Bool("disable-telemetry", false, "Disable anonymous error reporting")
 	flag.Parse()
 
+	// Resolve the workload identity before anything can spawn a process, so a
+	// misconfigured BL_SANDBOX_USER fails at boot instead of at first exec.
+	identity.Get()
+
 	sentrylib.Version = handler.Version
 	sentryFlush := sentrylib.Init(*disableTelemetry)
 	defer sentryFlush()
