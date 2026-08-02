@@ -17,10 +17,16 @@ does *on behalf of the user* is dropped to an unprivileged identity.
 ```dockerfile
 RUN adduser -D -u 10001 -h /blaxel app
 
+ENV BL_SANDBOX_USER_ENABLED=true
 ENV BL_SANDBOX_USER=app       # also accepts "10001", "app:app", "10001:10001"
 ```
 
-Equivalently, `sandbox-api --user app` — the flag wins over the environment.
+`BL_SANDBOX_USER_ENABLED` defaults to false, and without it `BL_SANDBOX_USER`
+is ignored: the runtime exports the image `USER` for every sandbox, so honouring
+it unprompted would change how existing images behave.
+
+`sandbox-api --user app` is equivalent and opts in by itself — the flag wins
+over the environment and does not need the toggle.
 Use an entrypoint when the image also needs root-only preparation before the
 workload identity applies:
 
@@ -32,7 +38,9 @@ chown -R "$SANDBOX_USER" "${HOME:-/blaxel}"
 exec /usr/local/bin/sandbox-api --user "$SANDBOX_USER" "$@"
 ```
 
-Do **not** add a `USER` directive: that is the mechanism this replaces.
+Do **not** add a `USER` directive unless the runtime is new enough to delegate
+it (blaxel-ai/metamorph#77, blaxel-ai/executionplane#449); on an older runtime
+it de-privileges PID 1, which is what this replaces.
 
 If the value cannot be resolved, or resolves to uid 0, the API refuses to start.
 Failing open would hand every workload the privileges the feature exists to
