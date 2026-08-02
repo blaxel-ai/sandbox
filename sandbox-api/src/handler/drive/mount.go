@@ -182,14 +182,22 @@ func MountDrive(driveName, mountPath, drivePath string, readOnly bool, uidMap, g
 	}
 
 	// Create mount directory if it doesn't exist. It is created by the API
-	// (root) but handed to the workload user, otherwise the directory is
-	// unusable while the drive is not mounted over it.
+	// (root) but handed to the workload user so it is usable while the drive
+	// is not yet mounted over it. Only chown directories we actually create:
+	// re-owning a pre-existing system directory (e.g. /usr/local/bin) would be
+	// a privilege-escalation vector if the subsequent mount fails.
+	created := false
+	if _, err := os.Stat(mountPath); os.IsNotExist(err) {
+		created = true
+	}
 	if err := os.MkdirAll(mountPath, 0755); err != nil {
 		return "", "", fmt.Errorf("failed to create mount directory: %w", err)
 	}
-	if id := identity.Get(); id != nil {
-		if err := os.Chown(mountPath, id.Uid, id.Gid); err != nil {
-			logrus.WithError(err).WithField("mount_path", mountPath).Warn("Failed to hand mount point to the workload user")
+	if created {
+		if id := identity.Get(); id != nil {
+			if err := os.Chown(mountPath, id.Uid, id.Gid); err != nil {
+				logrus.WithError(err).WithField("mount_path", mountPath).Warn("Failed to hand mount point to the workload user")
+			}
 		}
 	}
 
