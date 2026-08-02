@@ -20,6 +20,7 @@ import (
 	"github.com/blaxel-ai/sandbox-api/src/handler"
 	"github.com/blaxel-ai/sandbox-api/src/handler/process"
 	"github.com/blaxel-ai/sandbox-api/src/lib/blaxel"
+	"github.com/blaxel-ai/sandbox-api/src/lib/identity"
 	"github.com/blaxel-ai/sandbox-api/src/lib/networking"
 	"github.com/blaxel-ai/sandbox-api/src/lib/proxy"
 	"github.com/blaxel-ai/sandbox-api/src/lib/sentrylib"
@@ -239,6 +240,8 @@ func startBackgroundCommand(ctx context.Context, command string) {
 	cmd.Stdout = logrus.StandardLogger().Out
 	cmd.Stderr = logrus.StandardLogger().Out
 	cmd.Dir = "/"
+	cmd.Env = identity.Get().DecorateEnv(os.Environ())
+	cmd.SysProcAttr = &syscall.SysProcAttr{Credential: identity.Get().Credential()}
 
 	// Start the command in a goroutine so it doesn't block the server
 	go func() {

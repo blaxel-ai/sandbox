@@ -28,6 +28,7 @@ on:
           - nextjs
           - node
           - node-slim
+          - nonroot
           - onboarder-nextjs
           - playwright-chromium
           - playwright-firefox
