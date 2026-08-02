@@ -52,10 +52,12 @@ func main() {
 	command := flag.String("command", "", "Command to execute")
 	shortCommand := flag.String("c", "", "Command to execute (shorthand)")
 	disableTelemetry := flag.Bool("disable-telemetry", false, "Disable anonymous error reporting")
+	workloadUser := flag.String("user", "", "Run processes, terminals and filesystem operations as this user, in Docker USER syntax (also settable with "+identity.EnvUser+")")
 	flag.Parse()
 
 	// Resolve the workload identity before anything can spawn a process, so a
-	// misconfigured BL_SANDBOX_USER fails at boot instead of at first exec.
+	// misconfigured user fails at boot instead of at first exec.
+	identity.SetSpec(*workloadUser)
 	identity.Get()
 
 	sentrylib.Version = handler.Version

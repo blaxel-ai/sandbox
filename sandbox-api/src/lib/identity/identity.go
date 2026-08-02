@@ -36,14 +36,27 @@ type Identity struct {
 var (
 	once     sync.Once
 	resolved *Identity
+	spec     string
+	source   = EnvUser
 )
+
+// SetSpec sets the workload identity from the command line, taking precedence
+// over the environment. It must be called before the first Get.
+func SetSpec(value string) {
+	if value = strings.TrimSpace(value); value != "" {
+		spec = value
+		source = "--user"
+	}
+}
 
 // Get returns the workload identity, or nil when none is configured. The
 // resolution happens once: the value cannot change during the lifetime of the
 // process, so no request can influence which user its work runs as.
 func Get() *Identity {
 	once.Do(func() {
-		spec := strings.TrimSpace(os.Getenv(EnvUser))
+		if spec == "" {
+			spec = strings.TrimSpace(os.Getenv(EnvUser))
+		}
 		if spec == "" {
 			return
 		}
@@ -51,10 +64,10 @@ func Get() *Identity {
 		if err != nil {
 			// Failing open (running as root) would silently give every
 			// workload the privileges this feature exists to remove.
-			logrus.WithError(err).Fatalf("Invalid %s=%q", EnvUser, spec)
+			logrus.WithError(err).Fatalf("Invalid %s=%q", source, spec)
 		}
 		if id.Uid == 0 {
-			logrus.Fatalf("%s=%q resolves to uid 0; the workload identity must be unprivileged", EnvUser, spec)
+			logrus.Fatalf("%s=%q resolves to uid 0; the workload identity must be unprivileged", source, spec)
 		}
 		logrus.WithFields(logrus.Fields{
 			"user": id.Name,

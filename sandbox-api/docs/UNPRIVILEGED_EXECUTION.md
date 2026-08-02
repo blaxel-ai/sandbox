@@ -16,13 +16,24 @@ does *on behalf of the user* is dropped to an unprivileged identity.
 
 ```dockerfile
 RUN adduser -D -u 10001 -h /blaxel app
-RUN chown -R app:app /blaxel
 
 ENV BL_SANDBOX_USER=app       # also accepts "10001", "app:app", "10001:10001"
 ```
 
+Equivalently, `sandbox-api --user app` — the flag wins over the environment.
+Use an entrypoint when the image also needs root-only preparation before the
+workload identity applies:
+
+```sh
+#!/bin/sh
+set -eu
+SANDBOX_USER="${BL_SANDBOX_USER:-app}"
+chown -R "$SANDBOX_USER" "${HOME:-/blaxel}"
+exec /usr/local/bin/sandbox-api --user "$SANDBOX_USER" "$@"
+```
+
 Do **not** add a `USER` directive: that is the mechanism this replaces.
-`hub/nonroot/Dockerfile` is a working example.
+`hub/nonroot/` is a working example of both halves.
 
 If the value cannot be resolved, or resolves to uid 0, the API refuses to start.
 Failing open would hand every workload the privileges the feature exists to
