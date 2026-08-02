@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/blaxel-ai/sandbox-api/src/lib/identity"
 	"github.com/sirupsen/logrus"
 )
 
@@ -72,12 +73,19 @@ func validateLocalID(value, name string) error {
 
 // resolveMapping returns the effective local UID/GID value.
 // Priority: request parameter > environment variable > empty (no mapping).
-func resolveMapping(reqValue, envKey, name string) (string, error) {
+func resolveMapping(reqValue, envKey, name string, workloadID int) (string, error) {
 	value := reqValue
 	source := "request"
 	if value == "" {
 		value = os.Getenv(envKey)
 		source = "env"
+	}
+	// Drive content belongs to filer uid/gid 0. Mapping it onto the workload
+	// identity by default is what makes the mount writable by processes, which
+	// no longer run as root.
+	if value == "" && workloadID > 0 {
+		value = strconv.Itoa(workloadID)
+		source = "workload identity"
 	}
 	if value == "" {
 		return "", nil
@@ -123,12 +131,16 @@ func MountDrive(driveName, mountPath, drivePath string, readOnly bool, uidMap, g
 	lock.Lock()
 	defer lock.Unlock()
 
-	// Resolve UID/GID mappings (request param > env var > none).
-	effectiveUidMap, err := resolveMapping(uidMap, "BLFS_UID_MAP", "uidMap")
+	// Resolve UID/GID mappings (request param > env var > workload identity > none).
+	workloadUid, workloadGid := -1, -1
+	if id := identity.Get(); id != nil {
+		workloadUid, workloadGid = id.Uid, id.Gid
+	}
+	effectiveUidMap, err := resolveMapping(uidMap, "BLFS_UID_MAP", "uidMap", workloadUid)
 	if err != nil {
 		return "", "", fmt.Errorf("invalid uidMap: %w", err)
 	}
-	effectiveGidMap, err := resolveMapping(gidMap, "BLFS_GID_MAP", "gidMap")
+	effectiveGidMap, err := resolveMapping(gidMap, "BLFS_GID_MAP", "gidMap", workloadGid)
 	if err != nil {
 		return "", "", fmt.Errorf("invalid gidMap: %w", err)
 	}
@@ -169,9 +181,24 @@ func MountDrive(driveName, mountPath, drivePath string, readOnly bool, uidMap, g
 		return "", "", fmt.Errorf("failed to get filer address: %w", err)
 	}
 
-	// Create mount directory if it doesn't exist
+	// Create mount directory if it doesn't exist. It is created by the API
+	// (root) but handed to the workload user so it is usable while the drive
+	// is not yet mounted over it. Only chown directories we actually create:
+	// re-owning a pre-existing system directory (e.g. /usr/local/bin) would be
+	// a privilege-escalation vector if the subsequent mount fails.
+	created := false
+	if _, err := os.Stat(mountPath); os.IsNotExist(err) {
+		created = true
+	}
 	if err := os.MkdirAll(mountPath, 0755); err != nil {
 		return "", "", fmt.Errorf("failed to create mount directory: %w", err)
+	}
+	if created {
+		if id := identity.Get(); id != nil {
+			if err := os.Chown(mountPath, id.Uid, id.Gid); err != nil {
+				logrus.WithError(err).WithField("mount_path", mountPath).Warn("Failed to hand mount point to the workload user")
+			}
+		}
 	}
 
 	// Build the filer path: /buckets/{infrastructureId}{drivePath}

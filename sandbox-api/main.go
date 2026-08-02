@@ -20,6 +20,7 @@ import (
 	"github.com/blaxel-ai/sandbox-api/src/handler"
 	"github.com/blaxel-ai/sandbox-api/src/handler/process"
 	"github.com/blaxel-ai/sandbox-api/src/lib/blaxel"
+	"github.com/blaxel-ai/sandbox-api/src/lib/identity"
 	"github.com/blaxel-ai/sandbox-api/src/lib/networking"
 	"github.com/blaxel-ai/sandbox-api/src/lib/proxy"
 	"github.com/blaxel-ai/sandbox-api/src/lib/sentrylib"
@@ -51,7 +52,13 @@ func main() {
 	command := flag.String("command", "", "Command to execute")
 	shortCommand := flag.String("c", "", "Command to execute (shorthand)")
 	disableTelemetry := flag.Bool("disable-telemetry", false, "Disable anonymous error reporting")
+	workloadUser := flag.String("user", "", "Run processes, terminals and filesystem operations as this user, in Docker USER syntax (also settable with "+identity.EnvUser+")")
 	flag.Parse()
+
+	// Resolve the workload identity before anything can spawn a process, so a
+	// misconfigured user fails at boot instead of at first exec.
+	identity.SetSpec(*workloadUser)
+	identity.Get()
 
 	sentrylib.Version = handler.Version
 	sentryFlush := sentrylib.Init(*disableTelemetry)
@@ -239,6 +246,8 @@ func startBackgroundCommand(ctx context.Context, command string) {
 	cmd.Stdout = logrus.StandardLogger().Out
 	cmd.Stderr = logrus.StandardLogger().Out
 	cmd.Dir = "/"
+	cmd.Env = identity.Get().DecorateEnv(os.Environ())
+	cmd.SysProcAttr = &syscall.SysProcAttr{Credential: identity.Get().Credential()}
 
 	// Start the command in a goroutine so it doesn't block the server
 	go func() {
