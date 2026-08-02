@@ -209,13 +209,18 @@ func (id *Identity) Do(fn func() error) error {
 	previousGid := setfsgid(id.Gid)
 	previousUid := setfsuid(id.Uid)
 
-	// setfsuid(2) has no error return: it reports the previous value whether or
-	// not it changed anything. Reading it back is the only way to know the
-	// thread really lost its root filesystem privileges.
+	// setfsuid(2)/setfsgid(2) have no error return: they report the previous
+	// value whether or not they changed anything. Reading the value back is the
+	// only way to know the thread really lost its root filesystem privileges.
 	if current := setfsuid(id.Uid); current != id.Uid {
 		setfsuid(previousUid)
 		setfsgid(previousGid)
 		return fmt.Errorf("failed to drop filesystem uid to %d", id.Uid)
+	}
+	if current := setfsgid(id.Gid); current != id.Gid {
+		setfsuid(previousUid)
+		setfsgid(previousGid)
+		return fmt.Errorf("failed to drop filesystem gid to %d", id.Gid)
 	}
 
 	defer func() {
