@@ -3,9 +3,11 @@
 // mounts, WireGuard, CA bundle, keep-alive, port probing).
 //
 // The identity is configured with BL_SANDBOX_USER, using Docker's USER syntax:
-// "app", "10001", "app:app" or "10001:10001". When it is unset the whole
-// mechanism is disabled and everything keeps running as the API user (root),
-// which is the historical behaviour.
+// "app", "10001", "app:app" or "10001:10001". It only takes effect once
+// BL_SANDBOX_USER_ENABLED is on, so the runtime can export the image USER
+// before anyone opts in. When either is missing the whole mechanism is
+// disabled and everything keeps running as the API user (root), which is the
+// historical behaviour. --user opts in by itself.
 package identity
 
 import (
@@ -21,8 +23,15 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-// EnvUser is the environment variable holding the workload identity.
-const EnvUser = "BL_SANDBOX_USER"
+const (
+	// EnvUser is the environment variable holding the workload identity.
+	EnvUser = "BL_SANDBOX_USER"
+	// EnvEnabled opts into the identity coming from the environment. It
+	// defaults to false: the runtime exports the image USER for every
+	// sandbox, and honouring it unprompted would change how existing images
+	// behave.
+	EnvEnabled = "BL_SANDBOX_USER_ENABLED"
+)
 
 // Identity is a resolved, unprivileged POSIX identity.
 type Identity struct {
@@ -55,6 +64,9 @@ func SetSpec(value string) {
 func Get() *Identity {
 	once.Do(func() {
 		if spec == "" {
+			if !enabled() {
+				return
+			}
 			spec = strings.TrimSpace(os.Getenv(EnvUser))
 		}
 		if spec == "" {
@@ -78,6 +90,13 @@ func Get() *Identity {
 		resolved = id
 	})
 	return resolved
+}
+
+// enabled reports whether the environment opts into the workload identity.
+// Anything unparseable counts as off, the same as unset.
+func enabled() bool {
+	on, err := strconv.ParseBool(strings.TrimSpace(os.Getenv(EnvEnabled)))
+	return err == nil && on
 }
 
 // resolve parses a Docker USER string and looks the parts up in the passwd and

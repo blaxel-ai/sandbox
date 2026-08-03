@@ -52,7 +52,7 @@ func main() {
 	command := flag.String("command", "", "Command to execute")
 	shortCommand := flag.String("c", "", "Command to execute (shorthand)")
 	disableTelemetry := flag.Bool("disable-telemetry", false, "Disable anonymous error reporting")
-	workloadUser := flag.String("user", "", "Run processes, terminals and filesystem operations as this user, in Docker USER syntax (also settable with "+identity.EnvUser+")")
+	workloadUser := flag.String("user", "", "Run processes, terminals and filesystem operations as this user, in Docker USER syntax (also settable with "+identity.EnvUser+", which needs "+identity.EnvEnabled+")")
 	flag.Parse()
 
 	// Resolve the workload identity before anything can spawn a process, so a

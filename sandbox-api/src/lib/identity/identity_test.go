@@ -45,6 +45,15 @@ func TestResolveRejectsUnknown(t *testing.T) {
 	}
 }
 
+func TestEnabled(t *testing.T) {
+	for value, want := range map[string]bool{"": false, "false": false, "0": false, "maybe": false, "true": true, "1": true, " true ": true} {
+		t.Setenv(EnvEnabled, value)
+		if got := enabled(); got != want {
+			t.Fatalf("enabled() with %s=%q = %v, want %v", EnvEnabled, value, got, want)
+		}
+	}
+}
+
 func TestDecorateEnv(t *testing.T) {
 	id := &Identity{Uid: 10001, Gid: 10001, Name: "app", Home: "/home/app"}
 	env := id.DecorateEnv([]string{"HOME=/root", "USER=root", "LOGNAME=root", "PATH=/usr/bin"})
