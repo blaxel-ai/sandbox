@@ -1,5 +1,6 @@
 ARGS:= $(wordlist 2,$(words $(MAKECMDGOALS)),$(MAKECMDGOALS))
 
+
 dependencies:
 	cd sandbox-api && \
 		go install github.com/air-verse/air@latest && \
