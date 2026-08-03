@@ -1,11 +1,13 @@
 package identity
 
 import (
+	"errors"
 	"os"
 	"os/user"
 	"path/filepath"
 	"slices"
 	"strconv"
+	"sync"
 	"testing"
 )
 
@@ -119,5 +121,109 @@ func TestDoDropsRootAccess(t *testing.T) {
 
 	if _, err := os.ReadFile(secret); err != nil {
 		t.Fatalf("root access was not restored after Do: %v", err)
+	}
+}
+
+// reset undoes the package-level memoisation so a test can exercise Get with a
+// fresh configuration.
+func reset(t *testing.T) {
+	t.Helper()
+	t.Cleanup(func() {
+		once = sync.Once{}
+		resolved = nil
+		spec = ""
+		source = EnvUser
+	})
+	once = sync.Once{}
+	resolved = nil
+	spec = ""
+	source = EnvUser
+}
+
+func TestGetIgnoresEnvironmentWhenDisabled(t *testing.T) {
+	for _, enabledValue := range []string{"", "false", "0", "not-a-bool"} {
+		reset(t)
+		t.Setenv(EnvUser, currentUser(t).Username)
+		t.Setenv(EnvEnabled, enabledValue)
+
+		if id := Get(); id != nil {
+			t.Fatalf("Get() with %s=%q = %+v, want nil", EnvEnabled, enabledValue, id)
+		}
+	}
+}
+
+func TestGetUsesEnvironmentWhenEnabled(t *testing.T) {
+	u := currentUser(t)
+	if u.Uid == "0" {
+		t.Skip("requires a non-root test user")
+	}
+	reset(t)
+	t.Setenv(EnvUser, u.Username)
+	t.Setenv(EnvEnabled, "true")
+
+	id := Get()
+	if id == nil {
+		t.Fatal("Get() = nil, want the environment identity")
+	}
+	if id.Name != u.Username {
+		t.Fatalf("Get().Name = %q, want %q", id.Name, u.Username)
+	}
+}
+
+// SetSpec is the --user flag: it is the explicit opt-in, so it must not need
+// the environment gate.
+func TestSetSpecBypassesTheEnvironmentGate(t *testing.T) {
+	u := currentUser(t)
+	if u.Uid == "0" {
+		t.Skip("requires a non-root test user")
+	}
+	reset(t)
+	t.Setenv(EnvEnabled, "false")
+	SetSpec(" " + u.Username + " ")
+
+	id := Get()
+	if id == nil {
+		t.Fatal("Get() after SetSpec = nil, want the flag identity")
+	}
+	if id.Name != u.Username {
+		t.Fatalf("Get().Name = %q, want %q", id.Name, u.Username)
+	}
+	if source != "--user" {
+		t.Fatalf("source = %q, want %q", source, "--user")
+	}
+}
+
+func TestSetSpecIgnoresEmptyValues(t *testing.T) {
+	reset(t)
+	SetSpec("   ")
+	if spec != "" {
+		t.Fatalf("spec = %q, want empty", spec)
+	}
+}
+
+// Nothing but a configured identity may make the API act as a different user:
+// with no identity, Do must run fn as-is rather than fail or drop privileges.
+func TestDoWithoutIdentityRunsAsIs(t *testing.T) {
+	reset(t)
+	ran := false
+	if err := Do(func() error {
+		ran = true
+		return nil
+	}); err != nil {
+		t.Fatalf("Do: %v", err)
+	}
+	if !ran {
+		t.Fatal("Do did not run fn")
+	}
+}
+
+func TestDoPropagatesErrors(t *testing.T) {
+	want := errors.New("boom")
+	id := &Identity{Uid: 65534, Gid: 65534, Name: "nobody", Home: "/"}
+	if os.Geteuid() != 0 {
+		id = nil
+	}
+	if got := id.Do(func() error { return want }); !errors.Is(got, want) {
+		t.Fatalf("Do error = %v, want %v", got, want)
 	}
 }
