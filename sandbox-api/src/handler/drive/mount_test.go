@@ -1,9 +1,87 @@
 package drive
 
 import (
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 )
+
+// TestCreateMountPointReportsCreation checks the flag that decides whether the
+// mount point may be handed to the workload user.
+func TestCreateMountPointReportsCreation(t *testing.T) {
+	root := t.TempDir()
+
+	fresh := filepath.Join(root, "nested", "mount")
+	created, err := createMountPoint(fresh)
+	if err != nil {
+		t.Fatalf("createMountPoint(%q): %v", fresh, err)
+	}
+	if !created {
+		t.Fatalf("createMountPoint(%q) = false, want true for a new directory", fresh)
+	}
+
+	// A pre-existing directory must never be reported as created: it may be a
+	// root-owned system directory the caller asked for.
+	if created, err = createMountPoint(fresh); err != nil {
+		t.Fatalf("createMountPoint(%q) on existing dir: %v", fresh, err)
+	}
+	if created {
+		t.Fatalf("createMountPoint(%q) = true, want false for an existing directory", fresh)
+	}
+}
+
+// TestCreateMountPointDoesNotAdoptSymlinks makes sure a symlink planted at the
+// mount path is not reported as created, which would chown its target.
+func TestCreateMountPointDoesNotAdoptSymlinks(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "privileged")
+	if err := os.Mkdir(target, 0755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(root, "link")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+
+	created, err := createMountPoint(link)
+	if err != nil {
+		t.Fatalf("createMountPoint(%q): %v", link, err)
+	}
+	if created {
+		t.Fatalf("createMountPoint(%q) = true, want false for a symlink", link)
+	}
+}
+
+// TestCreateMountPointRejectsFiles keeps a file from being used as a mount
+// target, where it would previously have been chowned.
+func TestCreateMountPointRejectsFiles(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "file")
+	if err := os.WriteFile(path, []byte("x"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := createMountPoint(path); err == nil {
+		t.Fatalf("createMountPoint(%q) = nil error, want a failure", path)
+	}
+}
+
+// TestChownMountPointRefusesSymlinks verifies the chown cannot be redirected
+// through a symlink swapped in after the directory was created.
+func TestChownMountPointRefusesSymlinks(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "privileged")
+	if err := os.Mkdir(target, 0755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(root, "link")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := chownMountPoint(link, os.Getuid(), os.Getgid()); err == nil {
+		t.Fatal("chownMountPoint followed a symlink, want a failure")
+	}
+}
 
 func TestNormalizeDrivePath(t *testing.T) {
 	tests := []struct {
