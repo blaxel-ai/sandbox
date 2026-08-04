@@ -12,6 +12,7 @@ package tests
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"strings"
@@ -160,6 +161,36 @@ func TestFilesystemWritesAreOwnedByTheWorkloadUser(t *testing.T) {
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 
 	assert.Equal(t, user, runCommand(t, "stat -c %U "+path))
+}
+
+// TestDriveMountCannotTakeOverAnExistingDirectory covers the other way a
+// workload could reach root: the mount point of a drive is handed to the
+// workload user, and the mount path comes from the request. Asking for an
+// existing root-owned directory must not change its owner, otherwise the
+// workload could replace a binary the root API later runs.
+func TestDriveMountCannotTakeOverAnExistingDirectory(t *testing.T) {
+	requireWorkloadUser(t)
+
+	// A root-owned directory that exists in every image, and holds binaries
+	// the API executes as root.
+	const target = "/usr/local/bin"
+	require.Equal(t, "root", runCommand(t, "stat -c %U "+target), "precondition: %s is root-owned", target)
+
+	resp, err := common.MakeRequest(http.MethodPost, "/drives/mount", map[string]interface{}{
+		"driveName": "identity-probe",
+		"mountPath": target,
+	})
+	require.NoError(t, err)
+	body, err := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	require.NoError(t, err)
+
+	// The mount itself is expected to fail (there is no such drive); what
+	// matters is that nothing was handed over on the way.
+	require.NotContains(t, string(body), "BL_WORKSPACE_ID",
+		"the request never reached the mount point creation, set BL_WORKSPACE_ID on the API under test")
+	assert.Equal(t, "root", runCommand(t, "stat -c %U "+target),
+		"a drive mount request changed the owner of %s", target)
 }
 
 // TestDefaultInstanceStaysRoot is the compatibility contract: with no identity

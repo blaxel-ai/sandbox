@@ -66,7 +66,12 @@ process supervision and log files. So that a mounted drive is still usable:
 - `-map.uid` / `-map.gid` default to the workload uid/gid (drive content is
   owned by filer uid 0), overridable per request or with
   `BLFS_UID_MAP`/`BLFS_GID_MAP`;
-- the mount point is chowned to the workload user when it is created.
+- the mount point is chowned to the workload user, but only when the mount
+  request created it. `mountPath` comes from the caller, so adopting a directory
+  that already existed would let a process ask for `/usr/local/bin`, own it and
+  replace a binary the API runs as root. The chown also goes through an
+  `O_NOFOLLOW|O_DIRECTORY` descriptor, so the freshly created directory cannot
+  be swapped for a symlink to a privileged path in between.
 
 ## No escalation by calling the API back
 
@@ -75,7 +80,9 @@ That grants it nothing extra: every execution surface applies the same
 identity — there is no "run as root" parameter — and the filesystem endpoints
 are checked by the kernel against the workload user, so the classic escalation
 (overwrite a root-owned binary such as `blfs` or `sandbox-api`, wait for a
-privileged component to run it) fails with `EACCES`.
+privileged component to run it) fails with `EACCES`. The privileged surfaces are
+held to the same rule: they never hand an existing path to the workload user
+(see the drive mount point above).
 
 Two things are worth stating plainly:
 

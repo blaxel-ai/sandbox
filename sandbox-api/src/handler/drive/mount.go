@@ -37,6 +37,51 @@ func normalizeDrivePath(drivePath string) string {
 	return drivePath
 }
 
+// createMountPoint makes sure mountPath is a directory, and reports whether
+// this call created it.
+//
+// The distinction matters because the mount point is handed to the workload
+// user: mountPath comes from the request, so chowning a directory that already
+// existed would let a process ask for a root-owned directory such as
+// /usr/local/bin and take it over. Only a directory created here is safe to
+// hand over, since it holds nothing the workload did not already own.
+func createMountPoint(mountPath string) (created bool, err error) {
+	// Clean first: for "/mnt/data/", filepath.Dir would be "/mnt/data" and the
+	// parent creation below would create the mount point itself, hiding the fact
+	// that this call made it.
+	mountPath = filepath.Clean(mountPath)
+	if err := os.MkdirAll(filepath.Dir(mountPath), 0755); err != nil {
+		return false, err
+	}
+	if err := os.Mkdir(mountPath, 0755); err == nil {
+		return true, nil
+	} else if !errors.Is(err, os.ErrExist) {
+		return false, err
+	}
+	// Something is already there: it is only usable as a mount target if it is
+	// a directory.
+	info, err := os.Stat(mountPath)
+	if err != nil {
+		return false, err
+	}
+	if !info.IsDir() {
+		return false, fmt.Errorf("%s exists and is not a directory", mountPath)
+	}
+	return false, nil
+}
+
+// chownMountPoint changes the owner of the directory at mountPath without
+// following symlinks, so the target cannot be swapped for a link to a
+// privileged path between its creation and this call.
+func chownMountPoint(mountPath string, uid, gid int) error {
+	dir, err := os.OpenFile(mountPath, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_DIRECTORY, 0)
+	if err != nil {
+		return err
+	}
+	defer dir.Close()
+	return dir.Chown(uid, gid)
+}
+
 // existingMount returns the blfs mount currently backing mountPath, or nil if
 // none is managed there.
 func existingMount(mountPath string) (*MountInfo, error) {
@@ -181,15 +226,19 @@ func MountDrive(driveName, mountPath, drivePath string, readOnly bool, uidMap, g
 		return "", "", fmt.Errorf("failed to get filer address: %w", err)
 	}
 
-	// Create mount directory if it doesn't exist. It is created by the API
-	// (root) but handed to the workload user, otherwise the directory is
-	// unusable while the drive is not mounted over it.
-	if err := os.MkdirAll(mountPath, 0755); err != nil {
+	// Create the mount directory if it doesn't exist, and hand it to the
+	// workload user when this call created it: without that the directory is
+	// unusable by processes while the drive is not mounted over it.
+	created, err := createMountPoint(mountPath)
+	if err != nil {
 		return "", "", fmt.Errorf("failed to create mount directory: %w", err)
 	}
-	if id := identity.Get(); id != nil {
-		if err := os.Chown(mountPath, id.Uid, id.Gid); err != nil {
-			logrus.WithError(err).WithField("mount_path", mountPath).Warn("Failed to hand mount point to the workload user")
+	if id := identity.Get(); id != nil && created {
+		// A failure here means the directory we just created is not what we
+		// expect any more (it was replaced by a symlink, for instance), so the
+		// mount must not proceed against it.
+		if err := chownMountPoint(mountPath, id.Uid, id.Gid); err != nil {
+			return "", "", fmt.Errorf("failed to hand mount point to the workload user: %w", err)
 		}
 	}
 

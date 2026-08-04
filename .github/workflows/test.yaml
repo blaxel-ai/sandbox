@@ -70,7 +70,7 @@ jobs:
             # A root-owned secret the workload user must not reach through the API.
             sudo sh -c 'printf "root only\n" > /root/.integration-identity-secret && chmod 600 /root/.integration-identity-secret'
             echo "WORKLOAD_USER=sbxtest" >> "$GITHUB_ENV"
-            sudo -b sh -c 'SANDBOX_LOG_DIR=/tmp/sandbox-logs /tmp/sandbox-api --user sbxtest -port 8080 > /tmp/sandbox-api.log 2>&1'
+            sudo -b sh -c 'SANDBOX_LOG_DIR=/tmp/sandbox-logs BL_WORKSPACE_ID=test /tmp/sandbox-api --user sbxtest -port 8080 > /tmp/sandbox-api.log 2>&1'
           else
             sudo -b sh -c 'SANDBOX_LOG_DIR=/tmp/sandbox-logs /tmp/sandbox-api -port 8080 > /tmp/sandbox-api.log 2>&1'
           fi
