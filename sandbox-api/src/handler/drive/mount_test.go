@@ -31,6 +31,20 @@ func TestCreateMountPointReportsCreation(t *testing.T) {
 	}
 }
 
+// TestCreateMountPointHandlesTrailingSlash: a trailing slash must not make the
+// parent creation swallow the mount point itself, which would leave a directory
+// created for the workload owned by root.
+func TestCreateMountPointHandlesTrailingSlash(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "mount") + "/"
+	created, err := createMountPoint(path)
+	if err != nil {
+		t.Fatalf("createMountPoint(%q): %v", path, err)
+	}
+	if !created {
+		t.Fatalf("createMountPoint(%q) = false, want true", path)
+	}
+}
+
 // TestCreateMountPointDoesNotAdoptSymlinks makes sure a symlink planted at the
 // mount path is not reported as created, which would chown its target.
 func TestCreateMountPointDoesNotAdoptSymlinks(t *testing.T) {

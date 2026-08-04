@@ -46,6 +46,10 @@ func normalizeDrivePath(drivePath string) string {
 // /usr/local/bin and take it over. Only a directory created here is safe to
 // hand over, since it holds nothing the workload did not already own.
 func createMountPoint(mountPath string) (created bool, err error) {
+	// Clean first: for "/mnt/data/", filepath.Dir would be "/mnt/data" and the
+	// parent creation below would create the mount point itself, hiding the fact
+	// that this call made it.
+	mountPath = filepath.Clean(mountPath)
 	if err := os.MkdirAll(filepath.Dir(mountPath), 0755); err != nil {
 		return false, err
 	}
@@ -230,8 +234,11 @@ func MountDrive(driveName, mountPath, drivePath string, readOnly bool, uidMap, g
 		return "", "", fmt.Errorf("failed to create mount directory: %w", err)
 	}
 	if id := identity.Get(); id != nil && created {
+		// A failure here means the directory we just created is not what we
+		// expect any more (it was replaced by a symlink, for instance), so the
+		// mount must not proceed against it.
 		if err := chownMountPoint(mountPath, id.Uid, id.Gid); err != nil {
-			logrus.WithError(err).WithField("mount_path", mountPath).Warn("Failed to hand mount point to the workload user")
+			return "", "", fmt.Errorf("failed to hand mount point to the workload user: %w", err)
 		}
 	}
 
