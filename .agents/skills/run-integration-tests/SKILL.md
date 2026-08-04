@@ -7,6 +7,8 @@ description: Run the sandbox-api integration tests against a live API instance. 
 
 Integration tests live in `sandbox-api/integration-tests/` and test real HTTP endpoints against a running sandbox-api instance.
 
+CI runs them automatically on every PR touching `sandbox-api/` (`.github/workflows/test.yaml`), in both identity modes. Running them by hand is for debugging a failure or developing a new test — see the test-changes skill for what to add.
+
 ## Quick Start (Recommended)
 
 Run against an already-running dev environment:
@@ -72,6 +74,33 @@ API_BASE_URL=http://localhost:8080 go test -v -run TestFilesystemRead ./tests/fi
 | `tests/network/` | Port monitoring, tunnel config |
 | `tests/mcp/` | MCP tool registration and invocation |
 | `tests/codegen/` | File search, grep search, rerank, edit file |
+| `tests/identity/` | Workload user scoping: process/filesystem identity, no escalation to root |
+
+`tests/network/` is skipped in CI: it needs a real sandbox network stack.
+
+---
+
+## Run The Unprivileged Workload Mode
+
+When sandbox-api supervises a non-root workload user (Dockerfile `USER` /
+`--user` / `BL_SANDBOX_USER`), it stays root itself and scopes what it runs for
+the user. That mode has its own runner, which creates the user, builds and boots
+the API and runs `tests/identity`:
+
+```bash
+cd sandbox-api/integration-tests
+sudo ./run_identity_tests.sh              # WORKLOAD_USER=sbxtest by default
+```
+
+Against an instance you already started, point the suite at it and tell it which
+identity to expect:
+
+```bash
+API_BASE_URL=http://localhost:8080 WORKLOAD_USER=app go test -v ./tests/identity/...
+```
+
+With `WORKLOAD_USER` unset, the same suite asserts the opposite contract: an API
+with no identity configured still does everything as root.
 
 ---
 

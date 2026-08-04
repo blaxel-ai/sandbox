@@ -14,6 +14,7 @@ import (
 
 	"github.com/blaxel-ai/sandbox-api/src/handler/constants"
 	"github.com/blaxel-ai/sandbox-api/src/lib/blaxel"
+	"github.com/blaxel-ai/sandbox-api/src/lib/identity"
 	"github.com/sirupsen/logrus"
 )
 
@@ -240,10 +241,11 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 
 	// Set up process group to ensure all child processes can be killed together
 	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Setpgid: true,
+		Setpgid:    true,
+		Credential: identity.Get().Credential(),
 	}
 
-	cmd.Env = buildProcessEnv(env)
+	cmd.Env = identity.Get().DecorateEnv(buildProcessEnv(env))
 
 	// Ensure log directory exists
 	if err := ensureLogDir(); err != nil {
@@ -661,13 +663,14 @@ func (pm *ProcessManager) restartProcess(oldProcess *ProcessInfo, callback func(
 
 	// Set up process group to ensure all child processes can be killed together
 	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Setpgid: true,
+		Setpgid:    true,
+		Credential: identity.Get().Credential(),
 	}
 
 	// Re-merge the custom env vars provided at the original start with the
 	// current system environment. Using os.Environ() alone here would drop any
 	// custom env vars the caller passed when first starting the process.
-	cmd.Env = buildProcessEnv(oldProcess.Env)
+	cmd.Env = identity.Get().DecorateEnv(buildProcessEnv(oldProcess.Env))
 
 	// Open log files for appending - child writes directly to files
 	stdoutFile, err := os.OpenFile(oldProcess.StdoutFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)

@@ -1,0 +1,96 @@
+name: Test Sandbox API
+
+permissions:
+  contents: read
+
+on:
+  pull_request:
+    paths:
+      - 'sandbox-api/**'
+      - '.github/workflows/test.yaml'
+  push:
+    branches:
+      - main
+      - develop
+    paths:
+      - 'sandbox-api/**'
+      - '.github/workflows/test.yaml'
+  workflow_dispatch:
+
+jobs:
+  unit:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache-dependency-path: sandbox-api/go.sum
+
+      - name: go vet
+        working-directory: sandbox-api
+        run: go vet ./...
+
+      - name: go test
+        working-directory: sandbox-api
+        # The process manager writes its log files there; the default
+        # /var/log/sandbox-api is not writable on a runner.
+        env:
+          SANDBOX_LOG_DIR: /tmp/sandbox-api-unit-logs
+        run: go test ./...
+
+  integration:
+    name: Integration tests (${{ matrix.mode }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # root: the historical behaviour, everything runs as the API user.
+        # workload-user: the API keeps root and scopes what it runs for the
+        # user to an unprivileged identity (Dockerfile USER / --user).
+        mode: [root, workload-user]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache-dependency-path: sandbox-api/go.sum
+
+      - name: Build sandbox-api
+        working-directory: sandbox-api
+        run: go build -o /tmp/sandbox-api .
+
+      - name: Start sandbox-api
+        run: |
+          if [ "${{ matrix.mode }}" = "workload-user" ]; then
+            sudo useradd --create-home --shell /bin/sh sbxtest
+            # A root-owned secret the workload user must not reach through the API.
+            sudo sh -c 'printf "root only\n" > /root/.integration-identity-secret && chmod 600 /root/.integration-identity-secret'
+            echo "WORKLOAD_USER=sbxtest" >> "$GITHUB_ENV"
+            sudo -b sh -c 'SANDBOX_LOG_DIR=/tmp/sandbox-logs /tmp/sandbox-api --user sbxtest -port 8080 > /tmp/sandbox-api.log 2>&1'
+          else
+            sudo -b sh -c 'SANDBOX_LOG_DIR=/tmp/sandbox-logs /tmp/sandbox-api -port 8080 > /tmp/sandbox-api.log 2>&1'
+          fi
+
+          for _ in $(seq 30); do
+            curl -sf http://localhost:8080/health > /dev/null && exit 0
+            sleep 1
+          done
+          echo "sandbox-api did not become ready:"
+          cat /tmp/sandbox-api.log
+          exit 1
+
+      - name: Run integration tests
+        working-directory: sandbox-api/integration-tests
+        env:
+          API_BASE_URL: http://localhost:8080
+        # tests/network is excluded: it drives port monitoring against a real
+        # sandbox network stack, which a bare runner does not have.
+        run: go test -v . ./tests/codegen/... ./tests/filesystem/... ./tests/identity/... ./tests/mcp/... ./tests/process/...
+
+      - name: sandbox-api logs
+        if: failure()
+        run: cat /tmp/sandbox-api.log
