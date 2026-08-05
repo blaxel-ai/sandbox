@@ -223,7 +223,7 @@ func (fs *Filesystem) GetAbsolutePath(path string) (string, error) {
 }
 
 // FileExists checks if a file exists at the given path
-func (fs *Filesystem) FileExists(path string) (bool, error) {
+func (fs *Filesystem) fileExists(path string) (bool, error) {
 	absPath, err := fs.GetAbsolutePath(path)
 	if err != nil {
 		return false, err
@@ -241,7 +241,7 @@ func (fs *Filesystem) FileExists(path string) (bool, error) {
 }
 
 // DirectoryExists checks if a directory exists at the given path
-func (fs *Filesystem) DirectoryExists(path string) (bool, error) {
+func (fs *Filesystem) directoryExists(path string) (bool, error) {
 	absPath, err := fs.GetAbsolutePath(path)
 	if err != nil {
 		return false, err
@@ -260,7 +260,7 @@ func (fs *Filesystem) DirectoryExists(path string) (bool, error) {
 
 // Infos returns the information about a file or directory
 // Uses os.Stat to follow symlinks, so symlinks to directories are treated as directories
-func (fs *Filesystem) Infos(path string) (os.FileInfo, error) {
+func (fs *Filesystem) infos(path string) (os.FileInfo, error) {
 	absPath, err := fs.GetAbsolutePath(path)
 	if err != nil {
 		return nil, err
@@ -270,7 +270,7 @@ func (fs *Filesystem) Infos(path string) (os.FileInfo, error) {
 }
 
 // ReadFile reads a file and returns its contents
-func (fs *Filesystem) ReadFile(path string) (*FileWithContentByte, error) {
+func (fs *Filesystem) readFile(path string) (*FileWithContentByte, error) {
 	absPath, err := fs.GetAbsolutePath(path)
 	if err != nil {
 		return nil, err
@@ -314,7 +314,7 @@ func (fs *Filesystem) ReadFile(path string) (*FileWithContentByte, error) {
 }
 
 // WriteFile writes content to a file
-func (fs *Filesystem) WriteFile(path string, content []byte, perm os.FileMode) error {
+func (fs *Filesystem) writeFile(path string, content []byte, perm os.FileMode) error {
 	absPath, err := fs.GetAbsolutePath(path)
 	if err != nil {
 		return err
@@ -330,7 +330,7 @@ func (fs *Filesystem) WriteFile(path string, content []byte, perm os.FileMode) e
 }
 
 // WriteFileFromReader streams content from a reader to a file on disk
-func (fs *Filesystem) WriteFileFromReader(path string, r io.Reader, perm os.FileMode) error {
+func (fs *Filesystem) writeFileFromReader(path string, r io.Reader, perm os.FileMode) error {
 	absPath, err := fs.GetAbsolutePath(path)
 	if err != nil {
 		return err
@@ -358,7 +358,7 @@ func (fs *Filesystem) WriteFileFromReader(path string, r io.Reader, perm os.File
 }
 
 // CreateDirectory creates a directory at the given path
-func (fs *Filesystem) CreateDirectory(path string, perm os.FileMode) error {
+func (fs *Filesystem) createDirectory(path string, perm os.FileMode) error {
 	absPath, err := fs.GetAbsolutePath(path)
 	if err != nil {
 		return err
@@ -368,7 +368,7 @@ func (fs *Filesystem) CreateDirectory(path string, perm os.FileMode) error {
 }
 
 // ListDirectory lists files and directories in the given path
-func (fs *Filesystem) ListDirectory(path string) (*Directory, error) {
+func (fs *Filesystem) listDirectory(path string) (*Directory, error) {
 	absPath, err := fs.GetAbsolutePath(path)
 	if err != nil {
 		return nil, err
@@ -413,7 +413,7 @@ func (fs *Filesystem) ListDirectory(path string) (*Directory, error) {
 }
 
 // DeleteFile deletes a file at the given path
-func (fs *Filesystem) DeleteFile(path string) error {
+func (fs *Filesystem) deleteFile(path string) error {
 	absPath, err := fs.GetAbsolutePath(path)
 	if err != nil {
 		return err
@@ -432,7 +432,7 @@ func (fs *Filesystem) DeleteFile(path string) error {
 }
 
 // DeleteDirectory deletes a directory at the given path
-func (fs *Filesystem) DeleteDirectory(path string, recursive bool) error {
+func (fs *Filesystem) deleteDirectory(path string, recursive bool) error {
 	absPath, err := fs.GetAbsolutePath(path)
 	if err != nil {
 		return err
@@ -454,7 +454,7 @@ func (fs *Filesystem) DeleteDirectory(path string, recursive bool) error {
 }
 
 // CopyFile copies a file from src to dst
-func (fs *Filesystem) CopyFile(src, dst string) error {
+func (fs *Filesystem) copyFile(src, dst string) error {
 	srcAbs, err := fs.GetAbsolutePath(src)
 	if err != nil {
 		return err
@@ -488,7 +488,7 @@ func (fs *Filesystem) CopyFile(src, dst string) error {
 }
 
 // MoveFile moves a file from src to dst
-func (fs *Filesystem) MoveFile(src, dst string) error {
+func (fs *Filesystem) moveFile(src, dst string) error {
 	srcAbs, err := fs.GetAbsolutePath(src)
 	if err != nil {
 		return err
@@ -542,7 +542,7 @@ func (fs *Filesystem) getFileOwnerAndGroup(path string) (string, string, error) 
 }
 
 // GetFileInfo returns file information without reading its content
-func (fs *Filesystem) GetFileInfo(path string) (*FileByte, error) {
+func (fs *Filesystem) getFileInfo(path string) (*FileByte, error) {
 	absPath, err := fs.GetAbsolutePath(path)
 	if err != nil {
 		return nil, err
@@ -566,7 +566,7 @@ func (fs *Filesystem) GetFileInfo(path string) (*FileByte, error) {
 }
 
 // Walk walks the file tree rooted at root, calling fn for each file or directory
-func (fs *Filesystem) Walk(root string, fn filepath.WalkFunc) error {
+func (fs *Filesystem) walk(root string, fn filepath.WalkFunc) error {
 	absRoot, err := fs.GetAbsolutePath(root)
 	if err != nil {
 		return err
@@ -589,7 +589,7 @@ func (fs *Filesystem) Walk(root string, fn filepath.WalkFunc) error {
 }
 
 // CreateOrUpdateFile creates or updates a file
-func (fs *Filesystem) CreateOrUpdateFile(path string, content string, isDirectory bool, permissions string) error {
+func (fs *Filesystem) createOrUpdateFile(path string, content string, isDirectory bool, permissions string) error {
 	// Parse permissions or use appropriate defaults
 	var perm os.FileMode
 	if permissions != "" {
@@ -608,7 +608,7 @@ func (fs *Filesystem) CreateOrUpdateFile(path string, content string, isDirector
 	}
 
 	if isDirectory {
-		return fs.CreateDirectory(path, perm)
+		return fs.createDirectory(path, perm)
 	}
 
 	// Get absolute path for directory creation
@@ -623,5 +623,5 @@ func (fs *Filesystem) CreateOrUpdateFile(path string, content string, isDirector
 		return err
 	}
 
-	return fs.WriteFile(path, []byte(content), perm)
+	return fs.writeFile(path, []byte(content), perm)
 }

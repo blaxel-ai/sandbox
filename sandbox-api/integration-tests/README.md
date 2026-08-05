@@ -14,9 +14,11 @@ integration-tests/
 ├── tests/                 # Test files organized by API feature
 │   ├── filesystem/        # Tests for filesystem operations
 │   ├── process/           # Tests for process operations
+│   ├── identity/          # Tests for the unprivileged workload user
 │   └── network/           # Tests for network operations
 ├── main_test.go           # Main test setup and health check tests
 ├── run_tests.sh           # Test runner script
+├── run_identity_tests.sh  # Test runner for the unprivileged workload user mode
 ├── go.mod                 # Go module definition
 └── README.md              # This file
 ```

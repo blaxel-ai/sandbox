@@ -9,6 +9,7 @@ import (
 	"sync"
 	"syscall"
 
+	"github.com/blaxel-ai/sandbox-api/src/lib/identity"
 	"github.com/creack/pty"
 )
 
@@ -95,18 +96,41 @@ func NewTerminalSession(shell string, workingDir string, env map[string]string, 
 	if !hasTerm {
 		finalEnv = append(finalEnv, "TERM=xterm-256color")
 	}
-	cmd.Env = finalEnv
+	cmd.Env = identity.Get().DecorateEnv(finalEnv)
 
-	// NOTE: Do NOT set SysProcAttr here!
-	// The pty.Start() function internally sets Setsid: true to create a new session,
-	// which is required for proper PTY operation. Setting Setpgid would conflict with Setsid.
-
-	// Start command with PTY
-	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{
-		Cols: cols,
-		Rows: rows,
-	})
+	// The PTY pair is opened here rather than through pty.StartWithSize so the
+	// slave can be handed over to the workload user (as login(1) does) before
+	// the shell starts. Setsid/Setctty are required for PTY operation and
+	// conflict with Setpgid, so the credential travels in the same attributes.
+	ptmx, tty, err := pty.Open()
 	if err != nil {
+		return nil, err
+	}
+	defer tty.Close()
+
+	if err := pty.Setsize(ptmx, &pty.Winsize{Cols: cols, Rows: rows}); err != nil {
+		ptmx.Close()
+		return nil, err
+	}
+
+	if id := identity.Get(); id != nil {
+		if err := tty.Chown(id.Uid, id.Gid); err != nil {
+			ptmx.Close()
+			return nil, err
+		}
+	}
+
+	cmd.Stdin = tty
+	cmd.Stdout = tty
+	cmd.Stderr = tty
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		Setsid:     true,
+		Setctty:    true,
+		Credential: identity.Get().Credential(),
+	}
+
+	if err := cmd.Start(); err != nil {
+		ptmx.Close()
 		return nil, err
 	}
 
