@@ -1,3 +1,6 @@
+ARG SANDBOX_VERSION=latest
+FROM ghcr.io/blaxel-ai/sandbox:${SANDBOX_VERSION} AS sandbox-api
+
 FROM alpine:3.21
 
 RUN apk update && apk add --no-cache \
@@ -25,7 +28,7 @@ RUN sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master
 
 WORKDIR /app
 
-COPY --from=ghcr.io/blaxel-ai/sandbox:latest /sandbox-api /usr/local/bin/sandbox-api
+COPY --from=sandbox-api /sandbox-api /usr/local/bin/sandbox-api
 
 COPY hub/docker-in-sandbox/example /app/example
 
