@@ -40,8 +40,14 @@ jobs:
         working-directory: hub/jupyter-server
         run: |
           # The runner's python is externally managed (PEP 668), so --system is refused.
+          # Two separate installs, in the same order as hub/jupyter-server/Dockerfile,
+          # so this gate resolves the same package set the image actually ships:
+          # a joint `-r requirements.txt -r server/requirements.txt` resolution can
+          # differ from (or fail on a conflict tolerated by) the Dockerfile's
+          # sequential requirements.txt -> server/requirements.txt installs.
           uv venv .venv
-          uv pip install --python .venv -r requirements.txt -r server/requirements.txt
+          uv pip install --python .venv -r requirements.txt
+          uv pip install --python .venv -r server/requirements.txt
 
       - name: Run dependency smoke tests
         working-directory: hub/jupyter-server

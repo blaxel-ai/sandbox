@@ -122,7 +122,7 @@ def test_malformed_chunked_response_raises_clean_error(body: bytes):
     raising a clean, catchable HTTP error; it must never crash the process
     or hang.
     """
-    exc = asyncio.run(_fetch_malformed(body))
+    exc = asyncio.run(asyncio.wait_for(_fetch_malformed(body), timeout=5.0))
     # The parser's error message embeds a repr() of the bad snippet; assert
     # it is a normal, bounded string rather than something absurdly long
     # (a symptom of the unbounded strlen the patch removed).
