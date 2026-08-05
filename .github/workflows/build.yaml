@@ -263,6 +263,7 @@ jobs:
     outputs:
       sandboxes: ${{ steps.retrieve-sandbox.outputs.sandboxes }}
       architectures: ${{ steps.retrieve-architectures.outputs.architectures }}
+      exclusions: ${{ steps.retrieve-architectures.outputs.exclusions }}
     steps:
       - name: Retrieve architectures
         id: retrieve-architectures
@@ -272,6 +273,10 @@ jobs:
           ARCHS="${{ inputs.architectures }}"
           ARCHS="${ARCHS:-amd64}"
           echo "architectures=$(jq -cR 'split(",")' <<< "$ARCHS")" >> $GITHUB_OUTPUT
+          # Images that cannot be built for arm64 yet: the vibekit CLI base
+          # images are published amd64-only, and jupyter-server pulls python
+          # packages that have no aarch64 wheels.
+          echo "exclusions=$(jq -cn '["jupyter-server","vibekit-claude","vibekit-codex","vibekit-gemini","vibekit-grok","vibekit-opencode"] | map({sandbox: ., arch: "arm64"})')" >> $GITHUB_OUTPUT
       - name: Checkout code
         uses: actions/checkout@v4
         with:
@@ -352,6 +357,7 @@ jobs:
       matrix:
         sandbox: ${{ fromJson(needs.generate-matrix.outputs.sandboxes )}}
         arch: ${{ fromJson(needs.generate-matrix.outputs.architectures )}}
+        exclude: ${{ fromJson(needs.generate-matrix.outputs.exclusions )}}
     permissions:
       contents: read
       packages: write
@@ -418,6 +424,7 @@ jobs:
       matrix:
         sandbox: ${{ fromJson(needs.generate-matrix.outputs.sandboxes )}}
         arch: ${{ fromJson(needs.generate-matrix.outputs.architectures )}}
+        exclude: ${{ fromJson(needs.generate-matrix.outputs.exclusions )}}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
