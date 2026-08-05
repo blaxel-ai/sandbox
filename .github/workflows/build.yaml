@@ -352,6 +352,17 @@ jobs:
       matrix:
         sandbox: ${{ fromJson(needs.generate-matrix.outputs.sandboxes )}}
         arch: ${{ fromJson(needs.generate-matrix.outputs.architectures )}}
+        exclude:
+          - sandbox: vibekit-opencode
+            arch: arm64
+          - sandbox: vibekit-grok
+            arch: arm64
+          - sandbox: vibekit-gemini
+            arch: arm64
+          - sandbox: vibekit-codex
+            arch: arm64
+          - sandbox: vibekit-claude
+            arch: arm64
     permissions:
       contents: read
       packages: write
@@ -418,6 +429,17 @@ jobs:
       matrix:
         sandbox: ${{ fromJson(needs.generate-matrix.outputs.sandboxes )}}
         arch: ${{ fromJson(needs.generate-matrix.outputs.architectures )}}
+        exclude:
+          - sandbox: vibekit-opencode
+            arch: arm64
+          - sandbox: vibekit-grok
+            arch: arm64
+          - sandbox: vibekit-gemini
+            arch: arm64
+          - sandbox: vibekit-codex
+            arch: arm64
+          - sandbox: vibekit-claude
+            arch: arm64
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
