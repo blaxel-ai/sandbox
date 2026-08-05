@@ -146,6 +146,10 @@ func resolveMapping(reqValue, envKey, name string, workloadID int) (string, erro
 	return value, nil
 }
 
+func crossMountCacheCoherenceFlag(value string) string {
+	return "-crossMountCacheCoherence=" + strconv.FormatBool(value == "true")
+}
+
 // MountDrive mounts a drive using the blfs binary
 // driveName: name of the drive resource
 // mountPath: local path where the drive will be mounted
@@ -264,6 +268,8 @@ func MountDrive(driveName, mountPath, drivePath string, readOnly bool, uidMap, g
 	} else {
 		args = append(args, "-writebackCache=true")
 	}
+
+	args = append(args, crossMountCacheCoherenceFlag(os.Getenv("BLFS_CROSS_MOUNT_CACHE_COHERENCE")))
 
 	// Open read-only files with FUSE direct IO to bypass the kernel page cache. Keeps
 	// memory flat during bulk reads of large files (no page cache growth), at the cost of
