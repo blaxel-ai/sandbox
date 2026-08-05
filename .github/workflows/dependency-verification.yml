@@ -39,9 +39,11 @@ jobs:
       - name: Install jupyter-server Python dependencies
         working-directory: hub/jupyter-server
         run: |
-          uv pip install --system -r requirements.txt -r server/requirements.txt
+          # The runner's python is externally managed (PEP 668), so --system is refused.
+          uv venv .venv
+          uv pip install --python .venv -r requirements.txt -r server/requirements.txt
 
       - name: Run dependency smoke tests
         working-directory: hub/jupyter-server
         run: |
-          python -m pytest tests/ -v
+          .venv/bin/python -m pytest tests/ -v
