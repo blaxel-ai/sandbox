@@ -339,10 +339,14 @@ jobs:
   build-ghcr-hub:
     runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
     needs:
+      - check-changes
       - generate-matrix
       - sandbox-api
-    # Run after sandbox-api completes (if it runs) or is skipped. Skip automatic main pushes, but allow manual dispatch for a selected sandbox.
-    if: always() && (github.ref_name != 'main' || (github.event_name == 'workflow_dispatch' && inputs.sandbox != '')) && needs.generate-matrix.outputs.sandboxes != '[]' && (needs.sandbox-api.result == 'success' || needs.sandbox-api.result == 'skipped')
+    # Run after sandbox-api succeeds, or when it was never meant to run (no
+    # sandbox-api change). A skipped sandbox-api caused by a failed arch build
+    # must not let the hub images ship against a stale sandbox-api.
+    # Skip automatic main pushes, but allow manual dispatch for a selected sandbox.
+    if: always() && (github.ref_name != 'main' || (github.event_name == 'workflow_dispatch' && inputs.sandbox != '')) && needs.generate-matrix.outputs.sandboxes != '[]' && (needs.sandbox-api.result == 'success' || (needs.sandbox-api.result == 'skipped' && needs.check-changes.outputs.sandbox-api-changed != 'true'))
     strategy:
       fail-fast: false
       matrix:
