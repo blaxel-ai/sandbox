@@ -1811,7 +1811,7 @@ const docTemplate = `{
                 },
                 "model": {
                     "type": "string",
-                    "example": "auto"
+                    "example": "relace-apply-3"
                 }
             }
         },

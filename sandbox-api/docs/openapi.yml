@@ -1496,7 +1496,7 @@ components:
             }
           type: string
         model:
-          example: auto
+          example: relace-apply-3
           type: string
       required:
         - codeEdit
