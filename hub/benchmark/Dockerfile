@@ -1,6 +1,9 @@
+ARG SANDBOX_VERSION=latest
+FROM ghcr.io/blaxel-ai/sandbox:${SANDBOX_VERSION} AS sandbox-api
+
 FROM alpine:3.19
 
-COPY --from=ghcr.io/blaxel-ai/sandbox:latest /sandbox-api /usr/local/bin/sandbox-api
+COPY --from=sandbox-api /sandbox-api /usr/local/bin/sandbox-api
 
 EXPOSE 8080
 
