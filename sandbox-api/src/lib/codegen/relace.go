@@ -5,16 +5,27 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"strings"
 )
 
 // Ensure RelaceClient implements Client and CodeReranker interfaces
 var _ Client = (*RelaceClient)(nil)
 var _ CodeReranker = (*RelaceClient)(nil)
 
+// defaultRelaceBaseURL is the documented Relace host. The legacy
+// *.endpoint.relace.run hosts are deprecated.
+const defaultRelaceBaseURL = "https://models.relace.ai"
+
+// relaceApplyModel is the only apply model Relace still accepts; previous
+// versions (including "auto") have been deprecated in favor of it.
+const relaceApplyModel = "relace-apply-3"
+
 // RelaceClient handles communication with the Relace API
 type RelaceClient struct {
-	APIKey string
-	Client *http.Client
+	APIKey  string
+	BaseURL string
+	Client  *http.Client
 }
 
 // RelaceApplyRequest represents the request structure for Relace Instant Apply API
@@ -39,11 +50,18 @@ type RelaceApplyUsage struct {
 	TotalTokens      int `json:"total_tokens"`
 }
 
-// NewRelaceClient creates a new Relace API client
+// NewRelaceClient creates a new Relace API client. The base URL defaults to
+// the documented Relace host and can be overridden with RELACE_BASE_URL so a
+// future host change does not require a new sandbox image.
 func NewRelaceClient(apiKey string) *RelaceClient {
+	baseURL := defaultRelaceBaseURL
+	if override := os.Getenv("RELACE_BASE_URL"); override != "" {
+		baseURL = override
+	}
 	return &RelaceClient{
-		APIKey: apiKey,
-		Client: &http.Client{},
+		APIKey:  apiKey,
+		BaseURL: strings.TrimRight(baseURL, "/"),
+		Client:  &http.Client{},
 	}
 }
 
@@ -54,9 +72,10 @@ func (r *RelaceClient) ProviderName() string {
 
 // ApplyCodeEdit uses Relace's Instant Apply API to apply code edits
 func (r *RelaceClient) ApplyCodeEdit(originalContent, codeEdit, model string) (string, error) {
-	// Default to "auto" if not specified
-	if model == "" {
-		model = "auto"
+	// Relace only accepts relace-apply-3; "auto" and earlier versions are
+	// deprecated, so coerce empty/legacy values to the supported model.
+	if model == "" || model == "auto" {
+		model = relaceApplyModel
 	}
 
 	// Prepare the request payload according to Relace API spec
@@ -74,7 +93,7 @@ func (r *RelaceClient) ApplyCodeEdit(originalContent, codeEdit, model string) (s
 	}
 
 	// Create HTTP request to the instant apply endpoint
-	req, err := http.NewRequest("POST", "https://instantapply.endpoint.relace.run/v1/code/apply", bytes.NewBuffer(jsonData))
+	req, err := http.NewRequest("POST", r.BaseURL+"/v1/code/apply", bytes.NewBuffer(jsonData))
 	if err != nil {
 		return "", fmt.Errorf("failed to create request: %w", err)
 	}
@@ -171,7 +190,7 @@ func (r *RelaceClient) RerankCode(documents []CodebaseDocument, query string, to
 	}
 
 	// Create HTTP request to the ranker endpoint
-	req, err := http.NewRequest("POST", "https://ranker.endpoint.relace.run/v2/code/rank", bytes.NewBuffer(jsonData))
+	req, err := http.NewRequest("POST", r.BaseURL+"/v2/code/rank", bytes.NewBuffer(jsonData))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
