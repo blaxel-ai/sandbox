@@ -4,7 +4,9 @@ FROM ghcr.io/blaxel-ai/sandbox:${SANDBOX_VERSION} AS sandbox-api
 # Use an official Python runtime as a parent image
 FROM python:3.12-slim
 
-RUN apt-get update && apt-get install -y git curl netcat-openbsd fonts-noto-cjk \
+RUN apt-get update && apt-get install -y --no-install-recommends \
+  git curl netcat-openbsd fonts-noto-cjk \
+  gcc g++ python3-dev \
   && rm -rf /var/lib/apt/lists/*
 
 # Install UV
