@@ -20,6 +20,7 @@ import (
 	"github.com/blaxel-ai/sandbox-api/src/handler"
 	"github.com/blaxel-ai/sandbox-api/src/handler/process"
 	"github.com/blaxel-ai/sandbox-api/src/lib/blaxel"
+	"github.com/blaxel-ai/sandbox-api/src/lib/envfile"
 	"github.com/blaxel-ai/sandbox-api/src/lib/identity"
 	"github.com/blaxel-ai/sandbox-api/src/lib/networking"
 	"github.com/blaxel-ai/sandbox-api/src/lib/proxy"
@@ -45,6 +46,17 @@ func main() {
 
 	// Load .env file
 	_ = godotenv.Load()
+
+	// Adopt the environment the guest received as a file rather than on its
+	// kernel command line, before anything reads the environment or spawns a
+	// process. The image's init has normally done it already; doing it here as
+	// well means an init that did not is no longer an environment the user
+	// silently lost.
+	if loaded, err := envfile.Load(); err != nil {
+		logrus.WithError(err).Errorf("Failed to load the environment from %s - user environment variables may be missing", envfile.PathVar)
+	} else if loaded > 0 {
+		logrus.WithField("count", loaded).Infof("Loaded environment variables from %s that were missing from the process environment", envfile.PathVar)
+	}
 
 	// Define command-line flags
 	port := flag.Int("port", 8080, "Port to listen on")
