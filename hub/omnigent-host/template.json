@@ -1,0 +1,23 @@
+{
+  "name": "omnigent-host",
+  "displayName": "Omnigent Host",
+  "categories": [
+    "agents",
+    "development"
+  ],
+  "description": "An Omnigent host runtime for managed agent sessions in Blaxel sandboxes.",
+  "longDescription": "The Omnigent Host image combines Omnigent's agent runtimes with the Blaxel sandbox API. Omnigent servers use it to provision disposable managed hosts with process execution, file transfer, bounded streaming, and lifecycle control through the Blaxel SDK.",
+  "url": "https://github.com/omnigent-ai/omnigent",
+  "icon": "https://github.com/omnigent-ai.png",
+  "memory": 4096,
+  "ports": [
+    {
+      "name": "sandbox-api",
+      "target": 8080,
+      "protocol": "HTTP"
+    }
+  ],
+  "enterprise": false,
+  "coming_soon": false,
+  "hidden": true
+}
