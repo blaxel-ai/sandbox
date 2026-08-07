@@ -40,6 +40,9 @@ A development environment for TypeScript applications with Node.js runtime and e
 ### Expo
 A comprehensive development environment for building React Native applications using the Expo framework. Includes Expo CLI, development server, and all necessary tools for cross-platform mobile development.
 
+### Omnigent Host
+A managed-host runtime for Omnigent agent sessions. It combines Omnigent's prebuilt host environment with the Blaxel sandbox API for process execution, file transfer, streaming, and lifecycle control. The image stays hidden from general Hub discovery because Omnigent selects it automatically, but its `blaxel/omnigent-host:latest` reference is public across workspaces.
+
 ## Prerequisites
 
 - Docker and Docker Compose

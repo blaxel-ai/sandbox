@@ -28,6 +28,7 @@ on:
           - nextjs
           - node
           - node-slim
+          - omnigent-host
           - onboarder-nextjs
           - playwright-chromium
           - playwright-firefox
