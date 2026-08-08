@@ -53,7 +53,7 @@ func main() {
 	// well means an init that did not is no longer an environment the user
 	// silently lost.
 	if loaded, err := envfile.Load(); err != nil {
-		logrus.WithError(err).Errorf("Failed to load the environment from %s - user environment variables may be missing", envfile.PathVar)
+		logrus.WithError(err).WithField("loaded", loaded).Errorf("Failed to load part of the environment from %s - those user environment variables are missing", envfile.PathVar)
 	} else if loaded > 0 {
 		logrus.WithField("count", loaded).Infof("Loaded environment variables from %s that were missing from the process environment", envfile.PathVar)
 	}

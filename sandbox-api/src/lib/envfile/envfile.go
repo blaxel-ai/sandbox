@@ -17,6 +17,7 @@ package envfile
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 )
@@ -32,6 +33,11 @@ const PathVar = "BL_ENV_VAR_PATH"
 // Variables already present are left alone: the command line carries the
 // platform's own variables and is the more authoritative of the two, and a
 // variable the wrapper already loaded holds the same value anyway.
+//
+// A variable that cannot be applied costs only itself: the rest of the
+// environment is loaded and the failures are returned together, because losing
+// the whole environment over one unusable name is the very failure this exists
+// to prevent.
 func Load() (int, error) {
 	path := os.Getenv(PathVar)
 	if path == "" {
@@ -43,15 +49,31 @@ func Load() (int, error) {
 		return 0, fmt.Errorf("read %s=%q: %w", PathVar, path, err)
 	}
 
+	env := parse(content)
+	if len(env) == 0 {
+		if len(content) == 0 {
+			return 0, nil
+		}
+		// Content that yields no pair is a format the runtime and this parser
+		// disagree on. Silence here would look exactly like the environment
+		// loss this package exists to fix.
+		return 0, fmt.Errorf(`%s=%q holds %d bytes but no KEY\0VALUE\0 pair: unexpected format`, PathVar, path, len(content))
+	}
+
 	loaded := 0
-	for name, value := range parse(content) {
+	var failures []error
+	for name, value := range env {
 		if _, exists := os.LookupEnv(name); exists {
 			continue
 		}
 		if err := os.Setenv(name, value); err != nil {
-			return loaded, fmt.Errorf("set %q from %q: %w", name, path, err)
+			failures = append(failures, fmt.Errorf("set %q: %w", name, err))
+			continue
 		}
 		loaded++
+	}
+	if len(failures) > 0 {
+		return loaded, fmt.Errorf("%s=%q: %w", PathVar, path, errors.Join(failures...))
 	}
 	return loaded, nil
 }
