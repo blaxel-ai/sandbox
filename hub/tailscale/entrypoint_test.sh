@@ -1,7 +1,9 @@
 #!/bin/sh
 set -eu
 
+# Resolve the production entrypoint relative to this file so any working directory works.
 entrypoint=$(CDPATH= cd -- "$(dirname "$0")" && pwd)/entrypoint.sh
+# Keep fake binaries and PID files isolated, then remove them on every exit path.
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 
@@ -96,7 +98,7 @@ if kill -0 "$(cat "$tmp/child.pid")" 2>/dev/null; then
   exit 1
 fi
 
-# Tailscale is still required after readiness; its later failure must stop the sandbox API.
+# Tailscale is still required after readiness; its later failure must fail the entrypoint.
 cat >"$tmp/containerboot" <<'EOF'
 #!/bin/sh
 sleep 1
