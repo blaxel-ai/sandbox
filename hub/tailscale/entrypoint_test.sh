@@ -62,6 +62,24 @@ esac
 
 cat >"$tmp/containerboot" <<'EOF'
 #!/bin/sh
+echo $$ >"$TEST_CHILD_PID_FILE"
+sleep 5
+EOF
+TEST_CHILD_PID_FILE="$tmp/child.pid" PATH="$tmp:$PATH" TS_AUTHKEY=test sh "$entrypoint" &
+entrypoint_pid=$!
+while [ ! -s "$tmp/child.pid" ]; do sleep 1; done
+kill -TERM "$entrypoint_pid"
+if wait "$entrypoint_pid"; then
+  echo "entrypoint ignored a startup termination signal" >&2
+  exit 1
+fi
+if kill -0 "$(cat "$tmp/child.pid")" 2>/dev/null; then
+  echo "entrypoint left containerboot running after termination" >&2
+  exit 1
+fi
+
+cat >"$tmp/containerboot" <<'EOF'
+#!/bin/sh
 sleep 1
 exit 1
 EOF

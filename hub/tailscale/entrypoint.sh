@@ -14,6 +14,20 @@ esac
 
 containerboot &
 containerboot_pid=$!
+sandbox_api_pid=
+
+cleanup() {
+  trap - EXIT INT TERM
+  kill "$containerboot_pid" 2>/dev/null || true
+  if [ -n "$sandbox_api_pid" ]; then
+    kill "$sandbox_api_pid" 2>/dev/null || true
+    wait "$sandbox_api_pid" 2>/dev/null || true
+  fi
+  wait "$containerboot_pid" 2>/dev/null || true
+}
+trap 'cleanup; exit 143' INT TERM
+trap cleanup EXIT
+
 elapsed=0
 
 until tailscale --socket="${TS_SOCKET:-/tmp/tailscaled.sock}" status --json 2>/dev/null | grep -q '"BackendState": *"Running"'; do
@@ -34,13 +48,6 @@ done
 
 sandbox-api &
 sandbox_api_pid=$!
-
-cleanup() {
-  trap - EXIT INT TERM
-  kill "$containerboot_pid" "$sandbox_api_pid" 2>/dev/null || true
-  wait "$containerboot_pid" "$sandbox_api_pid" 2>/dev/null || true
-}
-trap cleanup EXIT INT TERM
 
 set +e
 wait -n "$containerboot_pid" "$sandbox_api_pid"
