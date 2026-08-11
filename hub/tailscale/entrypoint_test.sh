@@ -5,6 +5,7 @@ entrypoint=$(CDPATH= cd -- "$(dirname "$0")" && pwd)/entrypoint.sh
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 
+# A sandbox cannot join a tailnet without an auth key, so fail before starting services.
 if output=$(env -u TS_AUTHKEY sh "$entrypoint" 2>&1); then
   echo "entrypoint accepted a missing TS_AUTHKEY" >&2
   exit 1
@@ -14,6 +15,8 @@ case "$output" in
   *) echo "entrypoint did not explain the missing TS_AUTHKEY" >&2; exit 1 ;;
 esac
 
+# Shadow the real binaries through PATH so the entrypoint can be tested without Tailscale.
+# This happy path also proves that BL_NAME becomes the default Tailscale hostname.
 cat >"$tmp/containerboot" <<'EOF'
 #!/bin/sh
 sleep 1
@@ -30,6 +33,7 @@ chmod +x "$tmp/containerboot" "$tmp/tailscale" "$tmp/sandbox-api"
 
 PATH="$tmp:$PATH" TS_AUTHKEY=test BL_NAME=test-sandbox sh "$entrypoint"
 
+# If containerboot exits before Tailscale is ready, surface that failure instead of waiting.
 cat >"$tmp/containerboot" <<'EOF'
 #!/bin/sh
 exit 1
@@ -47,6 +51,7 @@ case "$output" in
   *) echo "entrypoint did not explain containerboot failure" >&2; exit 1 ;;
 esac
 
+# Bound startup when containerboot stays alive but Tailscale never reaches Running.
 cat >"$tmp/containerboot" <<'EOF'
 #!/bin/sh
 sleep 5
@@ -60,6 +65,7 @@ case "$output" in
   *) echo "entrypoint did not explain the startup timeout" >&2; exit 1 ;;
 esac
 
+# A termination signal during startup must reach containerboot and leave no child behind.
 cat >"$tmp/containerboot" <<'EOF'
 #!/bin/sh
 echo $$ >"$TEST_CHILD_PID_FILE"
@@ -68,6 +74,7 @@ EOF
 TEST_CHILD_PID_FILE="$tmp/child.pid" PATH="$tmp:$PATH" TS_AUTHKEY=test sh "$entrypoint" &
 entrypoint_pid=$!
 attempts=0
+# Wait only long enough to prove containerboot started; never let a failed test hang.
 while [ ! -s "$tmp/child.pid" ]; do
   if ! kill -0 "$entrypoint_pid" 2>/dev/null || [ "$attempts" -ge 5 ]; then
     kill "$entrypoint_pid" 2>/dev/null || true
@@ -78,6 +85,7 @@ while [ ! -s "$tmp/child.pid" ]; do
   attempts=$((attempts + 1))
   sleep 1
 done
+# Signal the supervisor, then verify both its exit status and child cleanup.
 kill -TERM "$entrypoint_pid"
 if wait "$entrypoint_pid"; then
   echo "entrypoint ignored a startup termination signal" >&2
@@ -88,6 +96,7 @@ if kill -0 "$(cat "$tmp/child.pid")" 2>/dev/null; then
   exit 1
 fi
 
+# Tailscale is still required after readiness; its later failure must stop the sandbox API.
 cat >"$tmp/containerboot" <<'EOF'
 #!/bin/sh
 sleep 1
