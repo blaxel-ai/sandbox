@@ -67,7 +67,17 @@ sleep 5
 EOF
 TEST_CHILD_PID_FILE="$tmp/child.pid" PATH="$tmp:$PATH" TS_AUTHKEY=test sh "$entrypoint" &
 entrypoint_pid=$!
-while [ ! -s "$tmp/child.pid" ]; do sleep 1; done
+attempts=0
+while [ ! -s "$tmp/child.pid" ]; do
+  if ! kill -0 "$entrypoint_pid" 2>/dev/null || [ "$attempts" -ge 5 ]; then
+    kill "$entrypoint_pid" 2>/dev/null || true
+    wait "$entrypoint_pid" 2>/dev/null || true
+    echo "entrypoint did not start containerboot" >&2
+    exit 1
+  fi
+  attempts=$((attempts + 1))
+  sleep 1
+done
 kill -TERM "$entrypoint_pid"
 if wait "$entrypoint_pid"; then
   echo "entrypoint ignored a startup termination signal" >&2

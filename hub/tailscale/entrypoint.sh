@@ -17,15 +17,17 @@ containerboot_pid=$!
 sandbox_api_pid=
 
 cleanup() {
+  signal=${1:-TERM}
   trap - EXIT INT TERM
-  kill "$containerboot_pid" 2>/dev/null || true
+  kill -s "$signal" "$containerboot_pid" 2>/dev/null || true
   if [ -n "$sandbox_api_pid" ]; then
-    kill "$sandbox_api_pid" 2>/dev/null || true
+    kill -s "$signal" "$sandbox_api_pid" 2>/dev/null || true
     wait "$sandbox_api_pid" 2>/dev/null || true
   fi
   wait "$containerboot_pid" 2>/dev/null || true
 }
-trap 'cleanup; exit 143' INT TERM
+trap 'cleanup INT; exit 130' INT
+trap 'cleanup TERM; exit 143' TERM
 trap cleanup EXIT
 
 elapsed=0
