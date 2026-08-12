@@ -17,7 +17,22 @@ func write(t *testing.T, content string) string {
 	return path
 }
 
+// absent guarantees the name is unset for the duration of the test whatever the
+// ambient environment holds, and restores it afterwards: a variable the test
+// expects Load to set must not be one the process already has, or Load skips it
+// and the test measures nothing.
+func absent(t *testing.T, names ...string) {
+	t.Helper()
+	for _, name := range names {
+		t.Setenv(name, "") // records the original value for restoration
+		if err := os.Unsetenv(name); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 func TestLoadSetsTheMissingVariables(t *testing.T) {
+	absent(t, "TEST_ENV_VAR_001", "PORT")
 	write(t, "TEST_ENV_VAR_001\x00value_001\x00PORT\x0080\x00")
 
 	loaded, err := Load()
@@ -33,8 +48,38 @@ func TestLoadSetsTheMissingVariables(t *testing.T) {
 	if got := os.Getenv("PORT"); got != "80" {
 		t.Errorf("PORT = %q, want %q", got, "80")
 	}
-	os.Unsetenv("TEST_ENV_VAR_001")
-	os.Unsetenv("PORT")
+}
+
+// One unusable name must not cost the rest of the environment: the whole point
+// of the package is that the user does not silently lose it.
+func TestLoadAppliesTheRestDespiteAnUnusableName(t *testing.T) {
+	absent(t, "TEST_ENV_VAR_GOOD")
+	write(t, "BAD=NAME\x00nope\x00TEST_ENV_VAR_GOOD\x00value\x00")
+
+	loaded, err := Load()
+	if err == nil {
+		t.Fatal("Load() error = nil, want the unusable name reported")
+	}
+	if loaded != 1 {
+		t.Errorf("Load() = %d, want 1", loaded)
+	}
+	if got := os.Getenv("TEST_ENV_VAR_GOOD"); got != "value" {
+		t.Errorf("TEST_ENV_VAR_GOOD = %q, want %q", got, "value")
+	}
+}
+
+// Content this parser finds no pair in means the runtime writes another format,
+// which would otherwise look exactly like the loss this package fixes.
+func TestLoadReportsAnUnexpectedFormat(t *testing.T) {
+	write(t, "KEY=value\nOTHER=value\n")
+
+	loaded, err := Load()
+	if err == nil {
+		t.Fatal("Load() error = nil, want an error for content holding no pair")
+	}
+	if loaded != 0 {
+		t.Errorf("Load() = %d, want 0", loaded)
+	}
 }
 
 // The command line is the authoritative half of the environment, and a variable
@@ -83,6 +128,7 @@ func TestLoadReportsAnUnreadableFile(t *testing.T) {
 	}
 }
 
+// An empty file is an environment with nothing in it, not a format mismatch.
 func TestLoadEmptyFile(t *testing.T) {
 	write(t, "")
 

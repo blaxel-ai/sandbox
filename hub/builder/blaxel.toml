@@ -1,0 +1,18 @@
+type = "sandbox"
+name = "builder"
+
+[runtime]
+generation = "mk3"
+memory = 8192
+
+# Scratch for the build context, the OCI export, the erofs AND buildkit's own
+# state. Never the RAM overlay: the native snapshotter copies per step, which
+# cost 4GB of real disk for a 411MB image.
+[[runtime.volumes]]
+name = "scratch"
+type = "ephemeral"
+mountPath = "/scratch"
+sizeMb = 20480
+
+[build]
+slim = false
