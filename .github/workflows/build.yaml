@@ -35,6 +35,7 @@ on:
           - playwright-firefox
           - py-app
           - ts-app
+          - tailscale
           - vite
           - xfce-vnc
       architectures:
