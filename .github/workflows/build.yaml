@@ -18,6 +18,7 @@ on:
           - app-runner
           - astro
           - base-image
+          - builder
           - claude-code
           - codex
           - chromium
