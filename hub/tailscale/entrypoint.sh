@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 set -eu
 
 if [ -z "${TS_AUTHKEY:-}" ]; then

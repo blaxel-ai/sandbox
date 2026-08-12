@@ -7,8 +7,14 @@ entrypoint=$(CDPATH= cd -- "$(dirname "$0")" && pwd)/entrypoint.sh
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 
+# Multi-process wait supervision requires Bash rather than BusyBox ash.
+if [ "$(head -n 1 "$entrypoint")" != '#!/bin/bash' ]; then
+  echo "entrypoint must run with Bash" >&2
+  exit 1
+fi
+
 # A sandbox cannot join a tailnet without an auth key, so fail before starting services.
-if output=$(env -u TS_AUTHKEY sh "$entrypoint" 2>&1); then
+if output=$(env -u TS_AUTHKEY bash "$entrypoint" 2>&1); then
   echo "entrypoint accepted a missing TS_AUTHKEY" >&2
   exit 1
 fi
@@ -33,7 +39,7 @@ test "$TS_HOSTNAME" = "test-sandbox"
 EOF
 chmod +x "$tmp/containerboot" "$tmp/tailscale" "$tmp/sandbox-api"
 
-PATH="$tmp:$PATH" TS_AUTHKEY=test BL_NAME=test-sandbox sh "$entrypoint"
+PATH="$tmp:$PATH" TS_AUTHKEY=test BL_NAME=test-sandbox bash "$entrypoint"
 
 # If containerboot exits before Tailscale is ready, surface that failure instead of waiting.
 cat >"$tmp/containerboot" <<'EOF'
@@ -44,7 +50,7 @@ cat >"$tmp/tailscale" <<'EOF'
 #!/bin/sh
 printf '%s\n' '{"BackendState": "NeedsLogin"}'
 EOF
-if output=$(PATH="$tmp:$PATH" TS_AUTHKEY=test sh "$entrypoint" 2>&1); then
+if output=$(PATH="$tmp:$PATH" TS_AUTHKEY=test bash "$entrypoint" 2>&1); then
   echo "entrypoint ignored containerboot failure" >&2
   exit 1
 fi
@@ -58,7 +64,7 @@ cat >"$tmp/containerboot" <<'EOF'
 #!/bin/sh
 sleep 5
 EOF
-if output=$(PATH="$tmp:$PATH" TS_AUTHKEY=test TS_STARTUP_TIMEOUT_SECONDS=0 sh "$entrypoint" 2>&1); then
+if output=$(PATH="$tmp:$PATH" TS_AUTHKEY=test TS_STARTUP_TIMEOUT_SECONDS=0 bash "$entrypoint" 2>&1); then
   echo "entrypoint ignored the startup timeout" >&2
   exit 1
 fi
@@ -73,7 +79,7 @@ cat >"$tmp/containerboot" <<'EOF'
 echo $$ >"$TEST_CHILD_PID_FILE"
 sleep 5
 EOF
-TEST_CHILD_PID_FILE="$tmp/child.pid" PATH="$tmp:$PATH" TS_AUTHKEY=test sh "$entrypoint" &
+TEST_CHILD_PID_FILE="$tmp/child.pid" PATH="$tmp:$PATH" TS_AUTHKEY=test bash "$entrypoint" &
 entrypoint_pid=$!
 attempts=0
 # Wait only long enough to prove containerboot started; never let a failed test hang.
@@ -102,7 +108,7 @@ fi
 cat >"$tmp/containerboot" <<'EOF'
 #!/bin/sh
 sleep 1
-exit 1
+exit 23
 EOF
 cat >"$tmp/tailscale" <<'EOF'
 #!/bin/sh
@@ -110,9 +116,68 @@ printf '%s\n' '{"BackendState": "Running"}'
 EOF
 cat >"$tmp/sandbox-api" <<'EOF'
 #!/bin/sh
-sleep 5
+echo $$ >"$TEST_SURVIVOR_PID_FILE"
+exec sleep 10
 EOF
-if PATH="$tmp:$PATH" TS_AUTHKEY=test sh "$entrypoint"; then
-  echo "entrypoint ignored post-readiness Tailscale failure" >&2
+TEST_SURVIVOR_PID_FILE="$tmp/sandbox-api.pid" PATH="$tmp:$PATH" TS_AUTHKEY=test bash "$entrypoint" &
+entrypoint_pid=$!
+attempts=0
+while kill -0 "$entrypoint_pid" 2>/dev/null && [ "$attempts" -lt 4 ]; do
+  attempts=$((attempts + 1))
+  sleep 1
+done
+if kill -0 "$entrypoint_pid" 2>/dev/null; then
+  kill "$entrypoint_pid" 2>/dev/null || true
+  wait "$entrypoint_pid" 2>/dev/null || true
+  echo "entrypoint waited for sandbox-api after Tailscale failed" >&2
+  exit 1
+fi
+set +e
+wait "$entrypoint_pid"
+status=$?
+set -e
+if [ "$status" -ne 23 ]; then
+  echo "entrypoint returned $status instead of Tailscale status 23" >&2
+  exit 1
+fi
+if kill -0 "$(cat "$tmp/sandbox-api.pid")" 2>/dev/null; then
+  echo "entrypoint left sandbox-api running after Tailscale failed" >&2
+  exit 1
+fi
+
+# The same supervision rule applies when sandbox-api exits before Tailscale.
+cat >"$tmp/containerboot" <<'EOF'
+#!/bin/sh
+echo $$ >"$TEST_SURVIVOR_PID_FILE"
+exec sleep 10
+EOF
+cat >"$tmp/sandbox-api" <<'EOF'
+#!/bin/sh
+sleep 1
+exit 24
+EOF
+TEST_SURVIVOR_PID_FILE="$tmp/containerboot.pid" PATH="$tmp:$PATH" TS_AUTHKEY=test bash "$entrypoint" &
+entrypoint_pid=$!
+attempts=0
+while kill -0 "$entrypoint_pid" 2>/dev/null && [ "$attempts" -lt 4 ]; do
+  attempts=$((attempts + 1))
+  sleep 1
+done
+if kill -0 "$entrypoint_pid" 2>/dev/null; then
+  kill "$entrypoint_pid" 2>/dev/null || true
+  wait "$entrypoint_pid" 2>/dev/null || true
+  echo "entrypoint waited for Tailscale after sandbox-api failed" >&2
+  exit 1
+fi
+set +e
+wait "$entrypoint_pid"
+status=$?
+set -e
+if [ "$status" -ne 24 ]; then
+  echo "entrypoint returned $status instead of sandbox-api status 24" >&2
+  exit 1
+fi
+if kill -0 "$(cat "$tmp/containerboot.pid")" 2>/dev/null; then
+  echo "entrypoint left Tailscale running after sandbox-api failed" >&2
   exit 1
 fi
