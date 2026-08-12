@@ -255,7 +255,7 @@ jobs:
       # kernel and the unikraft wrapper), so it cannot be built without a token.
       # Secrets are not exposed to pull requests from forks, so the image is
       # dropped from the matrix there rather than failing the whole run.
-      HAS_ARTEFACT_TOKEN: ${{ (secrets.METAMORPH_ARTEFACTS_TOKEN != '' || secrets.GH_PAT != '') && 'true' || 'false' }}
+      HAS_ARTEFACT_TOKEN: ${{ secrets.METAMORPH_ARTEFACTS_TOKEN != '' && 'true' || 'false' }}
     # Skip automatic main pushes, but allow manual dispatch for a selected sandbox.
     if: always() && (needs.check-changes.result == 'success') && (github.ref_name != 'main' || (github.event_name == 'workflow_dispatch' && inputs.sandbox != ''))
     outputs:
@@ -277,7 +277,7 @@ jobs:
           # token (fork PR) means no artefacts, so drop it instead of failing.
           if [[ "$HAS_ARTEFACT_TOKEN" != "true" ]]; then
             if echo "$all_sandboxes" | jq -e 'index("builder")' > /dev/null; then
-              echo "::notice::no token can read blaxel-ai/metamorph (METAMORPH_ARTEFACTS_TOKEN or GH_PAT), skipping the builder image"
+              echo "::notice::METAMORPH_ARTEFACTS_TOKEN is unavailable, skipping the builder image"
             fi
             all_sandboxes=$(echo "$all_sandboxes" | jq -c 'map(select(. != "builder"))')
           fi
@@ -383,8 +383,8 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: blaxel-ai/metamorph
-          # Either secret works, as long as it can read blaxel-ai/metamorph.
-          token: ${{ secrets.METAMORPH_ARTEFACTS_TOKEN || secrets.GH_PAT }}
+          # Fine-grained token, Contents:Read on blaxel-ai/metamorph only.
+          token: ${{ secrets.METAMORPH_ARTEFACTS_TOKEN }}
           path: .metamorph
           sparse-checkout: |
             templates/mk3-kernels
