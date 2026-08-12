@@ -250,6 +250,12 @@ jobs:
   generate-matrix:
     needs: [check-changes, sandbox-api]
     runs-on: ubuntu-latest
+    env:
+      # hub/builder needs two artefacts from the internal metamorph repo (the mk3
+      # kernel and the unikraft wrapper), so it cannot be built without a token.
+      # Secrets are not exposed to pull requests from forks, so the image is
+      # dropped from the matrix there rather than failing the whole run.
+      HAS_ARTEFACT_TOKEN: ${{ secrets.METAMORPH_ARTEFACTS_TOKEN != '' && 'true' || 'false' }}
     # Skip automatic main pushes, but allow manual dispatch for a selected sandbox.
     if: always() && (needs.check-changes.result == 'success') && (github.ref_name != 'main' || (github.event_name == 'workflow_dispatch' && inputs.sandbox != ''))
     outputs:
@@ -266,6 +272,15 @@ jobs:
 
           # Get list of all Sandbox directories (scripts/files in hub are ignored)
           all_sandboxes=$(tree -J -d -L 1 hub | jq -c '.[0].contents | map(select(.type == "directory") | .name)')
+
+          # builder embeds artefacts pulled from the internal metamorph repo. No
+          # token (fork PR) means no artefacts, so drop it instead of failing.
+          if [[ "$HAS_ARTEFACT_TOKEN" != "true" ]]; then
+            if echo "$all_sandboxes" | jq -e 'index("builder")' > /dev/null; then
+              echo "::notice::METAMORPH_ARTEFACTS_TOKEN is unavailable, skipping the builder image"
+            fi
+            all_sandboxes=$(echo "$all_sandboxes" | jq -c 'map(select(. != "builder"))')
+          fi
 
 
           if [[ "${{ inputs.sandbox }}" == "all" ]]; then
@@ -358,6 +373,26 @@ jobs:
             type=raw,value=develop,enable=${{ github.ref_name == 'develop' }}
             type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/') }}
             type=semver,pattern={{version}}
+
+      # Only hub/builder needs these: the mk3 kernel and the unikraft wrapper are
+      # not committed here (this repository is public and the kernel is a
+      # third-party binary), so they are fetched from the internal metamorph
+      # repo, which is where they already live.
+      - name: Checkout builder artefacts
+        if: matrix.sandbox == 'builder'
+        uses: actions/checkout@v4
+        with:
+          repository: blaxel-ai/metamorph
+          token: ${{ secrets.METAMORPH_ARTEFACTS_TOKEN }}
+          path: .metamorph
+          sparse-checkout: |
+            templates/mk3-kernels
+            templates/unikraft_wrapper
+          sparse-checkout-cone-mode: false
+
+      - name: Stage builder artefacts
+        if: matrix.sandbox == 'builder'
+        run: METAMORPH=.metamorph scripts/fetch-builder-artefacts.sh
 
       - name: Build and push sandbox image
         uses: docker/build-push-action@v5

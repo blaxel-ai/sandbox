@@ -1,0 +1,2 @@
+# the compiled binary; the image builds it in a multi-stage Dockerfile
+blbuild
