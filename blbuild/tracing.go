@@ -40,7 +40,27 @@ func InitTracing(ctx context.Context, traceParent string) (func(), error) {
 		return nil, fmt.Errorf("OTEL_EXPORTER_OTLP_ENDPOINT is not set")
 	}
 
-	exporter, err := otlptracehttp.New(ctx)
+	// The collector rejects an unauthenticated write with a 401, and the SDK
+	// drops the batch without failing the build — which is how a fully
+	// instrumented build produced no traces at all. The headers are the ones
+	// @blaxel/telemetry sends; the credential is injected into this sandbox by
+	// the control plane for exactly this purpose and is scoped to the workspace
+	// the build is for.
+	opts := []otlptracehttp.Option{}
+	headers := map[string]string{}
+	if token := os.Getenv("BL_API_KEY"); token != "" {
+		headers["x-blaxel-authorization"] = "Bearer " + token
+	}
+	if workspace := os.Getenv("BL_WORKSPACE"); workspace != "" {
+		headers["x-blaxel-workspace"] = workspace
+	}
+	if len(headers) > 0 {
+		opts = append(opts, otlptracehttp.WithHeaders(headers))
+	} else {
+		warn("no telemetry credential in the environment; the collector will reject these spans")
+	}
+
+	exporter, err := otlptracehttp.New(ctx, opts...)
 	if err != nil {
 		return nil, err
 	}
