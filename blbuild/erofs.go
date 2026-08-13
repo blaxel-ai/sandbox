@@ -185,6 +185,15 @@ func (b *Builder) buildErofsFromTree(ctx context.Context, layers []Layer, rootfs
 	if fixed > 0 {
 		sw.mark(fmt.Sprintf("  made %d file(s) readable", fixed))
 	}
+	// Rootfs slimming, unless the manifest opted out with [build] slim = false.
+	// Same patterns as metamorph, so an image loses the same things whichever
+	// builder produced it.
+	if !readBlaxelToml(b.ContextDir).NoSlim {
+		if n := slimRootfs(tree); n > 0 {
+			sw.mark(fmt.Sprintf("  slimmed %d entries", n))
+		}
+	}
+
 	sw.mark("extract layers to tree")
 
 	_ = os.Remove(rootfs)
