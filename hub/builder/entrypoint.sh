@@ -30,10 +30,12 @@ API_PID=$!
 
 # Wait for the API before registering anything against it. A build sandbox is
 # created and then driven over HTTP, so the API is what has to survive here.
+# Bounded per attempt: a refused connection returns at once, but a hung one
+# would otherwise eat the whole budget in a single call.
 i=0
-until curl -sf -o /dev/null http://localhost:8080/health; do
+until curl -sf -m 2 -o /dev/null http://localhost:8080/health; do
   i=$((i + 1))
-  if [ "$i" -gt 300 ]; then
+  if [ "$i" -gt 600 ]; then
     echo "FATAL: the sandbox API never came up" >&2
     exit 1
   fi
