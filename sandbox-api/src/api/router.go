@@ -188,6 +188,11 @@ func SetupRouter(disableRequestLogging bool, enableProcessingTime bool) *gin.Eng
 		logrus.Info("Terminal endpoint disabled via DISABLE_TERMINAL environment variable")
 	}
 
+	// Environment routes: the guest init calls this after applying a new
+	// metadata generation so the process env follows without a restart.
+	environmentHandler := handler.NewEnvironmentHandler()
+	r.POST("/environment/reload", environmentHandler.HandleReload)
+
 	// System routes
 	r.POST("/upgrade", systemHandler.HandleUpgrade)
 	r.HEAD("/upgrade", head)
