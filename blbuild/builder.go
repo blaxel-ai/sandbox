@@ -310,8 +310,8 @@ func (b *Builder) writePreludeTar() (string, error) {
 type preludeEntry struct{ src, dst string }
 
 // wrapperPath is where the wrapper lands in the produced image, without the
-// leading slash (tar) — see writeKraftFiles, which execs it from cmdline.txt.
-const wrapperPath = "opt/blaxel/metamorph-wrapper"
+// leading slash — see writeKraftFiles, which execs it from cmdline.txt.
+const wrapperPath = "bin/metamorph-wrapper"
 
 // preludeFiles is what every produced image gets from us.
 //
@@ -322,13 +322,10 @@ const wrapperPath = "opt/blaxel/metamorph-wrapper"
 func preludeFiles() []preludeEntry {
 	return []preludeEntry{
 		{src: artefactPath("BLBUILD_BLFS", "/usr/local/bin/blfs"), dst: "usr/local/bin/blfs"},
-		// Not /bin: the prelude goes in before the customer layers (see
-		// buildErofs), so it creates /bin as a directory — and a usrmerge image
-		// such as debian ships /bin as a symlink to /usr/bin, which replaces it
-		// and takes the wrapper with it. The image then boots to
-		// "/bin/metamorph-wrapper: -2" (ENOENT) and reboots forever. /opt/blaxel
-		// is ours and collides with nothing; cmdline.txt is generated here too,
-		// so the two move together.
+		// The path the execution plane expects, same as metamorph. Reaching it
+		// safely is what buildErofs guarantees: the prelude is copied onto the
+		// extracted tree after the customer layers, so a usrmerge /bin symlink
+		// is followed instead of replaced.
 		{src: artefactPath("BLBUILD_WRAPPER", "/opt/blaxel/metamorph-wrapper"), dst: wrapperPath},
 	}
 }

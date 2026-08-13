@@ -49,42 +49,23 @@ func (b *Builder) buildErofs(ctx context.Context, layers []Layer, sw *stopwatch)
 	rootfs := filepath.Join(b.OutDir, "rootfs.erofs")
 	_ = os.Remove(rootfs)
 
-	preludeTar, err := b.writePreludeTar()
-	if err != nil {
+	// Extract to a tree and run one mkfs over it, which is how metamorph does it.
+	//
+	// Appending layers incrementally was faster on paper, but a tar layer cannot
+	// follow a symlink — it replaces it. Our own binaries have to land where the
+	// execution plane reads them (/bin/metamorph-wrapper), and on a usrmerge
+	// image that path is a symlink into /usr/bin: applied before the layers the
+	// wrapper is lost, applied after it turns /bin into a directory and hides
+	// every binary the image had there. A filesystem copy onto the extracted tree
+	// has neither problem.
+	//
+	// It also drops the dependency on --incremental, flagged EXPERIMENTAL upstream
+	// and already broken in two different ways across versions. The measured cost
+	// is about 1.4s on a ~75s build.
+	if err := b.buildErofsFromTree(ctx, layers, rootfs, sw); err != nil {
 		return false, err
 	}
-	if err := b.mkfs(ctx, rootfs, preludeTar, false); err != nil {
-		return false, fmt.Errorf("writing the base layer: %w", err)
-	}
-	sw.mark("prelude layer")
-
-	for i, layer := range layers {
-		if err := b.applyLayer(ctx, rootfs, layer); err != nil {
-			// --incremental is flagged EXPERIMENTAL upstream and has broken in
-			// two different ways across versions (silent corruption on 1.8.2, a
-			// 2TiB extension on 1.9.3). Rather than fail the build, fall back to
-			// the slow-but-boring path: extract every layer into a tree and run
-			// one mkfs over it. On measured builds the erofs step is ~3s out of
-			// ~75s, so the fallback costs about 1.4s — far less than a failure.
-			warn("incremental layer %d failed (%v), falling back to a single-pass build", i+1, err)
-			if ferr := b.buildErofsFromTree(ctx, layers, rootfs, sw); ferr != nil {
-				return false, fmt.Errorf("single-pass fallback: %w", ferr)
-			}
-			return false, nil
-		}
-		sw.mark(fmt.Sprintf("  layer %d (%d MiB)", i+1, layer.Size/(1024*1024)))
-	}
-
-	runtimeTar, err := b.writeRuntimeDirsTar()
-	if err != nil {
-		return false, err
-	}
-	if err := b.mkfs(ctx, rootfs, runtimeTar, true); err != nil {
-		return false, fmt.Errorf("writing the runtime directories: %w", err)
-	}
-	sw.mark("runtime dirs layer")
-
-	return true, nil
+	return false, nil
 }
 
 // applyLayer streams one compressed layer into mkfs.
@@ -161,10 +142,6 @@ func (b *Builder) buildErofsFromTree(ctx context.Context, layers []Layer, rootfs
 	if err := os.MkdirAll(tree, 0o755); err != nil {
 		return err
 	}
-	if err := b.extractPrelude(tree); err != nil {
-		return err
-	}
-
 	for _, layer := range layers {
 		if err := b.extractLayer(ctx, layer, tree); err != nil {
 			return err
@@ -174,6 +151,15 @@ func (b *Builder) buildErofsFromTree(ctx context.Context, layers []Layer, rootfs
 		if err := applyWhiteouts(tree); err != nil {
 			return err
 		}
+	}
+	// After the layers, never before: this is a filesystem copy, so it follows
+	// whatever /bin ended up being. A usrmerge image ships /bin as a symlink to
+	// /usr/bin, and the copy lands in /usr/bin with the symlink intact — exactly
+	// what metamorph produces. Going in first instead created /bin as a real
+	// directory, the image's symlink replaced it, and the wrapper vanished:
+	// every such image booted to "/bin/metamorph-wrapper: -2" and rebooted.
+	if err := b.extractPrelude(tree); err != nil {
+		return err
 	}
 	if err := b.materializeRuntimeDirs(tree); err != nil {
 		return err

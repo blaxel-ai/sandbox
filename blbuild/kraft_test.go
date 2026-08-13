@@ -189,11 +189,8 @@ func readTestFile(t *testing.T, path string) string {
 	return string(data)
 }
 
-// cmdline.txt execs the wrapper from the path the prelude injects it to. The
-// two used to be written independently, and drifted: the prelude landed the
-// wrapper in /bin, which a usrmerge image replaces with a symlink to /usr/bin,
-// so every image built from debian booted to "/bin/metamorph-wrapper: -2" and
-// rebooted forever. Nothing catches that except booting the image.
+// cmdline.txt execs the wrapper from the path the prelude injects it to. The two
+// used to be written independently and could drift.
 func TestCmdlineExecsTheInjectedWrapper(t *testing.T) {
 	var injected string
 	for _, entry := range preludeFiles() {
@@ -207,7 +204,47 @@ func TestCmdlineExecsTheInjectedWrapper(t *testing.T) {
 	if injected != wrapperPath {
 		t.Fatalf("the prelude injects %q, cmdline.txt execs %q", injected, wrapperPath)
 	}
-	if strings.HasPrefix(injected, "bin/") || strings.HasPrefix(injected, "usr/") {
-		t.Fatalf("%q sits under a path a customer image can replace", injected)
+}
+
+// The prelude is copied onto the extracted tree, so it has to follow a symlink
+// rather than replace it. A usrmerge image ships /bin as a link to /usr/bin: a
+// tar layer would turn it into a directory and hide every binary the image had
+// there, while every image built with the wrapper written before the layers
+// booted to "/bin/metamorph-wrapper: -2" and rebooted forever.
+func TestExtractPreludeFollowsUsrmergeSymlink(t *testing.T) {
+	src := filepath.Join(t.TempDir(), "wrapper")
+	if err := os.WriteFile(src, []byte("WRAP"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("BLBUILD_WRAPPER", src)
+	t.Setenv("BLBUILD_BLFS", src)
+
+	tree := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(tree, "usr", "bin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("usr/bin", filepath.Join(tree, "bin")); err != nil {
+		t.Fatal(err)
+	}
+
+	b := &Builder{}
+	if err := b.extractPrelude(tree); err != nil {
+		t.Fatalf("extractPrelude: %v", err)
+	}
+
+	// The symlink survives: the image's own /bin/* stay reachable.
+	if fi, err := os.Lstat(filepath.Join(tree, "bin")); err != nil {
+		t.Fatal(err)
+	} else if fi.Mode()&os.ModeSymlink == 0 {
+		t.Fatal("/bin was replaced by a directory, hiding the image's own binaries")
+	}
+
+	// And the wrapper is reachable through it, which is what the kernel execs.
+	got, err := os.ReadFile(filepath.Join(tree, "bin", "metamorph-wrapper"))
+	if err != nil {
+		t.Fatalf("the wrapper is not reachable at /bin: %v", err)
+	}
+	if string(got) != "WRAP" {
+		t.Fatalf("wrapper content = %q", got)
 	}
 }
