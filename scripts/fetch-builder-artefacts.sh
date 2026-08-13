@@ -28,6 +28,19 @@ fi
 
 cp "$kernel" "$DEST/kernel.bin"
 cp "$wrapper" "$DEST/metamorph-wrapper"
+
+# The Dockerfile templates for projects that ship no recipe of their own. Taken
+# from metamorph rather than rewritten: a project builds the same whichever
+# builder handles it, and a template that drifts silently produces an image that
+# differs from what the customer had yesterday.
+for tmpl in node python golang; do
+  src=$METAMORPH/templates/dockerfile.$tmpl.tmpl
+  if [[ ! -f $src ]]; then
+    echo "missing $src" >&2
+    exit 1
+  fi
+  cp "$src" "$DEST/dockerfile.$tmpl.tmpl"
+done
 chmod +x "$DEST/metamorph-wrapper"
 
 ls -lh "$DEST"

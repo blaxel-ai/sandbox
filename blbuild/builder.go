@@ -81,6 +81,14 @@ func (b *Builder) Run(ctx context.Context) (*Result, error) {
 		return result, err
 	}
 
+	// A context with no Dockerfile still has to build: that is most of what
+	// `bl new` produces, and buildkit was receiving an empty build definition.
+	if generated, gerr := ensureDockerfile(contextDir); gerr != nil {
+		return nil, gerr
+	} else if generated {
+		sw.mark("generate dockerfile")
+	}
+
 	layers, err := b.runBuildkit(ctx, contextDir, sw)
 	if err != nil {
 		return result, err
