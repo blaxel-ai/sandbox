@@ -92,6 +92,13 @@ func InitTracing(ctx context.Context, traceParent string) (func(), error) {
 		),
 		sdktrace.WithResource(res),
 	)
+	// The SDK swallows export failures by default: a collector that rejects every
+	// batch looks exactly like a build with no telemetry, which is how a fully
+	// instrumented build went unnoticed for hours. Surface them in the build log,
+	// which is readable without any access to the telemetry backend.
+	otel.SetErrorHandler(otel.ErrorHandlerFunc(func(err error) {
+		warn("telemetry: %v", err)
+	}))
 	otel.SetTracerProvider(tp)
 	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(
 		propagation.TraceContext{}, propagation.Baggage{},
