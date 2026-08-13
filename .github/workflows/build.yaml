@@ -340,6 +340,19 @@ jobs:
                 changed_sandboxes+=("$sandbox")
               fi
             done
+
+            # The builder image embeds the blbuild binary, so a change there has
+            # to rebuild it even though nothing under hub/builder moved. Without
+            # this the image keeps shipping the previous blbuild and the fix
+            # looks deployed while the sandbox still runs the old one.
+            if git diff --name-only HEAD^ HEAD | grep -q "^blbuild/"; then
+              if echo "$all_sandboxes" | jq -e 'index("builder")' > /dev/null; then
+                if [[ ! " ${changed_sandboxes[*]} " =~ " builder " ]]; then
+                  echo "Changes detected in blbuild, including the builder image"
+                  changed_sandboxes+=("builder")
+                fi
+              fi
+            fi
           fi
 
           # Convert array to JSON array
