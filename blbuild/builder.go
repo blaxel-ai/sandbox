@@ -309,6 +309,10 @@ func (b *Builder) writePreludeTar() (string, error) {
 
 type preludeEntry struct{ src, dst string }
 
+// wrapperPath is where the wrapper lands in the produced image, without the
+// leading slash (tar) — see writeKraftFiles, which execs it from cmdline.txt.
+const wrapperPath = "opt/blaxel/metamorph-wrapper"
+
 // preludeFiles is what every produced image gets from us.
 //
 // blfs is read from this sandbox's own filesystem rather than shipped in the
@@ -318,7 +322,14 @@ type preludeEntry struct{ src, dst string }
 func preludeFiles() []preludeEntry {
 	return []preludeEntry{
 		{src: artefactPath("BLBUILD_BLFS", "/usr/local/bin/blfs"), dst: "usr/local/bin/blfs"},
-		{src: artefactPath("BLBUILD_WRAPPER", "/opt/blaxel/metamorph-wrapper"), dst: "bin/metamorph-wrapper"},
+		// Not /bin: the prelude goes in before the customer layers (see
+		// buildErofs), so it creates /bin as a directory — and a usrmerge image
+		// such as debian ships /bin as a symlink to /usr/bin, which replaces it
+		// and takes the wrapper with it. The image then boots to
+		// "/bin/metamorph-wrapper: -2" (ENOENT) and reboots forever. /opt/blaxel
+		// is ours and collides with nothing; cmdline.txt is generated here too,
+		// so the two move together.
+		{src: artefactPath("BLBUILD_WRAPPER", "/opt/blaxel/metamorph-wrapper"), dst: wrapperPath},
 	}
 }
 
