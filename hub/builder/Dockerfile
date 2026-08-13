@@ -49,6 +49,12 @@ COPY --from=blbuild-build /blbuild /usr/local/bin/blbuild
 COPY hub/builder/embedded/kernel.bin /opt/blaxel/kernel.bin
 COPY hub/builder/embedded/metamorph-wrapper /opt/blaxel/metamorph-wrapper
 
+# Dockerfile templates for projects that ship none, taken from metamorph so a
+# project builds the same whichever builder handles it.
+COPY hub/builder/embedded/dockerfile.node.tmpl /opt/blaxel/templates/dockerfile.node.tmpl
+COPY hub/builder/embedded/dockerfile.python.tmpl /opt/blaxel/templates/dockerfile.python.tmpl
+COPY hub/builder/embedded/dockerfile.golang.tmpl /opt/blaxel/templates/dockerfile.golang.tmpl
+
 COPY hub/builder/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh /usr/local/bin/blbuild /opt/blaxel/metamorph-wrapper
 
