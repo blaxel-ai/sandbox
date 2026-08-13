@@ -437,6 +437,9 @@ jobs:
           sparse-checkout: |
             templates/mk3-kernels
             templates/unikraft_wrapper
+            templates/dockerfile.node.tmpl
+            templates/dockerfile.python.tmpl
+            templates/dockerfile.golang.tmpl
           sparse-checkout-cone-mode: false
 
       - name: Stage builder artefacts
