@@ -12,7 +12,8 @@ func stageTemplates(t *testing.T) {
 	dir := t.TempDir()
 	// Same shape as metamorph's, reduced to the placeholders under test.
 	for name, body := range map[string]string{
-		"dockerfile.node.tmpl":   "FROM {base_image}\nWORKDIR {working_dir}\n{lock_file_copy}\nRUN {install_command}\nENTRYPOINT [{entrypoint_json}]\n",
+		// {pre_install} sits on its own line here, as in metamorph's template.
+		"dockerfile.node.tmpl":   "FROM {base_image}\nWORKDIR {working_dir}\n{pre_install}\n{lock_file_copy}\nRUN {install_command}\nENTRYPOINT [{entrypoint_json}]\n",
 		"dockerfile.python.tmpl": "FROM {base_image}\nCOPY {requirement_file} ./\nRUN {install_command}\nENTRYPOINT [{entrypoint_json}]\n",
 		"dockerfile.golang.tmpl": "FROM {base_image}\nRUN {install_command}\n{build_command}\nENTRYPOINT [{entrypoint_json}]\n",
 	} {
@@ -40,6 +41,20 @@ func TestEnsureDockerfileGeneratesForNode(t *testing.T) {
 	for _, want := range []string{"FROM node:", "pnpm install --frozen-lockfile", "COPY pnpm-lock.yaml"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("Dockerfile missing %q:\n%s", want, got)
+		}
+	}
+	// Every non-empty line has to be a Dockerfile instruction. A placeholder
+	// rendered bare — pre_install as "true" — is a parse error, not a no-op.
+	for _, line := range strings.Split(got, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		verb := strings.ToUpper(strings.Fields(line)[0])
+		switch verb {
+		case "FROM", "RUN", "COPY", "WORKDIR", "ENTRYPOINT", "CMD", "ENV", "ARG", "EXPOSE", "USER", "LABEL", "VOLUME":
+		default:
+			t.Errorf("not a Dockerfile instruction: %q\n%s", line, got)
 		}
 	}
 }

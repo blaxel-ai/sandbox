@@ -123,7 +123,14 @@ func dataFor(kind projectType, dir string, cfg blaxelBuild) templateData {
 		_, err := os.Stat(filepath.Join(dir, name))
 		return err == nil
 	}
-	d := templateData{workingDir: "/blaxel", preInstall: "true"}
+	// pre_install sits on its own line in the node and golang templates, so it
+	// has to be a whole instruction or nothing — a bare "true" there is parsed as
+	// an unknown Dockerfile instruction. Python wraps it in RUN, where a shell
+	// no-op is exactly right.
+	d := templateData{workingDir: "/blaxel"}
+	if kind == projectPython {
+		d.preInstall = "true"
+	}
 	if cfg.WorkingDir != "" {
 		d.workingDir = cfg.WorkingDir
 	}
