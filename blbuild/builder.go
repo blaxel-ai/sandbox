@@ -13,7 +13,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-	"syscall"
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -407,20 +406,6 @@ func (b *Builder) writeRuntimeDirsTar() (string, error) {
 		}
 	}
 	return path, nil
-}
-
-func (b *Builder) materializeRuntimeDirs(tree string) error {
-	for _, d := range runtimeDirs {
-		p := filepath.Join(tree, d.path)
-		if err := os.MkdirAll(p, 0o755); err != nil {
-			return err
-		}
-		// syscall.Chmod takes the raw mode, so the sticky bit survives.
-		if err := syscall.Chmod(p, uint32(d.mode)); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 func (b *Builder) extractLayer(ctx context.Context, layer Layer, tree string) error {

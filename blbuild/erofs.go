@@ -161,8 +161,29 @@ func (b *Builder) buildErofsFromTree(ctx context.Context, layers []Layer, rootfs
 	if err := b.extractPrelude(tree); err != nil {
 		return err
 	}
-	if err := b.materializeRuntimeDirs(tree); err != nil {
+	if err := ensureRuntimeDirs(tree); err != nil {
 		return err
+	}
+
+	// The image's own environment, where the guest can read it back: sandbox-api
+	// restores it at startup and reports as an error every variable it could not.
+	// Without this file the customer's environment is silently lost.
+	var cfg ociConfig
+	if err := readJSON(blobPath(b.ociDir, b.configDigest), &cfg); err != nil {
+		return fmt.Errorf("reading the image configuration: %w", err)
+	}
+	if err := writeEnvironmentFile(tree, cfg.Config.Env, cfg.Config.WorkingDir); err != nil {
+		return fmt.Errorf("writing the environment file: %w", err)
+	}
+
+	// A file the image left without u+r is unreadable in the guest, and surfaces
+	// as a missing library rather than as a permission problem.
+	fixed, err := fixUnreadableFiles(tree)
+	if err != nil {
+		return fmt.Errorf("fixing unreadable files: %w", err)
+	}
+	if fixed > 0 {
+		sw.mark(fmt.Sprintf("  made %d file(s) readable", fixed))
 	}
 	sw.mark("extract layers to tree")
 
