@@ -46,7 +46,7 @@ func (b *Builder) writeKraftFiles(ctx context.Context, sw *stopwatch) error {
 	}
 
 	// cmdline.txt: the wrapper receives the working directory then the command.
-	cmd := append([]string{"/bin/metamorph-wrapper", workingDir},
+	cmd := append([]string{"/" + wrapperPath, workingDir},
 		append(cfg.Config.Entrypoint, cfg.Config.Cmd...)...)
 	if err := os.WriteFile(filepath.Join(b.OutDir, cmdlineName),
 		[]byte(strings.Join(cmd, " ")+"\n"), 0o644); err != nil {

@@ -52,7 +52,7 @@ func TestWriteKraftFiles(t *testing.T) {
 
 	// cmdline.txt: the wrapper, then the working directory, then the command.
 	cmdline := readTestFile(t, filepath.Join(out, cmdlineName))
-	want := "/bin/metamorph-wrapper /app /entrypoint.sh --serve"
+	want := "/" + wrapperPath + " /app /entrypoint.sh --serve"
 	if strings.TrimSpace(cmdline) != want {
 		t.Errorf("cmdline.txt = %q, want %q", strings.TrimSpace(cmdline), want)
 	}
@@ -138,7 +138,7 @@ func TestWriteKraftFilesDefaultWorkingDir(t *testing.T) {
 	}
 
 	cmdline := strings.TrimSpace(readTestFile(t, filepath.Join(out, cmdlineName)))
-	if cmdline != "/bin/metamorph-wrapper / /bin/sh" {
+	if cmdline != "/"+wrapperPath+" / /bin/sh" {
 		t.Errorf("cmdline.txt = %q, want the working directory to default to /", cmdline)
 	}
 
@@ -187,4 +187,27 @@ func readTestFile(t *testing.T, path string) string {
 		t.Fatal(err)
 	}
 	return string(data)
+}
+
+// cmdline.txt execs the wrapper from the path the prelude injects it to. The
+// two used to be written independently, and drifted: the prelude landed the
+// wrapper in /bin, which a usrmerge image replaces with a symlink to /usr/bin,
+// so every image built from debian booted to "/bin/metamorph-wrapper: -2" and
+// rebooted forever. Nothing catches that except booting the image.
+func TestCmdlineExecsTheInjectedWrapper(t *testing.T) {
+	var injected string
+	for _, entry := range preludeFiles() {
+		if strings.HasSuffix(entry.dst, "metamorph-wrapper") {
+			injected = entry.dst
+		}
+	}
+	if injected == "" {
+		t.Fatal("the prelude no longer injects the wrapper")
+	}
+	if injected != wrapperPath {
+		t.Fatalf("the prelude injects %q, cmdline.txt execs %q", injected, wrapperPath)
+	}
+	if strings.HasPrefix(injected, "bin/") || strings.HasPrefix(injected, "usr/") {
+		t.Fatalf("%q sits under a path a customer image can replace", injected)
+	}
 }
