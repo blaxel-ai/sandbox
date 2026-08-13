@@ -28,8 +28,12 @@ pytest's temproot resolution at a throwaway directory instead of the real
 ``/tmp``. This is a deliberate coupling to an internal, undocumented pytest
 API rather than a public one -- there is no public entry point for this
 behavior -- so a future pytest release could rename or remove it with
-nothing wrong in the dependency; if this test starts failing to *import*
-(as opposed to failing its assertion), that is the first thing to check.
+nothing wrong in the dependency. That specific failure mode (the internal
+API moving or its constructor signature changing) is guarded below to
+``skip`` with an explanatory message instead of failing the CI gate on an
+unrelated future dependency PR; an assertion failure inside the test body
+(the ``OSError``/message-match not raising) is left as a hard failure,
+since that would mean the actual security property regressed.
 
 Revert-check: run against pytest==8.3.5 (the version this replaces), the
 same call does not raise -- it silently accepts the symlink and returns a
@@ -43,6 +47,42 @@ from pathlib import Path
 
 import pytest
 
+# _pytest.tmpdir.TempPathFactory is an internal, undocumented API (see module
+# docstring) -- a future pytest release can rename/remove it or reorder its
+# positional constructor arguments with nothing wrong in the dependency being
+# bumped. Import it defensively so that happening turns this test into an
+# informative skip instead of a hard failure that would block an unrelated
+# future dependency PR's CI gate (flagged by devin-ai-integration on this PR).
+try:
+    from _pytest.tmpdir import TempPathFactory
+
+    _import_error: Exception | None = None
+except ImportError as exc:  # pragma: no cover - depends on pytest internals
+    TempPathFactory = None  # type: ignore[assignment,misc]
+    _import_error = exc
+
+
+def _new_temp_path_factory() -> "TempPathFactory":
+    """Construct a TempPathFactory, skipping (not failing) the test if
+    pytest's internal constructor shape has changed -- see module docstring
+    and the guard above."""
+    if TempPathFactory is None:
+        pytest.skip(
+            "pytest moved or removed _pytest.tmpdir.TempPathFactory "
+            f"({_import_error}); this test targets an internal pytest API "
+            "and needs re-deriving against the new pytest internals -- "
+            "see this file's module docstring"
+        )
+    try:
+        return TempPathFactory(None, 3, "all", lambda *args: None, _ispytest=True)
+    except TypeError as exc:
+        pytest.skip(
+            f"_pytest.tmpdir.TempPathFactory's constructor signature changed "
+            f"({exc}); this test targets an internal pytest API and needs "
+            "re-deriving against the new pytest internals -- see this "
+            "file's module docstring"
+        )
+
 
 @pytest.mark.skipif(
     not hasattr(os, "getuid") or os.stat not in os.supports_follow_symlinks,
@@ -51,8 +91,6 @@ import pytest
 def test_tmp_path_factory_rejects_symlinked_basetemp(tmp_path: Path, monkeypatch) -> None:
     """A pytest-of-{user} base directory that is a symlink must be rejected,
     not silently followed (GHSA-6w46-j5rx-g56g / CVE-2025-71176)."""
-    from _pytest.tmpdir import TempPathFactory
-
     attacker_controlled = tmp_path / "attacker_controlled"
     attacker_controlled.mkdir()
 
@@ -64,14 +102,14 @@ def test_tmp_path_factory_rejects_symlinked_basetemp(tmp_path: Path, monkeypatch
     # First resolution creates the real pytest-of-{user} directory; capture
     # its path, then remove it and replace it with a symlink to a directory
     # an "attacker" controls.
-    tmp_factory = TempPathFactory(None, 3, "all", lambda *args: None, _ispytest=True)
+    tmp_factory = _new_temp_path_factory()
     pytest_of_user = tmp_factory.getbasetemp().parent
     assert "pytest-of-" in str(pytest_of_user)
     shutil.rmtree(pytest_of_user)
     pytest_of_user.symlink_to(attacker_controlled)
 
     # A fresh factory must now refuse to use it.
-    tmp_factory = TempPathFactory(None, 3, "all", lambda *args: None, _ispytest=True)
+    tmp_factory = _new_temp_path_factory()
     with pytest.raises(OSError, match=r"temporary directory .* is a symbolic link"):
         tmp_factory.getbasetemp()
 
