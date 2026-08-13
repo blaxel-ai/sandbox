@@ -9,13 +9,20 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-// metadataPath is the guest metadata document served by the host (vmm-manager)
-// through the initrd's FUSE mount. It always reflects the current generation:
-// on an environment update the host persists the new set, the initrd refetches
-// the document, then pings POST /environment/reload so this process adopts it.
-// Absent on VMs booted from an initrd that predates the metadata protocol.
-// A variable so tests can point it at a fixture.
-var metadataPath = "/bl/metadata"
+// defaultMetadataPath is the guest metadata document served by the host
+// (vmm-manager) through the initrd's FUSE mount. It always reflects the
+// current generation: on an environment update the host persists the new set,
+// the initrd refetches the document, then pings POST /environment/reload so
+// this process adopts it. Absent on VMs booted from an initrd that predates
+// the metadata protocol. Overridable through BL_METADATA_PATH.
+const defaultMetadataPath = "/bl/metadata"
+
+func metadataPath() string {
+	if path := os.Getenv("BL_METADATA_PATH"); path != "" {
+		return path
+	}
+	return defaultMetadataPath
+}
 
 // metadataDocument is the subset of the guest metadata document this handler
 // reads. The environment carried is the host's complete set, so a variable the
@@ -65,7 +72,7 @@ type ReloadResponse struct {
 // @Failure 500 {object} ErrorResponse
 // @Router /environment/reload [post]
 func (h *EnvironmentHandler) HandleReload(c *gin.Context) {
-	raw, err := os.ReadFile(metadataPath)
+	raw, err := os.ReadFile(metadataPath())
 	if err != nil {
 		if os.IsNotExist(err) {
 			h.SendError(c, http.StatusNotFound, err)

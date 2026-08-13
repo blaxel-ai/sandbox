@@ -22,9 +22,7 @@ func performReload(t *testing.T, h *EnvironmentHandler) *httptest.ResponseRecord
 
 func TestHandleReloadAppliesAndRemoves(t *testing.T) {
 	doc := filepath.Join(t.TempDir(), "metadata")
-	orig := metadataPath
-	metadataPath = doc
-	t.Cleanup(func() { metadataPath = orig })
+	t.Setenv("BL_METADATA_PATH", doc)
 
 	h := NewEnvironmentHandler()
 	t.Cleanup(func() {
@@ -59,9 +57,7 @@ func TestHandleReloadAppliesAndRemoves(t *testing.T) {
 }
 
 func TestHandleReloadWithoutMetadata(t *testing.T) {
-	orig := metadataPath
-	metadataPath = filepath.Join(t.TempDir(), "missing")
-	t.Cleanup(func() { metadataPath = orig })
+	t.Setenv("BL_METADATA_PATH", filepath.Join(t.TempDir(), "missing"))
 
 	if w := performReload(t, NewEnvironmentHandler()); w.Code != http.StatusNotFound {
 		t.Fatalf("expected 404, got %d", w.Code)
