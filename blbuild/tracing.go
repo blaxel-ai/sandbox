@@ -78,6 +78,12 @@ func InitTracing(ctx context.Context, traceParent string) (func(), error) {
 	}
 
 	tp := sdktrace.NewTracerProvider(
+		// Never sampled away. The platform injects
+		// OTEL_TRACES_SAMPLER=parentbased_traceidratio with a 0.1 ratio, which the
+		// Go SDK reads by default: a build with no sampled parent then had one
+		// chance in ten of being kept, and a build is a rare, minutes-long event
+		// whose trace is the whole point of instrumenting it.
+		sdktrace.WithSampler(sdktrace.ParentBased(sdktrace.AlwaysSample())),
 		sdktrace.WithBatcher(exporter,
 			// Small batches, short delay: a build can end abruptly, and a span
 			// still sitting in the queue is a span nobody will ever see.
