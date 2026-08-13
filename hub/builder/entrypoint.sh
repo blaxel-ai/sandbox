@@ -1,8 +1,6 @@
 #!/bin/sh
 set -e
 
-/usr/local/bin/sandbox-api &
-
 # buildkitd needs cgroup2 for the RUN steps. Same trick as
 # hub/docker-in-sandbox, which is the proof runc works inside our microVMs.
 mkdir -p /sys/fs/cgroup
@@ -26,7 +24,44 @@ if [ ! -d /scratch ]; then
 fi
 
 mkdir -p /scratch/buildkit
-exec buildkitd \
-  --root /scratch/buildkit \
-  --oci-worker-snapshotter=native \
-  --addr unix:///run/buildkit/buildkitd.sock
+
+/usr/local/bin/sandbox-api &
+API_PID=$!
+
+# Wait for the API before registering anything against it. A build sandbox is
+# created and then driven over HTTP, so the API is what has to survive here.
+i=0
+until curl -sf -o /dev/null http://localhost:8080/health; do
+  i=$((i + 1))
+  if [ "$i" -gt 300 ]; then
+    echo "FATAL: the sandbox API never came up" >&2
+    exit 1
+  fi
+  # Nothing to serve yet if the API died on its own.
+  kill -0 "$API_PID" 2>/dev/null || { echo "FATAL: the sandbox API exited" >&2; exit 1; }
+  sleep 0.1
+done
+
+# buildkitd runs as a process the API owns rather than as this script's exec
+# target, and that is the whole point: scale-to-zero pauses a sandbox with no
+# running process, and it pauses it about twenty seconds after boot. A paused
+# sandbox answers 502 through the gateway instead of resuming, so the controlplane
+# never saw a healthy build environment and every build failed on readiness.
+#
+# keepAlive is what disables scale-to-zero, and it defaults to false here despite
+# what the controlplane-side model documents. timeout 0 means no auto-kill: with
+# keepAlive and no timeout the API would substitute 600s and kill buildkitd ten
+# minutes into a build.
+curl -sf -X POST http://localhost:8080/process \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "name": "buildkitd",
+    "command": "buildkitd --root /scratch/buildkit --oci-worker-snapshotter=native --addr unix:///run/buildkit/buildkitd.sock",
+    "waitForCompletion": false,
+    "keepAlive": true,
+    "timeout": 0
+  }' >/dev/null
+
+# PID 1 stays the API: it is what the platform probes and what the build is
+# driven through. buildkitd dying is reported through the process endpoint.
+wait "$API_PID"
