@@ -56,6 +56,36 @@ func TestHandleReloadAppliesAndRemoves(t *testing.T) {
 	}
 }
 
+func TestHandleReloadRestoresPreExistingValue(t *testing.T) {
+	doc := filepath.Join(t.TempDir(), "metadata")
+	t.Setenv("BL_METADATA_PATH", doc)
+	t.Setenv("RELOAD_TEST_IMAGE", "from-image")
+
+	h := NewEnvironmentHandler()
+
+	// The metadata overrides a variable the process already had.
+	if err := os.WriteFile(doc, []byte(`{"generation":1,"environment":{"RELOAD_TEST_IMAGE":"override"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if w := performReload(t, h); w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if os.Getenv("RELOAD_TEST_IMAGE") != "override" {
+		t.Fatalf("environment not overridden")
+	}
+
+	// When the next generation drops it, the original value comes back.
+	if err := os.WriteFile(doc, []byte(`{"generation":2,"environment":{}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if w := performReload(t, h); w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if got := os.Getenv("RELOAD_TEST_IMAGE"); got != "from-image" {
+		t.Fatalf("pre-existing value not restored, got %q", got)
+	}
+}
+
 func TestHandleReloadWithoutMetadata(t *testing.T) {
 	t.Setenv("BL_METADATA_PATH", filepath.Join(t.TempDir(), "missing"))
 

@@ -40,18 +40,30 @@ type metadataDocument struct {
 type EnvironmentHandler struct {
 	*BaseHandler
 
+	// path is resolved once at construction so a metadata document carrying
+	// BL_METADATA_PATH cannot redirect subsequent reloads.
+	path string
+
 	mu sync.Mutex
-	// Keys applied from the metadata document, so a key the next generation no
-	// longer carries is unset rather than left behind. Keys that were never in
-	// the document (the image ENV, boot-time variables) are never touched.
-	applied map[string]struct{}
+	// Keys applied from the metadata document, mapped to the value the process
+	// held before the first override (image ENV, boot-time variables). When a
+	// later generation drops a key, that original value is restored instead of
+	// the variable being erased. Keys never carried by a document are never
+	// touched.
+	applied map[string]previousValue
+}
+
+type previousValue struct {
+	value   string
+	existed bool
 }
 
 // NewEnvironmentHandler creates a new environment handler.
 func NewEnvironmentHandler() *EnvironmentHandler {
 	return &EnvironmentHandler{
 		BaseHandler: NewBaseHandler(),
-		applied:     map[string]struct{}{},
+		path:        metadataPath(),
+		applied:     map[string]previousValue{},
 	}
 }
 
@@ -72,7 +84,7 @@ type ReloadResponse struct {
 // @Failure 500 {object} ErrorResponse
 // @Router /environment/reload [post]
 func (h *EnvironmentHandler) HandleReload(c *gin.Context) {
-	raw, err := os.ReadFile(metadataPath())
+	raw, err := os.ReadFile(h.path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			h.SendError(c, http.StatusNotFound, err)
@@ -92,9 +104,17 @@ func (h *EnvironmentHandler) HandleReload(c *gin.Context) {
 	defer h.mu.Unlock()
 
 	removed := 0
-	for key := range h.applied {
+	for key, prev := range h.applied {
 		if _, ok := doc.Environment[key]; !ok {
-			if err := os.Unsetenv(key); err == nil {
+			// Restore the value the process held before the first override (or
+			// unset if there was none).
+			var err error
+			if prev.existed {
+				err = os.Setenv(key, prev.value)
+			} else {
+				err = os.Unsetenv(key)
+			}
+			if err == nil {
 				removed++
 			}
 			delete(h.applied, key)
@@ -102,11 +122,15 @@ func (h *EnvironmentHandler) HandleReload(c *gin.Context) {
 	}
 	applied := 0
 	for key, value := range doc.Environment {
+		prev, tracked := h.applied[key]
+		if !tracked {
+			prev.value, prev.existed = os.LookupEnv(key)
+		}
 		if err := os.Setenv(key, value); err != nil {
 			logrus.WithError(err).WithField("key", key).Warn("Failed to set environment variable")
 			continue
 		}
-		h.applied[key] = struct{}{}
+		h.applied[key] = prev
 		applied++
 	}
 
