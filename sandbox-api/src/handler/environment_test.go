@@ -56,33 +56,35 @@ func TestHandleReloadAppliesAndRemoves(t *testing.T) {
 	}
 }
 
-func TestHandleReloadRestoresPreExistingValue(t *testing.T) {
+func TestHandleReloadRemovesBootTimeVariable(t *testing.T) {
 	doc := filepath.Join(t.TempDir(), "metadata")
 	t.Setenv("BL_METADATA_PATH", doc)
-	t.Setenv("RELOAD_TEST_IMAGE", "from-image")
+	// A host-injected variable present in the process since boot: the initrd
+	// applied it from the same metadata document before exec.
+	t.Setenv("RELOAD_TEST_BOOT", "from-host")
 
 	h := NewEnvironmentHandler()
 
-	// The metadata overrides a variable the process already had.
-	if err := os.WriteFile(doc, []byte(`{"generation":1,"environment":{"RELOAD_TEST_IMAGE":"override"}}`), 0o600); err != nil {
+	if err := os.WriteFile(doc, []byte(`{"generation":1,"environment":{"RELOAD_TEST_BOOT":"from-host"}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if w := performReload(t, h); w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
 	}
-	if os.Getenv("RELOAD_TEST_IMAGE") != "override" {
-		t.Fatalf("environment not overridden")
+	if os.Getenv("RELOAD_TEST_BOOT") != "from-host" {
+		t.Fatalf("environment not applied")
 	}
 
-	// When the next generation drops it, the original value comes back.
+	// The document is the host's complete set: dropping the key removes the
+	// variable, it does not resurface the boot-time value.
 	if err := os.WriteFile(doc, []byte(`{"generation":2,"environment":{}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if w := performReload(t, h); w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
 	}
-	if got := os.Getenv("RELOAD_TEST_IMAGE"); got != "from-image" {
-		t.Fatalf("pre-existing value not restored, got %q", got)
+	if got, ok := os.LookupEnv("RELOAD_TEST_BOOT"); ok {
+		t.Fatalf("removed variable still set, got %q", got)
 	}
 }
 
