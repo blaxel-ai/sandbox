@@ -51,6 +51,10 @@ func main() {
 		// Losing traces must never lose a build.
 		warn("tracing disabled: %v", err)
 	} else {
+		// Also registered for fatal(), which exits the process and would
+		// otherwise skip this: a failed build is exactly the one whose spans
+		// are worth having.
+		flushTraces = shutdown
 		defer shutdown()
 	}
 
@@ -95,9 +99,23 @@ func warn(format string, args ...any) {
 	fmt.Fprintf(os.Stderr, "warn: "+format+"\n", args...)
 }
 
+// flushTraces is set once tracing is up. os.Exit runs no deferred function, so
+// without this every failed build reported nothing: the spans explaining the
+// failure were still sitting in the batch queue when the process died.
+var flushTraces func()
+
 func fatal(format string, args ...any) {
 	fmt.Fprintf(os.Stderr, "error: "+format+"\n", args...)
+	flushBeforeExit()
 	os.Exit(1)
+}
+
+// flushBeforeExit sends whatever the tracer still holds. Separate from fatal so
+// it can be tested: fatal itself ends the process.
+func flushBeforeExit() {
+	if flushTraces != nil {
+		flushTraces()
+	}
 }
 
 // step records one pipeline stage in the result and prints it, so a build log
