@@ -278,6 +278,38 @@ const docTemplate = `{
                 }
             }
         },
+        "/environment/reload": {
+            "post": {
+                "description": "Re-reads /bl/metadata and applies its environment to the sandbox-api process, so this process and every process started afterwards see the current values. Called by the guest init after an environment update; safe to call manually.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "system"
+                ],
+                "summary": "Reload environment from guest metadata",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handler.ReloadResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/filesystem-content-search/{path}": {
             "get": {
                 "description": "Searches for text content inside files using ripgrep. Returns matching lines with context.",
@@ -2761,6 +2793,20 @@ const docTemplate = `{
                 },
                 "uploadedAt": {
                     "type": "string"
+                }
+            }
+        },
+        "handler.ReloadResponse": {
+            "type": "object",
+            "properties": {
+                "applied": {
+                    "type": "integer"
+                },
+                "generation": {
+                    "type": "integer"
+                },
+                "removed": {
+                    "type": "integer"
                 }
             }
         },
