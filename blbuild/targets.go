@@ -54,6 +54,10 @@ type Result struct {
 	// Incremental reports whether the fast per-layer path was used or whether
 	// it fell back to a single mkfs over an extracted tree.
 	Incremental bool `json:"incremental"`
+	// Cmdline is what the guest actually executes, wrapper and working
+	// directory included. It travels in the result because a boot failure is
+	// diagnosed from it and the build sandbox is gone by then.
+	Cmdline string `json:"cmdline,omitempty"`
 	// Error is the failure reason, product-neutral: this string reaches the
 	// customer through the build events.
 	Error string `json:"error,omitempty"`

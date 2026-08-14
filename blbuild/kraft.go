@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"go.opentelemetry.io/otel/attribute"
 )
 
 // ociConfig is the subset of the image config the artefacts are derived from.
@@ -52,6 +54,17 @@ func (b *Builder) writeKraftFiles(ctx context.Context, sw *stopwatch) error {
 		[]byte(strings.Join(cmd, " ")+"\n"), 0o644); err != nil {
 		return err
 	}
+	// This one line is what a boot failure is diagnosed from. The wrapper chdirs
+	// to the working directory and only *warns* when it cannot, so an image that
+	// starts in the wrong place looks identical to one that started correctly
+	// until the application itself fails — `pnpm` reporting no package.json in
+	// "/" was three hours of guessing that this line answers immediately.
+	b.cmdline = strings.Join(cmd, " ")
+	fmt.Printf("cmdline: %s\n", b.cmdline)
+	span.SetAttributes(
+		attribute.String("build.working_dir", workingDir),
+		attribute.String("build.cmdline", b.cmdline),
+	)
 
 	// HOME is added when the image does not set it, matching the current
 	// builder: without it a shell started in the VM has no home.
