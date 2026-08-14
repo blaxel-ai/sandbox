@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+
+	"go.opentelemetry.io/otel/attribute"
 )
 
 // mkfs flags, split so each group can be explained on its own.
@@ -142,16 +144,36 @@ func (b *Builder) buildErofsFromTree(ctx context.Context, layers []Layer, rootfs
 	if err := os.MkdirAll(tree, 0o755); err != nil {
 		return err
 	}
-	for _, layer := range layers {
-		if err := b.extractLayer(ctx, layer, tree); err != nil {
-			return err
+	// A child span per phase, not just a stopwatch mark. A span carries its own
+	// start and end, so it cannot inherit the previous step's elapsed time the
+	// way a mark placed in the wrong order did — which is how extraction read
+	// 0.0s while slimming read 4.3s for deleting two files.
+	if err := func() error {
+		ctx, span := tracer().Start(ctx, "erofs.extract")
+		defer span.End()
+		span.SetAttributes(attribute.Int("build.layers", len(layers)))
+		for _, layer := range layers {
+			if err := b.extractLayer(ctx, layer, tree); err != nil {
+				return err
+			}
+			// Whiteouts are resolved after each layer, which is what makes the
+			// order correct: a marker only masks what the layers below it put there.
+			if err := applyWhiteouts(tree); err != nil {
+				return err
+			}
 		}
-		// Whiteouts are resolved after each layer, which is what makes the
-		// order correct: a marker only masks what the layers below it put there.
-		if err := applyWhiteouts(tree); err != nil {
-			return err
-		}
+		return nil
+	}(); err != nil {
+		return err
 	}
+	// Marked here, where the extraction actually ends. It used to be marked after
+	// the slimming instead, which made the stopwatch lie in both directions: the
+	// extraction of several hundred megabytes reported 0.0s, and its cost was
+	// billed to whatever step happened to be marked next — slimming appeared to
+	// spend 4.3s deleting two files. Two rounds of optimising the wrong step came
+	// out of that.
+	sw.mark("extract layers to tree")
+
 	// After the layers, never before: this is a filesystem copy, so it follows
 	// whatever /bin ended up being. A usrmerge image ships /bin as a symlink to
 	// /usr/bin, and the copy lands in /usr/bin with the symlink intact — exactly
@@ -182,25 +204,31 @@ func (b *Builder) buildErofsFromTree(ctx context.Context, layers []Layer, rootfs
 	if err != nil {
 		return fmt.Errorf("fixing unreadable files: %w", err)
 	}
-	if fixed > 0 {
-		sw.mark(fmt.Sprintf("  made %d file(s) readable", fixed))
-	}
+	// Marked unconditionally, unlike before: a mark that only appears when it
+	// found something to do leaves its elapsed time inside the next step, which
+	// is the same mis-attribution in miniature.
+	sw.mark(fmt.Sprintf("prepare tree (%d file(s) made readable)", fixed))
+
 	// Rootfs slimming, unless the manifest opted out with [build] slim = false.
 	// Same patterns as metamorph, so an image loses the same things whichever
 	// builder produced it.
+	slimmed := 0
 	if !readBlaxelToml(b.ContextDir).NoSlim {
-		if n := slimRootfs(tree); n > 0 {
-			sw.mark(fmt.Sprintf("  slimmed %d entries", n))
-		}
+		_, slimSpan := tracer().Start(ctx, "erofs.slim")
+		slimmed = slimRootfs(tree)
+		slimSpan.SetAttributes(attribute.Int("build.slimmed_entries", slimmed))
+		slimSpan.End()
 	}
-
-	sw.mark("extract layers to tree")
+	sw.mark(fmt.Sprintf("slim rootfs (%d entries)", slimmed))
+	span.SetAttributes(attribute.Int("build.slimmed_entries", slimmed))
 
 	_ = os.Remove(rootfs)
 	args := append([]string{}, erofsBase...)
 	args = append(args, fmt.Sprintf("--workers=%d", workers()), rootfs, tree)
-	cmd := exec.CommandContext(ctx, "mkfs.erofs", args...)
+	mkfsCtx, mkfsSpan := tracer().Start(ctx, "erofs.mkfs")
+	cmd := exec.CommandContext(mkfsCtx, "mkfs.erofs", args...)
 	out, err := cmd.CombinedOutput()
+	mkfsSpan.End()
 	b.appendLog("mkfs.log", string(out))
 	if err != nil {
 		return fmt.Errorf("%w: %s", err, lastLine(string(out)))
