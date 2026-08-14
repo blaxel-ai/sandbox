@@ -1,6 +1,7 @@
 package main
 
 import (
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -63,9 +64,10 @@ var cleanupPatterns = []string{
 // only trying to delete.
 func slimRootfs(tree string) int {
 	removed := 0
+	var anywhere []string
 	for _, pattern := range cleanupPatterns {
-		if strings.HasPrefix(pattern, "**/") {
-			removed += removeAnywhere(tree, strings.TrimPrefix(pattern, "**/"))
+		if name, ok := strings.CutPrefix(pattern, "**/"); ok {
+			anywhere = append(anywhere, name)
 			continue
 		}
 		matches, err := filepath.Glob(filepath.Join(tree, pattern))
@@ -82,25 +84,43 @@ func slimRootfs(tree string) int {
 			}
 		}
 	}
-	return removed
+	return removed + removeAnywhere(tree, anywhere)
 }
 
-// removeAnywhere handles the **/ patterns, which Go's Glob does not.
-func removeAnywhere(tree, name string) int {
-	removed := 0
+// removeAnywhere handles the **/ patterns, which Go's Glob does not, in a single
+// pass over the tree.
+//
+// One walk for all of them, not one walk each: the three Python patterns
+// (__pycache__, *.pyc, *.pyo) meant three complete traversals of the rootfs, and
+// a Node image has none of those files to find. Measured on a 700 MiB image with
+// a large node_modules, slimming spent 5.2s to delete 2 entries, while a
+// different image deleted 257 in 2.0s — the cost was never the deletion, it was
+// walking hundreds of thousands of inodes three times over.
+//
+// WalkDir rather than Walk for the same reason: Walk calls lstat on every entry
+// to build a FileInfo nothing here needs.
+func removeAnywhere(tree string, names []string) int {
+	if len(names) == 0 {
+		return 0
+	}
 	var victims []string
-	_ = filepath.Walk(tree, func(path string, info os.FileInfo, err error) error {
+	_ = filepath.WalkDir(tree, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil
 		}
-		if ok, _ := filepath.Match(name, filepath.Base(path)); ok {
-			victims = append(victims, path)
-			if info.IsDir() {
-				return filepath.SkipDir
+		base := filepath.Base(path)
+		for _, name := range names {
+			if ok, _ := filepath.Match(name, base); ok {
+				victims = append(victims, path)
+				if d.IsDir() {
+					return filepath.SkipDir
+				}
+				return nil
 			}
 		}
 		return nil
 	})
+	removed := 0
 	for _, v := range victims {
 		if os.RemoveAll(v) == nil {
 			removed++
