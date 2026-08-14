@@ -189,7 +189,15 @@ func dataFor(kind projectType, dir string, cfg blaxelBuild) templateData {
 			d.installCommand, d.preInstall = "bun install --frozen-lockfile", "RUN npm install -g bun"
 		case exists("pnpm-lock.yaml"):
 			pm, d.lockFileCopy = "pnpm", "COPY pnpm-lock.yaml ./"
-			d.installCommand, d.preInstall = "pnpm install --frozen-lockfile", "RUN npm install -g pnpm"
+			// `npm install -g pnpm` installs the latest pnpm, and pnpm 10 turned
+			// "some dependency has a build script I did not approve" into a fatal
+			// error — which is exit 1 for any project that has not run
+			// `pnpm approve-builds`, including everything `bl new` scaffolds.
+			// Allowing the scripts is what npm and yarn do unconditionally and
+			// what pnpm 9 did, and esbuild needs its postinstall to fetch a
+			// platform binary at all. It is a no-op where there is nothing to run.
+			d.installCommand = "pnpm install --frozen-lockfile --config.dangerouslyAllowAllBuilds=true"
+			d.preInstall = "RUN npm install -g pnpm"
 		case exists("yarn.lock"):
 			pm, d.lockFileCopy = "yarn", "COPY yarn.lock ./"
 			d.installCommand = "yarn install --frozen-lockfile"
