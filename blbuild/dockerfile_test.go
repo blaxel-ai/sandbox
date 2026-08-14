@@ -7,15 +7,93 @@ import (
 	"testing"
 )
 
+// metamorph's templates/dockerfile.*.tmpl, verbatim. Copied rather than reduced:
+// a reduced shape hides exactly the bugs this file exists to catch — a bare
+// `RUN ` from an empty placeholder, or a Go binary the runtime stage cannot find
+// because the builder stage was never named.
+const (
+	nodeTemplate = `FROM {base_image}
+
+WORKDIR {working_dir}
+
+{pre_install}
+
+# Copy package files first for better layer caching
+COPY package.json ./
+{lock_file_copy}
+
+# Install dependencies
+RUN {install_command}
+
+# Copy application code
+COPY . .
+
+{build_command}
+
+ENTRYPOINT [{entrypoint_json}]`
+
+	pythonTemplate = `FROM {base_image}
+
+WORKDIR {working_dir}
+
+# Install system dependencies first if needed
+RUN {pre_install}
+
+# Copy dependency files first for better layer caching
+COPY {requirement_file} ./
+{lock_file_copy}
+
+# Install Python dependencies
+RUN {install_command}
+
+# Copy application code
+COPY . .
+
+{build_command}
+
+ENV PATH="/blaxel/.venv/bin:$PATH"
+
+ENTRYPOINT [{entrypoint_json}]`
+
+	golangTemplate = `# Build stage
+FROM {base_image}
+
+{pre_install}
+
+WORKDIR {working_dir}
+
+# Copy go mod files
+COPY {requirement_file} ./
+{lock_file_copy}
+
+# Download dependencies
+RUN {install_command}
+
+# Copy source code
+COPY . .
+
+# Build the application
+{build_command}
+
+# Runtime stage
+FROM alpine:latest
+
+RUN apk --no-cache add ca-certificates
+
+# Copy the binary from builder
+COPY --from=builder {working_dir}/app /app
+
+# Run the binary
+ENTRYPOINT ["/app"]`
+)
+
 func stageTemplates(t *testing.T) {
 	t.Helper()
 	dir := t.TempDir()
-	// Same shape as metamorph's, reduced to the placeholders under test.
 	for name, body := range map[string]string{
-		// {pre_install} sits on its own line here, as in metamorph's template.
-		"dockerfile.node.tmpl":   "FROM {base_image}\nWORKDIR {working_dir}\n{pre_install}\n{lock_file_copy}\nRUN {install_command}\nENTRYPOINT [{entrypoint_json}]\n",
-		"dockerfile.python.tmpl": "FROM {base_image}\nCOPY {requirement_file} ./\nRUN {install_command}\nENTRYPOINT [{entrypoint_json}]\n",
-		"dockerfile.golang.tmpl": "FROM {base_image}\nRUN {install_command}\n{build_command}\nENTRYPOINT [{entrypoint_json}]\n",
+		"dockerfile.node.tmpl":   nodeTemplate,
+		"dockerfile.python.tmpl": pythonTemplate,
+		"dockerfile.golang.tmpl": golangTemplate,
 	} {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
 			t.Fatal(err)
@@ -38,25 +116,161 @@ func TestEnsureDockerfileGeneratesForNode(t *testing.T) {
 		t.Fatalf("ensureDockerfile: generated=%v err=%v", generated, err)
 	}
 	got := read(t, dir, "Dockerfile")
-	for _, want := range []string{"FROM node:", "pnpm install --frozen-lockfile", "COPY pnpm-lock.yaml"} {
+	for _, want := range []string{
+		"FROM public.ecr.aws/docker/library/node:22-alpine",
+		"RUN npm install -g pnpm",
+		"RUN pnpm install --frozen-lockfile",
+		"COPY pnpm-lock.yaml",
+	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("Dockerfile missing %q:\n%s", want, got)
 		}
 	}
-	// Every non-empty line has to be a Dockerfile instruction. A placeholder
-	// rendered bare — pre_install as "true" — is a parse error, not a no-op.
-	for _, line := range strings.Split(got, "\n") {
+	// corepack refuses to run unless package.json pins packageManager, and that
+	// refusal is exit 1. metamorph installs the package manager with npm instead,
+	// and every `bl new` project relies on that.
+	if strings.Contains(got, "corepack") {
+		t.Errorf("corepack is back; it fails on projects without packageManager:\n%s", got)
+	}
+	assertDockerfileParses(t, got)
+}
+
+// Every non-empty line has to be a Dockerfile instruction. An empty placeholder
+// left in place renders `RUN ` or `COPY  ./`, which buildkit rejects before it
+// runs a single step.
+func assertDockerfileParses(t *testing.T, content string) {
+	t.Helper()
+	for _, line := range strings.Split(content, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		verb := strings.ToUpper(strings.Fields(line)[0])
+		fields := strings.Fields(line)
+		verb := strings.ToUpper(fields[0])
 		switch verb {
 		case "FROM", "RUN", "COPY", "WORKDIR", "ENTRYPOINT", "CMD", "ENV", "ARG", "EXPOSE", "USER", "LABEL", "VOLUME":
 		default:
-			t.Errorf("not a Dockerfile instruction: %q\n%s", line, got)
+			t.Errorf("not a Dockerfile instruction: %q\n%s", line, content)
+			continue
+		}
+		if len(fields) == 1 {
+			t.Errorf("instruction with no argument: %q\n%s", line, content)
 		}
 	}
+}
+
+// A framework project (Next.js, Astro) has to run its build script, or the image
+// ships sources and starts on something that was never compiled.
+func TestNodeRunsTheBuildScript(t *testing.T) {
+	stageTemplates(t)
+	dir := t.TempDir()
+	write(t, dir, "package.json", `{"scripts":{"build":"next build","start":"next start"}}`)
+	write(t, dir, "pnpm-lock.yaml", "lockfileVersion: 9")
+
+	if _, err := ensureDockerfile(dir); err != nil {
+		t.Fatal(err)
+	}
+	got := read(t, dir, "Dockerfile")
+	if !strings.Contains(got, "RUN pnpm run build") {
+		t.Errorf("the build script is not run:\n%s", got)
+	}
+	// The package manager's own script wins over guessing at a file.
+	if !strings.Contains(got, `ENTRYPOINT ["pnpm", "run", "start"]`) {
+		t.Errorf("the start script was not used as entrypoint:\n%s", got)
+	}
+	assertDockerfileParses(t, got)
+}
+
+// prod beats start, as in metamorph's priority order.
+func TestNodePrefersTheProdScript(t *testing.T) {
+	stageTemplates(t)
+	dir := t.TempDir()
+	write(t, dir, "package.json", `{"scripts":{"prod":"node dist/x.js","start":"nodemon"}}`)
+
+	if _, err := ensureDockerfile(dir); err != nil {
+		t.Fatal(err)
+	}
+	if got := read(t, dir, "Dockerfile"); !strings.Contains(got, `ENTRYPOINT ["npm", "run", "prod"]`) {
+		t.Errorf("prod did not win over start:\n%s", got)
+	}
+}
+
+// A Python project with no dependency file leaves install_command empty. Left in
+// place that renders `RUN `, which is a parse error — the whole line has to go.
+func TestPythonWithoutDependenciesStillParses(t *testing.T) {
+	stageTemplates(t)
+	dir := t.TempDir()
+	write(t, dir, "main.py", "print('hi')")
+
+	if _, err := ensureDockerfile(dir); err != nil {
+		t.Fatal(err)
+	}
+	got := read(t, dir, "Dockerfile")
+	assertDockerfileParses(t, got)
+	if !strings.Contains(got, `ENTRYPOINT ["python", "main.py"]`) {
+		t.Errorf("entrypoint not detected from main.py:\n%s", got)
+	}
+}
+
+// The slim image ships no compiler, so any dependency with a source distribution
+// fails to build without one. metamorph installs the toolchain unconditionally.
+func TestPythonInstallsABuildToolchain(t *testing.T) {
+	stageTemplates(t)
+	dir := t.TempDir()
+	write(t, dir, "requirements.txt", "uvicorn\n")
+	write(t, dir, "app.py", "")
+
+	if _, err := ensureDockerfile(dir); err != nil {
+		t.Fatal(err)
+	}
+	got := read(t, dir, "Dockerfile")
+	if !strings.Contains(got, "RUN apt update && apt install -y build-essential") {
+		t.Errorf("no build toolchain installed:\n%s", got)
+	}
+	if !strings.Contains(got, "RUN pip install -r requirements.txt") {
+		t.Errorf("dependencies not installed:\n%s", got)
+	}
+	assertDockerfileParses(t, got)
+}
+
+func TestPythonUsesUvForPyproject(t *testing.T) {
+	stageTemplates(t)
+	dir := t.TempDir()
+	write(t, dir, "pyproject.toml", "[project]\nname='x'\n")
+	write(t, dir, "uv.lock", "version = 1")
+
+	if _, err := ensureDockerfile(dir); err != nil {
+		t.Fatal(err)
+	}
+	got := read(t, dir, "Dockerfile")
+	for _, want := range []string{"COPY uv.lock ./", "RUN pip install uv && uv sync", "COPY pyproject.toml ./"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q:\n%s", want, got)
+		}
+	}
+}
+
+// The runtime stage copies `--from=builder`, so the build stage has to be named.
+// Without the stage name the Dockerfile fails at the COPY, after the whole
+// compile has already been paid for.
+func TestGolangBuildStageIsNamed(t *testing.T) {
+	stageTemplates(t)
+	dir := t.TempDir()
+	write(t, dir, "go.mod", "module x\n\ngo 1.22\n")
+	write(t, dir, "go.sum", "")
+	write(t, dir, "main.go", "package main\n\nfunc main() {}\n")
+
+	if _, err := ensureDockerfile(dir); err != nil {
+		t.Fatal(err)
+	}
+	got := read(t, dir, "Dockerfile")
+	if !strings.Contains(got, "AS builder") {
+		t.Errorf("the build stage is unnamed but the runtime stage copies from it:\n%s", got)
+	}
+	if !strings.Contains(got, "go build -a -installsuffix cgo -o app main.go") {
+		t.Errorf("unexpected build command:\n%s", got)
+	}
+	assertDockerfileParses(t, got)
 }
 
 // A context that ships its own recipe is the customer's business, not ours.
