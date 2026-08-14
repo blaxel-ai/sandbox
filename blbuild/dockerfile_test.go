@@ -119,7 +119,7 @@ func TestEnsureDockerfileGeneratesForNode(t *testing.T) {
 	for _, want := range []string{
 		"FROM public.ecr.aws/docker/library/node:22-alpine",
 		"RUN npm install -g pnpm",
-		"RUN pnpm install --frozen-lockfile",
+		"RUN pnpm install --frozen-lockfile --config.dangerouslyAllowAllBuilds=true",
 		"COPY pnpm-lock.yaml",
 	} {
 		if !strings.Contains(got, want) {
@@ -412,5 +412,22 @@ func TestResolveBuildArgsRejectsAMalformedLine(t *testing.T) {
 	write(t, dir, ".env.build", "NOT_A_PAIR\n")
 	if _, err := resolveBuildArgs(dir); err == nil {
 		t.Fatal("a line without = was accepted")
+	}
+}
+
+// pnpm 10 makes an unapproved dependency build script fatal, so every `bl new`
+// project fails at install without this. npm and yarn run those scripts
+// unconditionally; esbuild does not even get a platform binary otherwise.
+func TestNodeAllowsDependencyBuildScripts(t *testing.T) {
+	stageTemplates(t)
+	dir := t.TempDir()
+	write(t, dir, "package.json", `{"dependencies":{"esbuild":"0.25.10"}}`)
+	write(t, dir, "pnpm-lock.yaml", "lockfileVersion: 9")
+
+	if _, err := ensureDockerfile(dir); err != nil {
+		t.Fatal(err)
+	}
+	if got := read(t, dir, "Dockerfile"); !strings.Contains(got, "--config.dangerouslyAllowAllBuilds=true") {
+		t.Errorf("pnpm will refuse the ignored build scripts and exit 1:\n%s", got)
 	}
 }
