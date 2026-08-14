@@ -87,18 +87,35 @@ func slimRootfs(tree string) int {
 	return removed + removeAnywhere(tree, anywhere)
 }
 
+// Directories the **/ patterns are not worth descending into.
+//
+// Every remaining **/ pattern looks for Python bytecode (__pycache__, *.pyc,
+// *.pyo), and these two directories hold none: node_modules is a JavaScript
+// dependency tree and .git is object storage. They are also, on a typical image,
+// most of the inodes in the rootfs — slimming a 700 MiB Node image spent 4.4s to
+// delete two files, essentially all of it walking node_modules.
+//
+// .venv is the deliberate exception: it is full of the bytecode these patterns
+// exist for, so skipping it does keep .pyc files an image would otherwise lose.
+// That is the intended trade — the rootfs is a read-only EROFS, where a stripped
+// .pyc cannot be regenerated and is recompiled on every start instead of once.
+var slimSkipDirs = map[string]struct{}{
+	"node_modules": {},
+	".git":         {},
+	".venv":        {},
+}
+
 // removeAnywhere handles the **/ patterns, which Go's Glob does not, in a single
 // pass over the tree.
 //
-// One walk for all of them, not one walk each: the three Python patterns
-// (__pycache__, *.pyc, *.pyo) meant three complete traversals of the rootfs, and
-// a Node image has none of those files to find. Measured on a 700 MiB image with
-// a large node_modules, slimming spent 5.2s to delete 2 entries, while a
-// different image deleted 257 in 2.0s — the cost was never the deletion, it was
-// walking hundreds of thousands of inodes three times over.
+// One walk for all of them, not one walk each: the three Python patterns meant
+// three complete traversals, and a Node image has none of those files to find.
+// metamorph is looser still — it shells out to `find` twice per pattern, once to
+// count and once to delete — so skipping work here does not make the two
+// builders disagree on the result.
 //
 // WalkDir rather than Walk for the same reason: Walk calls lstat on every entry
-// to build a FileInfo nothing here needs.
+// to build a FileInfo nothing here reads.
 func removeAnywhere(tree string, names []string) int {
 	if len(names) == 0 {
 		return 0
@@ -116,6 +133,13 @@ func removeAnywhere(tree string, names []string) int {
 					return filepath.SkipDir
 				}
 				return nil
+			}
+		}
+		// Checked after the patterns so a directory that is itself a match is
+		// still removed, whatever its name.
+		if d.IsDir() && path != tree {
+			if _, skip := slimSkipDirs[base]; skip {
+				return filepath.SkipDir
 			}
 		}
 		return nil
