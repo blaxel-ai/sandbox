@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -118,70 +119,230 @@ type templateData struct {
 	entrypointJSON                    string
 }
 
+// quoteJSON renders an ENTRYPOINT argv the way metamorph does: every element
+// quoted, joined by ", ", with the template supplying the brackets.
+func quoteJSON(parts ...string) string {
+	quoted := make([]string, 0, len(parts))
+	for _, p := range parts {
+		quoted = append(quoted, fmt.Sprintf("%q", p))
+	}
+	return strings.Join(quoted, ", ")
+}
+
+// packageJSONScript reports whether package.json declares a given script.
+// A malformed or absent package.json simply has no scripts, which is how
+// metamorph treats it too — a build should not fail on a file it only consults.
+func packageJSONScript(dir, name string) bool {
+	raw, err := os.ReadFile(filepath.Join(dir, "package.json"))
+	if err != nil {
+		return false
+	}
+	var parsed struct {
+		Scripts map[string]string `json:"scripts"`
+	}
+	if json.Unmarshal(raw, &parsed) != nil {
+		return false
+	}
+	_, ok := parsed.Scripts[name]
+	return ok
+}
+
+// firstExisting returns the first candidate present in dir, or "".
+func firstExisting(dir string, candidates []string) string {
+	for _, c := range candidates {
+		if _, err := os.Stat(filepath.Join(dir, c)); err == nil {
+			return c
+		}
+	}
+	return ""
+}
+
+// dataFor mirrors metamorph's three generators (src/dockerfile/{node,python,
+// golang}.rs) field for field. It is deliberately a transcription rather than a
+// tidier equivalent: the two builders have to render the same Dockerfile for the
+// same project, and every place this drifted produced a build that succeeded on
+// one builder and failed on the other.
 func dataFor(kind projectType, dir string, cfg blaxelBuild) templateData {
 	exists := func(name string) bool {
 		_, err := os.Stat(filepath.Join(dir, name))
 		return err == nil
 	}
-	// pre_install sits on its own line in the node and golang templates, so it
-	// has to be a whole instruction or nothing — a bare "true" there is parsed as
-	// an unknown Dockerfile instruction. Python wraps it in RUN, where a shell
-	// no-op is exactly right.
 	d := templateData{workingDir: "/blaxel"}
-	if kind == projectPython {
-		d.preInstall = "true"
-	}
 	if cfg.WorkingDir != "" {
 		d.workingDir = cfg.WorkingDir
 	}
 
 	switch kind {
 	case projectNode:
-		d.baseImage = "node:22-slim"
+		d.baseImage = "public.ecr.aws/docker/library/node:22-alpine"
+		// The package manager is installed with npm, not enabled with corepack:
+		// corepack refuses to run unless package.json pins packageManager, and
+		// that refusal is exit 1 — which is how `bl new mcp` and `bl new job`
+		// were failing at "corepack enable && pnpm install --frozen-lockfile".
+		pm := "npm"
 		switch {
+		case exists("bun.lockb"):
+			pm, d.lockFileCopy = "bun", "COPY bun.lockb ./"
+			d.installCommand, d.preInstall = "bun install --frozen-lockfile", "RUN npm install -g bun"
+		case exists("bun.lock"):
+			pm, d.lockFileCopy = "bun", "COPY bun.lock ./"
+			d.installCommand, d.preInstall = "bun install --frozen-lockfile", "RUN npm install -g bun"
 		case exists("pnpm-lock.yaml"):
-			d.lockFileCopy = "COPY pnpm-lock.yaml ./"
-			d.installCommand = "corepack enable && pnpm install --frozen-lockfile"
+			pm, d.lockFileCopy = "pnpm", "COPY pnpm-lock.yaml ./"
+			d.installCommand, d.preInstall = "pnpm install --frozen-lockfile", "RUN npm install -g pnpm"
 		case exists("yarn.lock"):
-			d.lockFileCopy = "COPY yarn.lock ./"
-			d.installCommand = "corepack enable && yarn install --frozen-lockfile"
+			pm, d.lockFileCopy = "yarn", "COPY yarn.lock ./"
+			d.installCommand = "yarn install --frozen-lockfile"
 		case exists("package-lock.json"):
-			d.lockFileCopy = "COPY package-lock.json ./"
-			d.installCommand = "npm ci"
+			d.lockFileCopy, d.installCommand = "COPY package-lock.json ./", "npm ci"
 		default:
 			d.installCommand = "npm install"
 		}
-		d.entrypointJSON = `"npm", "start"`
-	case projectPython:
-		d.baseImage = "python:3.12-slim"
+
+		// Without this, a framework project (Next.js, Astro) shipped its sources
+		// and no build output, and the image started on something that was never
+		// compiled.
+		hasBuild := packageJSONScript(dir, "build")
+		if hasBuild {
+			d.buildCommand = "RUN " + pm + " run build"
+		}
+
 		switch {
+		case packageJSONScript(dir, "prod"):
+			d.entrypointJSON = quoteJSON(pm, "run", "prod")
+		case packageJSONScript(dir, "start"):
+			d.entrypointJSON = quoteJSON(pm, "run", "start")
+		default:
+			// A project that builds is searched for its output first; one that
+			// does not, for its sources.
+			built := []string{
+				"dist/index.js", "dist/app.js", "dist/server.js",
+				"build/index.js", "build/app.js", "build/server.js",
+				"index.js", "app.js", "server.js",
+				"src/index.js", "src/app.js", "src/server.js",
+			}
+			sources := []string{
+				"index.js", "app.js", "server.js",
+				"src/index.js", "src/app.js", "src/server.js",
+				"dist/index.js", "dist/app.js", "dist/server.js",
+				"build/index.js", "build/app.js", "build/server.js",
+			}
+			order := sources
+			fallback := "index.js"
+			if hasBuild {
+				order, fallback = built, "dist/index.js"
+			}
+			entry := firstExisting(dir, order)
+			if entry == "" {
+				entry = fallback
+			}
+			d.entrypointJSON = quoteJSON("node", entry)
+		}
+
+	case projectPython:
+		d.baseImage = "public.ecr.aws/docker/library/python:3.12-slim"
+		// Unconditional, as in metamorph: a wheel that has to compile needs a
+		// toolchain, and the slim image ships none. This used to be "true",
+		// which turned every source distribution into a build failure.
+		d.preInstall = "apt update && apt install -y build-essential"
+		switch {
+		case exists("uv.lock"):
+			d.requirementFile, d.lockFileCopy = "pyproject.toml", "COPY uv.lock ./"
+			d.installCommand = "pip install uv && uv sync"
+		case exists("poetry.lock"):
+			d.requirementFile, d.lockFileCopy = "pyproject.toml", "COPY poetry.lock ./"
+			d.installCommand = "pip install poetry && poetry config virtualenvs.in-project true && poetry install"
+		case exists("Pipfile.lock"):
+			d.requirementFile, d.lockFileCopy = "Pipfile", "COPY Pipfile.lock ./"
+			d.installCommand = "pip install pipenv && PIPENV_VENV_IN_PROJECT=1 pipenv install --deploy"
+		case exists("Pipfile"):
+			d.requirementFile = "Pipfile"
+			d.installCommand = "pip install pipenv && PIPENV_VENV_IN_PROJECT=1 pipenv install"
 		case exists("pyproject.toml"):
 			d.requirementFile = "pyproject.toml"
-			d.installCommand = "pip install --no-cache-dir ."
-		default:
+			d.installCommand = "pip install uv && uv sync"
+		case exists("requirements.txt"):
 			d.requirementFile = "requirements.txt"
-			d.installCommand = "pip install --no-cache-dir -r requirements.txt"
+			d.installCommand = "pip install -r requirements.txt"
 		}
-		d.entrypointJSON = `"python", "main.py"`
+		// No dependency file leaves requirementFile and installCommand empty, and
+		// the renderer drops their lines rather than emitting a bare `RUN`.
+
+		entry := firstExisting(dir, []string{
+			"app.py", "main.py", "api.py",
+			"app/main.py", "app/app.py", "app/api.py",
+			"src/main.py", "src/app.py", "src/api.py",
+		})
+		if entry == "" {
+			d.entrypointJSON = quoteJSON("python", "-m")
+		} else {
+			d.entrypointJSON = quoteJSON("python", entry)
+		}
+
 	case projectGolang:
-		d.baseImage = "golang:1.23"
+		// The base image carries the stage name: the template's runtime stage
+		// copies the binary `--from=builder`.
+		d.baseImage = "public.ecr.aws/docker/library/golang:1.22-alpine AS builder"
 		d.requirementFile = "go.mod"
-		d.lockFileCopy = "COPY go.sum ./"
+		d.preInstall = "# Install ca-certificates for HTTPS\nRUN apk add --no-cache ca-certificates"
+		if exists("go.sum") {
+			d.lockFileCopy = "COPY go.sum ./"
+		}
+		vendorFlag := ""
 		d.installCommand = "go mod download"
-		d.buildCommand = "RUN go build -o /app ."
-		d.entrypointJSON = `"/app"`
+		if exists("vendor") {
+			vendorFlag = " -mod=vendor"
+			d.installCommand = "# Using vendored dependencies"
+		}
+		// blaxel.toml points at the main file only when it names a .go path;
+		// anything else is a runtime command, and the binary is always /app.
+		mainFile := ""
+		if strings.HasSuffix(cfg.Entrypoint, ".go") {
+			mainFile = cfg.Entrypoint
+		}
+		if mainFile == "" {
+			if mainFile = firstExisting(dir, []string{"main.go", "src/main.go", "cmd/main.go"}); mainFile == "" {
+				mainFile = "."
+			}
+		}
+		d.buildCommand = fmt.Sprintf(
+			"RUN CGO_ENABLED=0 GOOS=linux go build%s -a -installsuffix cgo -o app %s",
+			vendorFlag, mainFile,
+		)
+		d.entrypointJSON = quoteJSON("app")
 	}
 
-	// What the customer asked for wins over anything inferred.
-	if cfg.Entrypoint != "" {
-		parts := strings.Fields(cfg.Entrypoint)
-		quoted := make([]string, 0, len(parts))
-		for _, p := range parts {
-			quoted = append(quoted, fmt.Sprintf("%q", p))
-		}
-		d.entrypointJSON = strings.Join(quoted, ", ")
+	// What the customer asked for wins over anything inferred. Go is excluded:
+	// its template hardcodes ENTRYPOINT ["/app"], and the entrypoint has already
+	// been consumed above as the file to compile.
+	if cfg.Entrypoint != "" && kind != projectGolang {
+		d.entrypointJSON = quoteJSON(strings.Fields(cfg.Entrypoint)...)
 	}
 	return d
+}
+
+// renderTemplate substitutes a placeholder, or deletes the whole line when the
+// value is empty — metamorph's replace_or_remove_line.
+//
+// Substituting an empty string instead is not equivalent and not harmless: a
+// Python project with no dependency file renders `RUN ` and `COPY  ./`, which
+// buildkit rejects before running a single instruction.
+func renderTemplate(tmpl string, values map[string]string) string {
+	out := tmpl
+	for placeholder, value := range values {
+		if value != "" {
+			out = strings.ReplaceAll(out, placeholder, value)
+			continue
+		}
+		kept := make([]string, 0, strings.Count(out, "\n")+1)
+		for _, line := range strings.Split(out, "\n") {
+			if !strings.Contains(line, placeholder) {
+				kept = append(kept, line)
+			}
+		}
+		out = strings.Join(kept, "\n")
+	}
+	return out
 }
 
 // ensureDockerfile writes one when the context has none, and reports whether it
@@ -202,16 +363,16 @@ func ensureDockerfile(dir string) (bool, error) {
 
 	cfg := readBlaxelToml(dir)
 	d := dataFor(kind, dir, cfg)
-	out := strings.NewReplacer(
-		"{base_image}", d.baseImage,
-		"{working_dir}", d.workingDir,
-		"{pre_install}", d.preInstall,
-		"{lock_file_copy}", d.lockFileCopy,
-		"{install_command}", d.installCommand,
-		"{build_command}", d.buildCommand,
-		"{requirement_file}", d.requirementFile,
-		"{entrypoint_json}", d.entrypointJSON,
-	).Replace(string(tmpl))
+	out := renderTemplate(string(tmpl), map[string]string{
+		"{base_image}":       d.baseImage,
+		"{working_dir}":      d.workingDir,
+		"{pre_install}":      d.preInstall,
+		"{lock_file_copy}":   d.lockFileCopy,
+		"{install_command}":  d.installCommand,
+		"{build_command}":    d.buildCommand,
+		"{requirement_file}": d.requirementFile,
+		"{entrypoint_json}":  d.entrypointJSON,
+	})
 
 	if err := os.WriteFile(filepath.Join(dir, "Dockerfile"), []byte(out), 0o644); err != nil {
 		return false, err
