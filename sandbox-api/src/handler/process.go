@@ -16,7 +16,12 @@ import (
 	"github.com/blaxel-ai/sandbox-api/src/handler/process"
 	"github.com/blaxel-ai/sandbox-api/src/lib"
 	"github.com/blaxel-ai/sandbox-api/src/lib/audit"
+	"github.com/blaxel-ai/sandbox-api/src/lib/blaxel"
 )
+
+// ErrKeepAliveDisabled is returned when a keepAlive process is requested on a
+// sandbox where the keepAlive feature is disabled.
+var ErrKeepAliveDisabled = fmt.Errorf("keepAlive is not available for this sandbox: it is not included in your current plan")
 
 var (
 	processHandlerInstance *ProcessHandler
@@ -90,6 +95,9 @@ type ProcessKillRequest struct {
 
 // ExecuteProcess executes a process
 func (h *ProcessHandler) ExecuteProcess(command string, workingDir string, name string, env map[string]string, waitForCompletion bool, timeout int, waitForPorts []int, restartOnFailure bool, maxRestarts int, keepAlive bool) (ProcessResponse, error) {
+	if keepAlive && blaxel.KeepAliveDisabled() {
+		return ProcessResponse{}, ErrKeepAliveDisabled
+	}
 	processInfo, err := h.processManager.ExecuteProcess(command, workingDir, name, env, waitForCompletion, timeout, waitForPorts, restartOnFailure, maxRestarts, keepAlive)
 
 	// If processInfo is nil (process failed to start), return empty response with error
@@ -275,6 +283,11 @@ func (h *ProcessHandler) HandleExecuteCommand(c *gin.Context) {
 		return
 	}
 
+	if req.KeepAlive && blaxel.KeepAliveDisabled() {
+		h.SendError(c, http.StatusBadRequest, ErrKeepAliveDisabled)
+		return
+	}
+
 	if req.WorkingDir != "" {
 		formattedWorkingDir, err := lib.FormatPath(req.WorkingDir)
 		if err != nil {
@@ -324,6 +337,11 @@ func (h *ProcessHandler) handleExecuteCommandStream(c *gin.Context) {
 	var req ProcessRequest
 	if err := h.BindJSON(c, &req); err != nil {
 		h.SendError(c, http.StatusBadRequest, err)
+		return
+	}
+
+	if req.KeepAlive && blaxel.KeepAliveDisabled() {
+		h.SendError(c, http.StatusBadRequest, ErrKeepAliveDisabled)
 		return
 	}
 
