@@ -194,16 +194,23 @@ func (b *Builder) fetchContext(ctx context.Context, sw *stopwatch) (string, erro
 
 // runBuildkit builds the image and returns its layers in application order.
 //
-// zstd with force-compression: the erofs step decompresses each layer straight
-// into mkfs, and zstd is markedly faster than gzip on that path. The compute
-// plane never sees a compressed layer, so this is a transport choice only.
+// Uncompressed, because this export never leaves the sandbox. buildkit writes it
+// to /scratch and the erofs step reads it back off the same disk seconds later,
+// so compressing it means paying to compress and then to decompress for nobody.
+// force-compression=zstd was worse still: it re-compressed the base image's
+// layers, which had just been decompressed by the pull.
+//
+// The previous comment justified zstd as "markedly faster than gzip on that
+// path", which is true and beside the point — the choice was never gzip versus
+// zstd, it was compress versus don't. The cost is disk on /scratch, which is
+// sized at 20GB for a rootfs measured in hundreds of megabytes.
 func (b *Builder) runBuildkit(ctx context.Context, contextDir string, buildArgs map[string]string, sw *stopwatch) ([]Layer, error) {
 	ctx, span := tracer().Start(ctx, "buildkit")
 	defer span.End()
 
 	ociTar := filepath.Join(b.WorkDir, "img.tar")
 	output := fmt.Sprintf(
-		"type=oci,dest=%s,compression=zstd,force-compression=true,oci-mediatypes=true", ociTar)
+		"type=oci,dest=%s,compression=uncompressed,force-compression=true,oci-mediatypes=true", ociTar)
 
 	cmd := exec.CommandContext(ctx, "buildctl", "build",
 		"--progress=plain",
