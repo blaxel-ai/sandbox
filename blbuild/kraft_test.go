@@ -248,3 +248,42 @@ func TestExtractPreludeFollowsUsrmergeSymlink(t *testing.T) {
 		t.Fatalf("wrapper content = %q", got)
 	}
 }
+
+// The wrapper only *warns* when it cannot enter the working directory, so an
+// image that starts in the wrong place looks exactly like one that started
+// correctly — until the application fails for an unrelated-looking reason
+// (pnpm reporting no package.json in "/"). Carrying the cmdline in the result
+// is what makes that diagnosable after the build sandbox is gone.
+func TestResultCarriesTheCmdline(t *testing.T) {
+	work := t.TempDir()
+	out := t.TempDir()
+	ociDir := filepath.Join(work, "oci")
+	digest := "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	blob := blobPath(ociDir, digest)
+	if err := os.MkdirAll(filepath.Dir(blob), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeTestJSON(t, blob, map[string]any{
+		"config": map[string]any{
+			"Entrypoint": []string{"pnpm", "run", "prod"},
+			"WorkingDir": "/blaxel",
+		},
+	})
+	kernelSrc := filepath.Join(work, "kernel.bin")
+	if err := os.WriteFile(kernelSrc, []byte("kernel"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(out, rootfsName), []byte("rootfs"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("BLBUILD_KERNEL", kernelSrc)
+
+	b := &Builder{WorkDir: work, OutDir: out, ociDir: ociDir, configDigest: digest}
+	if err := b.writeKraftFiles(context.Background(), newStopwatch()); err != nil {
+		t.Fatal(err)
+	}
+	want := "/" + wrapperPath + " /blaxel pnpm run prod"
+	if b.cmdline != want {
+		t.Errorf("cmdline = %q, want %q", b.cmdline, want)
+	}
+}

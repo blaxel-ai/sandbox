@@ -30,6 +30,8 @@ type Builder struct {
 	// Filled in while reading the OCI export.
 	ociDir       string
 	configDigest string
+	// Filled in while writing the kraft files.
+	cmdline string
 }
 
 // Layer is one OCI layer of the built image, in application order.
@@ -124,6 +126,7 @@ func (b *Builder) Run(ctx context.Context) (*Result, error) {
 	if err := b.writeKraftFiles(ctx, sw); err != nil {
 		return result, err
 	}
+	result.Cmdline = b.cmdline
 
 	if b.NoUpload {
 		result.TotalSeconds = sw.total()
