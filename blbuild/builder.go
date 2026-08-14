@@ -194,23 +194,24 @@ func (b *Builder) fetchContext(ctx context.Context, sw *stopwatch) (string, erro
 
 // runBuildkit builds the image and returns its layers in application order.
 //
-// Uncompressed, because this export never leaves the sandbox. buildkit writes it
-// to /scratch and the erofs step reads it back off the same disk seconds later,
-// so compressing it means paying to compress and then to decompress for nobody.
-// force-compression=zstd was worse still: it re-compressed the base image's
-// layers, which had just been decompressed by the pull.
+// zstd, kept after measuring the alternative. The export never leaves the
+// sandbox, so compressing it looks like paying to compress and then decompress
+// for nobody — that reasoning is why this was switched to uncompressed, and the
+// numbers said no: 44.3s mean over four builds against 42.6s over eight with
+// zstd, same region and same disk-backed /scratch.
 //
-// The previous comment justified zstd as "markedly faster than gzip on that
-// path", which is true and beside the point — the choice was never gzip versus
-// zstd, it was compress versus don't. The cost is disk on /scratch, which is
-// sized at 20GB for a rootfs measured in hundreds of megabytes.
+// The flaw in the argument was assuming CPU is the constraint. This build is
+// dominated by /scratch I/O — moving that directory to a tmpfs cuts buildctl
+// from 28.8s to 16.0s — so the bytes zstd does not write are worth more than
+// the cycles it spends. Compressing for oneself pays when the disk is the
+// bottleneck.
 func (b *Builder) runBuildkit(ctx context.Context, contextDir string, buildArgs map[string]string, sw *stopwatch) ([]Layer, error) {
 	ctx, span := tracer().Start(ctx, "buildkit")
 	defer span.End()
 
 	ociTar := filepath.Join(b.WorkDir, "img.tar")
 	output := fmt.Sprintf(
-		"type=oci,dest=%s,compression=uncompressed,force-compression=true,oci-mediatypes=true", ociTar)
+		"type=oci,dest=%s,compression=zstd,force-compression=true,oci-mediatypes=true", ociTar)
 
 	cmd := exec.CommandContext(ctx, "buildctl", "build",
 		"--progress=plain",
