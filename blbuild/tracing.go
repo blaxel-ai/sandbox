@@ -72,6 +72,23 @@ func tracer() trace.Tracer {
 	return otel.Tracer(tracerName)
 }
 
+// buildSampler keeps every build, always, with no way for anything upstream to
+// override it.
+//
+// AlwaysSample and not ParentBased(AlwaysSample): ParentBased applies its root
+// sampler only when there is no parent, and defers to the parent's decision
+// when there is one. The platform injects
+// OTEL_TRACES_SAMPLER=parentbased_traceidratio with a 0.1 ratio, so the day
+// anything upstream is instrumented and arrives unsampled, nine builds in ten
+// would silently lose their trace — precisely when someone needs it to debug
+// them. A build is a rare, minutes-long event; there is nothing to save here.
+//
+// Setting a sampler explicitly also makes the SDK ignore OTEL_TRACES_SAMPLER,
+// which it only reads when none is set.
+func buildSampler() sdktrace.Sampler {
+	return sdktrace.AlwaysSample()
+}
+
 // buildContext is the context every span descends from. It carries no parent:
 // the build is the root of its own trace.
 var buildContext context.Context
@@ -136,12 +153,7 @@ func InitTracing(ctx context.Context, traceParent string) (func(), error) {
 	}
 
 	tp := sdktrace.NewTracerProvider(append(tpOpts,
-		// Never sampled away. The platform injects
-		// OTEL_TRACES_SAMPLER=parentbased_traceidratio with a 0.1 ratio, which the
-		// Go SDK reads by default: a build with no sampled parent then had one
-		// chance in ten of being kept, and a build is a rare, minutes-long event
-		// whose trace is the whole point of instrumenting it.
-		sdktrace.WithSampler(sdktrace.ParentBased(sdktrace.AlwaysSample())),
+		sdktrace.WithSampler(buildSampler()),
 		sdktrace.WithBatcher(exporter,
 			// Small batches, short delay: a build can end abruptly, and a span
 			// still sitting in the queue is a span nobody will ever see.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -57,5 +58,40 @@ func TestExecutionIDGeneratorKeepsTheTraceID(t *testing.T) {
 	}
 	if !child.IsValid() {
 		t.Error("a child got an invalid span id")
+	}
+}
+
+// A build must never lose its trace. The platform injects
+// OTEL_TRACES_SAMPLER=parentbased_traceidratio at 0.1, and a ParentBased
+// sampler defers to an unsampled parent — so the day anything upstream is
+// instrumented, nine builds in ten would go dark exactly when someone needs
+// the trace to debug them.
+func TestEveryBuildIsSampled(t *testing.T) {
+	sampler := buildSampler()
+
+	traceID, _ := trace.TraceIDFromHex("b3f1c2d4e5a60718293a4b5c6d7e8f90")
+	spanID, _ := trace.SpanIDFromHex("1122334455667788")
+
+	for _, c := range []struct {
+		name   string
+		parent trace.SpanContext
+	}{
+		{"no parent", trace.SpanContext{}},
+		{"parent explicitly not sampled", trace.NewSpanContext(trace.SpanContextConfig{
+			TraceID: traceID, SpanID: spanID, Remote: true, // TraceFlags zero = not sampled
+		})},
+		{"sampled parent", trace.NewSpanContext(trace.SpanContextConfig{
+			TraceID: traceID, SpanID: spanID, Remote: true, TraceFlags: trace.FlagsSampled,
+		})},
+	} {
+		ctx := trace.ContextWithSpanContext(context.Background(), c.parent)
+		got := sampler.ShouldSample(sdktrace.SamplingParameters{
+			ParentContext: ctx,
+			TraceID:       traceID,
+			Name:          "build",
+		})
+		if got.Decision != sdktrace.RecordAndSample {
+			t.Errorf("%s: decision = %v, the build's trace would be dropped", c.name, got.Decision)
+		}
 	}
 }
