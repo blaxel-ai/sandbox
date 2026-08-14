@@ -287,3 +287,72 @@ func TestResultCarriesTheCmdline(t *testing.T) {
 		t.Errorf("cmdline = %q, want %q", b.cmdline, want)
 	}
 }
+
+// image.json is consumed by the compute plane's ImageMetadata, whose tags are
+// snake_case. Serialising the OCI config as-is looked equivalent because Go
+// matches JSON fields case-insensitively — "Entrypoint" does find
+// `json:"entrypoint"` — but "WorkingDir" cannot match `json:"working_dir"`.
+// That single field arrived empty, the compute plane substituted "/", and every
+// image with a relative entrypoint started in the wrong directory.
+func TestImageMetadataUsesTheKeysTheComputePlaneReads(t *testing.T) {
+	work := t.TempDir()
+	out := t.TempDir()
+	ociDir := filepath.Join(work, "oci")
+	digest := "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	blob := blobPath(ociDir, digest)
+	if err := os.MkdirAll(filepath.Dir(blob), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeTestJSON(t, blob, map[string]any{
+		"config": map[string]any{
+			"Entrypoint": []string{"pnpm", "run", "prod"},
+			"Env":        []string{"PATH=/usr/bin"},
+			"WorkingDir": "/blaxel",
+			"User":       "root",
+		},
+	})
+	kernelSrc := filepath.Join(work, "kernel.bin")
+	if err := os.WriteFile(kernelSrc, []byte("kernel"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(out, rootfsName), []byte("rootfs"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("BLBUILD_KERNEL", kernelSrc)
+
+	b := &Builder{WorkDir: work, OutDir: out, ociDir: ociDir, configDigest: digest}
+	if err := b.writeKraftFiles(context.Background(), newStopwatch()); err != nil {
+		t.Fatal(err)
+	}
+
+	// Decoded through the compute plane's own struct definition, so this fails
+	// if the names ever drift apart again.
+	var got struct {
+		Entrypoint []string `json:"entrypoint,omitempty"`
+		Cmd        []string `json:"cmd,omitempty"`
+		Env        []string `json:"env,omitempty"`
+		WorkingDir string   `json:"working_dir,omitempty"`
+		User       string   `json:"user,omitempty"`
+	}
+	raw, err := os.ReadFile(filepath.Join(out, imageName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.WorkingDir != "/blaxel" {
+		t.Errorf("working_dir = %q, want /blaxel — the guest would start in /", got.WorkingDir)
+	}
+	if strings.Join(got.Entrypoint, " ") != "pnpm run prod" {
+		t.Errorf("entrypoint = %v", got.Entrypoint)
+	}
+	if got.User != "root" {
+		t.Errorf("user = %q", got.User)
+	}
+	// The literal key matters as much as the decoded value: a PascalCase spelling
+	// decodes for every field except the one with an underscore.
+	if !strings.Contains(string(raw), `"working_dir"`) {
+		t.Errorf("image.json does not spell working_dir in snake_case:\n%s", raw)
+	}
+}

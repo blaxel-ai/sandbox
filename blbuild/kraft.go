@@ -22,6 +22,17 @@ type ociConfig struct {
 	} `json:"config"`
 }
 
+// imageMetadata is image.json, field for field as the compute plane declares it
+// in kraft-provider's ImageMetadata. The names are its contract, not ours, so
+// they are spelled out here rather than inherited from the OCI config.
+type imageMetadata struct {
+	Entrypoint []string `json:"entrypoint,omitempty"`
+	Cmd        []string `json:"cmd,omitempty"`
+	Env        []string `json:"env,omitempty"`
+	WorkingDir string   `json:"working_dir,omitempty"`
+	User       string   `json:"user,omitempty"`
+}
+
 // writeKraftFiles produces the four artefacts that accompany the rootfs. Their
 // shape is dictated by what the compute plane reads, so it matches the existing
 // builder field for field — an image whose config.json differs simply will not
@@ -110,8 +121,26 @@ func (b *Builder) writeKraftFiles(ctx context.Context, sw *stopwatch) error {
 		return err
 	}
 
-	// image.json carries the container metadata as-is.
-	if err := writeJSON(filepath.Join(b.OutDir, imageName), cfg.Config); err != nil {
+	// image.json is read by the compute plane's ImageMetadata
+	// (executionplane, kraft-provider/image_handler.go), whose tags are
+	// snake_case. Writing the OCI config as-is looked equivalent because Go
+	// matches JSON fields case-insensitively — "Entrypoint" does find
+	// `json:"entrypoint"` — but that only holds while the names differ by case
+	// alone. "WorkingDir" cannot match `json:"working_dir"`, so that one field,
+	// and only that one, arrived empty.
+	//
+	// The compute plane then substitutes "/" for an empty working directory
+	// (wrapImageArgsWithMetamorph), so every image with a relative entrypoint
+	// started in the wrong place: `bl new` projects failed with pnpm reporting no
+	// package.json in "/", while hub images survived only because their
+	// entrypoints are absolute.
+	if err := writeJSON(filepath.Join(b.OutDir, imageName), imageMetadata{
+		Entrypoint: cfg.Config.Entrypoint,
+		Cmd:        cfg.Config.Cmd,
+		Env:        cfg.Config.Env,
+		WorkingDir: workingDir,
+		User:       cfg.Config.User,
+	}); err != nil {
 		return err
 	}
 
