@@ -11,7 +11,18 @@ import (
 
 const (
 	defaultScaleFile = "/uk/libukp/scale_to_zero_disable"
+
+	// EnvDisableKeepAlive disables the keepAlive feature for the whole sandbox
+	// when set to a truthy value at boot.
+	EnvDisableKeepAlive = "BL_DISABLE_KEEPALIVE"
 )
+
+// KeepAliveDisabled reports whether the keepAlive feature is disabled for
+// this sandbox via the BL_DISABLE_KEEPALIVE environment variable.
+func KeepAliveDisabled() bool {
+	v, err := strconv.ParseBool(strings.TrimSpace(os.Getenv(EnvDisableKeepAlive)))
+	return err == nil && v
+}
 
 // scaleAvailable caches whether the scale file infrastructure is available
 var scaleAvailableChecked bool
@@ -82,6 +93,10 @@ func writeWithLock(operation string) error {
 
 // ScaleDisable disables scale-to-zero by incrementing the counter
 func ScaleDisable() error {
+	if KeepAliveDisabled() {
+		logrus.Infof("[Scale] keepAlive is disabled for this sandbox, not touching the scale-to-zero counter")
+		return nil
+	}
 	err := writeWithLock("+")
 	if err != nil {
 		logrus.Warnf("[Scale] Failed to disable scale-to-zero: %v", err)
@@ -94,6 +109,9 @@ func ScaleDisable() error {
 
 // ScaleEnable enables scale-to-zero by decrementing the counter
 func ScaleEnable() error {
+	if KeepAliveDisabled() {
+		return nil
+	}
 	err := writeWithLock("-")
 	if err != nil {
 		logrus.Warnf("[Scale] Failed to enable scale-to-zero: %v", err)
