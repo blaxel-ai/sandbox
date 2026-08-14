@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"go.opentelemetry.io/otel"
@@ -18,19 +20,70 @@ import (
 
 const tracerName = "blbuild"
 
+// traceIDFrom pulls the trace id out of a W3C traceparent
+// (version-traceid-spanid-flags). The parent span id is deliberately ignored;
+// see where buildContext is set for why.
+func traceIDFrom(traceParent string) (trace.TraceID, bool) {
+	parts := strings.Split(traceParent, "-")
+	if len(parts) < 3 {
+		return trace.TraceID{}, false
+	}
+	id, err := trace.TraceIDFromHex(parts[1])
+	if err != nil || !id.IsValid() {
+		return trace.TraceID{}, false
+	}
+	return id, true
+}
+
+// executionIDGenerator gives the root span the trace id derived from the step
+// function execution, so a build is still reachable from its execution, while
+// every span id stays random.
+//
+// This is how the trace id survives without a parent: the SDK only adopts an
+// inherited trace id from a parent span context, and any parent valid enough to
+// carry one would have to name a span that exists.
+type executionIDGenerator struct {
+	traceID trace.TraceID
+}
+
+func (g *executionIDGenerator) NewIDs(context.Context) (trace.TraceID, trace.SpanID) {
+	return g.traceID, g.randomSpanID()
+}
+
+func (g *executionIDGenerator) NewSpanID(context.Context, trace.TraceID) trace.SpanID {
+	return g.randomSpanID()
+}
+
+func (g *executionIDGenerator) randomSpanID() trace.SpanID {
+	var id trace.SpanID
+	for !id.IsValid() {
+		// crypto/rand.Read never returns a short read without an error, and an
+		// error here is unrecoverable in practice; an all-zero id would be
+		// rejected as invalid, hence the loop.
+		if _, err := rand.Read(id[:]); err != nil {
+			warn("telemetry: generating a span id: %v", err)
+			return id
+		}
+	}
+	return id
+}
+
 func tracer() trace.Tracer {
 	return otel.Tracer(tracerName)
 }
 
-// buildContext carries the trace context extracted from the targets file, so
-// every span the build creates hangs off the orchestration that started it.
+// buildContext is the context every span descends from. It carries no parent:
+// the build is the root of its own trace.
 var buildContext context.Context
 
-// InitTracing wires the OTLP exporter and adopts the caller's trace context.
+// InitTracing wires the OTLP exporter and adopts the trace id of the execution
+// that started this build.
 //
-// The traceparent comes from the step function through the targets file: without
-// it a build is an orphan trace and answering "why was this build slow" means
-// correlating by timestamp. With it, the build is a subtree of its execution.
+// The traceparent comes from the step function through the targets file. Only
+// its trace id is used: one execution still means one trace, so "why was this
+// build slow" stays a trace-id lookup rather than a correlation by timestamp,
+// but the build's root span has no parent — because the orchestration exports
+// no spans here, so any parent it named would be one that never arrives.
 //
 // Returns a shutdown function that flushes pending spans. A build is short-lived
 // and gets SIGKILLed with its sandbox, so an unflushed batch is a lost trace.
@@ -77,7 +130,12 @@ func InitTracing(ctx context.Context, traceParent string) (func(), error) {
 		res = resource.Default()
 	}
 
-	tp := sdktrace.NewTracerProvider(
+	tpOpts := []sdktrace.TracerProviderOption{}
+	if id, ok := traceIDFrom(traceParent); ok {
+		tpOpts = append(tpOpts, sdktrace.WithIDGenerator(&executionIDGenerator{traceID: id}))
+	}
+
+	tp := sdktrace.NewTracerProvider(append(tpOpts,
 		// Never sampled away. The platform injects
 		// OTEL_TRACES_SAMPLER=parentbased_traceidratio with a 0.1 ratio, which the
 		// Go SDK reads by default: a build with no sampled parent then had one
@@ -91,7 +149,7 @@ func InitTracing(ctx context.Context, traceParent string) (func(), error) {
 			sdktrace.WithMaxExportBatchSize(64),
 		),
 		sdktrace.WithResource(res),
-	)
+	)...)
 	// The SDK swallows export failures by default: a collector that rejects every
 	// batch looks exactly like a build with no telemetry, which is how a fully
 	// instrumented build went unnoticed for hours. Surface them in the build log,
@@ -104,11 +162,15 @@ func InitTracing(ctx context.Context, traceParent string) (func(), error) {
 		propagation.TraceContext{}, propagation.Baggage{},
 	))
 
+	// Deliberately NOT Extract()ed into a parent context. The traceparent's
+	// parent-span-id is a slice of a hash of the execution ARN, so it names a span
+	// nothing ever emits: the orchestration does not export to this collector at
+	// all. Making `build` its child left every trace flagged "this trace has
+	// missing spans", because a collected span referenced a parent no other span
+	// matched. The trace id is still adopted, through the ID generator above, so a
+	// build is still findable from its execution — it is simply the root of its
+	// own trace instead of an orphan hanging off a ghost.
 	buildContext = ctx
-	if traceParent != "" {
-		buildContext = otel.GetTextMapPropagator().Extract(ctx,
-			propagation.MapCarrier{"traceparent": traceParent})
-	}
 
 	return func() {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
