@@ -10,6 +10,9 @@ on:
       - 'hub/jupyter-server/requirements.txt'
       - 'hub/jupyter-server/server/requirements.txt'
       - 'hub/jupyter-server/tests/**'
+      - 'hub/onboarder-nextjs/app-template/package.json'
+      - 'hub/onboarder-nextjs/app-template/package-lock.json'
+      - 'hub/onboarder-nextjs/app-template/tests/**'
       - '.github/workflows/dependency-verification.yml'
   workflow_dispatch:
 
@@ -53,3 +56,38 @@ jobs:
         working-directory: hub/jupyter-server
         run: |
           .venv/bin/python -m pytest tests/ -v
+
+  onboarder-nextjs-app-template-npm-deps:
+    # Dependency PRs only: this remediation, Dependabot's own PRs, or an explicit label.
+    if: >-
+      contains(github.event.pull_request.title, 'Dependabot') ||
+      startsWith(github.event.pull_request.title, 'chore(deps)') ||
+      startsWith(github.head_ref, 'cploujoux/devin/dependabot-') ||
+      startsWith(github.head_ref, 'dependabot/') ||
+      contains(github.event.pull_request.labels.*.name, 'dependencies') ||
+      github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24' # matches hub/onboarder-nextjs/Dockerfile's node:24-alpine3.21 base
+
+      - name: Install dependencies (frozen lockfile)
+        working-directory: hub/onboarder-nextjs/app-template
+        run: npm ci
+
+      - name: Typecheck
+        working-directory: hub/onboarder-nextjs/app-template
+        run: npm run typecheck
+
+      - name: Run dependency smoke tests
+        working-directory: hub/onboarder-nextjs/app-template
+        run: npm test
+
+      - name: Build
+        working-directory: hub/onboarder-nextjs/app-template
+        run: npm run build
