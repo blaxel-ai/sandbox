@@ -360,3 +360,57 @@ func read(t *testing.T, dir, name string) string {
 	}
 	return string(b)
 }
+
+// Build args come from two places and .env.build wins, as in metamorph.
+func TestResolveBuildArgsMergesBothSources(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "blaxel.toml", "[build.args]\nVERSION = \"1.0.0\"\nREGION = \"eu\"\n")
+	write(t, dir, ".env.build", "VERSION=2.0.0\nTOKEN=secret\n# a comment\n\n")
+
+	args, err := resolveBuildArgs(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if args["VERSION"] != "2.0.0" {
+		t.Errorf("VERSION = %q, .env.build should win", args["VERSION"])
+	}
+	if args["REGION"] != "eu" {
+		t.Errorf("REGION = %q, the manifest value was dropped", args["REGION"])
+	}
+	if args["TOKEN"] != "secret" {
+		t.Errorf("TOKEN = %q", args["TOKEN"])
+	}
+}
+
+// Build args carry registry tokens and package credentials. A .env.build left in
+// the context is copied into a layer by any `COPY . .` and published with the
+// image, readable by anyone who pulls it.
+func TestResolveBuildArgsRemovesTheEnvFileFromTheContext(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, ".env.build", "TOKEN=secret\n")
+
+	if _, err := resolveBuildArgs(dir); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".env.build")); !os.IsNotExist(err) {
+		t.Fatal(".env.build is still in the build context and will be baked into a layer")
+	}
+}
+
+// A context with neither source is the common case and must not error.
+func TestResolveBuildArgsWithNeitherSource(t *testing.T) {
+	args, err := resolveBuildArgs(t.TempDir())
+	if err != nil || len(args) != 0 {
+		t.Fatalf("args=%v err=%v", args, err)
+	}
+}
+
+// A malformed line is the customer's typo; failing loudly beats silently
+// building without the arg and failing somewhere unrelated.
+func TestResolveBuildArgsRejectsAMalformedLine(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, ".env.build", "NOT_A_PAIR\n")
+	if _, err := resolveBuildArgs(dir); err == nil {
+		t.Fatal("a line without = was accepted")
+	}
+}

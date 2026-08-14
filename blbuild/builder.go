@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"time"
 
@@ -88,7 +89,14 @@ func (b *Builder) Run(ctx context.Context) (*Result, error) {
 		sw.mark("generate dockerfile")
 	}
 
-	layers, err := b.runBuildkit(ctx, contextDir, sw)
+	// Reads [build.args] and .env.build, and takes .env.build out of the context
+	// before anything can copy it into a layer.
+	buildArgs, err := resolveBuildArgs(contextDir)
+	if err != nil {
+		return result, err
+	}
+
+	layers, err := b.runBuildkit(ctx, contextDir, buildArgs, sw)
 	if err != nil {
 		return result, err
 	}
@@ -186,7 +194,7 @@ func (b *Builder) fetchContext(ctx context.Context, sw *stopwatch) (string, erro
 // zstd with force-compression: the erofs step decompresses each layer straight
 // into mkfs, and zstd is markedly faster than gzip on that path. The compute
 // plane never sees a compressed layer, so this is a transport choice only.
-func (b *Builder) runBuildkit(ctx context.Context, contextDir string, sw *stopwatch) ([]Layer, error) {
+func (b *Builder) runBuildkit(ctx context.Context, contextDir string, buildArgs map[string]string, sw *stopwatch) ([]Layer, error) {
 	ctx, span := tracer().Start(ctx, "buildkit")
 	defer span.End()
 
@@ -201,6 +209,16 @@ func (b *Builder) runBuildkit(ctx context.Context, contextDir string, sw *stopwa
 		"--local", "dockerfile="+contextDir,
 		"--output", output,
 	)
+	// Sorted so a build is reproducible and its log diffable; buildkit does not
+	// care about the order.
+	keys := make([]string, 0, len(buildArgs))
+	for k := range buildArgs {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		cmd.Args = append(cmd.Args, "--opt", "build-arg:"+k+"="+buildArgs[k])
+	}
 	// The build log is what the customer reads in the CLI, so it is streamed
 	// through unchanged rather than summarized.
 	cmd.Stdout = os.Stdout

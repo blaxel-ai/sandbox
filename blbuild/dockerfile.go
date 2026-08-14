@@ -321,6 +321,52 @@ func dataFor(kind projectType, dir string, cfg blaxelBuild) templateData {
 	return d
 }
 
+// buildEnvFile is read for build args and then deleted from the context.
+const buildEnvFile = ".env.build"
+
+// resolveBuildArgs merges [build.args] with .env.build, the latter winning, and
+// removes .env.build from the context.
+//
+// The removal is the point, not tidiness: build args routinely carry a registry
+// token or a private package credential, and a file left in the context is
+// copied into a layer by any `COPY . .` — published, and readable by anyone who
+// pulls the image. metamorph deletes it before the build for the same reason.
+func resolveBuildArgs(dir string) (map[string]string, error) {
+	args := map[string]string{}
+	for k, v := range readBlaxelToml(dir).Args {
+		args[k] = v
+	}
+
+	path := filepath.Join(dir, buildEnvFile)
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return args, nil
+		}
+		return nil, fmt.Errorf("reading %s: %w", buildEnvFile, err)
+	}
+	for i, line := range strings.Split(string(raw), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		key, value, ok := strings.Cut(line, "=")
+		if !ok {
+			return nil, fmt.Errorf("%s line %d: expected KEY=VALUE, got %q", buildEnvFile, i+1, line)
+		}
+		key = strings.TrimSpace(key)
+		if key == "" {
+			return nil, fmt.Errorf("%s line %d: empty key", buildEnvFile, i+1)
+		}
+		args[key] = strings.Trim(strings.TrimSpace(value), `"'`)
+	}
+
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return nil, fmt.Errorf("removing %s from the build context: %w", buildEnvFile, err)
+	}
+	return args, nil
+}
+
 // renderTemplate substitutes a placeholder, or deletes the whole line when the
 // value is empty — metamorph's replace_or_remove_line.
 //
