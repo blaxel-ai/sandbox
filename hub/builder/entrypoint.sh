@@ -11,19 +11,31 @@ mount -t cgroup2 none /sys/fs/cgroup 2>/dev/null || true
 # overlayfs-on-overlayfs is out — the same reason hub/docker-in-sandbox pins
 # dockerd to storage-driver vfs.
 #
-# --root on /scratch keeps every byte buildkit writes on the ephemeral volume.
+# --root on /scratch keeps every byte buildkit writes off the root filesystem.
 # It matters: the native snapshotter used 4GB of real disk for a 411MB image.
-# If /scratch is missing the build would silently fill the RAM overlay instead,
-# so fail loudly here rather than OOM mid-build.
+#
+# The ephemeral volume is mk3.1-only, and on mk3.0 the API accepts the
+# attachment and silently ignores it — no error anywhere, /scratch simply does
+# not exist in the guest. This used to be fatal, on the grounds that buildkit
+# would otherwise fill the RAM overlay. Refusing to start turned a degraded
+# build into no build at all, so fall back to an explicit tmpfs instead: same
+# memory, but sized and named rather than quietly eating the overlay.
+#
+# Sized at 70% of RAM. A tmpfs page is a RAM page, so the build shares its
+# budget with buildkit's own processes; leaving headroom is what keeps an
+# oversized image failing on ENOSPC — which names the problem — rather than on
+# the OOM killer, which does not.
 if [ ! -d /scratch ]; then
-  echo "FATAL: /scratch is not mounted. The builder needs a disk-backed" >&2
-  echo "ephemeral volume; without it buildkit writes to the RAM overlay." >&2
-  echo "Note ephemeral volumes are mk3.1-only: on mk3.0 the API accepts the" >&2
-  echo "attachment and silently ignores it." >&2
-  exit 1
+  scratch_mb=$(awk '/MemTotal/ {printf "%d", $2 * 7 / 10 / 1024}' /proc/meminfo)
+  echo "WARNING: /scratch is not mounted, falling back to a ${scratch_mb}MB tmpfs." >&2
+  echo "Ephemeral volumes are mk3.1-only; on mk3.0 the attachment is accepted" >&2
+  echo "and ignored. A large image may now exhaust memory instead of disk." >&2
+  mkdir -p /scratch
+  mount -t tmpfs -o "size=${scratch_mb}m" tmpfs /scratch
 fi
 
 mkdir -p /scratch/buildkit
+df -h /scratch >&2
 
 /usr/local/bin/sandbox-api &
 API_PID=$!
