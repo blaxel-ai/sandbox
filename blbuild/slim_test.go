@@ -71,3 +71,52 @@ func TestSlimLeavesAnUnrelatedTreeAlone(t *testing.T) {
 		}
 	}
 }
+
+// The **/ patterns only look for Python bytecode, and these directories hold
+// none while dominating the inode count — walking a 700 MiB node_modules to
+// delete two files was 4.4s of the build.
+func TestSlimSkipsDirectoriesWithNothingToFind(t *testing.T) {
+	tree := t.TempDir()
+	write := func(path string) string {
+		full := filepath.Join(tree, path)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return full
+	}
+
+	// Inside a skipped directory: kept, on purpose.
+	inNode := write("blaxel/node_modules/pkg/build/stale.pyc")
+	inGit := write("blaxel/.git/objects/thing.pyc")
+	inVenv := write("blaxel/.venv/lib/python3.12/site-packages/mod.pyc")
+	// Outside: still removed.
+	loose := write("blaxel/app/mod.pyc")
+
+	slimRootfs(tree)
+
+	for _, kept := range []string{inNode, inGit, inVenv} {
+		if _, err := os.Stat(kept); err != nil {
+			t.Errorf("%s was deleted, the directory should not have been walked: %v", kept, err)
+		}
+	}
+	if _, err := os.Stat(loose); !os.IsNotExist(err) {
+		t.Errorf("%s survived but is outside any skipped directory", loose)
+	}
+}
+
+// A directory that is itself a match must go even if it sits at a skipped name's
+// level: the pattern check runs before the skip.
+func TestSlimStillRemovesAMatchingDirectory(t *testing.T) {
+	tree := t.TempDir()
+	cache := filepath.Join(tree, "srv/app/__pycache__")
+	if err := os.MkdirAll(cache, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	slimRootfs(tree)
+	if _, err := os.Stat(cache); !os.IsNotExist(err) {
+		t.Error("__pycache__ survived")
+	}
+}
