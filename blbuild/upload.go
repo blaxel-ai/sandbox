@@ -125,7 +125,7 @@ func (b *Builder) uploadRootfs(ctx context.Context, rootfs string, sw *stopwatch
 			if remaining := info.Size() - offset; remaining < length {
 				length = remaining
 			}
-			etag, err := b.uploadPart(ctx, rootfs, idx, offset, length)
+			etag, err := b.uploadPartWithRetry(ctx, rootfs, idx, offset, length)
 			results <- outcome{part: CompletedPart{PartNumber: idx + 1, ETag: etag}, err: err}
 		}(i)
 	}
@@ -150,6 +150,54 @@ func (b *Builder) uploadRootfs(ctx context.Context, rootfs string, sw *stopwatch
 // uploadPart sends one slice of the image. It streams a section of the file
 // rather than splitting it on disk: writing a second copy of a multi-GB image to
 // the volume would be both slow and, on a tight scratch, fatal.
+// How long one attempt at a single part may take, and how many attempts it gets.
+//
+// The client's own 30-minute timeout is a last resort, not a policy: a part is
+// 512MiB, so a healthy flow finishes in seconds and anything past a couple of
+// minutes is a connection that will not recover. Without a bound here a network
+// blip parked a build for the full client timeout — measured at 15 minutes of a
+// build that had already produced every artefact and simply never uploaded them.
+const (
+	partAttemptTimeout = 2 * time.Minute
+	partAttempts       = 4
+)
+
+// uploadPartWithRetry retries a part on transient failure.
+//
+// Each attempt gets its own deadline, so a stalled connection is abandoned
+// rather than waited on. Retries are what make that safe: a part upload is
+// idempotent — the same presigned URL, the same bytes, and S3 keeps the last
+// write — so re-sending costs bandwidth and nothing else.
+func (b *Builder) uploadPartWithRetry(
+	ctx context.Context, rootfs string, idx int, offset, length int64,
+) (string, error) {
+	var err error
+	for attempt := 1; attempt <= partAttempts; attempt++ {
+		attemptCtx, cancel := context.WithTimeout(ctx, partAttemptTimeout)
+		var etag string
+		etag, err = b.uploadPart(attemptCtx, rootfs, idx, offset, length)
+		cancel()
+		if err == nil {
+			return etag, nil
+		}
+		// The build's own context being done means the whole build is over;
+		// retrying would only delay reporting it.
+		if ctx.Err() != nil {
+			return "", err
+		}
+		if attempt < partAttempts {
+			warn("part %d failed (attempt %d/%d), retrying: %v",
+				idx+1, attempt, partAttempts, err)
+			select {
+			case <-ctx.Done():
+				return "", ctx.Err()
+			case <-time.After(time.Duration(attempt) * 2 * time.Second):
+			}
+		}
+	}
+	return "", fmt.Errorf("part %d failed after %d attempts: %w", idx+1, partAttempts, err)
+}
+
 func (b *Builder) uploadPart(ctx context.Context, path string, idx int, offset, length int64) (string, error) {
 	ctx, span := tracer().Start(ctx, "upload.part")
 	defer span.End()
