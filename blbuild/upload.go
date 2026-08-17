@@ -152,17 +152,27 @@ func (b *Builder) uploadRootfs(ctx context.Context, rootfs string, sw *stopwatch
 // uploadPart sends one slice of the image. It streams a section of the file
 // rather than splitting it on disk: writing a second copy of a multi-GB image to
 // the volume would be both slow and, on a tight scratch, fatal.
-// How long one attempt at a single part may take, and how many attempts it gets.
+// Bounds on one attempt at a single part.
 //
-// The client's own 30-minute timeout is a last resort, not a policy: a part is
-// 512MiB, so a healthy flow finishes in seconds and anything past a couple of
-// minutes is a connection that will not recover. Without a bound here a network
-// blip parked a build for the full client timeout — measured at 15 minutes of a
-// build that had already produced every artefact and simply never uploaded them.
+// The deadline is derived from the part size, not fixed. A fixed one is wrong
+// for a 512MiB PUT: two minutes silently demands 4.3MiB/s, so a healthy-but-slow
+// link fails while the client's own 30-minute timeout would have let it finish.
+// That is exactly what a first attempt at this did — parts timing out on a
+// sandbox where an HTTPS request completed in 0.07s.
+//
+// The floor is deliberately far below what a working link does (measured at
+// ~150MiB/s across 8 flows): the deadline exists to abandon a dead connection,
+// not to enforce a service level. Anything above the floor gets to finish.
 const (
-	partAttemptTimeout = 2 * time.Minute
 	partAttempts       = 4
+	partAttemptBase    = 60 * time.Second
+	partFloorBytesPerS = 1 << 20 // 1MiB/s
 )
+
+// partDeadline is how long a part of this size gets before it is abandoned.
+func partDeadline(length int64) time.Duration {
+	return partAttemptBase + time.Duration(length/partFloorBytesPerS)*time.Second
+}
 
 // uploadPartWithRetry retries a part on transient failure.
 //
@@ -175,7 +185,7 @@ func (b *Builder) uploadPartWithRetry(
 ) (string, error) {
 	var err error
 	for attempt := 1; attempt <= partAttempts; attempt++ {
-		attemptCtx, cancel := context.WithTimeout(ctx, partAttemptTimeout)
+		attemptCtx, cancel := context.WithTimeout(ctx, partDeadline(length))
 		var etag string
 		etag, err = b.uploadPart(attemptCtx, rootfs, idx, offset, length)
 		cancel()

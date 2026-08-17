@@ -83,3 +83,35 @@ func TestUploadPartGivesUpWithAClearError(t *testing.T) {
 		t.Errorf("error %q does not say how many attempts were made", err)
 	}
 }
+
+// A fixed deadline is wrong for a part upload: two minutes on a 512MiB part
+// silently demands 4.3MiB/s, so a healthy-but-slow link fails while the client's
+// own 30-minute timeout would have let it finish. Observed exactly that — parts
+// timing out on a sandbox where an HTTPS request completed in 0.07s.
+func TestPartDeadlineScalesWithTheData(t *testing.T) {
+	const MiB = 1 << 20
+
+	// A part gets at least the base, however small it is.
+	if got := partDeadline(1); got < partAttemptBase {
+		t.Errorf("a tiny part got %v, less than the %v base", got, partAttemptBase)
+	}
+
+	// A full 512MiB part must tolerate a link far slower than any healthy one:
+	// measured throughput is ~150MiB/s across 8 flows, so the floor is ~150x
+	// slower than normal and only ever abandons a connection that is dead.
+	big := partDeadline(512 * MiB)
+	if implied := float64(512*MiB) / big.Seconds() / MiB; implied > 1.1 {
+		t.Errorf("a 512MiB part gets %v, implying %.1f MiB/s — too demanding", big, implied)
+	}
+
+	// Bigger parts must get proportionally longer, or the bound is fixed again.
+	if partDeadline(512*MiB) <= partDeadline(64*MiB) {
+		t.Error("the deadline does not scale with the part size")
+	}
+
+	// And the worst case must stay inside the build's own timeout (3600s).
+	if worst := time.Duration(partAttempts) * partDeadline(512*MiB); worst > 45*time.Minute {
+		t.Errorf("%d attempts on a full part is %v, too close to the build timeout",
+			partAttempts, worst)
+	}
+}
