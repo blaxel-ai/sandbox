@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -36,7 +38,7 @@ func download(ctx context.Context, url, dest string) error {
 	}
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return err
+		return transportError("downloading", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
@@ -223,7 +225,7 @@ func (b *Builder) uploadPart(ctx context.Context, path string, idx int, offset, 
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return "", err
+		return "", transportError("uploading", err)
 	}
 	defer resp.Body.Close()
 	_, _ = io.Copy(io.Discard, resp.Body)
@@ -259,7 +261,7 @@ func putFile(ctx context.Context, url, path string) (string, error) {
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return "", err
+		return "", transportError("uploading", err)
 	}
 	defer resp.Body.Close()
 	_, _ = io.Copy(io.Discard, resp.Body)
@@ -272,6 +274,21 @@ func putFile(ctx context.Context, url, path string) (string, error) {
 // statusError keeps the storage provider out of the message. These errors reach
 // the customer through the build events, and the response body of a rejected
 // presigned request names the provider and echoes request IDs.
+// transportError strips the URL out of a transport failure.
+//
+// Go's http client wraps every error as *url.Error, whose Error() prints the
+// full request URL. Ours are presigned: they carry a signature, and they name
+// the storage provider. That string reaches the customer through the build
+// events, so a timed-out upload reported itself as 200 characters of signed
+// query string — unreadable, and a credential in a log.
+func transportError(what string, err error) error {
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) {
+		return fmt.Errorf("%s: %w", what, urlErr.Err)
+	}
+	return fmt.Errorf("%s: %w", what, err)
+}
+
 func statusError(method string, code int) error {
 	switch code {
 	case http.StatusForbidden:
