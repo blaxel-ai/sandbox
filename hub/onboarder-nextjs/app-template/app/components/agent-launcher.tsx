@@ -1,7 +1,8 @@
 'use client';
 
 import { LuCopy, LuCopyCheck } from 'react-icons/lu';
-import { SiClaude, SiOpenai } from 'react-icons/si';
+import { SiClaude } from 'react-icons/si';
+import { RiOpenaiFill } from 'react-icons/ri';
 import type { IconType } from 'react-icons';
 import {
   AGENT_PROMPT,
@@ -36,7 +37,7 @@ export const agentLaunchTargets: AgentLaunchTarget[] = [
   {
     className: 'agent-icon-codex',
     href: buildAgentLaunchHref('codex'),
-    icon: SiOpenai,
+    icon: RiOpenaiFill,
     key: 'codex',
     label: 'Codex',
   },
