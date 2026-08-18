@@ -45,9 +45,15 @@ Each of these came from a build that failed in a confusing way:
 
 - **erofs-utils >= 1.9.** 1.8.2 produces an image `fsck.erofs` reports as
   corrupted ("no enough room for the root inode").
-- **The ephemeral volume is required**, and it is mk3.1-only. On mk3.0 the API
-  accepts the volume attachment and silently ignores it, so the entrypoint
-  refuses to start without `/scratch`.
+- **The ephemeral volume is optional.** It is mk3.1-only, and on mk3.0 the API
+  accepts the attachment and silently ignores it, so the entrypoint falls back to
+  a tmpfs sized at 90% of RAM rather than refusing to start.
 - **`buildctl` is a separate apk package** from `buildkit`.
-- **`--oci-worker-snapshotter=native`**: overlayfs cannot stack on the sandbox
-  rootfs, the same reason `hub/docker-in-sandbox` pins dockerd to `vfs`.
+- **`--oci-worker-snapshotter=overlayfs`**: it used to be `native`, on the
+  reasoning that overlayfs cannot stack on the sandbox rootfs. That holds for `/`
+  (a read-only EROFS under a RAM overlay) but buildkit writes to `/scratch`, a
+  tmpfs or a volume, where stacking works. native copies the accumulated snapshot
+  once per layer, so a build cost the sum of prefixes of its base image: measured
+  at 9 992MB of scratch for `hub/nextjs` against 5 108MB on overlayfs, and
+  `hub/cua-xfce` (27-layer base) could not build at all under native, at 14GB or
+  28GB, while overlayfs built it in 114s.
