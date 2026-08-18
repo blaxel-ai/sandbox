@@ -82,6 +82,38 @@ func (b *Builder) uploadSmallFiles(ctx context.Context, sw *stopwatch) error {
 
 // uploadRootfs splits the image and uploads the parts concurrently.
 //
+// s3MinPartBytes is the floor S3 enforces on every part but the last.
+const s3MinPartBytes = 5 << 20
+
+// uploadPartSize spreads the image across every slot it was granted, rather
+// than using the size the slots were issued at.
+//
+// The slots are minted before the build, sized for the largest image the
+// platform accepts, so a 700MiB rootfs fills 2 of its 120 at the issued 512MiB.
+// Two parts means two connections, and sandbox egress is capped PER CONNECTION
+// (measured: 0.2MB/s per flow, 4.8MB/s across 24, while a download on the same
+// link runs at 250MB/s). Throughput is therefore the part COUNT, and uploadFlows
+// can only parallelise the parts that exist. S3 requires parts to be at least
+// 5MiB but does NOT require them to be equal, so using the whole grant costs
+// nothing and turns a half-hour upload into a couple of minutes.
+func (b *Builder) uploadPartSize(size int64) int64 {
+	issued := b.Targets.Initrd.PartSizeBytes()
+	slots := int64(len(b.Targets.Initrd.PartURLs))
+	if slots <= 0 || size <= 0 {
+		return issued
+	}
+	// The smallest part that still fits the object into the slots on hand.
+	fit := (size + slots - 1) / slots
+	if fit < s3MinPartBytes {
+		fit = s3MinPartBytes
+	}
+	if fit >= issued {
+		// An image big enough to need the issued size already fills the slots.
+		return issued
+	}
+	return fit
+}
+
 // Concurrency is what makes this fast, and it is configured rather than fixed
 // because the right value depends on the network between the sandbox and the
 // bucket: on one path a single flow reached 20MB/s, on another it was capped
@@ -94,7 +126,7 @@ func (b *Builder) uploadRootfs(ctx context.Context, rootfs string, sw *stopwatch
 	if err != nil {
 		return nil, err
 	}
-	partSize := b.Targets.Initrd.PartSizeBytes()
+	partSize := b.uploadPartSize(info.Size())
 	nparts := int((info.Size() + partSize - 1) / partSize)
 	if nparts > len(b.Targets.Initrd.PartURLs) {
 		return nil, fmt.Errorf(
