@@ -26,6 +26,13 @@ type Targets struct {
 	TraceParent string `json:"traceparent"`
 }
 
+// defaultUploadFlows is the fallback when the targets do not carry one.
+//
+// 24, not 8: sandbox egress is capped per connection at ~0.2MB/s, and measured
+// aggregate throughput was still climbing linearly at 24 flows (4.8MB/s). On a
+// fast path the same 24 flows are harmless.
+const defaultUploadFlows = 24
+
 // InitrdUpload is the multipart upload of the rootfs.
 type InitrdUpload struct {
 	Key         string   `json:"key"`
@@ -93,7 +100,7 @@ func LoadTargets(path string) (*Targets, error) {
 		return nil, fmt.Errorf("%s has a zero part size", path)
 	}
 	if t.UploadFlows <= 0 {
-		t.UploadFlows = 8
+		t.UploadFlows = defaultUploadFlows
 	}
 	return &t, nil
 }
