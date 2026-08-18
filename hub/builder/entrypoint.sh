@@ -21,12 +21,19 @@ mount -t cgroup2 none /sys/fs/cgroup 2>/dev/null || true
 # build into no build at all, so fall back to an explicit tmpfs instead: same
 # memory, but sized and named rather than quietly eating the overlay.
 #
-# Sized at 70% of RAM. A tmpfs page is a RAM page, so the build shares its
-# budget with buildkit's own processes; leaving headroom is what keeps an
-# oversized image failing on ENOSPC — which names the problem — rather than on
-# the OOM killer, which does not.
+# Sized at 90% of RAM. A tmpfs page is a RAM page, so the build shares its
+# budget with buildkit's own processes, and headroom is what keeps an oversized
+# image failing on ENOSPC — which names the problem — rather than on the OOM
+# killer, which does not.
+#
+# It was 70%, which is where the headroom was wrong rather than merely generous:
+# the amplification is ~7x the final image (measured: hub/base-image 417MiB ->
+# 2 367MB of scratch, hub/nextjs 1 361MiB -> 9 956MB), so the scratch is what
+# runs out first, by a wide margin. At its 9.8GB peak nextjs still left 6GB of
+# RAM unused, so 30% was paying for a shortage that never happened while causing
+# one that did. 90% buys 2.7GB more scratch out of the same 16GB.
 if [ ! -d /scratch ]; then
-  scratch_mb=$(awk '/MemTotal/ {printf "%d", $2 * 7 / 10 / 1024}' /proc/meminfo)
+  scratch_mb=$(awk '/MemTotal/ {printf "%d", $2 * 9 / 10 / 1024}' /proc/meminfo)
   echo "WARNING: /scratch is not mounted, falling back to a ${scratch_mb}MB tmpfs." >&2
   echo "Ephemeral volumes are mk3.1-only; on mk3.0 the attachment is accepted" >&2
   echo "and ignored. A large image may now exhaust memory instead of disk." >&2
