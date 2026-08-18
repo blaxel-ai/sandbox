@@ -77,11 +77,28 @@ func (b *Builder) writeKraftFiles(ctx context.Context, sw *stopwatch) error {
 		attribute.String("build.cmdline", b.cmdline),
 	)
 
-	// HOME is added when the image does not set it, matching the current
-	// builder: without it a shell started in the VM has no home.
-	env := cfg.Config.Env
+	// The env has to match the current builder entry for entry, because mk3.0
+	// reads config.json — it is the kraftcloud/unikraft descriptor, which is why
+	// `os`, `os.features` and the cloud.unikraft.v1 labels live in it — while
+	// mk3.1 reads image.json and the EROFS directly. A field missing here is
+	// therefore invisible on mk3.1 and load-bearing on mk3.0: hub/cua-xfce built,
+	// ran on mk3.1, and on mk3.0 never answered, the gateway timing out after 10s
+	// on a VM that had nothing listening. The only difference against a metamorph
+	// build of the same image was this one entry.
+	//
+	// Copied, not appended in place: `append` on cfg.Config.Env would write
+	// through to the caller's slice whenever it has spare capacity, so the OCI
+	// config would gain entries depending on how it happened to be decoded.
+	env := make([]string, len(cfg.Config.Env))
+	copy(env, cfg.Config.Env)
+	// HOME: without it a shell started in the VM has no home.
 	if !hasPrefix(env, "HOME=") {
 		env = append(env, "HOME=/root")
+	}
+	// PWD: the wrapper chdirs to the working directory, but anything reading $PWD
+	// rather than calling getcwd() sees the value baked in here.
+	if !hasPrefix(env, "PWD=") {
+		env = append(env, "PWD="+workingDir)
 	}
 
 	kernelSHA, err := sha256File(kernelPath)
@@ -137,7 +154,10 @@ func (b *Builder) writeKraftFiles(ctx context.Context, sw *stopwatch) error {
 	if err := writeJSON(filepath.Join(b.OutDir, imageName), imageMetadata{
 		Entrypoint: cfg.Config.Entrypoint,
 		Cmd:        cfg.Config.Cmd,
-		Env:        cfg.Config.Env,
+		// The same env as config.json: the two files described the same image
+		// with different environments, HOME and PWD appearing in one and not
+		// the other.
+		Env:        env,
 		WorkingDir: workingDir,
 		User:       cfg.Config.User,
 	}); err != nil {
