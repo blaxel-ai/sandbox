@@ -356,3 +356,51 @@ func TestImageMetadataUsesTheKeysTheComputePlaneReads(t *testing.T) {
 		t.Errorf("image.json does not spell working_dir in snake_case:\n%s", raw)
 	}
 }
+
+// mk3.0 reads config.json, mk3.1 reads image.json, so an env entry missing from
+// either is invisible on one generation and fatal on the other. A metamorph
+// build of hub/cua-xfce carried PWD=/home/cua where this builder carried nothing,
+// and that image ran on mk3.1 and never answered on mk3.0.
+func TestKraftFilesCarryTheSameEnvWithHomeAndPwd(t *testing.T) {
+	for _, c := range []struct {
+		name       string
+		in         []string
+		workingDir string
+		wantHome   string
+		wantPwd    string
+	}{
+		{"adds both when absent", []string{"A=1"}, "/home/cua", "HOME=/root", "PWD=/home/cua"},
+		{"keeps the image's own", []string{"HOME=/h", "PWD=/p"}, "/home/cua", "HOME=/h", "PWD=/p"},
+		{"root working dir", nil, "/", "HOME=/root", "PWD=/"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			env := make([]string, len(c.in))
+			copy(env, c.in)
+			if !hasPrefix(env, "HOME=") {
+				env = append(env, "HOME=/root")
+			}
+			if !hasPrefix(env, "PWD=") {
+				env = append(env, "PWD="+c.workingDir)
+			}
+			var gotHome, gotPwd string
+			for _, e := range env {
+				if len(e) > 5 && e[:5] == "HOME=" {
+					gotHome = e
+				}
+				if len(e) > 4 && e[:4] == "PWD=" {
+					gotPwd = e
+				}
+			}
+			if gotHome != c.wantHome {
+				t.Errorf("HOME: got %q, want %q", gotHome, c.wantHome)
+			}
+			if gotPwd != c.wantPwd {
+				t.Errorf("PWD: got %q, want %q", gotPwd, c.wantPwd)
+			}
+			// The copy must not have written through to the input.
+			if len(c.in) > 0 && len(c.in) != len(c.in[:len(c.in)]) {
+				t.Error("input slice was mutated")
+			}
+		})
+	}
+}
