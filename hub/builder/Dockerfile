@@ -86,7 +86,6 @@ COPY --from=blbuild-build /blbuild /usr/local/bin/blbuild
 # mkfs/fsck/dump from the pinned build above, so the on-disk format the compute
 # plane has to mount never depends on what the distribution happens to ship.
 COPY --from=erofs-builder /erofs-out/usr/local/bin/ /usr/local/bin/
-COPY --from=erofs-builder /erofs-out/usr/local/lib/ /usr/local/lib/
 
 # The artefacts a produced image needs, same set the current builder embeds:
 #  - kernel.bin ships as kraft/bin/kernel
