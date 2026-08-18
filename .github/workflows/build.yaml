@@ -28,11 +28,13 @@ on:
           - nextjs
           - node
           - node-slim
+          - omnigent-host
           - onboarder-nextjs
           - playwright-chromium
           - playwright-firefox
           - py-app
           - ts-app
+          - tailscale
           - vite
           - xfce-vnc
 

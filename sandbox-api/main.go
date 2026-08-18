@@ -20,6 +20,8 @@ import (
 	"github.com/blaxel-ai/sandbox-api/src/handler"
 	"github.com/blaxel-ai/sandbox-api/src/handler/process"
 	"github.com/blaxel-ai/sandbox-api/src/lib/blaxel"
+	"github.com/blaxel-ai/sandbox-api/src/lib/envfile"
+	"github.com/blaxel-ai/sandbox-api/src/lib/identity"
 	"github.com/blaxel-ai/sandbox-api/src/lib/networking"
 	"github.com/blaxel-ai/sandbox-api/src/lib/proxy"
 	"github.com/blaxel-ai/sandbox-api/src/lib/sentrylib"
@@ -45,13 +47,30 @@ func main() {
 	// Load .env file
 	_ = godotenv.Load()
 
+	// Adopt the environment the guest received as a file rather than on its
+	// kernel command line, before anything reads the environment or spawns a
+	// process. The image's init has normally done it already; doing it here as
+	// well means an init that did not is no longer an environment the user
+	// silently lost.
+	if loaded, err := envfile.Load(); err != nil {
+		logrus.WithError(err).WithField("loaded", loaded).Errorf("Failed to load part of the environment from %s - those user environment variables are missing", envfile.PathVar)
+	} else if loaded > 0 {
+		logrus.WithField("count", loaded).Infof("Loaded environment variables from %s that were missing from the process environment", envfile.PathVar)
+	}
+
 	// Define command-line flags
 	port := flag.Int("port", 8080, "Port to listen on")
 	shortPort := flag.Int("p", 8080, "Port to listen on (shorthand)")
 	command := flag.String("command", "", "Command to execute")
 	shortCommand := flag.String("c", "", "Command to execute (shorthand)")
 	disableTelemetry := flag.Bool("disable-telemetry", false, "Disable anonymous error reporting")
+	workloadUser := flag.String("user", "", "Run processes, terminals and filesystem operations as this user, in Docker USER syntax (also settable with "+identity.EnvUser+", which needs "+identity.EnvEnabled+")")
 	flag.Parse()
+
+	// Resolve the workload identity before anything can spawn a process, so a
+	// misconfigured user fails at boot instead of at first exec.
+	identity.SetSpec(*workloadUser)
+	identity.Get()
 
 	sentrylib.Version = handler.Version
 	sentryFlush := sentrylib.Init(*disableTelemetry)
@@ -63,10 +82,10 @@ func main() {
 	sentrylib.InitMeter(ctx)
 	startupStart := time.Now()
 
-	// Resolve {{file(...)}} directives in HTTP_PROXY / HTTPS_PROXY and
-	// start a background goroutine that re-reads the token file periodically
-	// so rotated credentials are picked up before they expire.
-	proxy.StartProxyTokenRefresh(ctx)
+	// Point HTTP_PROXY / HTTPS_PROXY at a loopback proxy that injects the
+	// identity token on every request, so rotated credentials are picked up by
+	// every process, including ones started before the rotation.
+	proxy.Start(ctx)
 
 	// Parallel: all four tasks are independent of each other
 	pm := process.GetProcessManager()
@@ -239,6 +258,8 @@ func startBackgroundCommand(ctx context.Context, command string) {
 	cmd.Stdout = logrus.StandardLogger().Out
 	cmd.Stderr = logrus.StandardLogger().Out
 	cmd.Dir = "/"
+	cmd.Env = identity.Get().DecorateEnv(os.Environ())
+	cmd.SysProcAttr = &syscall.SysProcAttr{Credential: identity.Get().Credential()}
 
 	// Start the command in a goroutine so it doesn't block the server
 	go func() {

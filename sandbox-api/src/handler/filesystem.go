@@ -22,6 +22,7 @@ import (
 
 	"github.com/blaxel-ai/sandbox-api/src/handler/filesystem"
 	"github.com/blaxel-ai/sandbox-api/src/lib"
+	"github.com/blaxel-ai/sandbox-api/src/lib/identity"
 )
 
 var json = jsoniter.ConfigCompatibleWithStandardLibrary
@@ -379,8 +380,15 @@ func (h *FileSystemHandler) handleReadFile(c *gin.Context, path string) {
 			contentType = "image/svg+xml"
 		}
 
-		// Open file for zero-copy transfer
-		file, err := os.Open(absPath)
+		// Open file for zero-copy transfer. The open happens under the workload
+		// identity, so the kernel checks the path against it; the descriptor it
+		// returns is what ServeContent streams.
+		var file *os.File
+		err = identity.Do(func() error {
+			var openErr error
+			file, openErr = os.Open(absPath)
+			return openErr
+		})
 		if err != nil {
 			h.SendError(c, http.StatusUnprocessableEntity, fmt.Errorf("error opening file: %w", err))
 			return
@@ -1819,8 +1827,14 @@ func (h *FileSystemHandler) HandleContentSearch(c *gin.Context) {
 		go func() {
 			defer wg.Done()
 			for filePath := range filesChan {
-				// Read file
-				content, err := os.ReadFile(filePath)
+				// Read file as the workload user, like every other read the API
+				// does on its behalf.
+				var content []byte
+				err := identity.Do(func() error {
+					var readErr error
+					content, readErr = os.ReadFile(filePath)
+					return readErr
+				})
 				if err != nil {
 					continue
 				}

@@ -32,6 +32,11 @@ codspeed:
 integration-test:
 	cd sandbox-api/integration-tests && ./run_tests.sh
 
+# Same suite, against an API that keeps root and scopes the workload to an
+# unprivileged user (Dockerfile USER / --user). Needs root.
+identity-test:
+	cd sandbox-api/integration-tests && sudo ./run_identity_tests.sh
+
 mcp:
 	cd sandbox-api/mcp-inspect && npm run inspect
 

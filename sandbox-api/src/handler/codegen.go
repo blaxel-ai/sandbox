@@ -60,7 +60,7 @@ func (h *CodegenHandler) extractPathFromRequest(c *gin.Context) string {
 // ApplyEditRequest represents the request body for applying code edits
 type ApplyEditRequest struct {
 	CodeEdit string `json:"codeEdit" binding:"required" example:"// Add world parameter\nfunction hello(world) {\n  console.log('Hello', world);\n}"`
-	Model    string `json:"model,omitempty" example:"auto"`
+	Model    string `json:"model,omitempty" example:"relace-apply-3"`
 } // @name ApplyEditRequest
 
 // ApplyEditResponse represents the response for applying code edits

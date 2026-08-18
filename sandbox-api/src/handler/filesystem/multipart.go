@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/blaxel-ai/sandbox-api/src/lib/identity"
 	"github.com/google/uuid"
 )
 
@@ -169,16 +170,23 @@ func (m *MultipartManager) CompleteUpload(uploadID string, parts []UploadedPart)
 		return parts[i].PartNumber < parts[j].PartNumber
 	})
 
-	// Create parent directories if they don't exist
-	dir := filepath.Dir(upload.Path)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return fmt.Errorf("failed to create parent directory: %w", err)
-	}
-
-	// Create final file
-	finalFile, err := os.OpenFile(upload.Path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, upload.Permissions)
-	if err != nil {
-		return fmt.Errorf("failed to create final file: %w", err)
+	// The destination is caller-controlled, so it is created with the workload
+	// identity. The part files live in the API's own uploads directory and stay
+	// privileged.
+	var finalFile *os.File
+	if err := identity.Do(func() error {
+		dir := filepath.Dir(upload.Path)
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return fmt.Errorf("failed to create parent directory: %w", err)
+		}
+		f, err := os.OpenFile(upload.Path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, upload.Permissions)
+		if err != nil {
+			return fmt.Errorf("failed to create final file: %w", err)
+		}
+		finalFile = f
+		return nil
+	}); err != nil {
+		return err
 	}
 	defer finalFile.Close()
 

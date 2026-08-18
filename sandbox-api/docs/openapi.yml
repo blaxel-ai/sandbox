@@ -204,6 +204,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Conflict
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "500":
           description: Internal Server Error
           content:
@@ -249,6 +255,31 @@ paths:
       summary: Detach a drive from a local path
       tags:
         - drive
+  /environment/reload:
+    post:
+      description: Re-reads /bl/metadata and applies its environment to the sandbox-api process, so this process and every process started afterwards see the current values. Called by the guest init after an environment update; safe to call manually.
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/handler.ReloadResponse"
+        "404":
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+      summary: Reload environment from guest metadata
+      tags:
+        - system
   "/filesystem-content-search/{path}":
     get:
       description: Searches for text content inside files using ripgrep. Returns matching lines with context.
@@ -1490,7 +1521,7 @@ components:
             }
           type: string
         model:
-          example: auto
+          example: relace-apply-3
           type: string
       required:
         - codeEdit
@@ -2180,6 +2211,15 @@ components:
           type: integer
         uploadedAt:
           type: string
+      type: object
+    handler.ReloadResponse:
+      properties:
+        applied:
+          type: integer
+        generation:
+          type: integer
+        removed:
+          type: integer
       type: object
     process.UpgradeState:
       enum:

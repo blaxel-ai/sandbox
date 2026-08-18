@@ -217,6 +217,12 @@ const docTemplate = `{
                             "$ref": "#/definitions/ErrorResponse"
                         }
                     },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
@@ -259,6 +265,38 @@ const docTemplate = `{
                     },
                     "400": {
                         "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/environment/reload": {
+            "post": {
+                "description": "Re-reads /bl/metadata and applies its environment to the sandbox-api process, so this process and every process started afterwards see the current values. Called by the guest init after an environment update; safe to call manually.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "system"
+                ],
+                "summary": "Reload environment from guest metadata",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handler.ReloadResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
                         "schema": {
                             "$ref": "#/definitions/ErrorResponse"
                         }
@@ -1805,7 +1843,7 @@ const docTemplate = `{
                 },
                 "model": {
                     "type": "string",
-                    "example": "auto"
+                    "example": "relace-apply-3"
                 }
             }
         },
@@ -2755,6 +2793,20 @@ const docTemplate = `{
                 },
                 "uploadedAt": {
                     "type": "string"
+                }
+            }
+        },
+        "handler.ReloadResponse": {
+            "type": "object",
+            "properties": {
+                "applied": {
+                    "type": "integer"
+                },
+                "generation": {
+                    "type": "integer"
+                },
+                "removed": {
+                    "type": "integer"
                 }
             }
         },
