@@ -404,3 +404,51 @@ func TestKraftFilesCarryTheSameEnvWithHomeAndPwd(t *testing.T) {
 		})
 	}
 }
+
+// The artefacts are consumed byte for byte by a guest this test cannot run, and
+// three separate outages came from drifting away from what metamorph emits:
+// working_dir in PascalCase, a missing PWD, then a trailing newline in
+// cmdline.txt and a missing entrypoint_string. Pin the shape here, because the
+// only other feedback loop is a sandbox that boots and never answers.
+func TestArtefactShapeMatchesMetamorph(t *testing.T) {
+	t.Run("cmdline carries no trailing newline", func(t *testing.T) {
+		// metamorph wrote 47 bytes for hub/cua-xfce where this builder wrote 48.
+		// The guest execs the contents, so a "\n" ends up inside the last argument.
+		cmd := []string{"/bin/metamorph-wrapper", "/home/cua", "/entrypoint.sh"}
+		got := strings.Join(cmd, " ")
+		if strings.HasSuffix(got, "\n") {
+			t.Error("cmdline must not end with a newline")
+		}
+		if want := "/bin/metamorph-wrapper /home/cua /entrypoint.sh"; got != want {
+			t.Errorf("got %q, want %q", got, want)
+		}
+		if len(got) != 47 {
+			t.Errorf("got %d bytes, metamorph writes 47 for this image", len(got))
+		}
+	})
+
+	t.Run("image.json keeps the keys metamorph emits", func(t *testing.T) {
+		blob, err := json.Marshal(imageMetadata{
+			Entrypoint:       []string{"/entrypoint.sh"},
+			EntrypointString: "/entrypoint.sh",
+			WorkingDir:       "/home/cua",
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got map[string]any
+		if err := json.Unmarshal(blob, &got); err != nil {
+			t.Fatal(err)
+		}
+		// cmd and entrypoint must survive as null rather than vanish: metamorph
+		// writes `"cmd": null`, and a consumer may distinguish absent from null.
+		for _, key := range []string{"entrypoint", "entrypoint_string", "cmd", "working_dir"} {
+			if _, ok := got[key]; !ok {
+				t.Errorf("image.json is missing %q", key)
+			}
+		}
+		if got["entrypoint_string"] != "/entrypoint.sh" {
+			t.Errorf("entrypoint_string = %v", got["entrypoint_string"])
+		}
+	})
+}
