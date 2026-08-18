@@ -58,7 +58,7 @@ func TestMCPClientConnect(t *testing.T) {
 
 	assert.NotNil(t, client)
 	assert.NotNil(t, session)
-	assert.NotEmpty(t, session.ID(), "Session should have an ID")
+	// Note: session.ID() may be empty in stateless mode (go-sdk v1.7.0+)
 }
 
 // TestMCPClientListTools tests listing available tools
@@ -514,16 +514,13 @@ func TestMCPClientSessionPersistence(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	sessionID := session.ID()
-	assert.NotEmpty(t, sessionID)
-
-	// Make multiple calls and verify session ID stays the same
+	// In stateless mode (go-sdk v1.7.0+), session ID may be empty
+	// but calls should still succeed consistently
 	for i := 0; i < 3; i++ {
 		_, err := session.CallTool(ctx, &mcp.CallToolParams{
 			Name:      "processesList",
 			Arguments: map[string]any{},
 		})
 		require.NoError(t, err)
-		assert.Equal(t, sessionID, session.ID(), "Session ID should remain constant")
 	}
 }
