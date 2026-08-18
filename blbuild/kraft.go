@@ -25,12 +25,22 @@ type ociConfig struct {
 // imageMetadata is image.json, field for field as the compute plane declares it
 // in kraft-provider's ImageMetadata. The names are its contract, not ours, so
 // they are spelled out here rather than inherited from the OCI config.
+// imageMetadata is image.json, read by the compute plane's ImageMetadata
+// (executionplane, kraft-provider/image_handler.go). It has to match what
+// metamorph emits key for key, including keys whose value is null: `cmd` and
+// `entrypoint` carry no omitempty because metamorph writes `"cmd": null` rather
+// than dropping the key, and a consumer that distinguishes "absent" from "null"
+// would see a different image.
 type imageMetadata struct {
-	Entrypoint []string `json:"entrypoint,omitempty"`
-	Cmd        []string `json:"cmd,omitempty"`
-	Env        []string `json:"env,omitempty"`
-	WorkingDir string   `json:"working_dir,omitempty"`
-	User       string   `json:"user,omitempty"`
+	Entrypoint []string `json:"entrypoint"`
+	// EntrypointString is the entrypoint as one string. metamorph writes it and
+	// this builder did not, which is how an image could carry a correct
+	// entrypoint array and still have nothing to exec.
+	EntrypointString string   `json:"entrypoint_string,omitempty"`
+	Cmd              []string `json:"cmd"`
+	Env              []string `json:"env,omitempty"`
+	WorkingDir       string   `json:"working_dir,omitempty"`
+	User             string   `json:"user,omitempty"`
 }
 
 // writeKraftFiles produces the four artefacts that accompany the rootfs. Their
@@ -61,8 +71,14 @@ func (b *Builder) writeKraftFiles(ctx context.Context, sw *stopwatch) error {
 	// cmdline.txt: the wrapper receives the working directory then the command.
 	cmd := append([]string{"/" + wrapperPath, workingDir},
 		append(cfg.Config.Entrypoint, cfg.Config.Cmd...)...)
+	// No trailing newline. metamorph writes this file without one (47 bytes
+	// against the 48 this used to write for hub/cua-xfce), and the guest takes the
+	// contents as the command to exec: a trailing "\n" lands inside the last
+	// argument, so "/entrypoint.sh" became "/entrypoint.sh\n" and there was
+	// nothing to run. The VM still booted and got an IP, so the failure surfaced
+	// as the cluster gateway timing out after 10s and answering 404.
 	if err := os.WriteFile(filepath.Join(b.OutDir, cmdlineName),
-		[]byte(strings.Join(cmd, " ")+"\n"), 0o644); err != nil {
+		[]byte(strings.Join(cmd, " ")), 0o644); err != nil {
 		return err
 	}
 	// This one line is what a boot failure is diagnosed from. The wrapper chdirs
@@ -152,8 +168,9 @@ func (b *Builder) writeKraftFiles(ctx context.Context, sw *stopwatch) error {
 	// package.json in "/", while hub images survived only because their
 	// entrypoints are absolute.
 	if err := writeJSON(filepath.Join(b.OutDir, imageName), imageMetadata{
-		Entrypoint: cfg.Config.Entrypoint,
-		Cmd:        cfg.Config.Cmd,
+		Entrypoint:       cfg.Config.Entrypoint,
+		EntrypointString: strings.Join(cfg.Config.Entrypoint, " "),
+		Cmd:              cfg.Config.Cmd,
 		// The same env as config.json: the two files described the same image
 		// with different environments, HOME and PWD appearing in one and not
 		// the other.
