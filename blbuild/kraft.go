@@ -93,26 +93,28 @@ func (b *Builder) writeKraftFiles(ctx context.Context, sw *stopwatch) error {
 		attribute.String("build.cmdline", b.cmdline),
 	)
 
-	// The env has to match the current builder entry for entry, because mk3.0
-	// reads config.json — it is the kraftcloud/unikraft descriptor, which is why
-	// `os`, `os.features` and the cloud.unikraft.v1 labels live in it — while
-	// mk3.1 reads image.json and the EROFS directly. A field missing here is
-	// therefore invisible on mk3.1 and load-bearing on mk3.0: hub/cua-xfce built,
-	// ran on mk3.1, and on mk3.0 never answered, the gateway timing out after 10s
-	// on a VM that had nothing listening. The only difference against a metamorph
-	// build of the same image was this one entry.
+	// The two descriptors carry DIFFERENT environments, and that asymmetry is
+	// deliberate rather than a bug — a metamorph build of hub/cua-xfce puts
+	// PWD=/home/cua in config.json and not in image.json. Unifying them, on the
+	// reasoning that two files describing one image should agree, put PWD where
+	// metamorph has none.
+	//
+	//	config.json (mk3.0, the kraftcloud/unikraft descriptor)  OCI + HOME + PWD
+	//	image.json  (read as ImageMetadata by the compute plane) OCI + HOME
 	//
 	// Copied, not appended in place: `append` on cfg.Config.Env would write
 	// through to the caller's slice whenever it has spare capacity, so the OCI
 	// config would gain entries depending on how it happened to be decoded.
-	env := make([]string, len(cfg.Config.Env))
-	copy(env, cfg.Config.Env)
-	// HOME: without it a shell started in the VM has no home.
-	if !hasPrefix(env, "HOME=") {
-		env = append(env, "HOME=/root")
+	imageEnv := make([]string, len(cfg.Config.Env))
+	copy(imageEnv, cfg.Config.Env)
+	// HOME: without it a shell started in the VM has no home. Both files carry it.
+	if !hasPrefix(imageEnv, "HOME=") {
+		imageEnv = append(imageEnv, "HOME=/root")
 	}
-	// PWD: the wrapper chdirs to the working directory, but anything reading $PWD
-	// rather than calling getcwd() sees the value baked in here.
+	// PWD goes to config.json alone. Anything reading $PWD rather than calling
+	// getcwd() sees the value baked in there.
+	env := make([]string, len(imageEnv))
+	copy(env, imageEnv)
 	if !hasPrefix(env, "PWD=") {
 		env = append(env, "PWD="+workingDir)
 	}
@@ -171,10 +173,8 @@ func (b *Builder) writeKraftFiles(ctx context.Context, sw *stopwatch) error {
 		Entrypoint:       cfg.Config.Entrypoint,
 		EntrypointString: strings.Join(cfg.Config.Entrypoint, " "),
 		Cmd:              cfg.Config.Cmd,
-		// The same env as config.json: the two files described the same image
-		// with different environments, HOME and PWD appearing in one and not
-		// the other.
-		Env:        env,
+		// imageEnv, not env: PWD belongs to config.json only.
+		Env:        imageEnv,
 		WorkingDir: workingDir,
 		User:       cfg.Config.User,
 	}); err != nil {
