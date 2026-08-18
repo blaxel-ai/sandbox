@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -357,98 +358,80 @@ func TestImageMetadataUsesTheKeysTheComputePlaneReads(t *testing.T) {
 	}
 }
 
-// mk3.0 reads config.json, mk3.1 reads image.json, so an env entry missing from
-// either is invisible on one generation and fatal on the other. A metamorph
-// build of hub/cua-xfce carried PWD=/home/cua where this builder carried nothing,
-// and that image ran on mk3.1 and never answered on mk3.0.
-func TestKraftFilesCarryTheSameEnvWithHomeAndPwd(t *testing.T) {
-	for _, c := range []struct {
-		name       string
-		in         []string
-		workingDir string
-		wantHome   string
-		wantPwd    string
-	}{
-		{"adds both when absent", []string{"A=1"}, "/home/cua", "HOME=/root", "PWD=/home/cua"},
-		{"keeps the image's own", []string{"HOME=/h", "PWD=/p"}, "/home/cua", "HOME=/h", "PWD=/p"},
-		{"root working dir", nil, "/", "HOME=/root", "PWD=/"},
-	} {
-		t.Run(c.name, func(t *testing.T) {
-			env := make([]string, len(c.in))
-			copy(env, c.in)
-			if !hasPrefix(env, "HOME=") {
-				env = append(env, "HOME=/root")
-			}
-			if !hasPrefix(env, "PWD=") {
-				env = append(env, "PWD="+c.workingDir)
-			}
-			var gotHome, gotPwd string
-			for _, e := range env {
-				if len(e) > 5 && e[:5] == "HOME=" {
-					gotHome = e
-				}
-				if len(e) > 4 && e[:4] == "PWD=" {
-					gotPwd = e
-				}
-			}
-			if gotHome != c.wantHome {
-				t.Errorf("HOME: got %q, want %q", gotHome, c.wantHome)
-			}
-			if gotPwd != c.wantPwd {
-				t.Errorf("PWD: got %q, want %q", gotPwd, c.wantPwd)
-			}
-			// The copy must not have written through to the input.
-			if len(c.in) > 0 && len(c.in) != len(c.in[:len(c.in)]) {
-				t.Error("input slice was mutated")
-			}
-		})
+// The two descriptors carry different environments on purpose: a metamorph build
+// of hub/cua-xfce has PWD in config.json and not in image.json. "Unifying" them
+// put PWD where metamorph has none, and the earlier version of this test could
+// not catch it because it reimplemented the rule instead of reading the files
+// writeKraftFiles produced.
+func TestPwdGoesToConfigJsonOnly(t *testing.T) {
+	out := writeKraftFilesForTest(t, "/home/cua", []string{"VNC_COL_DEPTH=24"})
+
+	var cfg struct {
+		Config struct{ Env []string } `json:"config"`
+	}
+	readTestJSON(t, filepath.Join(out, configName), &cfg)
+	if !slices.Contains(cfg.Config.Env, "PWD=/home/cua") {
+		t.Errorf("config.json must carry PWD, got %v", cfg.Config.Env)
+	}
+
+	var img imageMetadata
+	readTestJSON(t, filepath.Join(out, imageName), &img)
+	for _, e := range img.Env {
+		if strings.HasPrefix(e, "PWD=") {
+			t.Errorf("image.json must NOT carry PWD, got %q", e)
+		}
+	}
+	// Both still carry HOME, and image.json still names the entrypoint.
+	if !slices.Contains(img.Env, "HOME=/root") {
+		t.Errorf("image.json lost HOME: %v", img.Env)
+	}
+	if img.EntrypointString != "/entrypoint.sh" {
+		t.Errorf("entrypoint_string = %q", img.EntrypointString)
 	}
 }
 
-// The artefacts are consumed byte for byte by a guest this test cannot run, and
-// three separate outages came from drifting away from what metamorph emits:
-// working_dir in PascalCase, a missing PWD, then a trailing newline in
-// cmdline.txt and a missing entrypoint_string. Pin the shape here, because the
-// only other feedback loop is a sandbox that boots and never answers.
-func TestArtefactShapeMatchesMetamorph(t *testing.T) {
-	t.Run("cmdline carries no trailing newline", func(t *testing.T) {
-		// metamorph wrote 47 bytes for hub/cua-xfce where this builder wrote 48.
-		// The guest execs the contents, so a "\n" ends up inside the last argument.
-		cmd := []string{"/bin/metamorph-wrapper", "/home/cua", "/entrypoint.sh"}
-		got := strings.Join(cmd, " ")
-		if strings.HasSuffix(got, "\n") {
-			t.Error("cmdline must not end with a newline")
-		}
-		if want := "/bin/metamorph-wrapper /home/cua /entrypoint.sh"; got != want {
-			t.Errorf("got %q, want %q", got, want)
-		}
-		if len(got) != 47 {
-			t.Errorf("got %d bytes, metamorph writes 47 for this image", len(got))
-		}
-	})
+// cmdline.txt is exec'd verbatim by the guest, so a trailing newline lands inside
+// the last argument: "/entrypoint.sh" became "/entrypoint.sh\n". metamorph writes
+// 47 bytes for hub/cua-xfce where this wrote 48.
+func TestCmdlineHasNoTrailingNewline(t *testing.T) {
+	out := writeKraftFilesForTest(t, "/home/cua", nil)
+	got := readTestFile(t, filepath.Join(out, cmdlineName))
+	if strings.HasSuffix(got, "\n") {
+		t.Errorf("cmdline ends with a newline: %q", got)
+	}
+	if want := "/" + wrapperPath + " /home/cua /entrypoint.sh"; got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
 
-	t.Run("image.json keeps the keys metamorph emits", func(t *testing.T) {
-		blob, err := json.Marshal(imageMetadata{
-			Entrypoint:       []string{"/entrypoint.sh"},
-			EntrypointString: "/entrypoint.sh",
-			WorkingDir:       "/home/cua",
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		var got map[string]any
-		if err := json.Unmarshal(blob, &got); err != nil {
-			t.Fatal(err)
-		}
-		// cmd and entrypoint must survive as null rather than vanish: metamorph
-		// writes `"cmd": null`, and a consumer may distinguish absent from null.
-		for _, key := range []string{"entrypoint", "entrypoint_string", "cmd", "working_dir"} {
-			if _, ok := got[key]; !ok {
-				t.Errorf("image.json is missing %q", key)
-			}
-		}
-		if got["entrypoint_string"] != "/entrypoint.sh" {
-			t.Errorf("entrypoint_string = %v", got["entrypoint_string"])
-		}
-	})
+// writeKraftFilesForTest runs the real writeKraftFiles over a minimal OCI export
+// and returns its output directory, so the assertions read the produced files
+// rather than a second copy of the rule they are meant to check.
+func writeKraftFilesForTest(t *testing.T, workingDir string, env []string) string {
+	t.Helper()
+	work, out := t.TempDir(), t.TempDir()
+	ociDir := filepath.Join(work, "oci")
+	digest := "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	blob := blobPath(ociDir, digest)
+	if err := os.MkdirAll(filepath.Dir(blob), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeTestJSON(t, blob, map[string]any{"config": map[string]any{
+		"Entrypoint": []string{"/entrypoint.sh"},
+		"Env":        env,
+		"WorkingDir": workingDir,
+	}})
+	kernel := filepath.Join(work, "kernel.bin")
+	if err := os.WriteFile(kernel, []byte("kernel"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(out, rootfsName), []byte("rootfs"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("BLBUILD_KERNEL", kernel)
+	b := &Builder{WorkDir: work, OutDir: out, ociDir: ociDir, configDigest: digest}
+	if err := b.writeKraftFiles(context.Background(), newStopwatch()); err != nil {
+		t.Fatalf("writeKraftFiles: %v", err)
+	}
+	return out
 }
