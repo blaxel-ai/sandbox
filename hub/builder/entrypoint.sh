@@ -6,13 +6,25 @@ set -e
 mkdir -p /sys/fs/cgroup
 mount -t cgroup2 none /sys/fs/cgroup 2>/dev/null || true
 
-# The native snapshotter copies instead of overlaying. This is not a tuning
-# choice: the sandbox rootfs is already a read-only EROFS with a RAM overlay, so
-# overlayfs-on-overlayfs is out — the same reason hub/docker-in-sandbox pins
-# dockerd to storage-driver vfs.
+# overlayfs, not native. The earlier reasoning was that the sandbox rootfs is a
+# read-only EROFS under a RAM overlay, so overlayfs-on-overlayfs is out. True of
+# `/`, but buildkit never writes there: --root puts it on /scratch, which is a
+# tmpfs (or an ephemeral volume), and stacking on those is fine. Verified on
+# 6.1.166 — the mount succeeds, buildkitd reports snapshotter:overlayfs, and the
+# tree it produces is byte-for-byte the size native produced.
+#
+# native copies the accumulated snapshot once per layer, so a build costs the SUM
+# OF PREFIXES of its base image rather than its size. On a 27-layer base that is
+# an ~8x tax that Depot never pays, and it decided whether a build ran at all:
+#
+#   hub/nextjs      native 9 992MB of scratch   overlayfs 5 108MB   (same 1 361MiB rootfs)
+#   hub/cua-xfce    native FAILED at 14GB and at 28GB   overlayfs built in 114s at 14 577MB
+#
+# Capping buildkit's cache does not substitute for this: --oci-worker-gc-keepstorage
+# was measured at 6GB and changed nothing, because GC cannot reclaim records the
+# running solve still holds. It only cleans up afterwards, which is too late.
 #
 # --root on /scratch keeps every byte buildkit writes off the root filesystem.
-# It matters: the native snapshotter used 4GB of real disk for a 411MB image.
 #
 # The ephemeral volume is mk3.1-only, and on mk3.0 the API accepts the
 # attachment and silently ignores it — no error anywhere, /scratch simply does
@@ -77,7 +89,7 @@ curl -sf -X POST http://localhost:8080/process \
   -H 'Content-Type: application/json' \
   -d '{
     "name": "buildkitd",
-    "command": "buildkitd --root /scratch/buildkit --oci-worker-snapshotter=native --addr unix:///run/buildkit/buildkitd.sock",
+    "command": "buildkitd --root /scratch/buildkit --oci-worker-snapshotter=overlayfs --addr unix:///run/buildkit/buildkitd.sock",
     "waitForCompletion": false,
     "keepAlive": true,
     "timeout": 0
