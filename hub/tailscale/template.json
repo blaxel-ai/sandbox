@@ -18,5 +18,6 @@
     "slim": false
   },
   "enterprise": false,
-  "coming_soon": false
+  "coming_soon": false,
+  "hidden": true
 }
