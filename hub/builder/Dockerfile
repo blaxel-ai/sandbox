@@ -33,6 +33,34 @@ RUN go mod download
 COPY blbuild/ ./
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /blbuild .
 
+# erofs-utils 1.8.10, built from source and pinned — the version metamorph
+# builds, not whatever the distribution ships.
+#
+# The tool writes the on-disk format, so its version is part of the artefact
+# contract. mk3.1 runs a current Linux kernel and mounts anything; mk3.0 is a
+# Unikraft unikernel whose EROFS driver is frozen, and an image it cannot mount
+# kills the VM 70 microseconds after Firecracker reports "Successfully started
+# microvm" — no guest logs, just an instant vcpu Shutdown. hub/cua-xfce built
+# with 1.9.3 did exactly that on mk3.0 while running fine on mk3.1.
+#
+# Not the distribution package either way: 3.21 ships 1.8.2, whose --incremental
+# produces "no enough room for the root inode" and an image fsck.erofs calls
+# corrupted, which is what sent this to edge in the first place. 1.8.10 is
+# between the two and is what metamorph validates against.
+#
+# --enable-multithreading is not optional: it is what makes --workers=N do
+# anything, and mkfs is a large share of build time.
+FROM alpine:3.21 AS erofs-builder
+RUN apk add --no-cache build-base autoconf automake libtool pkgconf \
+      lz4-dev util-linux-dev linux-headers curl tar \
+  && curl -fsSL https://github.com/erofs/erofs-utils/archive/refs/tags/v1.8.10.tar.gz | tar xz \
+  && cd erofs-utils-1.8.10 \
+  && autoreconf -i \
+  && ./configure --enable-lz4 --enable-multithreading --without-selinux \
+  && grep -q 'HAVE_PTHREAD' config.h \
+  && make -j"$(nproc)" \
+  && make install DESTDIR=/erofs-out
+
 FROM alpine:3.21
 
 # buildctl is a SEPARATE apk package from buildkit (which only ships buildkitd).
@@ -48,18 +76,17 @@ RUN apk add --no-cache \
   zstd \
   && rm -rf /var/cache/apk/*
 
-# erofs-utils from edge (1.9.x), NOT 3.21's 1.8.2. Measured on a real build:
-# 1.8.2's --incremental produces "no enough room for the root inode" and an
-# image fsck.erofs reports as corrupted. 1.9.3 builds clean.
-RUN apk add --no-cache -u \
-  --repository=https://dl-cdn.alpinelinux.org/alpine/edge/main \
-  --repository=https://dl-cdn.alpinelinux.org/alpine/edge/community \
-  erofs-utils \
-  && rm -rf /var/cache/apk/* \
-  && mkfs.erofs --version
+# Runtime libraries for the erofs-utils built above: it links against lz4 and
+# libuuid, which the build stage had and this image otherwise would not.
+RUN apk add --no-cache lz4-libs libuuid && rm -rf /var/cache/apk/*
+
 
 COPY --from=sandbox-api /sandbox-api /usr/local/bin/sandbox-api
 COPY --from=blbuild-build /blbuild /usr/local/bin/blbuild
+# mkfs/fsck/dump from the pinned build above, so the on-disk format the compute
+# plane has to mount never depends on what the distribution happens to ship.
+COPY --from=erofs-builder /erofs-out/usr/local/bin/ /usr/local/bin/
+COPY --from=erofs-builder /erofs-out/usr/local/lib/ /usr/local/lib/
 
 # The artefacts a produced image needs, same set the current builder embeds:
 #  - kernel.bin ships as kraft/bin/kernel
