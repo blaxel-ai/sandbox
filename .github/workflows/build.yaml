@@ -18,6 +18,7 @@ on:
           - app-runner
           - astro
           - base-image
+          - builder
           - claude-code
           - codex
           - chromium
@@ -37,6 +38,14 @@ on:
           - tailscale
           - vite
           - xfce-vnc
+      architectures:
+        description: "Guest architectures to build"
+        type: choice
+        default: "amd64"
+        options:
+          - amd64
+          - arm64
+          - amd64,arm64
 
 env:
   REGISTRY: ghcr.io
@@ -139,12 +148,13 @@ jobs:
 
   sandbox-api-build-arm64:
     needs: check-changes
-    runs-on: ubuntu-latest
+    # Native arm64 runner: the binary is cgo/static-pie linked, so it cannot be
+    # cross-compiled from the amd64 image.
+    runs-on: ubuntu-24.04-arm
     permissions:
       contents: read
       packages: write
     if: needs.check-changes.outputs.sandbox-api-changed == 'true'
-    continue-on-error: true
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -206,7 +216,7 @@ jobs:
           retention-days: 1
 
   sandbox-api:
-    needs: [check-changes, sandbox-api-build]
+    needs: [check-changes, sandbox-api-build, sandbox-api-build-arm64]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -251,11 +261,31 @@ jobs:
   generate-matrix:
     needs: [check-changes, sandbox-api]
     runs-on: ubuntu-latest
+    env:
+      # hub/builder needs two artefacts from the internal metamorph repo (the mk3
+      # kernel and the unikraft wrapper), so it cannot be built without a token.
+      # Secrets are not exposed to pull requests from forks, so the image is
+      # dropped from the matrix there rather than failing the whole run.
+      HAS_ARTEFACT_TOKEN: ${{ secrets.METAMORPH_ARTEFACTS_TOKEN != '' && 'true' || 'false' }}
     # Skip automatic main pushes, but allow manual dispatch for a selected sandbox.
     if: always() && (needs.check-changes.result == 'success') && (github.ref_name != 'main' || (github.event_name == 'workflow_dispatch' && inputs.sandbox != ''))
     outputs:
       sandboxes: ${{ steps.retrieve-sandbox.outputs.sandboxes }}
+      architectures: ${{ steps.retrieve-architectures.outputs.architectures }}
+      exclusions: ${{ steps.retrieve-architectures.outputs.exclusions }}
     steps:
+      - name: Retrieve architectures
+        id: retrieve-architectures
+        shell: bash
+        run: |
+          # amd64 is always built; arm64 is opt-in through the dispatch input.
+          ARCHS="${{ inputs.architectures }}"
+          ARCHS="${ARCHS:-amd64}"
+          echo "architectures=$(jq -cR 'split(",")' <<< "$ARCHS")" >> $GITHUB_OUTPUT
+          # Images that cannot be built for arm64 yet: the vibekit CLI base
+          # images are published amd64-only, and jupyter-server pulls python
+          # packages that have no aarch64 wheels.
+          echo "exclusions=$(jq -cn '["jupyter-server","vibekit-claude","vibekit-codex","vibekit-gemini","vibekit-grok","vibekit-opencode"] | map({sandbox: ., arch: "arm64"})')" >> $GITHUB_OUTPUT
       - name: Checkout code
         uses: actions/checkout@v4
         with:
@@ -267,6 +297,15 @@ jobs:
 
           # Get list of all Sandbox directories (scripts/files in hub are ignored)
           all_sandboxes=$(tree -J -d -L 1 hub | jq -c '.[0].contents | map(select(.type == "directory") | .name)')
+
+          # builder embeds artefacts pulled from the internal metamorph repo. No
+          # token (fork PR) means no artefacts, so drop it instead of failing.
+          if [[ "$HAS_ARTEFACT_TOKEN" != "true" ]]; then
+            if echo "$all_sandboxes" | jq -e 'index("builder")' > /dev/null; then
+              echo "::notice::METAMORPH_ARTEFACTS_TOKEN is unavailable, skipping the builder image"
+            fi
+            all_sandboxes=$(echo "$all_sandboxes" | jq -c 'map(select(. != "builder"))')
+          fi
 
 
           if [[ "${{ inputs.sandbox }}" == "all" ]]; then
@@ -301,6 +340,19 @@ jobs:
                 changed_sandboxes+=("$sandbox")
               fi
             done
+
+            # The builder image embeds the blbuild binary, so a change there has
+            # to rebuild it even though nothing under hub/builder moved. Without
+            # this the image keeps shipping the previous blbuild and the fix
+            # looks deployed while the sandbox still runs the old one.
+            if git diff --name-only HEAD^ HEAD | grep -q "^blbuild/"; then
+              if echo "$all_sandboxes" | jq -e 'index("builder")' > /dev/null; then
+                if [[ ! " ${changed_sandboxes[*]} " =~ " builder " ]]; then
+                  echo "Changes detected in blbuild, including the builder image"
+                  changed_sandboxes+=("builder")
+                fi
+              fi
+            fi
           fi
 
           # Convert array to JSON array
@@ -321,16 +373,22 @@ jobs:
           fi
 
   build-ghcr-hub:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
     needs:
+      - check-changes
       - generate-matrix
       - sandbox-api
-    # Run after sandbox-api completes (if it runs) or is skipped. Skip automatic main pushes, but allow manual dispatch for a selected sandbox.
-    if: always() && (github.ref_name != 'main' || (github.event_name == 'workflow_dispatch' && inputs.sandbox != '')) && needs.generate-matrix.outputs.sandboxes != '[]' && (needs.sandbox-api.result == 'success' || needs.sandbox-api.result == 'skipped')
+    # Run after sandbox-api succeeds, or when it was never meant to run (no
+    # sandbox-api change). A skipped sandbox-api caused by a failed arch build
+    # must not let the hub images ship against a stale sandbox-api.
+    # Skip automatic main pushes, but allow manual dispatch for a selected sandbox.
+    if: always() && (github.ref_name != 'main' || (github.event_name == 'workflow_dispatch' && inputs.sandbox != '')) && needs.generate-matrix.outputs.sandboxes != '[]' && (needs.sandbox-api.result == 'success' || (needs.sandbox-api.result == 'skipped' && needs.check-changes.outputs.sandbox-api-changed != 'true'))
     strategy:
       fail-fast: false
       matrix:
         sandbox: ${{ fromJson(needs.generate-matrix.outputs.sandboxes )}}
+        arch: ${{ fromJson(needs.generate-matrix.outputs.architectures )}}
+        exclude: ${{ fromJson(needs.generate-matrix.outputs.exclusions )}}
     permissions:
       contents: read
       packages: write
@@ -353,6 +411,10 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-${{ matrix.sandbox }}
+          # arm64 images are published under an -arm64 suffixed tag so both
+          # architectures of the same commit coexist in the registry.
+          flavor: |
+            suffix=${{ matrix.arch == 'arm64' && '-arm64' || '' }},onlatest=true
           tags: |
             type=ref,event=branch
             type=sha,prefix={{branch}}-,enable=${{ !startsWith(github.ref, 'refs/tags/') }}
@@ -360,19 +422,43 @@ jobs:
             type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/') }}
             type=semver,pattern={{version}}
 
+      # Only hub/builder needs these: the mk3 kernel and the unikraft wrapper are
+      # not committed here (this repository is public and the kernel is a
+      # third-party binary), so they are fetched from the internal metamorph
+      # repo, which is where they already live.
+      - name: Checkout builder artefacts
+        if: matrix.sandbox == 'builder'
+        uses: actions/checkout@v4
+        with:
+          repository: blaxel-ai/metamorph
+          # Fine-grained token, Contents:Read on blaxel-ai/metamorph only.
+          token: ${{ secrets.METAMORPH_ARTEFACTS_TOKEN }}
+          path: .metamorph
+          sparse-checkout: |
+            templates/mk3-kernels
+            templates/unikraft_wrapper
+            templates/dockerfile.node.tmpl
+            templates/dockerfile.python.tmpl
+            templates/dockerfile.golang.tmpl
+          sparse-checkout-cone-mode: false
+
+      - name: Stage builder artefacts
+        if: matrix.sandbox == 'builder'
+        run: METAMORPH=.metamorph scripts/fetch-builder-artefacts.sh
+
       - name: Build and push sandbox image
         uses: docker/build-push-action@v5
         with:
           context: .
           file: ./hub/${{ matrix.sandbox }}/Dockerfile
-          platforms: linux/amd64
+          platforms: linux/${{ matrix.arch }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             SANDBOX_VERSION=${{ startsWith(github.ref, 'refs/tags/') && 'latest' || github.ref_name == 'develop' && 'develop' || 'latest' }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=${{ matrix.sandbox }}-${{ matrix.arch }}
+          cache-to: type=gha,scope=${{ matrix.sandbox }}-${{ matrix.arch }},mode=max
 
   build-s3-hub:
     runs-on: codebuild-sandbox-${{ github.run_id }}-${{ github.run_attempt }}
@@ -392,6 +478,8 @@ jobs:
       fail-fast: false
       matrix:
         sandbox: ${{ fromJson(needs.generate-matrix.outputs.sandboxes )}}
+        arch: ${{ fromJson(needs.generate-matrix.outputs.architectures )}}
+        exclude: ${{ fromJson(needs.generate-matrix.outputs.exclusions )}}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -419,6 +507,7 @@ jobs:
         env:
           SANDBOX_NAME: ${{ matrix.sandbox }}
           IMAGE_TAG: ${{ steps.image-tag.outputs.tag }}
+          ARCH: ${{ matrix.arch }}
           BL_TYPE: sandbox
           BL_ENV: ${{ env.BL_ENV }}
           SRC_REGISTRY: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-${{ matrix.sandbox }}
@@ -435,6 +524,9 @@ jobs:
           chmod +x ./scripts/mk3-build.sh
           ./scripts/mk3-build.sh
       - name: Publish sandbox
+        # The hub store entry points at the amd64 image; arm64 artifacts are
+        # only registered as images (arch suffixed tag).
+        if: matrix.arch == 'amd64'
         env:
           SANDBOX_NAME: ${{ matrix.sandbox }}
           TAG: latest # We want to display latest in UI, controlplane will automaticly use the latest tag

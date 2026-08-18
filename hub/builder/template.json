@@ -1,0 +1,13 @@
+{
+  "name": "builder",
+  "displayName": "Image Builder",
+  "categories": ["devops"],
+  "description": "Internal builder: turns a source context into an EROFS image.",
+  "longDescription": "Internal Blaxel image builder. Runs buildkit inside a sandbox, streams the resulting layers into an EROFS rootfs and publishes the artefacts through presigned URLs, so the build never holds cloud credentials. Not intended for direct use.",
+  "url": "https://github.com/blaxel-ai/sandbox",
+  "icon": "https://github.com/firecracker-microvm",
+  "memory": 8192,
+  "hidden": true,
+  "enterprise": false,
+  "coming_soon": false
+}
