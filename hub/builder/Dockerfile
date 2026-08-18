@@ -1,7 +1,30 @@
 # Build context is the repository root, matching every other hub image and what
 # .github/workflows/build.yaml passes (context: . , file: ./hub/<name>/Dockerfile).
 ARG SANDBOX_VERSION=latest
+# latest tracks metamorph releases, develop tracks their branch. Releases, so
+# the builder ships what production runs.
+ARG UNIKRAFT_WRAPPER_IMAGE=ghcr.io/blaxel-ai/metamorph/unikraft-wrapper:latest
 FROM ghcr.io/blaxel-ai/sandbox:${SANDBOX_VERSION} AS sandbox-api
+
+# The wrapper comes from the image metamorph itself consumes, not from the
+# binary committed at metamorph's templates/unikraft_wrapper. That file is dead:
+# metamorph's own Dockerfile overwrites it with this image
+# (COPY --from=unikraft-wrapper), the committed copy dates from January while
+# its .c moved in August, and copying it shipped a six-month-old wrapper.
+#
+# It cost a day to find, because the failure is invisible on mk3.1: the wrapper
+# is in cmdline.txt on both generations, but only mk3.0 delegates the user
+# switch to it (mk3.1's init does that). hub/cua-xfce — the one hub image that
+# runs as a non-root user — built fine, ran in us-was-1 (mk3.1) and answered
+# nothing in eu-dub-1 (mk3.0): the VM booted, got an IP, and the gateway
+# returned 404 after its 10s timeout.
+#
+# Pulled rather than compiled from the .c on purpose: this way the binary is
+# identical to metamorph's bit for bit, with no toolchain of ours to drift.
+#
+# The package grants blaxel-ai/sandbox read access under its own Actions access
+# settings, so the job's GITHUB_TOKEN is enough and no extra secret is involved.
+FROM --platform=linux/amd64 ${UNIKRAFT_WRAPPER_IMAGE} AS unikraft-wrapper
 
 FROM golang:1.25-alpine AS blbuild-build
 WORKDIR /src
@@ -41,13 +64,14 @@ COPY --from=blbuild-build /blbuild /usr/local/bin/blbuild
 # The artefacts a produced image needs, same set the current builder embeds:
 #  - kernel.bin ships as kraft/bin/kernel
 #  - metamorph-wrapper is injected at /bin/metamorph-wrapper, which cmdline.txt
-#    execs (mk3.0 needs it, inert on mk3.1)
-# Populated by scripts/fetch-builder-artefacts.sh. blfs is NOT here: the push
+#    execs (mk3.0 delegates the user switch to it; mk3.1's init does that itself)
+# kernel.bin is populated by scripts/fetch-builder-artefacts.sh; the wrapper is
+# pulled from metamorph's published image above. blfs is NOT here: the push
 # that builds this image injects it at /usr/local/bin/blfs, and blbuild
 # re-injects that same binary into the images it produces, which keeps the FUSE
 # client in lockstep with the platform.
 COPY hub/builder/embedded/kernel.bin /opt/blaxel/kernel.bin
-COPY hub/builder/embedded/metamorph-wrapper /opt/blaxel/metamorph-wrapper
+COPY --from=unikraft-wrapper /unikraft_wrapper /opt/blaxel/metamorph-wrapper
 
 # Dockerfile templates for projects that ship none, taken from metamorph so a
 # project builds the same whichever builder handles it.
