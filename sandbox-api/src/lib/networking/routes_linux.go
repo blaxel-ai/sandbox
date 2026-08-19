@@ -84,24 +84,16 @@ func (w *WireGuardClient) monitorRoutes(wgLink netlink.Link) {
 				continue
 			}
 
-			// Check if it's on our primary interface
-			if w.defaultIface == "" {
-				continue
-			}
-
-			primaryLink, err := netlink.LinkByName(w.defaultIface)
-			if err != nil {
-				continue
-			}
-
-			if route.LinkIndex != primaryLink.Attrs().Index {
+			// Anything off the tunnel competes with it, whichever interface it
+			// showed up on.
+			if route.LinkIndex == wgLink.Attrs().Index {
 				continue
 			}
 
 			// This is a conflicting default route - remove it immediately!
 			logrus.WithFields(logrus.Fields{
-				"gw":        route.Gw,
-				"interface": w.defaultIface,
+				"gw":         route.Gw,
+				"link_index": route.LinkIndex,
 			}).Warn("Detected new conflicting default route being added, removing immediately")
 
 			if err := netlink.RouteDel(&route); err != nil {
