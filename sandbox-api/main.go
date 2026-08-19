@@ -191,15 +191,7 @@ func main() {
 	serverAddr := fmt.Sprintf(":%d", portValue)
 	logrus.Infof("Starting Sandbox API server on %s", serverAddr)
 
-	server := &http.Server{
-		Addr:              serverAddr,
-		Handler:           router,
-		ReadTimeout:       10 * time.Minute, // Allow up to 10 minutes for reading large uploads
-		WriteTimeout:      10 * time.Minute, // Allow up to 10 minutes for writing large downloads
-		ReadHeaderTimeout: 30 * time.Second, // Headers should be quick
-		IdleTimeout:       2 * time.Minute,  // Keep-alive connections timeout
-		MaxHeaderBytes:    1 << 20,          // 1 MB max header size
-	}
+	server := newHTTPServer(serverAddr, router)
 
 	// Set up signal handling for graceful shutdown
 	sigCh := make(chan os.Signal, 1)
@@ -230,6 +222,32 @@ func main() {
 	}
 
 	logrus.Info("Server stopped")
+}
+
+// newHTTPServer builds the API server.
+//
+// ReadTimeout and WriteTimeout are deliberately left at 0 (no deadline). They
+// are NOT idle timeouts: net/http arms them once, when the request starts, and
+// fires them regardless of traffic on the connection. Any non-zero value is
+// therefore a hard cap on the lifetime of every long-lived endpoint we serve:
+//   - GET  /process/:identifier/logs/stream
+//   - POST /process with Accept: text/event-stream
+//   - GET  /watch/filesystem/*path
+//   - GET  /terminal/ws (the deadline outlives the WebSocket hijack)
+//
+// A 10 minute WriteTimeout used to be set here for large file transfers; it cut
+// every one of those streams at exactly 600s while the underlying process kept
+// running, and the 30s "[keepalive]" lines could not prevent it. Slow-client
+// protection is kept where it does not conflict with streaming: ReadHeaderTimeout
+// bounds header slowloris, IdleTimeout bounds idle keep-alive connections.
+func newHTTPServer(addr string, handler http.Handler) *http.Server {
+	return &http.Server{
+		Addr:              addr,
+		Handler:           handler,
+		ReadHeaderTimeout: 30 * time.Second, // Headers should be quick
+		IdleTimeout:       2 * time.Minute,  // Keep-alive connections timeout
+		MaxHeaderBytes:    1 << 20,          // 1 MB max header size
+	}
 }
 
 // startBackgroundCommand runs the given command string in a goroutine using the
