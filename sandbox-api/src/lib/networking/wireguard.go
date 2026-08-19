@@ -397,6 +397,9 @@ func (w *WireGuardClient) setupRoutes(wgLink netlink.Link) error {
 		}
 		route := &netlink.Route{Dst: dst, LinkIndex: wgLink.Attrs().Index}
 		if err := netlink.RouteAdd(route); err != nil {
+			// Give the guest its connectivity back rather than leaving it with
+			// a family whose default route has been taken away.
+			w.removeRoutes()
 			return fmt.Errorf("failed to add route %s via WireGuard: %w", dst.String(), err)
 		}
 		w.tunnelDsts = append(w.tunnelDsts, dst)
