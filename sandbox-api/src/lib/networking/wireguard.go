@@ -604,9 +604,13 @@ func ipFamily(ip net.IP) int {
 }
 
 // routeFamily returns the address family a route belongs to, or AF_UNSPEC when
-// it carries no address to tell from (a family-agnostic default route).
+// nothing on the route tells it apart. The kernel's own family is preferred, so
+// an on-link default carrying neither destination nor gateway is still
+// attributed correctly.
 func routeFamily(route netlink.Route) int {
 	switch {
+	case route.Family == syscall.AF_INET || route.Family == syscall.AF_INET6:
+		return route.Family
 	case route.Dst != nil && route.Dst.IP != nil:
 		return ipFamily(route.Dst.IP)
 	case route.Gw != nil:

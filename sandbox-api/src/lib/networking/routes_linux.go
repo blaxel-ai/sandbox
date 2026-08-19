@@ -19,6 +19,29 @@ func (w *WireGuardClient) routesFamilyByDefault(family int) bool {
 	return false
 }
 
+// routesAnyFamilyByDefault reports whether the tunnel carries a default route
+// at all, whichever family.
+func (w *WireGuardClient) routesAnyFamilyByDefault() bool {
+	for _, dst := range w.tunnelDsts {
+		if isDefaultPrefix(dst) {
+			return true
+		}
+	}
+	return false
+}
+
+// conflictsWithTunnel reports whether a newly added default route competes with
+// a default the tunnel took over. A route whose family cannot be determined is
+// treated as conflicting whenever the tunnel owns any default, so an
+// unattributable default can never quietly divert traffic off the tunnel.
+func (w *WireGuardClient) conflictsWithTunnel(route netlink.Route) bool {
+	family := routeFamily(route)
+	if family == unix.AF_UNSPEC {
+		return w.routesAnyFamilyByDefault()
+	}
+	return w.routesFamilyByDefault(family)
+}
+
 // monitorRoutes subscribes to route changes and immediately removes conflicting default routes.
 // This handles snapshot resume scenarios where the container runtime may re-add routes.
 func (w *WireGuardClient) monitorRoutes(wgLink netlink.Link) {
@@ -57,7 +80,7 @@ func (w *WireGuardClient) monitorRoutes(wgLink netlink.Link) {
 			// Only defaults of a family the tunnel took over are conflicting:
 			// on an IPv6-only sandbox tunnelling IPv4, the IPv6 default is what
 			// carries the tunnel's own packets and must be left alone.
-			if !w.routesFamilyByDefault(routeFamily(route)) {
+			if !w.conflictsWithTunnel(route) {
 				continue
 			}
 

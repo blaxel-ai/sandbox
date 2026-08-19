@@ -118,6 +118,35 @@ func TestRouteFamily(t *testing.T) {
 	if got := routeFamily(netlink.Route{}); got != syscall.AF_UNSPEC {
 		t.Errorf("expected AF_UNSPEC for an address-less route, got %d", got)
 	}
+	// An on-link default carries neither destination nor gateway; the kernel's
+	// family is the only thing telling it apart.
+	if got := routeFamily(netlink.Route{Family: syscall.AF_INET6}); got != syscall.AF_INET6 {
+		t.Errorf("expected AF_INET6 from the route family, got %d", got)
+	}
+	if got := routeFamily(netlink.Route{Family: syscall.AF_INET}); got != syscall.AF_INET {
+		t.Errorf("expected AF_INET from the route family, got %d", got)
+	}
+}
+
+// An unattributable default must never be left in place while the tunnel owns a
+// default, or it would silently divert traffic off the tunnel.
+func TestConflictsWithTunnel(t *testing.T) {
+	client := &WireGuardClient{tunnelDsts: []*net.IPNet{mustCIDR(t, "0.0.0.0/0")}}
+
+	if !client.conflictsWithTunnel(netlink.Route{Family: syscall.AF_INET}) {
+		t.Error("an on-link IPv4 default conflicts with the tunnelled IPv4 default")
+	}
+	if client.conflictsWithTunnel(netlink.Route{Family: syscall.AF_INET6}) {
+		t.Error("an IPv6 default does not conflict when only IPv4 is tunnelled")
+	}
+	if !client.conflictsWithTunnel(netlink.Route{}) {
+		t.Error("a default of unknown family must be treated as conflicting")
+	}
+
+	noDefault := &WireGuardClient{tunnelDsts: []*net.IPNet{mustCIDR(t, "10.0.0.0/8")}}
+	if noDefault.conflictsWithTunnel(netlink.Route{}) {
+		t.Error("nothing conflicts when the tunnel carries no default route")
+	}
 }
 
 // A v6-only sandbox tunnelling IPv4 must keep its IPv6 default route: it is what
