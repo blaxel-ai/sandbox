@@ -8,6 +8,17 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+// routesFamilyByDefault reports whether the tunnel carries the default route of
+// the given address family.
+func (w *WireGuardClient) routesFamilyByDefault(family int) bool {
+	for _, dst := range w.tunnelDsts {
+		if isDefaultPrefix(dst) && ipFamily(dst.IP) == family {
+			return true
+		}
+	}
+	return false
+}
+
 // monitorRoutes subscribes to route changes and immediately removes conflicting default routes.
 // This handles snapshot resume scenarios where the container runtime may re-add routes.
 func (w *WireGuardClient) monitorRoutes(wgLink netlink.Link) {
@@ -40,6 +51,13 @@ func (w *WireGuardClient) monitorRoutes(wgLink netlink.Link) {
 
 			// Check if this is a default route on the physical interface
 			if !isDefaultRoute(route) {
+				continue
+			}
+
+			// Only defaults of a family the tunnel took over are conflicting:
+			// on an IPv6-only sandbox tunnelling IPv4, the IPv6 default is what
+			// carries the tunnel's own packets and must be left alone.
+			if !w.routesFamilyByDefault(routeFamily(route)) {
 				continue
 			}
 
