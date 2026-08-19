@@ -1,0 +1,33 @@
+type = "sandbox"
+
+[runtime]
+generation = "mk3"
+memory = 4096
+
+[[runtime.ports]]
+name = "sandbox-api"
+target = 8080
+protocol = "http"
+
+[[runtime.ports]]
+name = "novnc"
+target = 6901
+protocol = "tls"
+
+[[runtime.ports]]
+name = "computer-server"
+target = 8000
+protocol = "http"
+
+# 32GB of build memory, not the platform default.
+#
+# The build runs in memory unless a volume is asked for, and the tmpfs is 90% of
+# it, so the default 16GB leaves 14.1GB of scratch. Measured peak for this image
+# is 14 577MB — over by 1%. It is the heaviest image in the hub by a wide margin:
+# a full XFCE desktop on a 27-layer base, and buildkit materialises a parent
+# stage per layer.
+#
+# Declared here rather than passed per build so the requirement travels with the
+# image, which is the only place that knows it.
+[build]
+memoryMb = 32768
