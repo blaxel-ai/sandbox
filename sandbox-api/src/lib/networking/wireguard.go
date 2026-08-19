@@ -4,6 +4,7 @@ package networking
 
 import (
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"net"
 	"strings"
@@ -380,10 +381,18 @@ func (w *WireGuardClient) setupRoutes(wgLink netlink.Link) error {
 
 	// Pin the peer endpoint to the physical interface first, so the tunnel's
 	// own UDP keeps flowing once its family's default route moves to wg0.
-	w.pinPeerEndpoint(peerIP)
+	peerPinned := w.pinPeerEndpoint(peerIP)
 
 	for _, dst := range dsts {
 		if isDefaultPrefix(dst) {
+			// Without a pinned peer route, the peer is only reachable through
+			// its family's default route: moving that onto the tunnel would
+			// black-hole the tunnel itself, so leave the family alone.
+			if ipFamily(dst.IP) == ipFamily(peerIP) && !peerPinned {
+				logrus.WithField("prefix", dst.String()).
+					Warn("Peer endpoint is not pinned to the physical interface, leaving this default route alone")
+				continue
+			}
 			w.detachDefaultRoutes(ipFamily(dst.IP), wgLink.Attrs().Index)
 		}
 		route := &netlink.Route{Dst: dst, LinkIndex: wgLink.Attrs().Index}
@@ -399,39 +408,43 @@ func (w *WireGuardClient) setupRoutes(wgLink netlink.Link) error {
 }
 
 // pinPeerEndpoint installs a host route to the peer endpoint via the default
-// gateway of the endpoint's own address family.
-func (w *WireGuardClient) pinPeerEndpoint(peerIP net.IP) {
+// gateway of the endpoint's own address family. It reports whether the peer is
+// pinned to the physical interface afterwards.
+func (w *WireGuardClient) pinPeerEndpoint(peerIP net.IP) bool {
 	gw, iface, err := getDefaultGateway(ipFamily(peerIP))
 	if err != nil {
 		logrus.WithError(err).WithField("peer_ip", peerIP.String()).
 			Warn("No default gateway for the peer endpoint family, not pinning the peer route")
-		return
+		return false
 	}
 
 	primaryLink, err := netlink.LinkByName(iface)
 	if err != nil {
 		logrus.WithError(err).WithField("interface", iface).Warn("Failed to find primary interface")
-		return
+		return false
 	}
-
-	// Stored for cleanup and for the route monitor.
-	w.defaultGW = gw
-	w.defaultIface = iface
 
 	peerRoute := &netlink.Route{
 		Dst:       &net.IPNet{IP: peerIP, Mask: peerHostMask(peerIP)},
 		Gw:        gw,
 		LinkIndex: primaryLink.Attrs().Index,
 	}
-	if err := netlink.RouteAdd(peerRoute); err != nil {
-		logrus.WithError(err).Warn("Failed to add route to peer endpoint (may already exist)")
-		return
+	if err := netlink.RouteAdd(peerRoute); err != nil && !errors.Is(err, syscall.EEXIST) {
+		logrus.WithError(err).Warn("Failed to add route to peer endpoint")
+		return false
 	}
+
+	// Stored for cleanup and for the route monitor, only once the peer really
+	// is reachable off-tunnel.
+	w.defaultGW = gw
+	w.defaultIface = iface
+
 	logrus.WithFields(logrus.Fields{
 		"peer_ip": peerIP.String(),
 		"gateway": gw.String(),
 		"device":  iface,
-	}).Info("Added route to peer endpoint")
+	}).Info("Pinned peer endpoint to the physical interface")
+	return true
 }
 
 // detachDefaultRoutes removes every default route of the given family that does
