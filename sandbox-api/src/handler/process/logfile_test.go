@@ -34,7 +34,7 @@ func TestCapLogFileReleasesTheHeadAndKeepsTheTail(t *testing.T) {
 	}
 	before := diskUsage(t, path)
 
-	capLogFile(path)
+	capLogFile(path, 1)
 
 	if after := diskUsage(t, path); after >= before {
 		t.Errorf("disk usage %d bytes after capping, want less than %d", after, before)
@@ -76,7 +76,7 @@ func TestCapLogFileLeavesASmallFileAlone(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	capLogFile(path)
+	capLogFile(path, 1)
 
 	if got, ok := readLogTail(path, 64*1024); !ok || got != "hello\n" {
 		t.Errorf("readLogTail = %q (ok=%v), want %q verbatim", got, ok, "hello\n")
@@ -93,7 +93,7 @@ func TestCapLogFileDisabled(t *testing.T) {
 	}
 	before := diskUsage(t, path)
 
-	capLogFile(path)
+	capLogFile(path, 1)
 
 	if after := diskUsage(t, path); after != before {
 		t.Errorf("disk usage changed from %d to %d with the cap disabled", before, after)
@@ -127,7 +127,7 @@ func TestOpenLogTailStartsPastAReleasedHead(t *testing.T) {
 	if err := os.WriteFile(path, []byte(strings.Repeat("stdout:x\n", 400*1024)+"stdout:THE TAIL\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	capLogFile(path)
+	capLogFile(path, 1)
 
 	file, truncated, err := openLogTail(path, maxLogFile())
 	if err != nil {
@@ -226,6 +226,86 @@ func TestReadLogsSinceNothingNew(t *testing.T) {
 	}
 	if want := len("all of it\n"); end != want {
 		t.Errorf("end offset = %d, want %d", end, want)
+	}
+}
+
+// The log files live on the tmpfs root, so the budget is memory the workload
+// cannot have back: a per-file cap alone is paid three times per process, times
+// however many processes the sandbox runs.
+func TestPerFileBudgetIsSharedBetweenProcesses(t *testing.T) {
+	t.Setenv("SANDBOX_MAX_LOG_BYTES_TOTAL", fmt.Sprint(90*1024*1024))
+
+	if got, want := perFileBudget(1), int64(30*1024*1024); got != want {
+		t.Errorf("one process gets %d bytes per file, want %d", got, want)
+	}
+	if got, want := perFileBudget(10), int64(3*1024*1024); got != want {
+		t.Errorf("ten processes get %d bytes per file, want %d", got, want)
+	}
+	// The share never grows past what one file may hold on its own.
+	t.Setenv("SANDBOX_MAX_LOG_FILE_BYTES", fmt.Sprint(1024*1024))
+	if got, want := perFileBudget(1), int64(1024*1024); got != want {
+		t.Errorf("per-file budget = %d, want the %d ceiling", got, want)
+	}
+}
+
+func TestPerFileBudgetFloorAndDisabling(t *testing.T) {
+	// A thousand processes would divide the budget into nothing; a process is
+	// left enough output to be worth reading instead.
+	t.Setenv("SANDBOX_MAX_LOG_BYTES_TOTAL", fmt.Sprint(16*1024*1024))
+	if got, want := perFileBudget(1000), int64(minLogFileBytes); got != want {
+		t.Errorf("per-file budget = %d, want the %d floor", got, want)
+	}
+
+	t.Setenv("SANDBOX_MAX_LOG_FILE_BYTES", "0")
+	if got := perFileBudget(1); got != 0 {
+		t.Errorf("per-file budget = %d, want capping disabled", got)
+	}
+}
+
+func TestLogBudgetIsAShareOfTheGuestMemory(t *testing.T) {
+	total := memTotalBytes()
+	if total <= 0 {
+		t.Skip("cannot read MemTotal on this host")
+	}
+
+	if got, want := logBudget(), total*logBudgetPercent/100; got != want {
+		t.Errorf("log budget = %d, want %d (%d%% of MemTotal)", got, want, logBudgetPercent)
+	}
+
+	t.Setenv("SANDBOX_MAX_LOG_PERCENT", "25")
+	if got, want := logBudget(), total*25/100; got != want {
+		t.Errorf("log budget = %d, want %d (25%% of MemTotal)", got, want)
+	}
+
+	t.Setenv("SANDBOX_MAX_LOG_BYTES_TOTAL", fmt.Sprint(7*1024*1024))
+	if got, want := logBudget(), int64(7*1024*1024); got != want {
+		t.Errorf("log budget = %d, want the %d override", got, want)
+	}
+}
+
+func TestCapLogFilesShrinksFilesNobodyIsTailing(t *testing.T) {
+	t.Setenv("SANDBOX_MAX_LOG_BYTES_TOTAL", fmt.Sprint(3*minLogFileBytes))
+	pm := NewProcessManager()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "exited.stdout.log")
+	if err := os.WriteFile(path, []byte(strings.Repeat("w", 4*1024*1024)+"THE TAIL\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	before := diskUsage(t, path)
+
+	pm.mu.Lock()
+	pm.processes["exited"] = &ProcessInfo{PID: "exited", StdoutFile: path}
+	pm.mu.Unlock()
+
+	pm.CapLogFiles()
+
+	if after := diskUsage(t, path); after >= before {
+		t.Errorf("disk usage %d bytes, want less than %d: an exited process' output is still costing the guest memory", after, before)
+	}
+	tail, ok := readLogTail(path, maxLogFile())
+	if !ok || !strings.HasSuffix(tail, "THE TAIL\n") {
+		t.Error("the newest output was not kept")
 	}
 }
 

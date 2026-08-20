@@ -2,6 +2,7 @@ package process
 
 import (
 	"bufio"
+	"bytes"
 	"fmt"
 	"io"
 	"math/rand"
@@ -199,8 +200,21 @@ var (
 func GetProcessManager() *ProcessManager {
 	processManagerOnce.Do(func() {
 		processManager = NewProcessManager()
+		go processManager.sweepLogFiles()
 	})
 	return processManager
+}
+
+// logCapInterval is how often the log files of processes nobody is tailing are
+// brought back inside the shared budget.
+const logCapInterval = 5 * time.Second
+
+func (pm *ProcessManager) sweepLogFiles() {
+	ticker := time.NewTicker(logCapInterval)
+	defer ticker.Stop()
+	for range ticker.C {
+		pm.CapLogFiles()
+	}
 }
 
 func (pm *ProcessManager) StartProcess(command string, workingDir string, env map[string]string, restartOnFailure bool, maxRestarts int, keepAlive bool, timeout int, callback func(process *ProcessInfo)) (string, error) {
@@ -553,9 +567,12 @@ func (pm *ProcessManager) tailLogFiles(proc *ProcessInfo) {
 	capCheck := time.NewTicker(5 * time.Second)
 	defer capCheck.Stop()
 	capFiles := func() {
-		capLogFile(proc.StdoutFile)
-		capLogFile(proc.StderrFile)
-		capLogFile(proc.LogFile)
+		// Every process' log files share one budget, so what this one may keep
+		// depends on how many others are keeping output too.
+		processes := pm.countProcesses()
+		capLogFile(proc.StdoutFile, processes)
+		capLogFile(proc.StderrFile, processes)
+		capLogFile(proc.LogFile, processes)
 	}
 
 	for {
@@ -596,36 +613,42 @@ func (pm *ProcessManager) readAndBroadcast(file *os.File, buf []byte, proc *Proc
 			proc.stderr.Write(data)
 		}
 		proc.logs.Write(data)
-		// Write prefixed content to combined log file (preserves interleaved order)
-		if combinedFile != nil {
-			lines := strings.SplitAfter(string(data), "\n")
-			for _, line := range lines {
-				if line != "" {
-					combinedFile.WriteString(streamType + ":" + line)
-				}
-			}
-		}
-		// Export process logs to stdout for telemetry collection.
-		// Uses structured log attributes so the telemetry collector can
-		// distinguish process logs from access logs.
+
+		// Write the combined log file and the telemetry entries in a single pass
+		// over the bytes just read. This runs on every chunk of every process'
+		// output, so it stays on []byte: converting the chunk to a string and
+		// splitting it into a slice of lines used to copy it twice per chunk, and
+		// a workload that writes fast enough grew the heap doing so until the
+		// kernel OOM-killed the API for it.
+		var logEntry *logrus.Entry
 		if !disableProcessLogging {
-			logEntry := logrus.WithFields(logrus.Fields{
+			logEntry = logrus.WithFields(logrus.Fields{
 				"source":       "process",
 				"process-name": proc.Name,
 				"process-pid":  proc.PID,
 				"stream":       streamType,
 			})
-			// Log each line separately for clean telemetry ingestion
-			logLines := strings.SplitAfter(string(data), "\n")
-			for _, line := range logLines {
-				trimmed := strings.TrimSuffix(line, "\n")
-				if trimmed == "" {
-					continue
-				}
-				if streamType == "stderr" {
-					logEntry.Error(trimmed)
+		}
+		if combinedFile != nil || logEntry != nil {
+			prefix := []byte(streamType + ":")
+			for rest := data; len(rest) > 0; {
+				line := rest
+				if end := bytes.IndexByte(rest, '\n'); end >= 0 {
+					line, rest = rest[:end+1], rest[end+1:]
 				} else {
-					logEntry.Info(trimmed)
+					rest = nil
+				}
+
+				// Preserves the interleaved order of the two streams.
+				if combinedFile != nil {
+					_, _ = combinedFile.Write(prefix)
+					_, _ = combinedFile.Write(line)
+				}
+
+				// Structured attributes let the telemetry collector tell process
+				// logs from access logs.
+				if logEntry != nil {
+					logProcessLine(logEntry, streamType, line)
 				}
 			}
 		}
@@ -639,6 +662,28 @@ func (pm *ProcessManager) readAndBroadcast(file *os.File, buf []byte, proc *Proc
 		// Real error, but we'll keep trying
 	}
 	return n
+}
+
+// maxLoggedLineBytes caps what one line of a process' output contributes to
+// telemetry. Output with no newlines in it is one line however long it is, and
+// logging it whole would mean holding the whole of it - as a string, then again
+// JSON-encoded - in the API's heap.
+const maxLoggedLineBytes = 8 * 1024
+
+// logProcessLine exports one line of a process' output for telemetry.
+func logProcessLine(entry *logrus.Entry, streamType string, line []byte) {
+	line = bytes.TrimSuffix(line, []byte("\n"))
+	if len(line) == 0 {
+		return
+	}
+	if len(line) > maxLoggedLineBytes {
+		line = line[:maxLoggedLineBytes]
+	}
+	if streamType == "stderr" {
+		entry.Error(string(line))
+	} else {
+		entry.Info(string(line))
+	}
 }
 
 // restartProcess restarts a failed process with the same configuration
@@ -994,6 +1039,27 @@ func (pm *ProcessManager) ListProcesses() []*ProcessInfo {
 	return processes
 }
 
+// countProcesses is how many processes the manager knows about, running or not:
+// they all hold log files, so they all share the log budget.
+func (pm *ProcessManager) countProcesses() int {
+	pm.mu.RLock()
+	defer pm.mu.RUnlock()
+	return len(pm.processes)
+}
+
+// CapLogFiles keeps every process' log files inside the shared budget. A
+// process' own tailer stops capping when the process exits, but its output stays
+// on the tmpfs and still costs the guest memory, so something has to keep
+// looking at the ones nobody is tailing any more.
+func (pm *ProcessManager) CapLogFiles() {
+	processes := pm.ListProcesses()
+	for _, proc := range processes {
+		capLogFile(proc.StdoutFile, len(processes))
+		capLogFile(proc.StderrFile, len(processes))
+		capLogFile(proc.LogFile, len(processes))
+	}
+}
+
 // StopProcess attempts to gracefully stop a process
 func (pm *ProcessManager) StopProcess(identifier string) error {
 	process, exists := pm.GetProcessByIdentifier(identifier)
@@ -1141,9 +1207,10 @@ func (pm *ProcessManager) KillProcess(identifier string) error {
 }
 
 // GetProcessOutput returns the stdout and stderr output of a process, read from
-// its log files, up to the size those files are capped at.
+// its log files, up to what one response inlines. Use StreamProcessOutput for
+// the whole of a log file that is larger than that.
 func (pm *ProcessManager) GetProcessOutput(identifier string) (ProcessLogs, error) {
-	return pm.getProcessOutput(identifier, maxLogFile())
+	return pm.getProcessOutput(identifier, maxLogsResponse())
 }
 
 // GetProcessOutputTail is GetProcessOutput limited to the last max bytes of each

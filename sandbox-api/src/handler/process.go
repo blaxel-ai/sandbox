@@ -188,9 +188,11 @@ func (h *ProcessHandler) GetProcess(identifier string) (ProcessResponse, error) 
 		completedAt = processInfo.CompletedAt.Format("Mon, 02 Jan 2006 15:04:05 GMT")
 	}
 
-	// Get logs from file if available
+	// Get logs from file if available. Like a list, this inlines the output in a
+	// response describing the process, so it reads a tail: the whole output is
+	// what GET /process/{identifier}/logs is for.
 	var logs, stdout, stderr *string
-	if output, err := h.processManager.GetProcessOutput(identifier); err == nil {
+	if output, err := h.processManager.GetProcessOutputTail(identifier, process.MaxInlinedLogBytes); err == nil {
 		logs = &output.Logs
 		stdout = &output.Stdout
 		stderr = &output.Stderr

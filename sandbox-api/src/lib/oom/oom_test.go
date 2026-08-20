@@ -3,6 +3,7 @@ package oom
 import (
 	"os"
 	"os/exec"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"testing"
@@ -36,6 +37,40 @@ func TestPreferAsVictimRaisesTheScoreOfTheChildOnly(t *testing.T) {
 	}
 	if got := readScoreAdj(t, os.Getpid()); got != own {
 		t.Errorf("own oom_score_adj changed to %s, want %s", got, own)
+	}
+}
+
+func TestLimitHeapSetsAShareOfTheGuestMemory(t *testing.T) {
+	total := memTotalBytes()
+	if total <= 0 {
+		t.Skip("cannot read MemTotal on this host")
+	}
+	previous := debug.SetMemoryLimit(-1)
+	defer debug.SetMemoryLimit(previous)
+
+	t.Setenv("SANDBOX_MAX_HEAP_PERCENT", "50")
+	LimitHeap()
+
+	want := total / 2
+	if want < HeapFloorBytes {
+		want = HeapFloorBytes
+	}
+	if got := debug.SetMemoryLimit(-1); got != want {
+		t.Errorf("soft memory limit = %d, want %d", got, want)
+	}
+}
+
+// GOMEMLIMIT is the runtime's own knob, so an operator who set it keeps it.
+func TestLimitHeapLeavesAnExplicitLimitAlone(t *testing.T) {
+	previous := debug.SetMemoryLimit(-1)
+	defer debug.SetMemoryLimit(previous)
+
+	t.Setenv("GOMEMLIMIT", "123456789")
+	debug.SetMemoryLimit(700 * 1024 * 1024)
+	LimitHeap()
+
+	if got := debug.SetMemoryLimit(-1); got != 700*1024*1024 {
+		t.Errorf("soft memory limit = %d, want the %d it was already set to", got, 700*1024*1024)
 	}
 }
 

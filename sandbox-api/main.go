@@ -49,6 +49,7 @@ func main() {
 	_ = godotenv.Load()
 
 	oom.ProtectSelf()
+	oom.LimitHeap()
 
 	// Adopt the environment the guest received as a file rather than on its
 	// kernel command line, before anything reads the environment or spawns a
