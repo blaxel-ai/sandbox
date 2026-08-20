@@ -87,15 +87,15 @@ func (pm *ProcessManager) SaveState() error {
 		var logs, stdout, stderr string
 		var logsBytes, stdoutBytes, stderrBytes int
 		if proc.logs != nil {
-			logs = proc.logs.String()
+			logs = proc.logs.tail()
 			logsBytes = proc.logs.Len()
 		}
 		if proc.stdout != nil {
-			stdout = proc.stdout.String()
+			stdout = proc.stdout.tail()
 			stdoutBytes = proc.stdout.Len()
 		}
 		if proc.stderr != nil {
-			stderr = proc.stderr.String()
+			stderr = proc.stderr.tail()
 			stderrBytes = proc.stderr.Len()
 		}
 		proc.logLock.RUnlock()

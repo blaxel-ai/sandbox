@@ -59,13 +59,21 @@ func (b *logBuffer) WriteString(s string) (int, error) {
 	return b.Write([]byte(s))
 }
 
-// String returns the buffered tail. It is prefixed with a marker when the head
-// was dropped, so a client cannot mistake the tail for the whole output.
+// String returns the buffered tail for a client. It is prefixed with a marker
+// when the head was dropped, so the tail cannot be mistaken for the whole
+// output. Use tail() for anything that round-trips through the buffer.
 func (b *logBuffer) String() string {
 	if b.written > len(b.buf) {
-		return "[... truncated, see the process log file for the full output ...]\n" +
-			string(b.buf)
+		return truncationMarker + b.tail()
 	}
+	return b.tail()
+}
+
+const truncationMarker = "[... truncated, see the process log file for the full output ...]\n"
+
+// tail is the buffered bytes as they were written, with no marker: what a
+// saved state holds, so restoring it does not accumulate a marker per restart.
+func (b *logBuffer) tail() string {
 	return string(b.buf)
 }
 

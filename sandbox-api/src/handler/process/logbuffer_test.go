@@ -48,6 +48,25 @@ func TestLogBufferRestoreKeepsTheFileOffset(t *testing.T) {
 	}
 }
 
+func TestLogBufferSaveRestoreDoesNotStackMarkers(t *testing.T) {
+	b := &logBuffer{max: 8}
+	b.WriteString("0123456789")
+
+	// What SaveState persists, restored by LoadState, twice over.
+	for i := 0; i < 2; i++ {
+		restored := &logBuffer{max: 8}
+		restored.restore(b.tail(), b.Len())
+		b = restored
+	}
+
+	if got, want := strings.Count(b.String(), truncationMarker), 1; got != want {
+		t.Errorf("String() = %q, want exactly %d truncation marker(s)", b.String(), want)
+	}
+	if got, want := strings.TrimPrefix(b.String(), truncationMarker), "23456789"; got != want {
+		t.Errorf("restored tail = %q, want %q", got, want)
+	}
+}
+
 func TestStreamOffsetFallsBackToSavedOutput(t *testing.T) {
 	if got, want := streamOffset(0, "saved output"), len("saved output"); got != want {
 		t.Errorf("streamOffset without a count = %d, want %d", got, want)
