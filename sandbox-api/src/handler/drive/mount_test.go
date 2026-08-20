@@ -3,6 +3,7 @@ package drive
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -251,5 +252,77 @@ func TestFormatFilerServerAddress(t *testing.T) {
 				t.Fatalf("formatFilerServerAddress(%q) = %q, want %q", tt.address, got, tt.want)
 			}
 		})
+	}
+}
+
+// The platform states the filer host on mk3.1, where inferring it from
+// resolv.conf finds the DNS resolver instead of the filer.
+func TestGetFilerAddressPrefersThePlatformValue(t *testing.T) {
+	t.Setenv(DriveFilerEnv, "agent-drive.svc.blaxel.local")
+
+	got, err := getFilerAddress()
+	if err != nil {
+		t.Fatalf("getFilerAddress() error = %v", err)
+	}
+	if got != "agent-drive.svc.blaxel.local" {
+		t.Fatalf("getFilerAddress() = %q, want the platform-supplied host", got)
+	}
+}
+
+// Whitespace around the value must not become part of the host: it would be
+// appended to SeaweedFS's address string and produce an unresolvable target.
+func TestGetFilerAddressTrimsThePlatformValue(t *testing.T) {
+	t.Setenv(DriveFilerEnv, "  agent-drive.svc.blaxel.local\n")
+
+	got, err := getFilerAddress()
+	if err != nil {
+		t.Fatalf("getFilerAddress() error = %v", err)
+	}
+	if got != "agent-drive.svc.blaxel.local" {
+		t.Fatalf("getFilerAddress() = %q, want it trimmed", got)
+	}
+}
+
+// An empty value is treated as unset, so a platform that exports the variable
+// without a value does not break the mk3.0 path.
+func TestGetFilerAddressIgnoresAnEmptyPlatformValue(t *testing.T) {
+	t.Setenv(DriveFilerEnv, "   ")
+
+	// It must not return the blank value; whether the resolv.conf fallback then
+	// succeeds depends on the machine, which is why that branch is asserted
+	// separately in TestParseFilerAddress.
+	got, _ := getFilerAddress()
+	if got != "" && strings.TrimSpace(got) == "" {
+		t.Fatalf("getFilerAddress() = %q, want a whitespace-only value ignored", got)
+	}
+	if got == "   " {
+		t.Fatal("getFilerAddress() returned the blank environment value verbatim")
+	}
+}
+
+// mk3.0 must be untouched: with the variable unset, the address still comes from
+// resolv.conf. This is the property that makes the change safe to ship to both
+// generations from one binary.
+func TestGetFilerAddressFallsBackToResolvConfWhenUnset(t *testing.T) {
+	if _, ok := os.LookupEnv(DriveFilerEnv); ok {
+		t.Fatalf("%s must be unset for this test", DriveFilerEnv)
+	}
+	// parseFilerAddress is the resolv.conf path getFilerAddress delegates to.
+	got, err := parseFilerAddress([]byte("nameserver 10.0.0.2\n"))
+	if err != nil {
+		t.Fatalf("parseFilerAddress() error = %v", err)
+	}
+	if got != "10.0.0.2" {
+		t.Fatalf("parseFilerAddress() = %q, want the first nameserver", got)
+	}
+}
+
+// A NAME survives SeaweedFS's host:httpPort.grpcPort formatting. Its parser
+// splits the ports on the final '.', computed on the ports substring only, so the
+// dots inside a hostname are not mistaken for the port separator.
+func TestFormatFilerServerAddressAcceptsAName(t *testing.T) {
+	got := formatFilerServerAddress("agent-drive.svc.blaxel.local")
+	if got != "agent-drive.svc.blaxel.local:49200.49201" {
+		t.Fatalf("formatFilerServerAddress() = %q", got)
 	}
 }

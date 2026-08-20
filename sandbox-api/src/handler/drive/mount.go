@@ -378,9 +378,39 @@ func MountDrive(driveName, mountPath, drivePath string, readOnly bool, uidMap, g
 	return "", "", fmt.Errorf("timeout waiting for mount point to be ready after %s", mountTimeout)
 }
 
-// getFilerAddress reads the filer address from /etc/resolv.conf
-// The filer is the first nameserver listed in resolv.conf
+// DriveFilerEnv, when the platform sets it, names the host the Agent Drive filer
+// answers on. A name or an address, and NO port -- formatFilerServerAddress
+// appends SeaweedFS's own host:httpPort.grpcPort form, and must leave an IPv6
+// literal unbracketed there, so a value carrying a port would be ambiguous.
+const DriveFilerEnv = "BL_DRIVE_FILER"
+
+// getFilerAddress returns the host the filer answers on.
+//
+// Two sources, and the order matters. The platform may state the answer via
+// DriveFilerEnv; only if it does not do we fall back to inferring it from
+// /etc/resolv.conf, where the filer is the first nameserver.
+//
+// That inference is correct on mk3.0, where the per-host filer and the DNS
+// resolver are the same host-local thing, so one address genuinely is both. It is
+// wrong on mk3.1, where they are two separate sandboxes: the first nameserver is
+// the CoreDNS resolver, which serves DNS and nothing on 49200, so every mount
+// fails after a 30s timeout.
+//
+// The environment variable rather than resolving a well-known service name here,
+// because neither generation can be detected from inside a sandbox and both
+// alternatives are worse: resolving a name unconditionally breaks mk3.0, where no
+// such name exists, and resolving-then-falling-back reinstates the mk3.1 bug as a
+// silent degraded mode reachable any time DNS is briefly unavailable. The platform
+// knows its own generation; on mk3.1 it sets this, and on mk3.0 it does not.
 func getFilerAddress() (string, error) {
+	if host := strings.TrimSpace(os.Getenv(DriveFilerEnv)); host != "" {
+		logrus.WithFields(logrus.Fields{
+			"filer_address": host,
+			"source":        DriveFilerEnv,
+		}).Debug("Using the filer address supplied by the platform")
+		return host, nil
+	}
+
 	resolvConf, err := os.ReadFile("/etc/resolv.conf")
 	if err != nil {
 		return "", fmt.Errorf("failed to read /etc/resolv.conf: %w", err)
