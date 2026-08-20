@@ -142,9 +142,10 @@ func (h *ProcessHandler) ListProcesses() []ProcessResponse {
 			completedAtPtr = &completedAt
 		}
 
-		// Get logs from file if available
+		// Get logs from file if available. A list inlines every process' output
+		// in a single response, so only the tail of each is read.
 		var logs, stdout, stderr *string
-		if output, err := h.processManager.GetProcessOutput(p.PID); err == nil {
+		if output, err := h.processManager.GetProcessOutputTail(p.PID, process.MaxInlinedLogBytes); err == nil {
 			logs = &output.Logs
 			stdout = &output.Stdout
 			stderr = &output.Stderr

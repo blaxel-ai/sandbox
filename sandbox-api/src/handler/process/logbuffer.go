@@ -11,10 +11,10 @@ import (
 // heap forever (once in the stream's buffer, once in the combined one), so a
 // chatty workload grew sandbox-api until it, rather than the workload, was the
 // fattest process in the guest and the OOM killer's pick - taking the whole
-// sandbox down. The full output lives in the process' log files, which is what
-// GET /process/{id}/logs reads, so memory only has to hold the tail as a
-// fallback for the (rare) case where the files are unavailable.
-const maxInMemoryLogBytes = 256 * 1024
+// sandbox down. Output is served from the process' log files instead, so this
+// buffer is only the fallback for when a file cannot be read, and small enough
+// that many processes still cost the API next to nothing.
+const maxInMemoryLogBytes = 64 * 1024
 
 func maxInMemoryLog() int {
 	if raw := os.Getenv("SANDBOX_MAX_IN_MEMORY_LOG_BYTES"); raw != "" {
@@ -90,6 +90,14 @@ func streamOffset(writtenBytes int, saved string) int {
 		return writtenBytes
 	}
 	return len(saved)
+}
+
+// resume records that the stream has produced offset bytes in total, for when a
+// bounded read skipped over output that only exists in the log file.
+func (b *logBuffer) resume(offset int) {
+	if offset > b.written {
+		b.written = offset
+	}
 }
 
 // restore seeds the buffer from a saved state: tail is what is left of the

@@ -1,6 +1,7 @@
 package process
 
 import (
+	"bufio"
 	"fmt"
 	"io"
 	"math/rand"
@@ -99,7 +100,7 @@ type ProcessInfo struct {
 	logWriters       []io.Writer
 	logLock          sync.RWMutex
 	stopTimeout      chan struct{} // Channel to signal timeout goroutine to stop
-	stopTimeoutOnce  sync.Once    // Protects stopTimeout channel from double-close
+	stopTimeoutOnce  sync.Once     // Protects stopTimeout channel from double-close
 }
 
 // ProcessLogDir is the directory where process logs are stored
@@ -547,8 +548,20 @@ func (pm *ProcessManager) tailLogFiles(proc *ProcessInfo) {
 	stdoutBuf := make([]byte, 4096)
 	stderrBuf := make([]byte, 4096)
 
+	// The workload writes to its log files itself, so the tailer is what keeps
+	// them from filling the guest's tmpfs.
+	capCheck := time.NewTicker(5 * time.Second)
+	defer capCheck.Stop()
+	capFiles := func() {
+		capLogFile(proc.StdoutFile)
+		capLogFile(proc.StderrFile)
+		capLogFile(proc.LogFile)
+	}
+
 	for {
 		select {
+		case <-capCheck.C:
+			capFiles()
 		case <-proc.Done:
 			// Drain all remaining data from both files before returning.
 			// Loop until both files return 0 bytes to handle data larger than the buffer.
@@ -559,6 +572,7 @@ func (pm *ProcessManager) tailLogFiles(proc *ProcessInfo) {
 					break
 				}
 			}
+			capFiles()
 			close(proc.TailDone)
 			return
 		default:
@@ -1126,45 +1140,45 @@ func (pm *ProcessManager) KillProcess(identifier string) error {
 	return nil
 }
 
-// GetProcessOutput returns the stdout and stderr output of a process
+// GetProcessOutput returns the stdout and stderr output of a process, read from
+// its log files, up to the size those files are capped at.
 func (pm *ProcessManager) GetProcessOutput(identifier string) (ProcessLogs, error) {
+	return pm.getProcessOutput(identifier, maxLogFile())
+}
+
+// GetProcessOutputTail is GetProcessOutput limited to the last max bytes of each
+// stream. Listing every process inlines all of their output in one response, so
+// that path reads a tail rather than whole log files.
+func (pm *ProcessManager) GetProcessOutputTail(identifier string, max int64) (ProcessLogs, error) {
+	return pm.getProcessOutput(identifier, max)
+}
+
+func (pm *ProcessManager) getProcessOutput(identifier string, max int64) (ProcessLogs, error) {
 	process, exists := pm.GetProcessByIdentifier(identifier)
 	if !exists {
 		return ProcessLogs{}, fmt.Errorf("process with PID %s not found", identifier)
 	}
 
-	// Try to read from separate log files if available
-	var stdout, stderr, logs string
-
-	// Read stdout from file or memory
-	if process.StdoutFile != "" {
-		if content, err := os.ReadFile(process.StdoutFile); err == nil {
-			stdout = string(content)
-		} else {
-			stdout = process.stdout.String()
-		}
-	} else {
+	// The log files hold the whole output; the in-memory buffers are the
+	// fallback for when a file is gone or unreadable.
+	stdout, ok := readLogTail(process.StdoutFile, max)
+	if !ok {
+		process.logLock.RLock()
 		stdout = process.stdout.String()
+		process.logLock.RUnlock()
 	}
 
-	// Read stderr from file or memory
-	if process.StderrFile != "" {
-		if content, err := os.ReadFile(process.StderrFile); err == nil {
-			stderr = string(content)
-		} else {
-			stderr = process.stderr.String()
-		}
-	} else {
+	stderr, ok := readLogTail(process.StderrFile, max)
+	if !ok {
+		process.logLock.RLock()
 		stderr = process.stderr.String()
+		process.logLock.RUnlock()
 	}
-
-	// Combined logs
-	logs = stdout + stderr
 
 	return ProcessLogs{
 		Stdout: stdout,
 		Stderr: stderr,
-		Logs:   logs,
+		Logs:   stdout + stderr,
 	}, nil
 }
 
@@ -1177,11 +1191,14 @@ func (pm *ProcessManager) StreamProcessOutput(identifier string, w io.Writer) er
 	// Write current content first - read from combined log file which has prefixed, ordered content
 	// The combined log file is written by tailLogFiles with "stdout:" and "stderr:" prefixes
 	if process.LogFile != "" {
-		if content, err := os.ReadFile(process.LogFile); err == nil && len(content) > 0 {
-			// Parse prefixed lines and send as proper events
-			// This ensures JSONStreamWriter receives structured stdout/stderr events
-			lines := strings.Split(string(content), "\n")
-			for _, line := range lines {
+		// Parse prefixed lines and send as proper events, a line at a time so a
+		// long-running process' backlog is not held in memory all at once.
+		// This ensures JSONStreamWriter receives structured stdout/stderr events
+		if file, err := os.Open(process.LogFile); err == nil {
+			scanner := bufio.NewScanner(file)
+			scanner.Buffer(make([]byte, 0, 64*1024), maxLogLineBytes)
+			for scanner.Scan() {
+				line := scanner.Text()
 				if strings.HasPrefix(line, "stdout:") {
 					writeToLogWriter(w, "stdout", []byte(strings.TrimPrefix(line, "stdout:")+"\n"))
 				} else if strings.HasPrefix(line, "stderr:") {
@@ -1191,6 +1208,7 @@ func (pm *ProcessManager) StreamProcessOutput(identifier string, w io.Writer) er
 					writeToLogWriter(w, "stdout", []byte(line+"\n"))
 				}
 			}
+			file.Close()
 		}
 	}
 
