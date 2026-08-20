@@ -93,9 +93,9 @@ type ProcessInfo struct {
 	StderrFile       string                  `json:"-"` // Path to stderr log file
 	Done             chan struct{}
 	TailDone         chan struct{} // Closed when tailLogFiles finishes its final reads
-	stdout           *strings.Builder
-	stderr           *strings.Builder
-	logs             *strings.Builder
+	stdout           *logBuffer
+	stderr           *logBuffer
+	logs             *logBuffer
 	logWriters       []io.Writer
 	logLock          sync.RWMutex
 	stopTimeout      chan struct{} // Channel to signal timeout goroutine to stop
@@ -254,9 +254,9 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 	}
 
 	// Set up in-memory buffers
-	stdout := &strings.Builder{}
-	stderr := &strings.Builder{}
-	logs := &strings.Builder{}
+	stdout := newLogBuffer()
+	stderr := newLogBuffer()
+	logs := newLogBuffer()
 
 	// Create separate log files for stdout and stderr
 	// Child processes write DIRECTLY to these files (no pipes)

@@ -20,6 +20,23 @@ import (
 // when the process runs unprivileged.
 const VictimScoreAdj = 500
 
+// SurvivorScoreAdj is sandbox-api's own bias. A child inherits it and is then
+// set to VictimScoreAdj, so the 1000-point gap between the API and anything it
+// spawned is what the kernel compares.
+const SurvivorScoreAdj = -500
+
+// ProtectSelf takes sandbox-api out of the OOM killer's likely picks: it holds
+// every process' state and its death restarts the whole sandbox, so it must be
+// the last thing the kernel reclaims. Lowering an oom_score_adj needs
+// CAP_SYS_RESOURCE, so this only takes effect while we are root - best-effort
+// otherwise, as the bias on the spawned processes covers the same ground.
+func ProtectSelf() {
+	if err := os.WriteFile("/proc/self/oom_score_adj",
+		[]byte(fmt.Sprintf("%d\n", SurvivorScoreAdj)), 0o644); err != nil {
+		logrus.Debugf("[OOM] Failed to protect sandbox-api from the OOM killer: %v", err)
+	}
+}
+
 // PreferAsVictim makes the kernel OOM killer choose pid over sandbox-api.
 // Best-effort: a process that already exited, or a kernel without the knob,
 // is not an error for the caller.

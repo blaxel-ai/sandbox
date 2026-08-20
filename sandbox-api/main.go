@@ -48,6 +48,8 @@ func main() {
 	// Load .env file
 	_ = godotenv.Load()
 
+	oom.ProtectSelf()
+
 	// Adopt the environment the guest received as a file rather than on its
 	// kernel command line, before anything reads the environment or spawns a
 	// process. The image's init has normally done it already; doing it here as

@@ -44,6 +44,9 @@ type ProcessState struct {
 	Logs             string                  `json:"logs,omitempty"`
 	Stdout           string                  `json:"stdout,omitempty"`
 	Stderr           string                  `json:"stderr,omitempty"`
+	StdoutBytes      int                     `json:"stdoutBytes,omitempty"` // Bytes ever written; the strings above only hold the tail, so these are the offsets the log files resume at
+	StderrBytes      int                     `json:"stderrBytes,omitempty"`
+	LogsBytes        int                     `json:"logsBytes,omitempty"`
 	RestartOnFailure bool                    `json:"restartOnFailure"`
 	MaxRestarts      int                     `json:"maxRestarts"`
 	RestartCount     int                     `json:"restartCount"`
@@ -82,14 +85,18 @@ func (pm *ProcessManager) SaveState() error {
 		// Safely read logs under lock
 		proc.logLock.RLock()
 		var logs, stdout, stderr string
+		var logsBytes, stdoutBytes, stderrBytes int
 		if proc.logs != nil {
 			logs = proc.logs.String()
+			logsBytes = proc.logs.Len()
 		}
 		if proc.stdout != nil {
 			stdout = proc.stdout.String()
+			stdoutBytes = proc.stdout.Len()
 		}
 		if proc.stderr != nil {
 			stderr = proc.stderr.String()
+			stderrBytes = proc.stderr.Len()
 		}
 		proc.logLock.RUnlock()
 
@@ -109,6 +116,9 @@ func (pm *ProcessManager) SaveState() error {
 			Logs:             logs,
 			Stdout:           stdout,
 			Stderr:           stderr,
+			StdoutBytes:      stdoutBytes,
+			StderrBytes:      stderrBytes,
+			LogsBytes:        logsBytes,
 			RestartOnFailure: proc.RestartOnFailure,
 			MaxRestarts:      proc.MaxRestarts,
 			RestartCount:     proc.RestartCount,
@@ -225,33 +235,27 @@ func (pm *ProcessManager) LoadState() error {
 			Env:              procState.Env,
 			Done:             make(chan struct{}),
 			TailDone:         make(chan struct{}),
-			stdout:           &strings.Builder{},
-			stderr:           &strings.Builder{},
-			logs:             &strings.Builder{},
+			stdout:           newLogBuffer(),
+			stderr:           newLogBuffer(),
+			logs:             newLogBuffer(),
 			logWriters:       make([]io.Writer, 0),
 		}
 
 		// Restore accumulated logs from saved state
-		if procState.Logs != "" {
-			proc.logs.WriteString(procState.Logs)
-		}
-		if procState.Stdout != "" {
-			proc.stdout.WriteString(procState.Stdout)
-		}
-		if procState.Stderr != "" {
-			proc.stderr.WriteString(procState.Stderr)
-		}
+		proc.logs.restore(procState.Logs, procState.LogsBytes)
+		proc.stdout.restore(procState.Stdout, procState.StdoutBytes)
+		proc.stderr.restore(procState.Stderr, procState.StderrBytes)
 
 		// Also read any new logs from the separate log files since state was saved
 		// Use atomic read with bounds checking to avoid TOCTOU issues
 		if procState.StdoutFile != "" {
-			if newContent := readLogsSince(procState.StdoutFile, len(procState.Stdout)); len(newContent) > 0 {
+			if newContent := readLogsSince(procState.StdoutFile, streamOffset(procState.StdoutBytes, procState.Stdout)); len(newContent) > 0 {
 				proc.stdout.Write(newContent)
 				proc.logs.Write(newContent)
 			}
 		}
 		if procState.StderrFile != "" {
-			if newContent := readLogsSince(procState.StderrFile, len(procState.Stderr)); len(newContent) > 0 {
+			if newContent := readLogsSince(procState.StderrFile, streamOffset(procState.StderrBytes, procState.Stderr)); len(newContent) > 0 {
 				proc.stderr.Write(newContent)
 				proc.logs.Write(newContent)
 			}
@@ -259,7 +263,7 @@ func (pm *ProcessManager) LoadState() error {
 
 		// Legacy: Also read from combined log file if separate files don't exist
 		if procState.StdoutFile == "" && procState.LogFile != "" {
-			if newContent := readLogsSince(procState.LogFile, len(procState.Logs)); len(newContent) > 0 {
+			if newContent := readLogsSince(procState.LogFile, streamOffset(procState.LogsBytes, procState.Logs)); len(newContent) > 0 {
 				proc.logs.Write(newContent)
 				proc.stdout.Write(newContent)
 			}
