@@ -88,6 +88,32 @@ const MaxInlinedLogBytes = 64 * 1024
 // without a newline in it cannot be read into memory without bound.
 const maxLogLineBytes = 1024 * 1024
 
+// openLogTail opens a log file positioned on the last max bytes, past any head
+// capLogFile has released. truncated says whether anything was skipped, so the
+// caller can say the output is partial. The caller closes the file.
+func openLogTail(path string, max int64) (file *os.File, truncated bool, err error) {
+	file, err = os.Open(path)
+	if err != nil {
+		return nil, false, err
+	}
+
+	stat, err := file.Stat()
+	if err != nil {
+		file.Close()
+		return nil, false, err
+	}
+
+	if max <= 0 || stat.Size() <= max {
+		return file, false, nil
+	}
+
+	if _, err := file.Seek(stat.Size()-max, io.SeekStart); err != nil {
+		file.Close()
+		return nil, false, err
+	}
+	return file, true, nil
+}
+
 // readLogTail returns the last max bytes of a log file, skipping any head that
 // capLogFile has already released, so a caller never holds more than the cap in
 // memory. ok is false when the file cannot be read at all.
@@ -96,26 +122,11 @@ func readLogTail(path string, max int64) (string, bool) {
 		return "", false
 	}
 
-	file, err := os.Open(path)
+	file, truncated, err := openLogTail(path, max)
 	if err != nil {
 		return "", false
 	}
 	defer file.Close()
-
-	stat, err := file.Stat()
-	if err != nil {
-		return "", false
-	}
-
-	offset := int64(0)
-	if max > 0 && stat.Size() > max {
-		offset = stat.Size() - max
-	}
-	if offset > 0 {
-		if _, err := file.Seek(offset, io.SeekStart); err != nil {
-			return "", false
-		}
-	}
 
 	content, err := io.ReadAll(file)
 	if err != nil {
@@ -125,7 +136,7 @@ func readLogTail(path string, max int64) (string, bool) {
 	// A file whose head was released reads back as zeros; a file we seeked past
 	// is missing its head. Either way say so rather than handing back a tail
 	// that looks like the whole output.
-	if offset > 0 {
+	if truncated {
 		return truncationMarker + string(content), true
 	}
 	return string(trimReleasedHead(content)), true

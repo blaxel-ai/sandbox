@@ -1194,11 +1194,14 @@ func (pm *ProcessManager) StreamProcessOutput(identifier string, w io.Writer) er
 		// Parse prefixed lines and send as proper events, a line at a time so a
 		// long-running process' backlog is not held in memory all at once.
 		// This ensures JSONStreamWriter receives structured stdout/stderr events
-		if file, err := os.Open(process.LogFile); err == nil {
+		if file, truncated, err := openLogTail(process.LogFile, maxLogFile()); err == nil {
+			if truncated {
+				writeToLogWriter(w, "stdout", []byte(truncationMarker))
+			}
 			scanner := bufio.NewScanner(file)
 			scanner.Buffer(make([]byte, 0, 64*1024), maxLogLineBytes)
 			for scanner.Scan() {
-				line := scanner.Text()
+				line := strings.TrimLeft(scanner.Text(), "\x00")
 				if strings.HasPrefix(line, "stdout:") {
 					writeToLogWriter(w, "stdout", []byte(strings.TrimPrefix(line, "stdout:")+"\n"))
 				} else if strings.HasPrefix(line, "stderr:") {

@@ -1,6 +1,7 @@
 package process
 
 import (
+	"bufio"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -114,6 +115,41 @@ func TestReadLogTailBoundsWhatItReads(t *testing.T) {
 	}
 	if !strings.HasPrefix(tail, truncationMarker) {
 		t.Error("a tail read of a bigger file must say it is truncated")
+	}
+}
+
+// A punched-out head has no newline in it, so a scanner starting at offset 0
+// would see it as one huge line and give up before reaching the real output.
+func TestOpenLogTailStartsPastAReleasedHead(t *testing.T) {
+	t.Setenv("SANDBOX_MAX_LOG_FILE_BYTES", fmt.Sprint(64*1024))
+
+	path := filepath.Join(t.TempDir(), "combined.log")
+	if err := os.WriteFile(path, []byte(strings.Repeat("stdout:x\n", 400*1024)+"stdout:THE TAIL\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	capLogFile(path)
+
+	file, truncated, err := openLogTail(path, maxLogFile())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	if !truncated {
+		t.Error("openLogTail must report a capped file as truncated")
+	}
+
+	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 0, 64*1024), maxLogLineBytes)
+	lines, last := 0, ""
+	for scanner.Scan() {
+		lines++
+		last = scanner.Text()
+	}
+	if err := scanner.Err(); err != nil {
+		t.Fatalf("scanning the tail failed: %v", err)
+	}
+	if lines == 0 || last != "stdout:THE TAIL" {
+		t.Errorf("scanned %d lines, last = %q, want the tail of the file", lines, last)
 	}
 }
 
