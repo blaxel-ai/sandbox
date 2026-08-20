@@ -15,6 +15,7 @@ import (
 	"github.com/blaxel-ai/sandbox-api/src/handler/constants"
 	"github.com/blaxel-ai/sandbox-api/src/lib/blaxel"
 	"github.com/blaxel-ai/sandbox-api/src/lib/identity"
+	"github.com/blaxel-ai/sandbox-api/src/lib/oom"
 	"github.com/sirupsen/logrus"
 )
 
@@ -315,6 +316,7 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 
 	process.PID = fmt.Sprintf("%d", cmd.Process.Pid)
 	process.ProcessPid = cmd.Process.Pid
+	oom.PreferAsVictim(process.ProcessPid)
 
 	// Close the write handles in parent - child has its own FDs
 	stdoutFile.Close()
@@ -708,6 +710,7 @@ func (pm *ProcessManager) restartProcess(oldProcess *ProcessInfo, callback func(
 	// Update only the OS process PID for kill/stop operations
 	// Keep the user-facing PID (oldProcess.PID) unchanged for transparency
 	oldProcess.ProcessPid = cmd.Process.Pid
+	oom.PreferAsVictim(oldProcess.ProcessPid)
 
 	// Close write handles in parent - child has its own FDs
 	stdoutFile.Close()

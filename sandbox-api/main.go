@@ -23,6 +23,7 @@ import (
 	"github.com/blaxel-ai/sandbox-api/src/lib/envfile"
 	"github.com/blaxel-ai/sandbox-api/src/lib/identity"
 	"github.com/blaxel-ai/sandbox-api/src/lib/networking"
+	"github.com/blaxel-ai/sandbox-api/src/lib/oom"
 	"github.com/blaxel-ai/sandbox-api/src/lib/proxy"
 	"github.com/blaxel-ai/sandbox-api/src/lib/sentrylib"
 	"github.com/blaxel-ai/sandbox-api/src/mcp"
@@ -285,6 +286,7 @@ func startBackgroundCommand(ctx context.Context, command string) {
 			logrus.Fatalf("Failed to start command: %v", err)
 			return
 		}
+		oom.PreferAsVictim(cmd.Process.Pid)
 		logrus.Infof("Command started successfully")
 
 		if err := cmd.Wait(); err != nil {
