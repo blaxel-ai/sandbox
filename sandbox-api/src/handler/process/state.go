@@ -44,6 +44,9 @@ type ProcessState struct {
 	Logs             string                  `json:"logs,omitempty"`
 	Stdout           string                  `json:"stdout,omitempty"`
 	Stderr           string                  `json:"stderr,omitempty"`
+	StdoutBytes      int                     `json:"stdoutBytes,omitempty"` // Bytes ever written; the strings above only hold the tail, so these are the offsets the log files resume at
+	StderrBytes      int                     `json:"stderrBytes,omitempty"`
+	LogsBytes        int                     `json:"logsBytes,omitempty"`
 	RestartOnFailure bool                    `json:"restartOnFailure"`
 	MaxRestarts      int                     `json:"maxRestarts"`
 	RestartCount     int                     `json:"restartCount"`
@@ -82,14 +85,18 @@ func (pm *ProcessManager) SaveState() error {
 		// Safely read logs under lock
 		proc.logLock.RLock()
 		var logs, stdout, stderr string
+		var logsBytes, stdoutBytes, stderrBytes int
 		if proc.logs != nil {
-			logs = proc.logs.String()
+			logs = proc.logs.tail()
+			logsBytes = proc.logs.Len()
 		}
 		if proc.stdout != nil {
-			stdout = proc.stdout.String()
+			stdout = proc.stdout.tail()
+			stdoutBytes = proc.stdout.Len()
 		}
 		if proc.stderr != nil {
-			stderr = proc.stderr.String()
+			stderr = proc.stderr.tail()
+			stderrBytes = proc.stderr.Len()
 		}
 		proc.logLock.RUnlock()
 
@@ -109,6 +116,9 @@ func (pm *ProcessManager) SaveState() error {
 			Logs:             logs,
 			Stdout:           stdout,
 			Stderr:           stderr,
+			StdoutBytes:      stdoutBytes,
+			StderrBytes:      stderrBytes,
+			LogsBytes:        logsBytes,
 			RestartOnFailure: proc.RestartOnFailure,
 			MaxRestarts:      proc.MaxRestarts,
 			RestartCount:     proc.RestartCount,
@@ -116,11 +126,11 @@ func (pm *ProcessManager) SaveState() error {
 		}
 
 		logrus.WithFields(logrus.Fields{
-			"pid":        proc.PID,
-			"name":       proc.Name,
-			"command":    proc.Command,
+			"pid":         proc.PID,
+			"name":        proc.Name,
+			"command":     proc.Command,
 			"process-pid": proc.ProcessPid,
-			"status":     proc.Status,
+			"status":      proc.Status,
 		}).Info("SaveState: saving process")
 	}
 
@@ -197,12 +207,12 @@ func (pm *ProcessManager) LoadState() error {
 		isRunning := isProcessRunning(procState.ProcessPid)
 
 		logrus.WithFields(logrus.Fields{
-			"pid":        procState.PID,
-			"name":       procState.Name,
-			"command":    procState.Command,
+			"pid":         procState.PID,
+			"name":        procState.Name,
+			"command":     procState.Command,
 			"process-pid": procState.ProcessPid,
-			"status":     procState.Status,
-			"isRunning":  isRunning,
+			"status":      procState.Status,
+			"isRunning":   isRunning,
 		}).Info("LoadState: processing saved process")
 
 		// Create ProcessInfo from saved state
@@ -225,43 +235,43 @@ func (pm *ProcessManager) LoadState() error {
 			Env:              procState.Env,
 			Done:             make(chan struct{}),
 			TailDone:         make(chan struct{}),
-			stdout:           &strings.Builder{},
-			stderr:           &strings.Builder{},
-			logs:             &strings.Builder{},
+			stdout:           newLogBuffer(),
+			stderr:           newLogBuffer(),
+			logs:             newLogBuffer(),
 			logWriters:       make([]io.Writer, 0),
 		}
 
 		// Restore accumulated logs from saved state
-		if procState.Logs != "" {
-			proc.logs.WriteString(procState.Logs)
-		}
-		if procState.Stdout != "" {
-			proc.stdout.WriteString(procState.Stdout)
-		}
-		if procState.Stderr != "" {
-			proc.stderr.WriteString(procState.Stderr)
-		}
+		proc.logs.restore(procState.Logs, procState.LogsBytes)
+		proc.stdout.restore(procState.Stdout, procState.StdoutBytes)
+		proc.stderr.restore(procState.Stderr, procState.StderrBytes)
 
 		// Also read any new logs from the separate log files since state was saved
 		// Use atomic read with bounds checking to avoid TOCTOU issues
 		if procState.StdoutFile != "" {
-			if newContent := readLogsSince(procState.StdoutFile, len(procState.Stdout)); len(newContent) > 0 {
+			newContent, end := readLogsSince(procState.StdoutFile, streamOffset(procState.StdoutBytes, procState.Stdout))
+			if len(newContent) > 0 {
 				proc.stdout.Write(newContent)
 				proc.logs.Write(newContent)
+				proc.stdout.resume(end)
 			}
 		}
 		if procState.StderrFile != "" {
-			if newContent := readLogsSince(procState.StderrFile, len(procState.Stderr)); len(newContent) > 0 {
+			newContent, end := readLogsSince(procState.StderrFile, streamOffset(procState.StderrBytes, procState.Stderr))
+			if len(newContent) > 0 {
 				proc.stderr.Write(newContent)
 				proc.logs.Write(newContent)
+				proc.stderr.resume(end)
 			}
 		}
 
 		// Legacy: Also read from combined log file if separate files don't exist
 		if procState.StdoutFile == "" && procState.LogFile != "" {
-			if newContent := readLogsSince(procState.LogFile, len(procState.Logs)); len(newContent) > 0 {
+			newContent, end := readLogsSince(procState.LogFile, streamOffset(procState.LogsBytes, procState.Logs))
+			if len(newContent) > 0 {
 				proc.logs.Write(newContent)
 				proc.stdout.Write(newContent)
+				proc.logs.resume(end)
 			}
 		}
 
@@ -270,9 +280,9 @@ func (pm *ProcessManager) LoadState() error {
 			// This prevents adopting arbitrary processes that happen to have the same PID
 			if !verifyProcessCommand(proc.ProcessPid, proc.Command) {
 				logrus.WithFields(logrus.Fields{
-					"pid":        proc.PID,
-					"name":       proc.Name,
-					"command":    proc.Command,
+					"pid":         proc.PID,
+					"name":        proc.Name,
+					"command":     proc.Command,
 					"process-pid": proc.ProcessPid,
 				}).Warn("Process command mismatch, marking as failed (PID may have been reused)")
 				proc.Status = StatusFailed
@@ -434,23 +444,27 @@ func reapZombieProcess(pid int) int {
 
 // readLogsSince safely reads log content from a file starting at a given offset.
 // It handles TOCTOU issues by reading the file atomically and validating bounds.
+// The read is bounded: the content only feeds the in-memory tail buffers, so a
+// process that wrote gigabytes while the API was down must not be loaded whole.
+// It returns the content and the file offset it read up to, which is where the
+// stream resumes even when the read skipped ahead.
 // Returns nil if the file cannot be read or if offset is invalid.
-func readLogsSince(filePath string, offset int) []byte {
+func readLogsSince(filePath string, offset int) ([]byte, int) {
 	if filePath == "" || offset < 0 {
-		return nil
+		return nil, offset
 	}
 
 	// Open file for reading
 	file, err := os.Open(filePath)
 	if err != nil {
-		return nil
+		return nil, offset
 	}
 	defer file.Close()
 
 	// Get file size atomically with the file handle
 	stat, err := file.Stat()
 	if err != nil {
-		return nil
+		return nil, offset
 	}
 
 	fileSize := stat.Size()
@@ -468,21 +482,27 @@ func readLogsSince(filePath string, offset int) []byte {
 
 	// Nothing new to read
 	if int64(offset) >= fileSize {
-		return nil
+		return nil, offset
+	}
+
+	// Only the tail is kept in memory anyway, and anything older may sit in a
+	// head that capLogFile has already released.
+	if tail := fileSize - int64(maxInMemoryLogBytes); tail > int64(offset) {
+		offset = int(tail)
 	}
 
 	// Seek to offset
 	if _, err := file.Seek(int64(offset), 0); err != nil {
-		return nil
+		return nil, offset
 	}
 
 	// Read remaining content
 	content, err := io.ReadAll(file)
 	if err != nil {
-		return nil
+		return nil, offset
 	}
 
-	return content
+	return content, offset + len(content)
 }
 
 // verifyProcessCommand checks if the running process matches the expected command.
@@ -552,9 +572,9 @@ func verifyProcessHealth(pid int) bool {
 // monitorAdoptedProcess monitors an adopted process for completion
 func (pm *ProcessManager) monitorAdoptedProcess(proc *ProcessInfo) {
 	logrus.WithFields(logrus.Fields{
-		"pid":        proc.PID,
-		"name":       proc.Name,
-		"command":    proc.Command,
+		"pid":         proc.PID,
+		"name":        proc.Name,
+		"command":     proc.Command,
 		"process-pid": proc.ProcessPid,
 	}).Info("Starting monitoring for adopted process")
 
@@ -570,11 +590,11 @@ func (pm *ProcessManager) monitorAdoptedProcess(proc *ProcessInfo) {
 
 			if checkCount <= 3 || checkCount%10 == 0 {
 				logrus.WithFields(logrus.Fields{
-					"pid":        proc.PID,
-					"name":       proc.Name,
+					"pid":         proc.PID,
+					"name":        proc.Name,
 					"process-pid": proc.ProcessPid,
-					"isRunning":  isRunning,
-					"checkCount": checkCount,
+					"isRunning":   isRunning,
+					"checkCount":  checkCount,
 				}).Debug("Monitoring adopted process")
 			}
 
@@ -607,11 +627,11 @@ func (pm *ProcessManager) monitorAdoptedProcess(proc *ProcessInfo) {
 				close(proc.TailDone)
 
 				logrus.WithFields(logrus.Fields{
-					"pid":        proc.PID,
-					"name":       proc.Name,
-					"command":    proc.Command,
+					"pid":         proc.PID,
+					"name":        proc.Name,
+					"command":     proc.Command,
 					"process-pid": proc.ProcessPid,
-					"checkCount": checkCount,
+					"checkCount":  checkCount,
 				}).Info("Adopted process completed")
 
 				return
