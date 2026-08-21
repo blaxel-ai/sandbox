@@ -1255,9 +1255,23 @@ func (pm *ProcessManager) StreamProcessOutput(identifier string, w io.Writer) er
 		return fmt.Errorf("process with Identifier %s not found", identifier)
 	}
 
+	// Attach the writer before the backlog is replayed: it queues what the
+	// process writes meanwhile, so that output is neither lost nor sent out of
+	// order. The combined log file is written under the same lock, so its size
+	// here is exactly where the queue starts - the backlog is replayed up to it
+	// and no line is sent twice.
+	pending := newPendingWriter(w)
+	process.logLock.Lock()
+	backlogEnd := int64(-1)
+	if info, err := os.Stat(process.LogFile); err == nil {
+		backlogEnd = info.Size()
+	}
+	process.logWriters = append(process.logWriters, pending)
+	process.logLock.Unlock()
+
 	// Write current content first - read from combined log file which has prefixed, ordered content
 	// The combined log file is written by tailLogFiles with "stdout:" and "stderr:" prefixes
-	if process.LogFile != "" {
+	if process.LogFile != "" && backlogEnd > 0 {
 		// Parse prefixed lines and send as proper events, a line at a time so a
 		// long-running process' backlog is not held in memory all at once.
 		// This ensures JSONStreamWriter receives structured stdout/stderr events
@@ -1265,7 +1279,7 @@ func (pm *ProcessManager) StreamProcessOutput(identifier string, w io.Writer) er
 			if truncated {
 				writeToLogWriter(w, "stdout", []byte(truncationMarker))
 			}
-			scanner := bufio.NewScanner(file)
+			scanner := bufio.NewScanner(backlogReader(file, backlogEnd))
 			scanner.Buffer(make([]byte, 0, 64*1024), maxLogLineBytes)
 			for scanner.Scan() {
 				line := strings.TrimLeft(scanner.Text(), "\x00")
@@ -1282,10 +1296,7 @@ func (pm *ProcessManager) StreamProcessOutput(identifier string, w io.Writer) er
 		}
 	}
 
-	// Attach writer for future output
-	process.logLock.Lock()
-	process.logWriters = append(process.logWriters, w)
-	process.logLock.Unlock()
+	pending.release()
 
 	// Start keepalive goroutine to prevent connection timeout
 	go func() {
@@ -1321,7 +1332,7 @@ func (pm *ProcessManager) RemoveLogWriter(identifier string, w io.Writer) error 
 	defer process.logLock.Unlock()
 
 	for i, writer := range process.logWriters {
-		if writer == w {
+		if unwrapWriter(writer) == w {
 			// Remove this writer
 			process.logWriters = append(process.logWriters[:i], process.logWriters[i+1:]...)
 			return nil
