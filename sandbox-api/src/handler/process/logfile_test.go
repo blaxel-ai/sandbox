@@ -309,6 +309,68 @@ func TestCapLogFilesShrinksFilesNobodyIsTailing(t *testing.T) {
 	}
 }
 
+// What one file may keep shrinks as more processes write, so a reader asking
+// for a whole maxLogFile() worth of tail can start inside the released head. It
+// has to skip to the output the file still holds instead of serving the zero
+// bytes the hole reads back as.
+func TestReadLogTailSkipsAHeadReleasedBeyondWhatItAsksFor(t *testing.T) {
+	t.Setenv("SANDBOX_MAX_LOG_BYTES_TOTAL", fmt.Sprint(3*minLogFileBytes))
+
+	path := filepath.Join(t.TempDir(), "shrunk.log")
+	if err := os.WriteFile(path, []byte(strings.Repeat("v", 4*1024*1024)+"THE TAIL\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	// One process' share is minLogFileBytes, far less than maxLogFile().
+	capLogFile(path, 1)
+
+	tail, ok := readLogTail(path, maxLogFile())
+	if !ok {
+		t.Fatal("readLogTail failed")
+	}
+	if strings.ContainsRune(tail, 0) {
+		t.Errorf("read %d bytes containing NULs: the released head is being served", len(tail))
+	}
+	if !strings.HasSuffix(tail, "THE TAIL\n") {
+		t.Error("the newest output was not kept")
+	}
+	if !strings.HasPrefix(tail, truncationMarker) {
+		t.Errorf("tail = %.80q, want it to say the output was truncated", tail)
+	}
+}
+
+// The tailer reads the workload's log files, and a workload can write faster
+// than it reads. Releasing what it has not read yet would replace that output
+// with zero bytes.
+func TestCapLogFileKeepsWhatAReaderHasNotReadYet(t *testing.T) {
+	t.Setenv("SANDBOX_MAX_LOG_FILE_BYTES", fmt.Sprint(64*1024))
+
+	path := filepath.Join(t.TempDir(), "unread.log")
+	if err := os.WriteFile(path, []byte(strings.Repeat("u", 1024*1024)+"THE TAIL\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// A reader that has only read the first 4 KiB.
+	capLogFileUpTo(path, 1, 4*1024)
+
+	file, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	if _, err := file.Seek(4*1024, 0); err != nil {
+		t.Fatal(err)
+	}
+	unread, err := readAtMost(file, 1024*1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, b := range unread {
+		if b == 0 {
+			t.Fatalf("byte %d of what the reader has yet to read was released", 4*1024+i)
+		}
+	}
+}
+
 func TestReadLogTailMissingFile(t *testing.T) {
 	if _, ok := readLogTail(filepath.Join(t.TempDir(), "absent.log"), 1024); ok {
 		t.Error("readLogTail reported success for a file that does not exist")

@@ -559,8 +559,8 @@ func (pm *ProcessManager) tailLogFiles(proc *ProcessInfo) {
 		}
 	}
 
-	stdoutBuf := make([]byte, 4096)
-	stderrBuf := make([]byte, 4096)
+	stdoutBuf := make([]byte, tailReadBytes)
+	stderrBuf := make([]byte, tailReadBytes)
 
 	// The workload writes to its log files itself, so the tailer is what keeps
 	// them from filling the guest's tmpfs.
@@ -568,10 +568,13 @@ func (pm *ProcessManager) tailLogFiles(proc *ProcessInfo) {
 	defer capCheck.Stop()
 	capFiles := func() {
 		// Every process' log files share one budget, so what this one may keep
-		// depends on how many others are keeping output too.
+		// depends on how many others are keeping output too. Only what this tailer
+		// has already read may be released: the workload writes faster than the
+		// tailer reads, and releasing output it has yet to broadcast would replace
+		// that output with zero bytes.
 		processes := pm.countProcesses()
-		capLogFile(proc.StdoutFile, processes)
-		capLogFile(proc.StderrFile, processes)
+		capLogFileUpTo(proc.StdoutFile, processes, fileOffset(stdoutFile))
+		capLogFileUpTo(proc.StderrFile, processes, fileOffset(stderrFile))
 		capLogFile(proc.LogFile, processes)
 	}
 
@@ -593,11 +596,42 @@ func (pm *ProcessManager) tailLogFiles(proc *ProcessInfo) {
 			close(proc.TailDone)
 			return
 		default:
-			pm.readAndBroadcast(stdoutFile, stdoutBuf, proc, "stdout", combinedFile)
-			pm.readAndBroadcast(stderrFile, stderrBuf, proc, "stderr", combinedFile)
+			// Drain what is there rather than one buffer per tick: a workload that
+			// writes faster than that would fall further behind on every tick, and
+			// output waiting to be read is output the cap cannot release.
+			pm.drain(stdoutFile, stdoutBuf, proc, "stdout", combinedFile)
+			pm.drain(stderrFile, stderrBuf, proc, "stderr", combinedFile)
 			time.Sleep(50 * time.Millisecond)
 		}
 	}
+}
+
+// tailReadBytes is how much of a log file one read of the tailer takes.
+const tailReadBytes = 32 * 1024
+
+// maxDrainBytes is how much of one stream a single pass of the tailer reads, so
+// a process writing without pause cannot starve the other stream or the rest of
+// the loop.
+const maxDrainBytes = 4 * 1024 * 1024
+
+// drain reads and broadcasts what a log file holds, up to maxDrainBytes.
+func (pm *ProcessManager) drain(file *os.File, buf []byte, proc *ProcessInfo, streamType string, combinedFile *os.File) {
+	for read := 0; read < maxDrainBytes; {
+		n := pm.readAndBroadcast(file, buf, proc, streamType, combinedFile)
+		if n < len(buf) {
+			return
+		}
+		read += n
+	}
+}
+
+// fileOffset is where file is positioned, or 0 when that cannot be read.
+func fileOffset(file *os.File) int64 {
+	offset, err := file.Seek(0, io.SeekCurrent)
+	if err != nil {
+		return 0
+	}
+	return offset
 }
 
 // readAndBroadcast reads from a file and broadcasts to log writers.

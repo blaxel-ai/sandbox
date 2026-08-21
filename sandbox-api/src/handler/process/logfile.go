@@ -136,6 +136,15 @@ var memTotalBytes = sync.OnceValue(func() int64 {
 // - hence the tail is kept whole and only the head, rounded down to a page
 // boundary, is released.
 func capLogFile(path string, processes int) {
+	capLogFileUpTo(path, processes, -1)
+}
+
+// capLogFileUpTo is capLogFile with a ceiling on what it may release: a tailer
+// reading the file has a cursor of its own, and output past it has not been
+// broadcast yet. Punching that range would hand the tailer zero bytes instead
+// of the workload's output. A negative limit means there is no reader to wait
+// for. It is rounded down to a page boundary like the head itself.
+func capLogFileUpTo(path string, processes int, limit int64) {
 	max := perFileBudget(processes)
 	if path == "" || max == 0 {
 		return
@@ -155,6 +164,11 @@ func capLogFile(path string, processes int) {
 	// Keep a whole cap's worth of tail, and only punch entire pages: a partial
 	// page cannot be freed anyway.
 	head := (stat.Size() - max) & ^int64(pageSize-1)
+	if limit >= 0 {
+		if unread := limit & ^int64(pageSize-1); head > unread {
+			head = unread
+		}
+	}
 	if head <= 0 {
 		return
 	}
@@ -216,15 +230,56 @@ func openLogTail(path string, max int64) (file *os.File, truncated bool, err err
 		return nil, false, err
 	}
 
-	if max <= 0 || stat.Size() <= max {
-		return file, false, nil
+	if max > 0 && stat.Size() > max {
+		if _, err := file.Seek(stat.Size()-max, io.SeekStart); err != nil {
+			file.Close()
+			return nil, false, err
+		}
+		truncated = true
 	}
 
-	if _, err := file.Seek(stat.Size()-max, io.SeekStart); err != nil {
+	// capLogFile may have released more than max - what one file may keep
+	// shrinks as more processes write - so the position above can sit inside the
+	// hole. It reads back as zero bytes, which a caller would hand to a client or
+	// scan as one enormous line, so skip to where the kept output starts.
+	skipped, err := skipReleasedHead(file)
+	if err != nil {
 		file.Close()
 		return nil, false, err
 	}
-	return file, true, nil
+	return file, truncated || skipped, nil
+}
+
+// skipReleasedHead advances file past the zero bytes a released head reads back
+// as, and says whether it skipped any.
+func skipReleasedHead(file *os.File) (bool, error) {
+	start, err := file.Seek(0, io.SeekCurrent)
+	if err != nil {
+		return false, err
+	}
+
+	buf := make([]byte, 32*1024)
+	offset := start
+	for {
+		n, readErr := file.Read(buf)
+		for i := 0; i < n; i++ {
+			if buf[i] == 0 {
+				continue
+			}
+			if _, err := file.Seek(offset+int64(i), io.SeekStart); err != nil {
+				return false, err
+			}
+			return offset+int64(i) > start, nil
+		}
+		offset += int64(n)
+		if readErr != nil {
+			// Including EOF: the whole tail was released.
+			if _, err := file.Seek(offset, io.SeekStart); err != nil {
+				return false, err
+			}
+			return offset > start, nil
+		}
+	}
 }
 
 // readLogTail returns the last max bytes of a log file, skipping any head that
@@ -249,13 +304,13 @@ func readLogTail(path string, max int64) (string, bool) {
 		return "", false
 	}
 
-	// A file whose head was released reads back as zeros; a file we seeked past
-	// is missing its head. Either way say so rather than handing back a tail
-	// that looks like the whole output.
+	// A file whose head was released, or one we seeked past, is missing its
+	// head: say so rather than handing back a tail that looks like the whole
+	// output.
 	if truncated {
 		return truncationMarker + string(content), true
 	}
-	return string(trimReleasedHead(content)), true
+	return string(content), true
 }
 
 // backlogReader reads file up to the absolute offset end, so a replay stops
@@ -298,14 +353,3 @@ func readAtMost(file *os.File, max int64) ([]byte, error) {
 	return buf[:n], nil
 }
 
-// trimReleasedHead drops the zero bytes a punched-out head reads back as.
-func trimReleasedHead(content []byte) []byte {
-	head := 0
-	for head < len(content) && content[head] == 0 {
-		head++
-	}
-	if head == 0 {
-		return content
-	}
-	return append([]byte(truncationMarker), content[head:]...)
-}
