@@ -8,7 +8,6 @@ import (
 	"sync"
 
 	"github.com/sirupsen/logrus"
-	"golang.org/x/sys/unix"
 )
 
 // maxLogFileBytes is the ceiling on what one log file of one process keeps on
@@ -160,8 +159,7 @@ func capLogFile(path string, processes int) {
 		return
 	}
 
-	if err := unix.Fallocate(int(file.Fd()),
-		unix.FALLOC_FL_PUNCH_HOLE|unix.FALLOC_FL_KEEP_SIZE, 0, head); err != nil {
+	if err := punchHole(file, head); err != nil {
 		logrus.WithError(err).WithField("file", path).
 			Debug("Failed to release the head of an oversized process log file")
 		return
@@ -258,6 +256,19 @@ func readLogTail(path string, max int64) (string, bool) {
 		return truncationMarker + string(content), true
 	}
 	return string(trimReleasedHead(content)), true
+}
+
+// backlogReader reads file up to the absolute offset end, so a replay stops
+// where the live stream takes over.
+func backlogReader(file *os.File, end int64) io.Reader {
+	offset, err := file.Seek(0, io.SeekCurrent)
+	if err != nil {
+		return file
+	}
+	if end <= offset {
+		return io.LimitReader(file, 0)
+	}
+	return io.LimitReader(file, end-offset)
 }
 
 // readAtMost reads the rest of file, up to max bytes, into a single buffer.
