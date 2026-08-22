@@ -48,6 +48,12 @@ type WireGuardConfig struct {
 	// nil means use default (25s), pointer to 0 explicitly disables keepalive.
 	PersistentKeepalive *int `json:"persistent_keepalive,omitempty"`
 
+	// DNS lists nameservers to put ahead of the sandbox's own ones. Only the
+	// ones whose family the tunnel carries are used: an IPv6-only sandbox is
+	// given a DNS64 resolver, which answers no A records, so tunnelled IPv4
+	// needs an IPv4 resolver to resolve IPv4-only names.
+	DNS []string `json:"dns,omitempty"`
+
 	// RouteAll routes all traffic through the tunnel (sets up default route)
 	RouteAll bool `json:"route_all,omitempty"`
 }
@@ -148,6 +154,12 @@ func (c *WireGuardConfig) Validate() error {
 	for _, ip := range c.AllowedIPs {
 		if _, _, err := net.ParseCIDR(ip); err != nil {
 			return fmt.Errorf("invalid allowed_ip %q: %w", ip, err)
+		}
+	}
+
+	for _, server := range c.DNS {
+		if net.ParseIP(server) == nil {
+			return fmt.Errorf("invalid dns nameserver %q: must be an IP address", server)
 		}
 	}
 
