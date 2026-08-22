@@ -3,15 +3,27 @@
 package networking
 
 import (
+	"net"
+	"slices"
+
 	"github.com/sirupsen/logrus"
 	"github.com/vishvananda/netlink"
 	"golang.org/x/sys/unix"
 )
 
+// tunnelPrefixes snapshots the prefixes currently routed into the tunnel. The
+// route monitor outlives the tunnel it watches, and teardown clears these under
+// the lock, so the monitor has to read them under it too.
+func (w *WireGuardClient) tunnelPrefixes() []*net.IPNet {
+	w.mutex.Lock()
+	defer w.mutex.Unlock()
+	return slices.Clone(w.tunnelDsts)
+}
+
 // routesFamilyByDefault reports whether the tunnel carries the default route of
 // the given address family.
-func (w *WireGuardClient) routesFamilyByDefault(family int) bool {
-	for _, dst := range w.tunnelDsts {
+func routesFamilyByDefault(tunnelDsts []*net.IPNet, family int) bool {
+	for _, dst := range tunnelDsts {
 		if isDefaultPrefix(dst) && ipFamily(dst.IP) == family {
 			return true
 		}
@@ -21,8 +33,8 @@ func (w *WireGuardClient) routesFamilyByDefault(family int) bool {
 
 // routesAnyFamilyByDefault reports whether the tunnel carries a default route
 // at all, whichever family.
-func (w *WireGuardClient) routesAnyFamilyByDefault() bool {
-	for _, dst := range w.tunnelDsts {
+func routesAnyFamilyByDefault(tunnelDsts []*net.IPNet) bool {
+	for _, dst := range tunnelDsts {
 		if isDefaultPrefix(dst) {
 			return true
 		}
@@ -35,16 +47,21 @@ func (w *WireGuardClient) routesAnyFamilyByDefault() bool {
 // treated as conflicting whenever the tunnel owns any default, so an
 // unattributable default can never quietly divert traffic off the tunnel.
 func (w *WireGuardClient) conflictsWithTunnel(route netlink.Route) bool {
+	tunnelDsts := w.tunnelPrefixes()
+
 	family := routeFamily(route)
 	if family == unix.AF_UNSPEC {
-		return w.routesAnyFamilyByDefault()
+		return routesAnyFamilyByDefault(tunnelDsts)
 	}
-	return w.routesFamilyByDefault(family)
+	return routesFamilyByDefault(tunnelDsts, family)
 }
 
 // monitorRoutes subscribes to route changes and immediately removes conflicting default routes.
 // This handles snapshot resume scenarios where the container runtime may re-add routes.
-func (w *WireGuardClient) monitorRoutes(wgLink netlink.Link) {
+// stop is taken by value: teardown clears the client's own reference to it
+// under the lock, and this goroutine must keep watching the channel it was
+// started with.
+func (w *WireGuardClient) monitorRoutes(wgLink netlink.Link, stop <-chan struct{}) {
 	// Create a channel to receive route updates
 	routeUpdateCh := make(chan netlink.RouteUpdate)
 	doneCh := make(chan struct{})
@@ -59,7 +76,7 @@ func (w *WireGuardClient) monitorRoutes(wgLink netlink.Link) {
 
 	for {
 		select {
-		case <-w.stopMonitor:
+		case <-stop:
 			close(doneCh)
 			logrus.Debug("Stopping route monitor")
 			return

@@ -152,25 +152,25 @@ func TestConflictsWithTunnel(t *testing.T) {
 // A v6-only sandbox tunnelling IPv4 must keep its IPv6 default route: it is what
 // carries the tunnel's own UDP to an IPv6 peer endpoint.
 func TestRoutesFamilyByDefault(t *testing.T) {
-	client := &WireGuardClient{tunnelDsts: []*net.IPNet{mustCIDR(t, "0.0.0.0/0")}}
+	tunnelled := []*net.IPNet{mustCIDR(t, "0.0.0.0/0")}
 
-	if !client.routesFamilyByDefault(syscall.AF_INET) {
+	if !routesFamilyByDefault(tunnelled, syscall.AF_INET) {
 		t.Error("IPv4 default is on the tunnel, expected true")
 	}
-	if client.routesFamilyByDefault(syscall.AF_INET6) {
+	if routesFamilyByDefault(tunnelled, syscall.AF_INET6) {
 		t.Error("IPv6 default is not on the tunnel, expected false")
 	}
-	if client.routesFamilyByDefault(syscall.AF_UNSPEC) {
+	if routesFamilyByDefault(tunnelled, syscall.AF_UNSPEC) {
 		t.Error("an unknown family must never be treated as tunnelled")
 	}
 
-	client.tunnelDsts = append(client.tunnelDsts, mustCIDR(t, "::/0"))
-	if !client.routesFamilyByDefault(syscall.AF_INET6) {
+	tunnelled = append(tunnelled, mustCIDR(t, "::/0"))
+	if !routesFamilyByDefault(tunnelled, syscall.AF_INET6) {
 		t.Error("IPv6 default is on the tunnel now, expected true")
 	}
 
-	narrow := &WireGuardClient{tunnelDsts: []*net.IPNet{mustCIDR(t, "10.0.0.0/8")}}
-	if narrow.routesFamilyByDefault(syscall.AF_INET) {
+	narrow := []*net.IPNet{mustCIDR(t, "10.0.0.0/8")}
+	if routesFamilyByDefault(narrow, syscall.AF_INET) {
 		t.Error("a narrow prefix must not count as the family default")
 	}
 }

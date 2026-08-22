@@ -356,7 +356,7 @@ func (w *WireGuardClient) configureNetwork(interfaceName string) error {
 
 		// Start route monitor to handle snapshot resume scenarios
 		w.stopMonitor = make(chan struct{})
-		go w.monitorRoutes(link)
+		go w.monitorRoutes(link, w.stopMonitor)
 	}
 
 	return nil
