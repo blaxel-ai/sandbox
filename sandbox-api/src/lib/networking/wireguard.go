@@ -35,9 +35,6 @@ type WireGuardClient struct {
 	// replacedDefaults are the pre-existing default routes taken off the
 	// physical interface, kept verbatim so they can be restored on teardown.
 	replacedDefaults []*netlink.Route
-	// resolv holds the resolver configuration from before the tunnel's
-	// nameservers were injected, nil when none were.
-	resolv *resolvGuard
 }
 
 // Global WireGuard client instance protected by a mutex.
@@ -261,10 +258,6 @@ func (w *WireGuardClient) Stop() error {
 		w.removeRoutes()
 	}
 
-	// The injected nameservers are only reachable through the tunnel.
-	w.resolv.restore()
-	w.resolv = nil
-
 	if w.device != nil {
 		w.device.Close()
 	}
@@ -366,28 +359,7 @@ func (w *WireGuardClient) configureNetwork(interfaceName string) error {
 		go w.monitorRoutes(link)
 	}
 
-	w.configureDNS()
-
 	return nil
-}
-
-// configureDNS injects the configured nameservers the tunnel can reach ahead of
-// the ones the sandbox was booted with. A dedicated-egress sandbox is reachable
-// only over IPv6 and gets a DNS64 resolver, which answers no A records: without
-// a resolver of the tunnelled family, IPv4 egress works but IPv4-only names do
-// not resolve. A failure here is not fatal, connectivity itself is unaffected.
-func (w *WireGuardClient) configureDNS() {
-	servers := tunnelledDNS(w.config.DNS, w.tunnelDsts)
-	if len(servers) == 0 {
-		return
-	}
-
-	guard, err := applyTunnelDNS(resolvConfPath, servers)
-	if err != nil {
-		logrus.WithError(err).Warn("Failed to inject the tunnel's nameservers")
-		return
-	}
-	w.resolv = guard
 }
 
 // setupRoutes routes the tunnel's allowed IPs through the WireGuard interface,
