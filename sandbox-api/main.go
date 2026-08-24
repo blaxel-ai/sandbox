@@ -59,7 +59,16 @@ func main() {
 	if loaded, err := envfile.Load(); err != nil {
 		logrus.WithError(err).WithField("loaded", loaded).Errorf("Failed to load part of the environment from %s - those user environment variables are missing", envfile.PathVar)
 	} else if loaded > 0 {
-		logrus.WithField("count", loaded).Infof("Loaded environment variables from %s that were missing from the process environment", envfile.PathVar)
+		logrus.WithField("count", loaded).Infof("Applied environment variables from %s", envfile.PathVar)
+	}
+
+	environmentHandler := handler.GetEnvironmentHandler()
+	if _, err := environmentHandler.Reload(); err != nil {
+		if os.IsNotExist(err) {
+			logrus.WithError(err).Debug("Guest metadata document is absent; skipping startup environment reload")
+		} else {
+			logrus.WithError(err).Error("Failed to load guest metadata environment")
+		}
 	}
 
 	// Define command-line flags

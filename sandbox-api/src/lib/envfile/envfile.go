@@ -4,15 +4,11 @@
 // The command line is bounded, so the runtime moves everything that does not
 // fit into a file mounted from a secret and names it in BL_ENV_VAR_PATH. The
 // guest's init (the metamorph wrapper) reads that file before exec'ing the
-// workload, so in the normal case the API already has those variables in its
-// own environment and there is nothing to do here.
+// workload, but may have loaded an older version before a restart.
 //
-// It is not the case for every image: the wrapper baked into an image predates
-// the file for images converted before it existed, and an init that cannot read
-// the mount (or is not the wrapper at all) drops the whole user environment
-// silently. Reading the file here makes the API the authority on its own
-// environment instead of the image's init, which is what every process,
-// terminal and MCP tool it spawns inherits.
+// Reading the file here makes the API authoritative for the variables it
+// carries. This keeps a restarted API in sync with the file the host rewrote,
+// and ensures every process, terminal and MCP tool it spawns inherits them.
 package envfile
 
 import (
@@ -25,14 +21,13 @@ import (
 // PathVar names the file holding the overflowed environment.
 const PathVar = "BL_ENV_VAR_PATH"
 
-// Load sets every variable of the file named by PathVar that the process does
-// not already have, and reports how many it set. It is a no-op when the
+// Load sets every variable carried by the file named by PathVar, overwriting
+// inherited values, and reports how many it applied. It is a no-op when the
 // variable is unset, which is the case whenever the whole environment fit on
 // the command line.
 //
-// Variables already present are left alone: the command line carries the
-// platform's own variables and is the more authoritative of the two, and a
-// variable the wrapper already loaded holds the same value anyway.
+// PathVar itself is never applied from the file, so the file cannot redirect a
+// subsequent read.
 //
 // A variable that cannot be applied costs only itself: the rest of the
 // environment is loaded and the failures are returned together, because losing
@@ -63,7 +58,7 @@ func Load() (int, error) {
 	loaded := 0
 	var failures []error
 	for name, value := range env {
-		if _, exists := os.LookupEnv(name); exists {
+		if name == PathVar {
 			continue
 		}
 		if err := os.Setenv(name, value); err != nil {

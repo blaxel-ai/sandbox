@@ -20,6 +20,29 @@ func performReload(t *testing.T, h *EnvironmentHandler) *httptest.ResponseRecord
 	return w
 }
 
+func TestReloadAppliesEnvironment(t *testing.T) {
+	doc := filepath.Join(t.TempDir(), "metadata")
+	t.Setenv("BL_METADATA_PATH", doc)
+	t.Cleanup(func() {
+		os.Unsetenv("RELOAD_TEST_DIRECT")
+	})
+
+	if err := os.WriteFile(doc, []byte(`{"generation":3,"environment":{"RELOAD_TEST_DIRECT":"value"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	response, err := NewEnvironmentHandler().Reload()
+	if err != nil {
+		t.Fatalf("Reload() error = %v", err)
+	}
+	if response != (ReloadResponse{Generation: 3, Applied: 1}) {
+		t.Fatalf("Reload() = %+v, want generation 3 and one applied variable", response)
+	}
+	if got := os.Getenv("RELOAD_TEST_DIRECT"); got != "value" {
+		t.Fatalf("RELOAD_TEST_DIRECT = %q, want %q", got, "value")
+	}
+}
+
 func TestHandleReloadAppliesAndRemoves(t *testing.T) {
 	doc := filepath.Join(t.TempDir(), "metadata")
 	t.Setenv("BL_METADATA_PATH", doc)
@@ -93,5 +116,14 @@ func TestHandleReloadWithoutMetadata(t *testing.T) {
 
 	if w := performReload(t, NewEnvironmentHandler()); w.Code != http.StatusNotFound {
 		t.Fatalf("expected 404, got %d", w.Code)
+	}
+}
+
+func TestReloadWithoutMetadata(t *testing.T) {
+	t.Setenv("BL_METADATA_PATH", filepath.Join(t.TempDir(), "missing"))
+
+	_, err := NewEnvironmentHandler().Reload()
+	if !os.IsNotExist(err) {
+		t.Fatalf("Reload() error = %v, want not-exist error", err)
 	}
 }

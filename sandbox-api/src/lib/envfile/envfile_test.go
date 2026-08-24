@@ -18,9 +18,7 @@ func write(t *testing.T, content string) string {
 }
 
 // absent guarantees the name is unset for the duration of the test whatever the
-// ambient environment holds, and restores it afterwards: a variable the test
-// expects Load to set must not be one the process already has, or Load skips it
-// and the test measures nothing.
+// ambient environment holds, and restores it afterwards.
 func absent(t *testing.T, names ...string) {
 	t.Helper()
 	for _, name := range names {
@@ -82,10 +80,8 @@ func TestLoadReportsAnUnexpectedFormat(t *testing.T) {
 	}
 }
 
-// The command line is the authoritative half of the environment, and a variable
-// the image's init already loaded holds the same value anyway.
-func TestLoadKeepsTheVariablesAlreadySet(t *testing.T) {
-	write(t, "ALREADY_SET\x00from_file\x00EMPTY_BUT_SET\x00from_file\x00")
+func TestLoadOverwritesInheritedVariablesWithoutClobberingPath(t *testing.T) {
+	path := write(t, "ALREADY_SET\x00from_file\x00EMPTY_BUT_SET\x00from_file\x00"+PathVar+"\x00redirect\x00")
 	t.Setenv("ALREADY_SET", "from_command_line")
 	t.Setenv("EMPTY_BUT_SET", "")
 
@@ -93,14 +89,17 @@ func TestLoadKeepsTheVariablesAlreadySet(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
-	if loaded != 0 {
-		t.Errorf("Load() = %d, want 0", loaded)
+	if loaded != 2 {
+		t.Errorf("Load() = %d, want 2", loaded)
 	}
-	if got := os.Getenv("ALREADY_SET"); got != "from_command_line" {
-		t.Errorf("ALREADY_SET = %q, want %q", got, "from_command_line")
+	if got := os.Getenv("ALREADY_SET"); got != "from_file" {
+		t.Errorf("ALREADY_SET = %q, want %q", got, "from_file")
 	}
-	if got := os.Getenv("EMPTY_BUT_SET"); got != "" {
-		t.Errorf("EMPTY_BUT_SET = %q, want empty", got)
+	if got := os.Getenv("EMPTY_BUT_SET"); got != "from_file" {
+		t.Errorf("EMPTY_BUT_SET = %q, want %q", got, "from_file")
+	}
+	if got := os.Getenv(PathVar); got != path {
+		t.Errorf("%s = %q, want %q", PathVar, got, path)
 	}
 }
 

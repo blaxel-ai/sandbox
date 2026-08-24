@@ -1,6 +1,7 @@
 package handler
 
 import (
+	stdjson "encoding/json"
 	"net/http"
 	"os"
 	"sync"
@@ -62,6 +63,19 @@ func NewEnvironmentHandler() *EnvironmentHandler {
 	}
 }
 
+var (
+	environmentHandler     *EnvironmentHandler
+	environmentHandlerOnce sync.Once
+)
+
+// GetEnvironmentHandler returns the singleton environment handler instance.
+func GetEnvironmentHandler() *EnvironmentHandler {
+	environmentHandlerOnce.Do(func() {
+		environmentHandler = NewEnvironmentHandler()
+	})
+	return environmentHandler
+}
+
 // ReloadResponse is the response body for the environment reload endpoint.
 type ReloadResponse struct {
 	Generation int64 `json:"generation"`
@@ -79,7 +93,7 @@ type ReloadResponse struct {
 // @Failure 500 {object} ErrorResponse
 // @Router /environment/reload [post]
 func (h *EnvironmentHandler) HandleReload(c *gin.Context) {
-	raw, err := os.ReadFile(h.path)
+	response, err := h.Reload()
 	if err != nil {
 		if os.IsNotExist(err) {
 			h.SendError(c, http.StatusNotFound, err)
@@ -88,11 +102,19 @@ func (h *EnvironmentHandler) HandleReload(c *gin.Context) {
 		h.SendError(c, http.StatusInternalServerError, err)
 		return
 	}
+	c.JSON(http.StatusOK, response)
+}
+
+// Reload applies the environment from the guest metadata document.
+func (h *EnvironmentHandler) Reload() (ReloadResponse, error) {
+	raw, err := os.ReadFile(h.path)
+	if err != nil {
+		return ReloadResponse{}, err
+	}
 
 	var doc metadataDocument
-	if err := json.Unmarshal(raw, &doc); err != nil {
-		h.SendError(c, http.StatusInternalServerError, err)
-		return
+	if err := stdjson.Unmarshal(raw, &doc); err != nil {
+		return ReloadResponse{}, err
 	}
 
 	h.mu.Lock()
@@ -123,9 +145,9 @@ func (h *EnvironmentHandler) HandleReload(c *gin.Context) {
 		"removed":    removed,
 	}).Info("Environment reloaded from guest metadata")
 
-	c.JSON(http.StatusOK, ReloadResponse{
+	return ReloadResponse{
 		Generation: doc.Generation,
 		Applied:    applied,
 		Removed:    removed,
-	})
+	}, nil
 }
