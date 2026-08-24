@@ -1,6 +1,7 @@
 package process
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"math/rand"
@@ -31,19 +32,53 @@ type JSONStreamWriter interface {
 	IsJSONStreamWriter() bool
 }
 
-// writeToLogWriter sends data to a log writer, using JSON format if supported
-func writeToLogWriter(w io.Writer, eventType string, data []byte) {
+// prefixLines tags every line start in data with "stdout:" / "stderr:" and
+// reports whether data ended on a line boundary.
+//
+// The caller reads into a fixed-size buffer, so a chunk is a window, not a
+// line: a long line spans several chunks. Prefixing the chunk itself put the
+// tag in the middle of such a line, which corrupted it for every consumer
+// (a >4KB JSON line came out with "stdout:" spliced in at byte 4096 and no
+// longer parsed). atLineStart carries that state across chunks so a
+// continuation resumes untagged.
+func prefixLines(eventType string, data []byte, atLineStart bool) (out []byte, endsAtLineStart bool) {
+	prefix := []byte(eventType + ":")
+	out = make([]byte, 0, len(data)+len(prefix))
+	for len(data) > 0 {
+		if atLineStart {
+			out = append(out, prefix...)
+		}
+		idx := bytes.IndexByte(data, '\n')
+		if idx < 0 {
+			// Chunk ended mid-line; the next one continues it.
+			return append(out, data...), false
+		}
+		out = append(out, data[:idx+1]...)
+		data = data[idx+1:]
+		atLineStart = true
+	}
+	return out, atLineStart
+}
+
+// writeToLogWriter sends one chunk to a log writer. raw is the unprefixed
+// bytes (JSON writers carry the stream in the event type); prefixed is the
+// same bytes tagged at line starts, for plain text writers.
+func writeToLogWriter(w io.Writer, eventType string, raw, prefixed []byte) {
 	if jw, ok := w.(JSONStreamWriter); ok {
 		// JSON writer - send structured event
-		jw.WriteEvent(eventType, string(data))
+		jw.WriteEvent(eventType, string(raw))
 	} else {
-		// Regular writer - send prefixed text (stdout: or stderr:)
-		prefixed := append([]byte(eventType+":"), data...)
 		_, _ = w.Write(prefixed)
 	}
 	if f, ok := w.(interface{ Flush() }); ok {
 		f.Flush()
 	}
+}
+
+// writeLineToLogWriter sends a single whole line, which is always a line start.
+func writeLineToLogWriter(w io.Writer, eventType string, line []byte) {
+	prefixed, _ := prefixLines(eventType, line, true)
+	writeToLogWriter(w, eventType, line, prefixed)
 }
 
 // Define process status constants
@@ -96,9 +131,13 @@ type ProcessInfo struct {
 	stderr           *strings.Builder
 	logs             *strings.Builder
 	logWriters       []io.Writer
-	logLock          sync.RWMutex
-	stopTimeout      chan struct{} // Channel to signal timeout goroutine to stop
-	stopTimeoutOnce  sync.Once    // Protects stopTimeout channel from double-close
+	// Whether the next byte of each stream begins a new line, tracked across
+	// reads so a line split over several chunks is tagged only once.
+	stdoutAtLineStart bool
+	stderrAtLineStart bool
+	logLock           sync.RWMutex
+	stopTimeout       chan struct{} // Channel to signal timeout goroutine to stop
+	stopTimeoutOnce   sync.Once     // Protects stopTimeout channel from double-close
 }
 
 // ProcessLogDir is the directory where process logs are stored
@@ -274,28 +313,30 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 	}
 
 	process := &ProcessInfo{
-		Name:             name,
-		Command:          command,
-		StartedAt:        time.Now(),
-		CompletedAt:      nil,
-		Status:           StatusRunning,
-		WorkingDir:       workingDir,
-		Env:              env,
-		RestartOnFailure: restartOnFailure,
-		MaxRestarts:      maxRestarts,
-		RestartCount:     0,
-		KeepAlive:        keepAlive,
-		Timeout:          timeout,
-		LogFile:          combinedPath,
-		StdoutFile:       stdoutPath,
-		StderrFile:       stderrPath,
-		Done:             make(chan struct{}),
-		TailDone:         make(chan struct{}),
-		stdout:           stdout,
-		stderr:           stderr,
-		logs:             logs,
-		logWriters:       make([]io.Writer, 0),
-		stopTimeout:      make(chan struct{}),
+		Name:              name,
+		Command:           command,
+		StartedAt:         time.Now(),
+		CompletedAt:       nil,
+		Status:            StatusRunning,
+		WorkingDir:        workingDir,
+		Env:               env,
+		RestartOnFailure:  restartOnFailure,
+		MaxRestarts:       maxRestarts,
+		RestartCount:      0,
+		KeepAlive:         keepAlive,
+		Timeout:           timeout,
+		LogFile:           combinedPath,
+		StdoutFile:        stdoutPath,
+		StderrFile:        stderrPath,
+		Done:              make(chan struct{}),
+		TailDone:          make(chan struct{}),
+		stdoutAtLineStart: true,
+		stderrAtLineStart: true,
+		stdout:            stdout,
+		stderr:            stderr,
+		logs:              logs,
+		logWriters:        make([]io.Writer, 0),
+		stopTimeout:       make(chan struct{}),
 	}
 
 	// Redirect stdout/stderr directly to files
@@ -580,14 +621,21 @@ func (pm *ProcessManager) readAndBroadcast(file *os.File, buf []byte, proc *Proc
 			proc.stderr.Write(data)
 		}
 		proc.logs.Write(data)
+		// Tag line starts once, then hand the same bytes to the combined log
+		// file and to every writer, so the file and the live stream agree.
+		atLineStart := proc.stdoutAtLineStart
+		if streamType == "stderr" {
+			atLineStart = proc.stderrAtLineStart
+		}
+		prefixed, endsAtLineStart := prefixLines(streamType, data, atLineStart)
+		if streamType == "stderr" {
+			proc.stderrAtLineStart = endsAtLineStart
+		} else {
+			proc.stdoutAtLineStart = endsAtLineStart
+		}
 		// Write prefixed content to combined log file (preserves interleaved order)
 		if combinedFile != nil {
-			lines := strings.SplitAfter(string(data), "\n")
-			for _, line := range lines {
-				if line != "" {
-					combinedFile.WriteString(streamType + ":" + line)
-				}
-			}
+			combinedFile.Write(prefixed)
 		}
 		// Export process logs to stdout for telemetry collection.
 		// Uses structured log attributes so the telemetry collector can
@@ -615,7 +663,7 @@ func (pm *ProcessManager) readAndBroadcast(file *os.File, buf []byte, proc *Proc
 		}
 		// Send to log writers for streaming
 		for _, w := range proc.logWriters {
-			writeToLogWriter(w, streamType, data)
+			writeToLogWriter(w, streamType, data, prefixed)
 		}
 		proc.logLock.Unlock()
 	}
@@ -697,6 +745,12 @@ func (pm *ProcessManager) restartProcess(oldProcess *ProcessInfo, callback func(
 	oldProcess.stopTimeoutOnce = sync.Once{}
 	oldProcess.Done = make(chan struct{})
 	oldProcess.TailDone = make(chan struct{})
+	// Fresh run, fresh line state: a previous run that died mid-line must not
+	// leave the next one's first line untagged.
+	oldProcess.logLock.Lock()
+	oldProcess.stdoutAtLineStart = true
+	oldProcess.stderrAtLineStart = true
+	oldProcess.logLock.Unlock()
 
 	// Start the process
 	if err := cmd.Start(); err != nil {
@@ -1180,12 +1234,12 @@ func (pm *ProcessManager) StreamProcessOutput(identifier string, w io.Writer) er
 			lines := strings.Split(string(content), "\n")
 			for _, line := range lines {
 				if strings.HasPrefix(line, "stdout:") {
-					writeToLogWriter(w, "stdout", []byte(strings.TrimPrefix(line, "stdout:")+"\n"))
+					writeLineToLogWriter(w, "stdout", []byte(strings.TrimPrefix(line, "stdout:")+"\n"))
 				} else if strings.HasPrefix(line, "stderr:") {
-					writeToLogWriter(w, "stderr", []byte(strings.TrimPrefix(line, "stderr:")+"\n"))
+					writeLineToLogWriter(w, "stderr", []byte(strings.TrimPrefix(line, "stderr:")+"\n"))
 				} else if line != "" {
 					// Fallback for unprefixed lines (shouldn't happen, but handle gracefully)
-					writeToLogWriter(w, "stdout", []byte(line+"\n"))
+					writeLineToLogWriter(w, "stdout", []byte(line+"\n"))
 				}
 			}
 		}
