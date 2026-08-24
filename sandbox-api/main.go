@@ -51,15 +51,27 @@ func main() {
 	oom.ProtectSelf()
 	oom.LimitHeap()
 
-	// Adopt the environment the guest received as a file rather than on its
-	// kernel command line, before anything reads the environment or spawns a
-	// process. The image's init has normally done it already; doing it here as
-	// well means an init that did not is no longer an environment the user
-	// silently lost.
-	if loaded, err := envfile.Load(); err != nil {
-		logrus.WithError(err).WithField("loaded", loaded).Errorf("Failed to load part of the environment from %s - those user environment variables are missing", envfile.PathVar)
-	} else if loaded > 0 {
-		logrus.WithField("count", loaded).Infof("Loaded environment variables from %s that were missing from the process environment", envfile.PathVar)
+	// Re-derive the environment from the two places the host keeps it - the
+	// file naming the part the kernel command line could not carry, then the
+	// metadata document holding the current generation - before anything reads
+	// the environment or spawns a process. The image's init did it at boot, but
+	// a process it restarts after an OOM kill or an in-guest reboot inherits the
+	// environment of that boot, not the one the host has now.
+	loaded, err := envfile.Load()
+	if err != nil {
+		logrus.WithError(err).WithField("loaded", len(loaded)).Errorf("Failed to load part of the environment from %s - those user environment variables are missing", envfile.PathVar)
+	} else if len(loaded) > 0 {
+		logrus.WithField("count", len(loaded)).Infof("Applied environment variables from %s", envfile.PathVar)
+	}
+
+	environmentHandler := handler.GetEnvironmentHandler()
+	environmentHandler.TrackHostManaged(loaded)
+	if _, err := environmentHandler.Reload(); err != nil {
+		if os.IsNotExist(err) {
+			logrus.WithError(err).Debug("Guest metadata document is absent; skipping startup environment reload")
+		} else {
+			logrus.WithError(err).Error("Failed to load guest metadata environment")
+		}
 	}
 
 	// Define command-line flags

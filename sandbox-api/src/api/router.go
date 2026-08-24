@@ -190,7 +190,7 @@ func SetupRouter(disableRequestLogging bool, enableProcessingTime bool) *gin.Eng
 
 	// Environment routes: the guest init calls this after applying a new
 	// metadata generation so the process env follows without a restart.
-	environmentHandler := handler.NewEnvironmentHandler()
+	environmentHandler := handler.GetEnvironmentHandler()
 	r.POST("/environment/reload", environmentHandler.HandleReload)
 
 	// System routes

@@ -45,11 +45,10 @@ type EnvironmentHandler struct {
 	path string
 
 	mu sync.Mutex
-	// Keys applied from the metadata document. The document carries the host's
-	// complete environment set — including the variables the guest booted with,
-	// which the initrd applied from this same document — so a key a later
-	// generation no longer carries is unset. Keys never carried by a document
-	// are never touched.
+	// Keys applied from the metadata document or handed to the guest through
+	// the env-var file. Tracking both sources ensures a later metadata
+	// generation can unset a host-managed key it no longer carries. Keys never
+	// carried by either source are never touched.
 	applied map[string]struct{}
 }
 
@@ -59,6 +58,31 @@ func NewEnvironmentHandler() *EnvironmentHandler {
 		BaseHandler: NewBaseHandler(),
 		path:        metadataPath(),
 		applied:     map[string]struct{}{},
+	}
+}
+
+var (
+	environmentHandler     *EnvironmentHandler
+	environmentHandlerOnce sync.Once
+)
+
+// GetEnvironmentHandler returns the singleton environment handler instance.
+func GetEnvironmentHandler() *EnvironmentHandler {
+	environmentHandlerOnce.Do(func() {
+		environmentHandler = NewEnvironmentHandler()
+	})
+	return environmentHandler
+}
+
+// TrackHostManaged tracks variables handed to the guest through the env-var
+// file, so metadata reload can unset one the current generation no longer
+// carries instead of leaving an inherited value in place.
+func (h *EnvironmentHandler) TrackHostManaged(names []string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	for _, name := range names {
+		h.applied[name] = struct{}{}
 	}
 }
 
@@ -79,7 +103,7 @@ type ReloadResponse struct {
 // @Failure 500 {object} ErrorResponse
 // @Router /environment/reload [post]
 func (h *EnvironmentHandler) HandleReload(c *gin.Context) {
-	raw, err := os.ReadFile(h.path)
+	response, err := h.Reload()
 	if err != nil {
 		if os.IsNotExist(err) {
 			h.SendError(c, http.StatusNotFound, err)
@@ -88,11 +112,19 @@ func (h *EnvironmentHandler) HandleReload(c *gin.Context) {
 		h.SendError(c, http.StatusInternalServerError, err)
 		return
 	}
+	c.JSON(http.StatusOK, response)
+}
+
+// Reload applies the environment from the guest metadata document.
+func (h *EnvironmentHandler) Reload() (ReloadResponse, error) {
+	raw, err := os.ReadFile(h.path)
+	if err != nil {
+		return ReloadResponse{}, err
+	}
 
 	var doc metadataDocument
 	if err := json.Unmarshal(raw, &doc); err != nil {
-		h.SendError(c, http.StatusInternalServerError, err)
-		return
+		return ReloadResponse{}, err
 	}
 
 	h.mu.Lock()
@@ -123,9 +155,9 @@ func (h *EnvironmentHandler) HandleReload(c *gin.Context) {
 		"removed":    removed,
 	}).Info("Environment reloaded from guest metadata")
 
-	c.JSON(http.StatusOK, ReloadResponse{
+	return ReloadResponse{
 		Generation: doc.Generation,
 		Applied:    applied,
 		Removed:    removed,
-	})
+	}, nil
 }
