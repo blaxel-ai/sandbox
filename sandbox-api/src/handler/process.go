@@ -540,14 +540,22 @@ func (h *ProcessHandler) HandleGetProcessLogsStream(c *gin.Context) {
 		return
 	}
 
-	// Wait until the process is done or the client disconnects
+	// Wait until the process is done for good, or the client disconnects.
+	//
+	// Waiting on Done here used to end the stream on a restart: a restart closes
+	// the current Done and installs a fresh one, so the handler returned 200
+	// while the process bounced back up and kept producing output nobody
+	// received. Finished is closed once, when there is no restart to come.
 	proc, exists := h.processManager.GetProcessByIdentifier(identifier)
 	if !exists {
 		return
 	}
+	streamStart := time.Now()
 	select {
-	case <-proc.Done:
+	case <-proc.Finished:
+		logStreamEnd(identifier, "process_finished", streamStart, rw)
 	case <-c.Request.Context().Done():
+		logStreamEnd(identifier, "client_disconnected", streamStart, rw)
 		h.RemoveLogWriter(identifier, rw)
 		return
 	}
@@ -565,6 +573,21 @@ func (h *ProcessHandler) HandleGetProcessLogsStream(c *gin.Context) {
 			rw.Write(content)
 		}
 	}
+}
+
+// logStreamEnd records why a log stream ended. Without it a stream that ends
+// because the client hung up is indistinguishable from one that ends because
+// the process finished: both return 200 (the status was fixed when the headers
+// went out, at the first log line) and neither leaves a trace. Three separate
+// customer investigations came down to guessing which of the two happened.
+func logStreamEnd(identifier, reason string, start time.Time, rw *ResponseWriter) {
+	logrus.WithFields(logrus.Fields{
+		"process":    identifier,
+		"reason":     reason,
+		"duration":   time.Since(start).Round(time.Millisecond).String(),
+		"bytes_sent": rw.BytesSent(),
+		"source":     "process_logs_stream",
+	}).Info("Log stream ended")
 }
 
 // HandleStopProcess handles DELETE requests to /process/{identifier}
@@ -655,10 +678,11 @@ func (h *ProcessHandler) HandleGetProcess(c *gin.Context) {
 
 // ResponseWriter is a custom writer for SSE responses that also flushes after each write
 type ResponseWriter struct {
-	gin      *gin.Context
-	closed   bool
-	sentData bool // Track if any data was sent
-	mu       sync.Mutex
+	gin       *gin.Context
+	closed    bool
+	sentData  bool // Track if any data was sent
+	bytesSent int  // Total bytes written to the client, for the stream-end log
+	mu        sync.Mutex
 }
 
 // Write writes data to the buffer and flushes to the client in a safe manner
@@ -688,8 +712,16 @@ func (w *ResponseWriter) Write(data []byte) (int, error) {
 		w.closed = true
 		return 0, err
 	}
+	w.bytesSent += n
 	w.gin.Writer.Flush()
 	return n, nil
+}
+
+// BytesSent reports how much was written to the client so far.
+func (w *ResponseWriter) BytesSent() int {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.bytesSent
 }
 
 // HasSentData returns true if any data was sent

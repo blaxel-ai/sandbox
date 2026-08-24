@@ -235,6 +235,7 @@ func (pm *ProcessManager) LoadState() error {
 			Env:              procState.Env,
 			Done:             make(chan struct{}),
 			TailDone:         make(chan struct{}),
+			Finished:         make(chan struct{}),
 			stdout:           newLogBuffer(),
 			stderr:           newLogBuffer(),
 			logs:             newLogBuffer(),
@@ -291,6 +292,7 @@ func (pm *ProcessManager) LoadState() error {
 				proc.ExitCode = -1
 				close(proc.Done)
 				close(proc.TailDone)
+				proc.markFinished()
 				deadCount++
 				pm.processes[pid] = proc
 				continue
@@ -334,6 +336,7 @@ func (pm *ProcessManager) LoadState() error {
 			// Close the Done and TailDone channels since process is no longer running
 			close(proc.Done)
 			close(proc.TailDone)
+			proc.markFinished()
 
 			logrus.WithFields(logrus.Fields{
 				"pid":     proc.PID,
@@ -345,6 +348,7 @@ func (pm *ProcessManager) LoadState() error {
 			if proc.CompletedAt != nil {
 				close(proc.Done)
 				close(proc.TailDone)
+				proc.markFinished()
 			}
 		}
 
@@ -625,6 +629,7 @@ func (pm *ProcessManager) monitorAdoptedProcess(proc *ProcessInfo) {
 				// Signal that the process is done
 				close(proc.Done)
 				close(proc.TailDone)
+				proc.markFinished()
 
 				logrus.WithFields(logrus.Fields{
 					"pid":         proc.PID,
