@@ -92,13 +92,20 @@ type ProcessInfo struct {
 	StderrFile       string                  `json:"-"` // Path to stderr log file
 	Done             chan struct{}
 	TailDone         chan struct{} // Closed when tailLogFiles finishes its final reads
-	stdout           *strings.Builder
-	stderr           *strings.Builder
-	logs             *strings.Builder
-	logWriters       []io.Writer
-	logLock          sync.RWMutex
-	stopTimeout      chan struct{} // Channel to signal timeout goroutine to stop
-	stopTimeoutOnce  sync.Once    // Protects stopTimeout channel from double-close
+	// Finished is closed once the process is over for good, with no restart to
+	// come. Done is per-run: a restart closes it and installs a fresh one, so a
+	// consumer waiting on Done sees "finished" every time the process merely
+	// bounces. Anything user-facing that means "this process is over" must wait
+	// on Finished instead.
+	Finished        chan struct{}
+	finishOnce      sync.Once
+	stdout          *strings.Builder
+	stderr          *strings.Builder
+	logs            *strings.Builder
+	logWriters      []io.Writer
+	logLock         sync.RWMutex
+	stopTimeout     chan struct{} // Channel to signal timeout goroutine to stop
+	stopTimeoutOnce sync.Once     // Protects stopTimeout channel from double-close
 }
 
 // ProcessLogDir is the directory where process logs are stored
@@ -121,6 +128,12 @@ func init() {
 
 // shouldRestart reports whether a failed process is eligible for another
 // restart attempt. A negative MaxRestarts means unlimited restarts.
+// markFinished closes Finished exactly once. Safe to call from every terminal
+// path, including ones that may overlap.
+func (p *ProcessInfo) markFinished() {
+	p.finishOnce.Do(func() { close(p.Finished) })
+}
+
 func shouldRestart(p *ProcessInfo) bool {
 	return p.Status == StatusFailed && p.RestartOnFailure &&
 		(p.MaxRestarts < 0 || p.RestartCount < p.MaxRestarts)
@@ -291,6 +304,7 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 		StderrFile:       stderrPath,
 		Done:             make(chan struct{}),
 		TailDone:         make(chan struct{}),
+		Finished:         make(chan struct{}),
 		stdout:           stdout,
 		stderr:           stderr,
 		logs:             logs,
@@ -479,6 +493,7 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 				process.logWriters = nil
 				process.logLock.Unlock()
 
+				process.markFinished()
 				callback(process)
 			}
 			// If restart succeeds, the callback will be called when that process completes
@@ -509,6 +524,7 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 			process.logWriters = nil
 			process.logLock.Unlock()
 
+			process.markFinished()
 			callback(process)
 		}
 	}()
@@ -858,6 +874,7 @@ func (pm *ProcessManager) restartProcess(oldProcess *ProcessInfo, callback func(
 				oldProcess.logWriters = nil
 				oldProcess.logLock.Unlock()
 
+				oldProcess.markFinished()
 				callback(oldProcess)
 			}
 			// If restart succeeds, the callback will be called when that process completes
@@ -888,6 +905,7 @@ func (pm *ProcessManager) restartProcess(oldProcess *ProcessInfo, callback func(
 			oldProcess.logWriters = nil
 			oldProcess.logLock.Unlock()
 
+			oldProcess.markFinished()
 			callback(oldProcess)
 		}
 	}()
@@ -1196,22 +1214,32 @@ func (pm *ProcessManager) StreamProcessOutput(identifier string, w io.Writer) er
 	process.logWriters = append(process.logWriters, w)
 	process.logLock.Unlock()
 
-	// Start keepalive goroutine to prevent connection timeout
+	// Keep the connection warm for as long as this writer is attached.
+	//
+	// Tied to Finished rather than to a "status is running" check: during a
+	// restart the status is briefly Failed, and stopping on that left the
+	// stream with no traffic at all for the rest of its life. Idle connections
+	// are reaped upstream after five minutes, so a quiet process would then
+	// lose its stream for no reason. A failing write means the client is gone.
 	go func() {
 		ticker := time.NewTicker(30 * time.Second)
 		defer ticker.Stop()
 
-		for range ticker.C {
-			process, exists = pm.GetProcessByIdentifier(identifier)
-			// Check if process is still running
-			if !exists || process.Status != StatusRunning {
+		keepaliveMsg := []byte("[keepalive]\n")
+		for {
+			select {
+			case <-process.Finished:
 				return
-			}
-			// Send keepalive message only to this specific writer
-			keepaliveMsg := []byte("[keepalive]\n")
-			_, _ = w.Write(keepaliveMsg)
-			if f, ok := w.(interface{ Flush() }); ok {
-				f.Flush()
+			case <-ticker.C:
+				if _, stillTracked := pm.GetProcessByIdentifier(identifier); !stillTracked {
+					return
+				}
+				if _, writeErr := w.Write(keepaliveMsg); writeErr != nil {
+					return
+				}
+				if f, ok := w.(interface{ Flush() }); ok {
+					f.Flush()
+				}
 			}
 		}
 	}()
