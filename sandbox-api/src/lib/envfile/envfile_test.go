@@ -37,8 +37,8 @@ func TestLoadSetsTheMissingVariables(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
-	if loaded != 2 {
-		t.Errorf("Load() = %d, want 2", loaded)
+	if len(loaded) != 2 {
+		t.Errorf("Load() applied %d variables, want 2", len(loaded))
 	}
 	if got := os.Getenv("TEST_ENV_VAR_001"); got != "value_001" {
 		t.Errorf("TEST_ENV_VAR_001 = %q, want %q", got, "value_001")
@@ -58,8 +58,8 @@ func TestLoadAppliesTheRestDespiteAnUnusableName(t *testing.T) {
 	if err == nil {
 		t.Fatal("Load() error = nil, want the unusable name reported")
 	}
-	if loaded != 1 {
-		t.Errorf("Load() = %d, want 1", loaded)
+	if len(loaded) != 1 {
+		t.Errorf("Load() applied %d variables, want 1", len(loaded))
 	}
 	if got := os.Getenv("TEST_ENV_VAR_GOOD"); got != "value" {
 		t.Errorf("TEST_ENV_VAR_GOOD = %q, want %q", got, "value")
@@ -75,8 +75,8 @@ func TestLoadReportsAnUnexpectedFormat(t *testing.T) {
 	if err == nil {
 		t.Fatal("Load() error = nil, want an error for content holding no pair")
 	}
-	if loaded != 0 {
-		t.Errorf("Load() = %d, want 0", loaded)
+	if len(loaded) != 0 {
+		t.Errorf("Load() applied %d variables, want 0", len(loaded))
 	}
 }
 
@@ -89,8 +89,8 @@ func TestLoadOverwritesInheritedVariablesWithoutClobberingPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
-	if loaded != 2 {
-		t.Errorf("Load() = %d, want 2", loaded)
+	if len(loaded) != 2 {
+		t.Errorf("Load() applied %d variables, want 2", len(loaded))
 	}
 	if got := os.Getenv("ALREADY_SET"); got != "from_file" {
 		t.Errorf("ALREADY_SET = %q, want %q", got, "from_file")
@@ -112,8 +112,8 @@ func TestLoadWithoutAPathDoesNothing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
-	if loaded != 0 {
-		t.Errorf("Load() = %d, want 0", loaded)
+	if len(loaded) != 0 {
+		t.Errorf("Load() applied %d variables, want 0", len(loaded))
 	}
 }
 
@@ -135,8 +135,8 @@ func TestLoadEmptyFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
-	if loaded != 0 {
-		t.Errorf("Load() = %d, want 0", loaded)
+	if len(loaded) != 0 {
+		t.Errorf("Load() applied %d variables, want 0", len(loaded))
 	}
 }
 

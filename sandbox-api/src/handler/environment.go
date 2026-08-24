@@ -45,11 +45,10 @@ type EnvironmentHandler struct {
 	path string
 
 	mu sync.Mutex
-	// Keys applied from the metadata document. The document carries the host's
-	// complete environment set — including the variables the guest booted with,
-	// which the initrd applied from this same document — so a key a later
-	// generation no longer carries is unset. Keys never carried by a document
-	// are never touched.
+	// Keys applied from the metadata document or handed to the guest through
+	// the env-var file. Tracking both sources ensures a later metadata
+	// generation can unset a host-managed key it no longer carries. Keys never
+	// carried by either source are never touched.
 	applied map[string]struct{}
 }
 
@@ -73,6 +72,18 @@ func GetEnvironmentHandler() *EnvironmentHandler {
 		environmentHandler = NewEnvironmentHandler()
 	})
 	return environmentHandler
+}
+
+// TrackHostManaged tracks variables handed to the guest through the env-var
+// file, so metadata reload can unset one the current generation no longer
+// carries instead of leaving an inherited value in place.
+func (h *EnvironmentHandler) TrackHostManaged(names []string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	for _, name := range names {
+		h.applied[name] = struct{}{}
+	}
 }
 
 // ReloadResponse is the response body for the environment reload endpoint.

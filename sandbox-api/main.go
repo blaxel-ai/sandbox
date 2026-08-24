@@ -56,13 +56,15 @@ func main() {
 	// process. The image's init has normally done it already; doing it here as
 	// well means an init that did not is no longer an environment the user
 	// silently lost.
-	if loaded, err := envfile.Load(); err != nil {
-		logrus.WithError(err).WithField("loaded", loaded).Errorf("Failed to load part of the environment from %s - those user environment variables are missing", envfile.PathVar)
-	} else if loaded > 0 {
-		logrus.WithField("count", loaded).Infof("Applied environment variables from %s", envfile.PathVar)
+	loaded, err := envfile.Load()
+	if err != nil {
+		logrus.WithError(err).WithField("loaded", len(loaded)).Errorf("Failed to load part of the environment from %s - those user environment variables are missing", envfile.PathVar)
+	} else if len(loaded) > 0 {
+		logrus.WithField("count", len(loaded)).Infof("Applied environment variables from %s", envfile.PathVar)
 	}
 
 	environmentHandler := handler.GetEnvironmentHandler()
+	environmentHandler.TrackHostManaged(loaded)
 	if _, err := environmentHandler.Reload(); err != nil {
 		if os.IsNotExist(err) {
 			logrus.WithError(err).Debug("Guest metadata document is absent; skipping startup environment reload")

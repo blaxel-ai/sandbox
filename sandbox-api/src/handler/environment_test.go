@@ -119,11 +119,49 @@ func TestHandleReloadWithoutMetadata(t *testing.T) {
 	}
 }
 
+func TestReloadRemovesDroppedHostManagedVariables(t *testing.T) {
+	doc := filepath.Join(t.TempDir(), "metadata")
+	t.Setenv("BL_METADATA_PATH", doc)
+	t.Setenv("RELOAD_TEST_DROPPED", "inherited")
+	t.Setenv("RELOAD_TEST_KEPT", "inherited")
+
+	h := NewEnvironmentHandler()
+	h.TrackHostManaged([]string{"RELOAD_TEST_DROPPED", "RELOAD_TEST_KEPT"})
+
+	if err := os.WriteFile(doc, []byte(`{"generation":4,"environment":{"RELOAD_TEST_KEPT":"updated"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	response, err := h.Reload()
+	if err != nil {
+		t.Fatalf("Reload() error = %v", err)
+	}
+	if response.Removed != 1 {
+		t.Errorf("Reload() removed %d variables, want 1", response.Removed)
+	}
+	if response.Applied != 1 {
+		t.Errorf("Reload() applied %d variables, want 1", response.Applied)
+	}
+	if _, ok := os.LookupEnv("RELOAD_TEST_DROPPED"); ok {
+		t.Fatal("dropped host-managed variable still set")
+	}
+	if got := os.Getenv("RELOAD_TEST_KEPT"); got != "updated" {
+		t.Fatalf("RELOAD_TEST_KEPT = %q, want %q", got, "updated")
+	}
+}
+
 func TestReloadWithoutMetadata(t *testing.T) {
 	t.Setenv("BL_METADATA_PATH", filepath.Join(t.TempDir(), "missing"))
+	t.Setenv("RELOAD_TEST_NO_METADATA", "inherited")
 
-	_, err := NewEnvironmentHandler().Reload()
+	h := NewEnvironmentHandler()
+	h.TrackHostManaged([]string{"RELOAD_TEST_NO_METADATA"})
+
+	_, err := h.Reload()
 	if !os.IsNotExist(err) {
 		t.Fatalf("Reload() error = %v, want not-exist error", err)
+	}
+	if got := os.Getenv("RELOAD_TEST_NO_METADATA"); got != "inherited" {
+		t.Fatalf("RELOAD_TEST_NO_METADATA = %q, want %q", got, "inherited")
 	}
 }

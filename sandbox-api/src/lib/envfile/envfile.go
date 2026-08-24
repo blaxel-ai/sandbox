@@ -22,7 +22,7 @@ import (
 const PathVar = "BL_ENV_VAR_PATH"
 
 // Load sets every variable carried by the file named by PathVar, overwriting
-// inherited values, and reports how many it applied. It is a no-op when the
+// inherited values, and reports the names it applied. It is a no-op when the
 // variable is unset, which is the case whenever the whole environment fit on
 // the command line.
 //
@@ -33,29 +33,29 @@ const PathVar = "BL_ENV_VAR_PATH"
 // environment is loaded and the failures are returned together, because losing
 // the whole environment over one unusable name is the very failure this exists
 // to prevent.
-func Load() (int, error) {
+func Load() ([]string, error) {
 	path := os.Getenv(PathVar)
 	if path == "" {
-		return 0, nil
+		return nil, nil
 	}
 
 	content, err := os.ReadFile(path)
 	if err != nil {
-		return 0, fmt.Errorf("read %s=%q: %w", PathVar, path, err)
+		return nil, fmt.Errorf("read %s=%q: %w", PathVar, path, err)
 	}
 
 	env := parse(content)
 	if len(env) == 0 {
 		if len(content) == 0 {
-			return 0, nil
+			return nil, nil
 		}
 		// Content that yields no pair is a format the runtime and this parser
 		// disagree on. Silence here would look exactly like the environment
 		// loss this package exists to fix.
-		return 0, fmt.Errorf(`%s=%q holds %d bytes but no KEY\0VALUE\0 pair: unexpected format`, PathVar, path, len(content))
+		return nil, fmt.Errorf(`%s=%q holds %d bytes but no KEY\0VALUE\0 pair: unexpected format`, PathVar, path, len(content))
 	}
 
-	loaded := 0
+	applied := make([]string, 0, len(env))
 	var failures []error
 	for name, value := range env {
 		if name == PathVar {
@@ -65,12 +65,12 @@ func Load() (int, error) {
 			failures = append(failures, fmt.Errorf("set %q: %w", name, err))
 			continue
 		}
-		loaded++
+		applied = append(applied, name)
 	}
 	if len(failures) > 0 {
-		return loaded, fmt.Errorf("%s=%q: %w", PathVar, path, errors.Join(failures...))
+		return applied, fmt.Errorf("%s=%q: %w", PathVar, path, errors.Join(failures...))
 	}
-	return loaded, nil
+	return applied, nil
 }
 
 // parse reads NUL-delimited KEY\0VALUE\0 pairs, the format the runtime writes:
