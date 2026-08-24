@@ -1,7 +1,6 @@
 package handler
 
 import (
-	stdjson "encoding/json"
 	"net/http"
 	"os"
 	"sync"
@@ -113,7 +112,7 @@ func (h *EnvironmentHandler) Reload() (ReloadResponse, error) {
 	}
 
 	var doc metadataDocument
-	if err := stdjson.Unmarshal(raw, &doc); err != nil {
+	if err := json.Unmarshal(raw, &doc); err != nil {
 		return ReloadResponse{}, err
 	}
 
