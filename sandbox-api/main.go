@@ -51,11 +51,12 @@ func main() {
 	oom.ProtectSelf()
 	oom.LimitHeap()
 
-	// Adopt the environment the guest received as a file rather than on its
-	// kernel command line, before anything reads the environment or spawns a
-	// process. The image's init has normally done it already; doing it here as
-	// well means an init that did not is no longer an environment the user
-	// silently lost.
+	// Re-derive the environment from the two places the host keeps it - the
+	// file naming the part the kernel command line could not carry, then the
+	// metadata document holding the current generation - before anything reads
+	// the environment or spawns a process. The image's init did it at boot, but
+	// a process it restarts after an OOM kill or an in-guest reboot inherits the
+	// environment of that boot, not the one the host has now.
 	loaded, err := envfile.Load()
 	if err != nil {
 		logrus.WithError(err).WithField("loaded", len(loaded)).Errorf("Failed to load part of the environment from %s - those user environment variables are missing", envfile.PathVar)
