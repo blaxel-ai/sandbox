@@ -1,6 +1,7 @@
 package process
 
 import (
+	"bufio"
 	"bytes"
 	"fmt"
 	"io"
@@ -16,6 +17,7 @@ import (
 	"github.com/blaxel-ai/sandbox-api/src/handler/constants"
 	"github.com/blaxel-ai/sandbox-api/src/lib/blaxel"
 	"github.com/blaxel-ai/sandbox-api/src/lib/identity"
+	"github.com/blaxel-ai/sandbox-api/src/lib/oom"
 	"github.com/sirupsen/logrus"
 )
 
@@ -32,42 +34,15 @@ type JSONStreamWriter interface {
 	IsJSONStreamWriter() bool
 }
 
-// prefixLines tags every line start in data with "stdout:" / "stderr:" and
-// reports whether data ended on a line boundary.
-//
-// The caller reads into a fixed-size buffer, so a chunk is a window, not a
-// line: a long line spans several chunks. Prefixing the chunk itself put the
-// tag in the middle of such a line, which corrupted it for every consumer
-// (a >4KB JSON line came out with "stdout:" spliced in at byte 4096 and no
-// longer parsed). atLineStart carries that state across chunks so a
-// continuation resumes untagged.
-func prefixLines(eventType string, data []byte, atLineStart bool) (out []byte, endsAtLineStart bool) {
-	prefix := []byte(eventType + ":")
-	out = make([]byte, 0, len(data)+len(prefix))
-	for len(data) > 0 {
-		if atLineStart {
-			out = append(out, prefix...)
-		}
-		idx := bytes.IndexByte(data, '\n')
-		if idx < 0 {
-			// Chunk ended mid-line; the next one continues it.
-			return append(out, data...), false
-		}
-		out = append(out, data[:idx+1]...)
-		data = data[idx+1:]
-		atLineStart = true
-	}
-	return out, atLineStart
-}
-
-// writeToLogWriter sends one chunk to a log writer. raw is the unprefixed
-// bytes (JSON writers carry the stream in the event type); prefixed is the
-// same bytes tagged at line starts, for plain text writers.
-func writeToLogWriter(w io.Writer, eventType string, raw, prefixed []byte) {
+// writeToLogWriter sends data that begins a line, tagging it for text writers.
+// Callers with a partial line must use writeChunkToLogWriter instead.
+func writeToLogWriter(w io.Writer, eventType string, data []byte) {
 	if jw, ok := w.(JSONStreamWriter); ok {
 		// JSON writer - send structured event
-		jw.WriteEvent(eventType, string(raw))
+		jw.WriteEvent(eventType, string(data))
 	} else {
+		// Regular writer - send prefixed text (stdout: or stderr:)
+		prefixed := append([]byte(eventType+":"), data...)
 		_, _ = w.Write(prefixed)
 	}
 	if f, ok := w.(interface{ Flush() }); ok {
@@ -75,10 +50,24 @@ func writeToLogWriter(w io.Writer, eventType string, raw, prefixed []byte) {
 	}
 }
 
-// writeLineToLogWriter sends a single whole line, which is always a line start.
-func writeLineToLogWriter(w io.Writer, eventType string, line []byte) {
-	prefixed, _ := prefixLines(eventType, line, true)
-	writeToLogWriter(w, eventType, line, prefixed)
+// writeChunkToLogWriter sends one read of process output. raw is the untagged
+// bytes, which JSON writers carry with the stream in the event type; prefixed
+// is the same bytes already tagged at their line starts, for text writers.
+//
+// A read is a fixed-size window, not a line, so the tag cannot be applied here:
+// doing so put it in the middle of any line longer than the buffer.
+func writeChunkToLogWriter(w io.Writer, eventType string, raw, prefixed []byte) {
+	// IsJSONStreamWriter, not just the type assertion: a pendingWriter accepts
+	// WriteEvent whatever its target is, and queueing raw bytes as an event
+	// would have it re-tag them per chunk on release, undoing the work above.
+	if jw, ok := w.(JSONStreamWriter); ok && jw.IsJSONStreamWriter() {
+		jw.WriteEvent(eventType, string(raw))
+	} else {
+		_, _ = w.Write(prefixed)
+	}
+	if f, ok := w.(interface{ Flush() }); ok {
+		f.Flush()
+	}
 }
 
 // Define process status constants
@@ -127,17 +116,21 @@ type ProcessInfo struct {
 	StderrFile       string                  `json:"-"` // Path to stderr log file
 	Done             chan struct{}
 	TailDone         chan struct{} // Closed when tailLogFiles finishes its final reads
-	stdout           *strings.Builder
-	stderr           *strings.Builder
-	logs             *strings.Builder
+	stdout           *logBuffer
+	stderr           *logBuffer
+	logs             *logBuffer
 	logWriters       []io.Writer
-	// Whether the next byte of each stream begins a new line, tracked across
-	// reads so a line split over several chunks is tagged only once.
-	stdoutAtLineStart bool
-	stderrAtLineStart bool
-	logLock           sync.RWMutex
-	stopTimeout       chan struct{} // Channel to signal timeout goroutine to stop
-	stopTimeoutOnce   sync.Once     // Protects stopTimeout channel from double-close
+	// Whether each stream is part-way through a line. A read is a fixed-size
+	// window, not a line, so a long line spans several reads and must be tagged
+	// only at its start. Phrased as "mid-line" so the zero value means "at a
+	// line start", which is what a fresh process is.
+	stdoutMidLine bool
+	stderrMidLine bool
+	// Reused across reads so tagging a chunk costs no allocation.
+	prefixBuf       []byte
+	logLock         sync.RWMutex
+	stopTimeout     chan struct{} // Channel to signal timeout goroutine to stop
+	stopTimeoutOnce sync.Once     // Protects stopTimeout channel from double-close
 }
 
 // ProcessLogDir is the directory where process logs are stored
@@ -236,8 +229,21 @@ var (
 func GetProcessManager() *ProcessManager {
 	processManagerOnce.Do(func() {
 		processManager = NewProcessManager()
+		go processManager.sweepLogFiles()
 	})
 	return processManager
+}
+
+// logCapInterval is how often the log files of processes nobody is tailing are
+// brought back inside the shared budget.
+const logCapInterval = 5 * time.Second
+
+func (pm *ProcessManager) sweepLogFiles() {
+	ticker := time.NewTicker(logCapInterval)
+	defer ticker.Stop()
+	for range ticker.C {
+		pm.CapLogFiles()
+	}
 }
 
 func (pm *ProcessManager) StartProcess(command string, workingDir string, env map[string]string, restartOnFailure bool, maxRestarts int, keepAlive bool, timeout int, callback func(process *ProcessInfo)) (string, error) {
@@ -292,9 +298,9 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 	}
 
 	// Set up in-memory buffers
-	stdout := &strings.Builder{}
-	stderr := &strings.Builder{}
-	logs := &strings.Builder{}
+	stdout := newLogBuffer()
+	stderr := newLogBuffer()
+	logs := newLogBuffer()
 
 	// Create separate log files for stdout and stderr
 	// Child processes write DIRECTLY to these files (no pipes)
@@ -313,30 +319,28 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 	}
 
 	process := &ProcessInfo{
-		Name:              name,
-		Command:           command,
-		StartedAt:         time.Now(),
-		CompletedAt:       nil,
-		Status:            StatusRunning,
-		WorkingDir:        workingDir,
-		Env:               env,
-		RestartOnFailure:  restartOnFailure,
-		MaxRestarts:       maxRestarts,
-		RestartCount:      0,
-		KeepAlive:         keepAlive,
-		Timeout:           timeout,
-		LogFile:           combinedPath,
-		StdoutFile:        stdoutPath,
-		StderrFile:        stderrPath,
-		Done:              make(chan struct{}),
-		TailDone:          make(chan struct{}),
-		stdoutAtLineStart: true,
-		stderrAtLineStart: true,
-		stdout:            stdout,
-		stderr:            stderr,
-		logs:              logs,
-		logWriters:        make([]io.Writer, 0),
-		stopTimeout:       make(chan struct{}),
+		Name:             name,
+		Command:          command,
+		StartedAt:        time.Now(),
+		CompletedAt:      nil,
+		Status:           StatusRunning,
+		WorkingDir:       workingDir,
+		Env:              env,
+		RestartOnFailure: restartOnFailure,
+		MaxRestarts:      maxRestarts,
+		RestartCount:     0,
+		KeepAlive:        keepAlive,
+		Timeout:          timeout,
+		LogFile:          combinedPath,
+		StdoutFile:       stdoutPath,
+		StderrFile:       stderrPath,
+		Done:             make(chan struct{}),
+		TailDone:         make(chan struct{}),
+		stdout:           stdout,
+		stderr:           stderr,
+		logs:             logs,
+		logWriters:       make([]io.Writer, 0),
+		stopTimeout:      make(chan struct{}),
 	}
 
 	// Redirect stdout/stderr directly to files
@@ -356,6 +360,7 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 
 	process.PID = fmt.Sprintf("%d", cmd.Process.Pid)
 	process.ProcessPid = cmd.Process.Pid
+	oom.PreferAsVictim(process.ProcessPid)
 
 	// Close the write handles in parent - child has its own FDs
 	stdoutFile.Close()
@@ -586,8 +591,23 @@ func (pm *ProcessManager) tailLogFiles(proc *ProcessInfo) {
 	stdoutBuf := make([]byte, 4096)
 	stderrBuf := make([]byte, 4096)
 
+	// The workload writes to its log files itself, so the tailer is what keeps
+	// them from filling the guest's tmpfs.
+	capCheck := time.NewTicker(5 * time.Second)
+	defer capCheck.Stop()
+	capFiles := func() {
+		// Every process' log files share one budget, so what this one may keep
+		// depends on how many others are keeping output too.
+		processes := pm.countProcesses()
+		capLogFile(proc.StdoutFile, processes)
+		capLogFile(proc.StderrFile, processes)
+		capLogFile(proc.LogFile, processes)
+	}
+
 	for {
 		select {
+		case <-capCheck.C:
+			capFiles()
 		case <-proc.Done:
 			// Drain all remaining data from both files before returning.
 			// Loop until both files return 0 bytes to handle data larger than the buffer.
@@ -598,6 +618,7 @@ func (pm *ProcessManager) tailLogFiles(proc *ProcessInfo) {
 					break
 				}
 			}
+			capFiles()
 			close(proc.TailDone)
 			return
 		default:
@@ -621,49 +642,66 @@ func (pm *ProcessManager) readAndBroadcast(file *os.File, buf []byte, proc *Proc
 			proc.stderr.Write(data)
 		}
 		proc.logs.Write(data)
-		// Tag line starts once, then hand the same bytes to the combined log
-		// file and to every writer, so the file and the live stream agree.
-		atLineStart := proc.stdoutAtLineStart
-		if streamType == "stderr" {
-			atLineStart = proc.stderrAtLineStart
-		}
-		prefixed, endsAtLineStart := prefixLines(streamType, data, atLineStart)
-		if streamType == "stderr" {
-			proc.stderrAtLineStart = endsAtLineStart
-		} else {
-			proc.stdoutAtLineStart = endsAtLineStart
-		}
-		// Write prefixed content to combined log file (preserves interleaved order)
-		if combinedFile != nil {
-			combinedFile.Write(prefixed)
-		}
-		// Export process logs to stdout for telemetry collection.
-		// Uses structured log attributes so the telemetry collector can
-		// distinguish process logs from access logs.
+
+		// Write the combined log file and the telemetry entries in a single pass
+		// over the bytes just read. This runs on every chunk of every process'
+		// output, so it stays on []byte: converting the chunk to a string and
+		// splitting it into a slice of lines used to copy it twice per chunk, and
+		// a workload that writes fast enough grew the heap doing so until the
+		// kernel OOM-killed the API for it.
+		var logEntry *logrus.Entry
 		if !disableProcessLogging {
-			logEntry := logrus.WithFields(logrus.Fields{
+			logEntry = logrus.WithFields(logrus.Fields{
 				"source":       "process",
 				"process-name": proc.Name,
 				"process-pid":  proc.PID,
 				"stream":       streamType,
 			})
-			// Log each line separately for clean telemetry ingestion
-			logLines := strings.SplitAfter(string(data), "\n")
-			for _, line := range logLines {
-				trimmed := strings.TrimSuffix(line, "\n")
-				if trimmed == "" {
-					continue
-				}
-				if streamType == "stderr" {
-					logEntry.Error(trimmed)
-				} else {
-					logEntry.Info(trimmed)
-				}
+		}
+		// Tag only real line starts. Tagging the chunk instead put the tag in
+		// the middle of any line longer than the read buffer, which corrupted
+		// it for every consumer: a >4KB JSON line came out with "stdout:"
+		// spliced in at byte 4096 and no longer parsed. atLineStart carries
+		// that across reads so a continuation resumes untagged.
+		atLineStart := !proc.stdoutMidLine
+		if streamType == "stderr" {
+			atLineStart = !proc.stderrMidLine
+		}
+		prefix := []byte(streamType + ":")
+		proc.prefixBuf = proc.prefixBuf[:0]
+		for rest := data; len(rest) > 0; {
+			line := rest
+			if end := bytes.IndexByte(rest, '\n'); end >= 0 {
+				line, rest = rest[:end+1], rest[end+1:]
+			} else {
+				rest = nil
 			}
+
+			if atLineStart {
+				proc.prefixBuf = append(proc.prefixBuf, prefix...)
+			}
+			proc.prefixBuf = append(proc.prefixBuf, line...)
+			atLineStart = line[len(line)-1] == '\n'
+
+			// Structured attributes let the telemetry collector tell process
+			// logs from access logs.
+			if logEntry != nil {
+				logProcessLine(logEntry, streamType, line)
+			}
+		}
+		if streamType == "stderr" {
+			proc.stderrMidLine = !atLineStart
+		} else {
+			proc.stdoutMidLine = !atLineStart
+		}
+
+		// Preserves the interleaved order of the two streams.
+		if combinedFile != nil {
+			_, _ = combinedFile.Write(proc.prefixBuf)
 		}
 		// Send to log writers for streaming
 		for _, w := range proc.logWriters {
-			writeToLogWriter(w, streamType, data, prefixed)
+			writeChunkToLogWriter(w, streamType, data, proc.prefixBuf)
 		}
 		proc.logLock.Unlock()
 	}
@@ -671,6 +709,28 @@ func (pm *ProcessManager) readAndBroadcast(file *os.File, buf []byte, proc *Proc
 		// Real error, but we'll keep trying
 	}
 	return n
+}
+
+// maxLoggedLineBytes caps what one line of a process' output contributes to
+// telemetry. Output with no newlines in it is one line however long it is, and
+// logging it whole would mean holding the whole of it - as a string, then again
+// JSON-encoded - in the API's heap.
+const maxLoggedLineBytes = 8 * 1024
+
+// logProcessLine exports one line of a process' output for telemetry.
+func logProcessLine(entry *logrus.Entry, streamType string, line []byte) {
+	line = bytes.TrimSuffix(line, []byte("\n"))
+	if len(line) == 0 {
+		return
+	}
+	if len(line) > maxLoggedLineBytes {
+		line = line[:maxLoggedLineBytes]
+	}
+	if streamType == "stderr" {
+		entry.Error(string(line))
+	} else {
+		entry.Info(string(line))
+	}
 }
 
 // restartProcess restarts a failed process with the same configuration
@@ -743,14 +803,14 @@ func (pm *ProcessManager) restartProcess(oldProcess *ProcessInfo, callback func(
 	oldProcess.ExitCode = 0
 	oldProcess.stopTimeout = make(chan struct{})
 	oldProcess.stopTimeoutOnce = sync.Once{}
+	// Fresh run, fresh line state: a run that died mid-line must not leave the
+	// next one's first line untagged.
+	oldProcess.logLock.Lock()
+	oldProcess.stdoutMidLine = false
+	oldProcess.stderrMidLine = false
+	oldProcess.logLock.Unlock()
 	oldProcess.Done = make(chan struct{})
 	oldProcess.TailDone = make(chan struct{})
-	// Fresh run, fresh line state: a previous run that died mid-line must not
-	// leave the next one's first line untagged.
-	oldProcess.logLock.Lock()
-	oldProcess.stdoutAtLineStart = true
-	oldProcess.stderrAtLineStart = true
-	oldProcess.logLock.Unlock()
 
 	// Start the process
 	if err := cmd.Start(); err != nil {
@@ -762,6 +822,7 @@ func (pm *ProcessManager) restartProcess(oldProcess *ProcessInfo, callback func(
 	// Update only the OS process PID for kill/stop operations
 	// Keep the user-facing PID (oldProcess.PID) unchanged for transparency
 	oldProcess.ProcessPid = cmd.Process.Pid
+	oom.PreferAsVictim(oldProcess.ProcessPid)
 
 	// Close write handles in parent - child has its own FDs
 	stdoutFile.Close()
@@ -1031,6 +1092,27 @@ func (pm *ProcessManager) ListProcesses() []*ProcessInfo {
 	return processes
 }
 
+// countProcesses is how many processes the manager knows about, running or not:
+// they all hold log files, so they all share the log budget.
+func (pm *ProcessManager) countProcesses() int {
+	pm.mu.RLock()
+	defer pm.mu.RUnlock()
+	return len(pm.processes)
+}
+
+// CapLogFiles keeps every process' log files inside the shared budget. A
+// process' own tailer stops capping when the process exits, but its output stays
+// on the tmpfs and still costs the guest memory, so something has to keep
+// looking at the ones nobody is tailing any more.
+func (pm *ProcessManager) CapLogFiles() {
+	processes := pm.ListProcesses()
+	for _, proc := range processes {
+		capLogFile(proc.StdoutFile, len(processes))
+		capLogFile(proc.StderrFile, len(processes))
+		capLogFile(proc.LogFile, len(processes))
+	}
+}
+
 // StopProcess attempts to gracefully stop a process
 func (pm *ProcessManager) StopProcess(identifier string) error {
 	process, exists := pm.GetProcessByIdentifier(identifier)
@@ -1177,46 +1259,65 @@ func (pm *ProcessManager) KillProcess(identifier string) error {
 	return nil
 }
 
-// GetProcessOutput returns the stdout and stderr output of a process
+// GetProcessOutput returns the stdout and stderr output of a process, read from
+// its log files, up to what one response inlines. Use StreamProcessOutput for
+// the whole of a log file that is larger than that.
 func (pm *ProcessManager) GetProcessOutput(identifier string) (ProcessLogs, error) {
+	return pm.getProcessOutput(identifier, maxLogsResponse())
+}
+
+// GetProcessOutputTail is GetProcessOutput limited to the last max bytes of each
+// stream. Listing every process inlines all of their output in one response, so
+// that path reads a tail rather than whole log files.
+func (pm *ProcessManager) GetProcessOutputTail(identifier string, max int64) (ProcessLogs, error) {
+	return pm.getProcessOutput(identifier, max)
+}
+
+func (pm *ProcessManager) getProcessOutput(identifier string, max int64) (ProcessLogs, error) {
 	process, exists := pm.GetProcessByIdentifier(identifier)
 	if !exists {
 		return ProcessLogs{}, fmt.Errorf("process with PID %s not found", identifier)
 	}
 
-	// Try to read from separate log files if available
-	var stdout, stderr, logs string
-
-	// Read stdout from file or memory
-	if process.StdoutFile != "" {
-		if content, err := os.ReadFile(process.StdoutFile); err == nil {
-			stdout = string(content)
-		} else {
-			stdout = process.stdout.String()
-		}
-	} else {
+	// The log files hold the whole output; the in-memory buffers are the
+	// fallback for when a file is gone or unreadable.
+	stdout, ok := readLogTail(process.StdoutFile, max)
+	if !ok {
+		process.logLock.RLock()
 		stdout = process.stdout.String()
+		process.logLock.RUnlock()
 	}
 
-	// Read stderr from file or memory
-	if process.StderrFile != "" {
-		if content, err := os.ReadFile(process.StderrFile); err == nil {
-			stderr = string(content)
-		} else {
-			stderr = process.stderr.String()
-		}
-	} else {
+	stderr, ok := readLogTail(process.StderrFile, max)
+	if !ok {
+		process.logLock.RLock()
 		stderr = process.stderr.String()
+		process.logLock.RUnlock()
 	}
-
-	// Combined logs
-	logs = stdout + stderr
 
 	return ProcessLogs{
 		Stdout: stdout,
 		Stderr: stderr,
-		Logs:   logs,
+		Logs:   stdout + stderr,
 	}, nil
+}
+
+// endsWithNewline reports whether the first size bytes of path end a line.
+// A backlog cut mid-line must not be given a terminator of its own.
+func endsWithNewline(path string, size int64) bool {
+	if size <= 0 {
+		return true
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return true
+	}
+	defer file.Close()
+	var last [1]byte
+	if _, err := file.ReadAt(last[:], size-1); err != nil {
+		return true
+	}
+	return last[0] == '\n'
 }
 
 func (pm *ProcessManager) StreamProcessOutput(identifier string, w io.Writer) error {
@@ -1225,30 +1326,68 @@ func (pm *ProcessManager) StreamProcessOutput(identifier string, w io.Writer) er
 		return fmt.Errorf("process with Identifier %s not found", identifier)
 	}
 
+	// Attach the writer before the backlog is replayed: it queues what the
+	// process writes meanwhile, so that output is neither lost nor sent out of
+	// order. The combined log file is written under the same lock, so its size
+	// here is exactly where the queue starts - the backlog is replayed up to it
+	// and no line is sent twice.
+	pending := newPendingWriter(w)
+	process.logLock.Lock()
+	backlogEnd := int64(-1)
+	if info, err := os.Stat(process.LogFile); err == nil {
+		backlogEnd = info.Size()
+	}
+	process.logWriters = append(process.logWriters, pending)
+	process.logLock.Unlock()
+
 	// Write current content first - read from combined log file which has prefixed, ordered content
 	// The combined log file is written by tailLogFiles with "stdout:" and "stderr:" prefixes
-	if process.LogFile != "" {
-		if content, err := os.ReadFile(process.LogFile); err == nil && len(content) > 0 {
-			// Parse prefixed lines and send as proper events
-			// This ensures JSONStreamWriter receives structured stdout/stderr events
-			lines := strings.Split(string(content), "\n")
-			for _, line := range lines {
+	if process.LogFile != "" && backlogEnd > 0 {
+		// Parse prefixed lines and send as proper events, a line at a time so a
+		// long-running process' backlog is not held in memory all at once.
+		// This ensures JSONStreamWriter receives structured stdout/stderr events
+		if file, truncated, err := openLogTail(process.LogFile, maxLogFile()); err == nil {
+			if truncated {
+				writeToLogWriter(w, "stdout", []byte(truncationMarker))
+			}
+			// backlogEnd is wherever the file happened to be when this writer
+			// attached, which can be mid-line. Ending that fragment with a
+			// newline would split one line in two, and the queued live output
+			// carrying its remainder would look like a second line.
+			backlogEndsMidLine := !endsWithNewline(process.LogFile, backlogEnd)
+			scanner := bufio.NewScanner(backlogReader(file, backlogEnd))
+			scanner.Buffer(make([]byte, 0, 64*1024), maxLogLineBytes)
+			pendingLine := ""
+			havePending := false
+			emit := func(line string, last bool) {
+				terminator := "\n"
+				if last && backlogEndsMidLine {
+					terminator = ""
+				}
 				if strings.HasPrefix(line, "stdout:") {
-					writeLineToLogWriter(w, "stdout", []byte(strings.TrimPrefix(line, "stdout:")+"\n"))
+					writeToLogWriter(w, "stdout", []byte(strings.TrimPrefix(line, "stdout:")+terminator))
 				} else if strings.HasPrefix(line, "stderr:") {
-					writeLineToLogWriter(w, "stderr", []byte(strings.TrimPrefix(line, "stderr:")+"\n"))
+					writeToLogWriter(w, "stderr", []byte(strings.TrimPrefix(line, "stderr:")+terminator))
 				} else if line != "" {
 					// Fallback for unprefixed lines (shouldn't happen, but handle gracefully)
-					writeLineToLogWriter(w, "stdout", []byte(line+"\n"))
+					writeToLogWriter(w, "stdout", []byte(line+terminator))
 				}
 			}
+			for scanner.Scan() {
+				if havePending {
+					emit(pendingLine, false)
+				}
+				pendingLine = strings.TrimLeft(scanner.Text(), "\x00")
+				havePending = true
+			}
+			if havePending {
+				emit(pendingLine, true)
+			}
+			file.Close()
 		}
 	}
 
-	// Attach writer for future output
-	process.logLock.Lock()
-	process.logWriters = append(process.logWriters, w)
-	process.logLock.Unlock()
+	pending.release()
 
 	// Start keepalive goroutine to prevent connection timeout
 	go func() {
@@ -1284,7 +1423,7 @@ func (pm *ProcessManager) RemoveLogWriter(identifier string, w io.Writer) error 
 	defer process.logLock.Unlock()
 
 	for i, writer := range process.logWriters {
-		if writer == w {
+		if unwrapWriter(writer) == w {
 			// Remove this writer
 			process.logWriters = append(process.logWriters[:i], process.logWriters[i+1:]...)
 			return nil
