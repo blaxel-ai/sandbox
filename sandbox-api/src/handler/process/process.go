@@ -725,6 +725,14 @@ func (pm *ProcessManager) restartProcess(oldProcess *ProcessInfo, callback func(
 	}
 	cmdArgs = append(cmdArgs, command)
 
+	// Swap in the new run's channels before anything that can fail. The caller
+	// closed the previous Done before calling us, and closes Done again if we
+	// return an error; leaving the old channel in place until after the
+	// working-dir and log-file checks made that second close panic on an
+	// already-closed channel.
+	oldProcess.Done = make(chan struct{})
+	oldProcess.TailDone = make(chan struct{})
+
 	cmd := exec.Command(shell, cmdArgs...)
 
 	if workingDir != "" {
@@ -771,8 +779,6 @@ func (pm *ProcessManager) restartProcess(oldProcess *ProcessInfo, callback func(
 	oldProcess.ExitCode = 0
 	oldProcess.stopTimeout = make(chan struct{})
 	oldProcess.stopTimeoutOnce = sync.Once{}
-	oldProcess.Done = make(chan struct{})
-	oldProcess.TailDone = make(chan struct{})
 
 	// Start the process
 	if err := cmd.Start(); err != nil {
