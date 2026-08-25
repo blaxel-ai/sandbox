@@ -339,20 +339,25 @@ func startBackgroundCommand(ctx context.Context, command string) {
 	cmd.Env = identity.Get().DecorateEnv(os.Environ())
 	cmd.SysProcAttr = &syscall.SysProcAttr{Credential: identity.Get().Credential()}
 
-	// Start the command in a goroutine so it doesn't block the server
+	// Started before the goroutine, so the workload is known to be running by
+	// the time this returns and the server starts accepting calls: an export
+	// arriving right after boot has to stop it, and a registration done inside
+	// the goroutine could still be pending then, leaving the one process most
+	// likely to be writing running while the filesystem is read.
+	if err := cmd.Start(); err != nil {
+		logrus.Fatalf("Failed to start command: %v", err)
+		return
+	}
+	pid := cmd.Process.Pid
+	oom.PreferAsVictim(pid)
+	// The process manager never hears about this command, and an archive export
+	// has to stop it like any other process.
+	archive.RegisterStartupWorkload(pid)
+	logrus.Infof("Command started successfully")
+
+	// Waited on in a goroutine so it doesn't block the server
 	go func() {
-		if err := cmd.Start(); err != nil {
-			logrus.Fatalf("Failed to start command: %v", err)
-			return
-		}
-		oom.PreferAsVictim(cmd.Process.Pid)
-		// The process manager never hears about this command, and an archive
-		// export has to stop it like any other process: it is usually the
-		// workload, so leaving it running would let it write to the filesystem
-		// while the archive is read.
-		archive.RegisterStartupWorkload(cmd.Process.Pid)
-		defer archive.UnregisterStartupWorkload(cmd.Process.Pid)
-		logrus.Infof("Command started successfully")
+		defer archive.UnregisterStartupWorkload(pid)
 
 		if err := cmd.Wait(); err != nil {
 			select {

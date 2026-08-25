@@ -134,6 +134,29 @@ func TestDiffReportsDeletedDirectoryOnce(t *testing.T) {
 	}
 }
 
+func TestDiffHandlesADirectoryOfTheImageReplacedByAFile(t *testing.T) {
+	// The image has a directory where the sandbox now has a file. Walking the
+	// image below it asks about paths whose parent is not a directory any more,
+	// which fails with ENOTDIR rather than reporting them absent - and treating
+	// that as an error failed the export of a perfectly ordinary change.
+	root, lower := fakeSandbox(t)
+	write(t, filepath.Join(lower, "opt/tool/bin/tool"), "ELF", 0o755)
+	write(t, filepath.Join(root, "opt/tool"), "a file now", 0o644)
+
+	changes, err := Diff(root, lower, nil)
+	if err != nil {
+		t.Fatalf("Diff failed: %v", err)
+	}
+	if change := changeFor(changes, "opt/tool"); change == nil || change.Kind != ChangeModified {
+		t.Errorf("expected the replaced directory to travel as a modified path, got %+v", change)
+	}
+	for _, change := range changes {
+		if change.Kind == ChangeDeleted && strings.HasPrefix(change.Path, "opt/tool/") {
+			t.Errorf("what the replaced directory held is not a deletion of its own, got %q", change.Path)
+		}
+	}
+}
+
 func TestDiffHonoursExtraExcludes(t *testing.T) {
 	root, lower := fakeSandbox(t)
 	write(t, filepath.Join(root, "workspace/secret.env"), "TOKEN=1", 0o600)

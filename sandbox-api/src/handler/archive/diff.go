@@ -3,6 +3,7 @@ package archive
 import (
 	"bytes"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -401,6 +402,15 @@ func (s *scanner) scanDeleted() ([]Change, error) {
 		}
 
 		if _, err := os.Lstat(live); err == nil {
+			return nil
+		} else if errors.Is(err, syscall.ENOTDIR) {
+			// A directory of the image the sandbox replaced with a file or a
+			// symlink: everything the image had below it is unreachable, but it
+			// is not a deletion of its own - the replacement travels as a
+			// modified member, and restoring it takes the subtree away.
+			if info.IsDir() {
+				return filepath.SkipDir
+			}
 			return nil
 		} else if !os.IsNotExist(err) {
 			return fmt.Errorf("failed to stat %s: %w", rel, err)
