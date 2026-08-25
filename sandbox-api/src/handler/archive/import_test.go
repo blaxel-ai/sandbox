@@ -999,6 +999,77 @@ func TestMarkerIsInstalledAtomically(t *testing.T) {
 	}
 }
 
+func TestImportKilledWhileWritingIsNeverReadAsACleanImage(t *testing.T) {
+	resetRestore(t)
+	// An import killed while it extracts - an OOM on a large archive - records
+	// nothing itself: the quarantine never runs and the freeze dies with the
+	// process. What it leaves is a filesystem holding part of the archive, and
+	// the next start must not take it for the image's own.
+	root := t.TempDir()
+	marker := filepath.Join(root, "marker.json")
+	if err := writeMarker(marker, startedMarker("bucket/key")); err != nil {
+		t.Fatal(err)
+	}
+
+	// The archive cannot be fetched this time, which on a clean image is a
+	// sandbox that simply boots on the image. Here it is not: the filesystem
+	// still holds what the killed import wrote.
+	unreachable := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer unreachable.Close()
+
+	if _, err := importOnBoot(context.Background(), ImportOptions{URL: unreachable.URL, root: root, MarkerPath: marker}); !errors.Is(err, ErrPartialImport) {
+		t.Fatalf("a failed retry of an import that was writing must keep the workload from starting, got %v", err)
+	}
+	recorded, err := readMarker(marker)
+	if err != nil || recorded == nil || !recorded.Partial {
+		t.Fatalf("the filesystem must stay recorded as partially restored, got %+v (%v)", recorded, err)
+	}
+
+	// Restoring the archive again is what makes that filesystem whole, so a
+	// retry that succeeds boots the workload as usual.
+	root = t.TempDir()
+	marker = filepath.Join(root, "marker.json")
+	if err := writeMarker(marker, startedMarker("bucket/key")); err != nil {
+		t.Fatal(err)
+	}
+	body := buildArchive(t, Manifest{Version: ManifestVersion, Root: "/"}, nil, []archiveMember{
+		{name: "srv/data", content: "restored", mode: 0o644},
+	})
+	result, err := importOnBoot(context.Background(), ImportOptions{URL: serve(t, body), root: root, MarkerPath: marker})
+	if err != nil {
+		t.Fatalf("expected the archive to be restored again, got %v", err)
+	}
+	if result.Restored != 1 {
+		t.Errorf("expected the archive's member to be restored, got %d", result.Restored)
+	}
+	if recorded, err := readMarker(marker); err != nil || recorded == nil || recorded.Started || recorded.Partial {
+		t.Fatalf("a finished import must replace the record of the attempt, got %+v (%v)", recorded, err)
+	}
+}
+
+func TestImportThatWroteNothingLeavesNoAttemptBehind(t *testing.T) {
+	resetRestore(t)
+	// An archive that cannot be downloaded leaves the image untouched, so the
+	// sandbox boots on it - and a later start must not read the attempt as one
+	// that may have written.
+	root := t.TempDir()
+	marker := filepath.Join(root, "marker.json")
+	unreachable := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer unreachable.Close()
+
+	_, err := importOnBoot(context.Background(), ImportOptions{URL: unreachable.URL, root: root, MarkerPath: marker})
+	if err == nil || errors.Is(err, ErrPartialImport) {
+		t.Fatalf("an archive that could not be downloaded wrote nothing, got %v", err)
+	}
+	if _, err := os.Lstat(marker); !os.IsNotExist(err) {
+		t.Fatalf("the attempt must be forgotten, got %v", err)
+	}
+}
+
 func TestImportOnBootNeverRestoresOverAPartialImport(t *testing.T) {
 	resetRestore(t)
 	// The freeze a partial import triggers only lives in memory, and the

@@ -144,6 +144,13 @@ type Marker struct {
 	Partial bool `json:"partial,omitempty"`
 	// Error is why a partial import stopped, for whoever comes to look.
 	Error string `json:"error,omitempty"`
+	// Started records an import that began and has not reported an outcome. It
+	// is written before the first member is restored and replaced by the
+	// import's own record, so a start that finds it knows the filesystem may be
+	// a mix of the image's files and the archive's: the process was killed - an
+	// OOM, a crash - while it was writing, which leaves nothing else behind
+	// since the freeze lives in memory and the quarantine never ran.
+	Started bool `json:"started,omitempty"`
 	// PendingProcesses is the archived process list, carried by the marker for as
 	// long as those processes have not been started. The record has to be written
 	// before anything is relaunched - a crash after the relaunch and before the
@@ -201,10 +208,16 @@ func importOnBoot(ctx context.Context, options ImportOptions) (_ *ImportResult, 
 	}()
 
 	identity := archiveIdentity(options.URL)
-	marker, err := readMarker(options.markerPath())
+	markerPath := options.markerPath()
+	marker, err := readMarker(markerPath)
 	if err != nil {
 		return nil, err
 	}
+	// retrying is an import that follows one killed while it was writing. The
+	// archive is restored again, over whatever that attempt left, and this time
+	// any failure is a partial import: the filesystem is only the image's again
+	// if this import finishes.
+	retrying := false
 	if marker != nil {
 		// Any marker stops the import, not only one for this archive: the
 		// filesystem has already been restored once, and applying another
@@ -223,12 +236,19 @@ func importOnBoot(ctx context.Context, options ImportOptions) (_ *ImportResult, 
 			// processes are.
 			return resumeRelaunch(options, *marker)
 		}
+		if !marker.Started {
+			logrus.WithFields(logrus.Fields{
+				"archive":    marker.Archive,
+				"importedAt": marker.ImportedAt,
+				"requested":  identity,
+			}).Info("[Archive] Filesystem already restored, skipping the import")
+			return nil, ErrNoImport
+		}
+		retrying = true
 		logrus.WithFields(logrus.Fields{
-			"archive":    marker.Archive,
-			"importedAt": marker.ImportedAt,
-			"requested":  identity,
-		}).Info("[Archive] Filesystem already restored, skipping the import")
-		return nil, ErrNoImport
+			"archive":   marker.Archive,
+			"startedAt": marker.ImportedAt,
+		}).Warn("[Archive] An earlier import was killed while it was writing, restoring the archive again over what it left")
 	}
 
 	if status := Status(); status.ReadOnlyRoot {
@@ -242,7 +262,13 @@ func importOnBoot(ctx context.Context, options ImportOptions) (_ *ImportResult, 
 	}
 
 	logrus.WithField("archive", identity).Info("[Archive] Restoring the filesystem from the archive before the workload starts")
-	markerPath := options.markerPath()
+	// The attempt is recorded before it writes anything. Killed in the middle -
+	// an OOM while a large archive is being extracted - it has no chance to
+	// record anything itself, and without this the half restored filesystem it
+	// leaves is indistinguishable from the image's own.
+	if err := writeMarker(markerPath, startedMarker(identity)); err != nil {
+		return nil, fmt.Errorf("failed to record the start of the import: %w", err)
+	}
 	options.onRestored = func(result *ImportResult, pendingProcesses []byte) error {
 		marker := markerFor(identity, result)
 		marker.PendingProcesses = pendingProcesses
@@ -252,6 +278,12 @@ func importOnBoot(ctx context.Context, options ImportOptions) (_ *ImportResult, 
 	imported = true
 	result, err := Import(ctx, options)
 	if err != nil {
+		if retrying && !errors.Is(err, ErrPartialImport) {
+			// Nothing was written this time, but the attempt this one follows
+			// was writing when it died: the filesystem stays the mix it left,
+			// and the workload must not run on it.
+			err = fmt.Errorf("%w: an earlier import was killed while it was writing and this one could not restore the archive again: %w", ErrPartialImport, err)
+		}
 		if errors.Is(err, ErrPartialImport) {
 			// The filesystem is a mix of the image and the archive, and it is
 			// quarantined here rather than by the caller: until the root is
@@ -270,6 +302,14 @@ func importOnBoot(ctx context.Context, options ImportOptions) (_ *ImportResult, 
 			}); quarantineErr != nil {
 				logrus.WithError(quarantineErr).Error("[Archive] Failed to freeze the sandbox after a partial import")
 			}
+			return nil, err
+		}
+		// The import failed before writing anything - an archive that could not
+		// be downloaded - so the filesystem is the image's and the sandbox boots
+		// on it. The attempt is forgotten, since a later start reading it would
+		// refuse to run a workload on a filesystem nothing ever touched.
+		if removeErr := os.Remove(markerPath); removeErr != nil && !os.IsNotExist(removeErr) {
+			logrus.WithError(removeErr).Warn("[Archive] Failed to forget an import that wrote nothing")
 		}
 		return nil, err
 	}
@@ -322,6 +362,17 @@ func markerFor(identity string, result *ImportResult) Marker {
 		Relaunched:       result.Relaunched,
 		FailedRelaunches: result.FailedRelaunches,
 		CreatedAt:        result.Manifest.CreatedAt,
+	}
+}
+
+// startedMarker is what an import writes before it restores anything, so a
+// filesystem it was killed halfway through is never read as the image's own.
+func startedMarker(identity string) Marker {
+	return Marker{
+		Version:    ManifestVersion,
+		Archive:    identity,
+		ImportedAt: time.Now(),
+		Started:    true,
 	}
 }
 
