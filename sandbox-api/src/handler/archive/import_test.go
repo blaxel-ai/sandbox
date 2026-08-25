@@ -606,8 +606,12 @@ func TestImportReportsThatItWrotePartOfTheArchive(t *testing.T) {
 func TestImportDoesNotCountSkippedMembersAsWritten(t *testing.T) {
 	// A member of a type the import does not restore writes nothing, so a later
 	// failure is not a partial import and the sandbox may still boot on its
-	// image. Here the fifo is followed by a member the truncated stream cuts off.
+	// image. Here the fifo is followed by a member the truncated stream cuts off,
+	// in a directory the image already has - so nothing at all was created.
 	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "srv"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	body := buildArchive(t, Manifest{Version: ManifestVersion, Root: "/"}, nil, []archiveMember{
 		{name: "srv/pipe", mode: 0o644, typeflag: tar.TypeFifo},
 		{name: "srv/second", content: strings.Repeat("x", 4096), mode: 0o644},
@@ -684,6 +688,24 @@ func TestImportIsPartialWhenAMemberFailsAfterTouchingTheFilesystem(t *testing.T)
 	}
 	if _, err := os.Lstat(existing); !os.IsNotExist(err) {
 		t.Fatalf("expected the image's file to be gone, which is what makes this partial, got %v", err)
+	}
+}
+
+func TestImportIsPartialWhenOnlyTheParentsOfAFailedMemberWereCreated(t *testing.T) {
+	// The member itself is refused, but the directories leading to it were
+	// created before that: the filesystem already differs from the image, so the
+	// workload must not start on it.
+	root := t.TempDir()
+	body := buildArchive(t, Manifest{Version: ManifestVersion, Root: "/"}, nil, []archiveMember{
+		{name: "srv/deep/link", link: "etc/resolv.conf", hardlink: true, mode: 0o644},
+	})
+
+	_, err := Import(context.Background(), ImportOptions{URL: serve(t, body), root: root, MarkerPath: filepath.Join(root, "marker.json")})
+	if !errors.Is(err, ErrPartialImport) {
+		t.Fatalf("a member that created its parents before failing must be reported as partial, got %v", err)
+	}
+	if !exists(filepath.Join(root, "srv/deep")) {
+		t.Fatal("expected the created parents to be what makes this partial")
 	}
 }
 

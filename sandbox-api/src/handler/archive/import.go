@@ -493,10 +493,13 @@ func restore(root, target, name string, excludes []string, header *tar.Header, c
 		return false, nil
 	}
 
-	// Reported as a write even when it fails: MkdirAll creates the parents it
-	// gets through before it stops, so the filesystem may already be holding
-	// directories the image did not have.
-	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+	// The parents count as a write of their own, whether MkdirAll succeeds or
+	// not: it creates the ones it gets through before it stops, and once they
+	// exist the filesystem holds directories the image did not have - so every
+	// failure below this point is one that already changed the filesystem.
+	parent := filepath.Dir(target)
+	touched := !exists(parent)
+	if err := os.MkdirAll(parent, 0o755); err != nil {
 		return true, fmt.Errorf("failed to create the parent of %s: %w", target, err)
 	}
 
@@ -507,7 +510,7 @@ func restore(root, target, name string, excludes []string, header *tar.Header, c
 		// type change is exactly what the archive is there to reproduce.
 		if info, err := os.Lstat(target); err == nil && !info.IsDir() {
 			if excludesUnder(name, excludes) {
-				return false, fmt.Errorf("archive member %q would replace %s, which holds paths that are never restored", name, target)
+				return touched, fmt.Errorf("archive member %q would replace %s, which holds paths that are never restored", name, target)
 			}
 			if err := os.Remove(target); err != nil {
 				return true, fmt.Errorf("failed to replace %s: %w", target, err)
@@ -547,18 +550,18 @@ func restore(root, target, name string, excludes []string, header *tar.Header, c
 		// not to the member's own directory.
 		linkname, err := memberName(header.Linkname)
 		if err != nil {
-			return false, err
+			return touched, err
 		}
 		// Hardlinking an excluded path into the restored tree would hand the
 		// archive's owner the live file - a platform credential under bl/, the
 		// resolver configuration - under a name they choose, which is what the
 		// excludes exist to prevent.
 		if excludedPath(linkname, excludes) {
-			return false, fmt.Errorf("archive member %q would hardlink %q, which is never restored", name, linkname)
+			return touched, fmt.Errorf("archive member %q would hardlink %q, which is never restored", name, linkname)
 		}
 		source, err := resolve(root, linkname)
 		if err != nil {
-			return false, err
+			return touched, err
 		}
 		if err := os.RemoveAll(target); err != nil {
 			return true, fmt.Errorf("failed to replace %s: %w", target, err)
@@ -569,7 +572,7 @@ func restore(root, target, name string, excludes []string, header *tar.Header, c
 		return true, nil
 	case tar.TypeReg:
 		if changed, err := writeFile(target, header.FileInfo().Mode().Perm(), content); err != nil {
-			return changed, err
+			return touched || changed, err
 		}
 	}
 
@@ -772,6 +775,13 @@ func archiveIdentity(presigned string) string {
 		return ""
 	}
 	return parsed.Host + parsed.Path
+}
+
+// exists says whether a path is there at all, a broken symlink included: what it
+// answers is whether creating it would change the filesystem.
+func exists(path string) bool {
+	_, err := os.Lstat(path)
+	return err == nil
 }
 
 func readMarker(path string) (*Marker, error) {
