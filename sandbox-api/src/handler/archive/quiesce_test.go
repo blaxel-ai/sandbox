@@ -3,6 +3,8 @@ package archive
 import (
 	"errors"
 	"testing"
+
+	"github.com/blaxel-ai/sandbox-api/src/handler/process"
 )
 
 func TestQuiesceLifecycle(t *testing.T) {
@@ -112,5 +114,29 @@ func TestFreezingForAnExportClaimsTheFilesystemAtOnce(t *testing.T) {
 	}
 	if !Quiesced() {
 		t.Error("the sandbox must still be frozen for the export that claimed it")
+	}
+}
+
+func TestFreezingLeavesFailedProcessesDown(t *testing.T) {
+	// A process that failed just before the freeze is waiting to be restarted,
+	// under a name the export never saw running: it would come back as a writer
+	// while the filesystem is being read, and nothing would stop it.
+	t.Cleanup(func() { forceResume() })
+	if process.RestartsSuspended() {
+		t.Fatal("a sandbox starts restarting its failed processes")
+	}
+	if err := freezeForExport("archive export"); err != nil {
+		t.Fatal(err)
+	}
+	if !process.RestartsSuspended() {
+		t.Error("a frozen sandbox must not bring a failed process back into the archive")
+	}
+
+	endExport()
+	if _, err := Resume(); err != nil {
+		t.Fatal(err)
+	}
+	if process.RestartsSuspended() {
+		t.Error("a resumed sandbox must restart its failed processes as it did before")
 	}
 }

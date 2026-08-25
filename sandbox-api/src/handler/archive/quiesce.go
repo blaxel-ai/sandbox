@@ -20,6 +20,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/blaxel-ai/sandbox-api/src/handler/process"
 	"github.com/sirupsen/logrus"
 )
 
@@ -57,6 +58,9 @@ var (
 	// exporting is set while an export reads and uploads the filesystem, so a
 	// resume cannot make the root writable underneath it.
 	exporting bool
+	// allowRestarts lifts the restart suspension the freeze took, so a resumed
+	// sandbox keeps restarting its failed processes as it did before.
+	allowRestarts func()
 )
 
 // ErrExportInProgress is returned by Resume while an export is still reading the
@@ -118,6 +122,11 @@ func freezeLocked(reason string) error {
 	if quiesceStatus.State != StateActive {
 		return fmt.Errorf("%w: %s (%s)", ErrAlreadyQuiesced, quiesceStatus.State, quiesceStatus.Reason)
 	}
+	// Before anything is stopped: a process that failed just before the freeze is
+	// waiting to be restarted, and it would come back after the export listed the
+	// processes it had to stop - writing to the filesystem being archived, under a
+	// name the export never saw running.
+	allowRestarts = process.SuspendRestarts()
 	now := time.Now()
 	quiesceStatus = QuiesceStatus{
 		State:  StateQuiescing,
@@ -153,6 +162,7 @@ func adoptRootState(root string) {
 	now := time.Now()
 	quiesceMu.Lock()
 	defer quiesceMu.Unlock()
+	allowRestarts = process.SuspendRestarts()
 	quiesceStatus = QuiesceStatus{
 		State:        StateQuiesced,
 		Reason:       "an interrupted archive left the root filesystem read-only",
@@ -235,6 +245,10 @@ func forceResume() QuiesceStatus {
 	quiesceMu.Lock()
 	defer quiesceMu.Unlock()
 	exporting = false
+	if allowRestarts != nil {
+		allowRestarts()
+		allowRestarts = nil
+	}
 	if quiesceStatus.ReadOnlyRoot {
 		if err := setRootReadOnly(DefaultRoot, false); err != nil {
 			// The API would serve every route again while every write still

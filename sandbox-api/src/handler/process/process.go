@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -122,9 +123,57 @@ func init() {
 	}
 }
 
+// restartsSuspended stops failed processes from being brought back. An archive
+// holds it: a process restarted while the filesystem is read writes into the
+// archive, and a process that failed just before the archive stopped the
+// workload would otherwise come back on its own, after the export had already
+// listed the processes it had to stop.
+var restartsSuspended atomic.Bool
+
+// SuspendRestarts stops failed processes from being restarted, and returns the
+// function that allows restarts again.
+func SuspendRestarts() func() {
+	restartsSuspended.Store(true)
+	return func() { restartsSuspended.Store(false) }
+}
+
+// RestartsSuspended reports whether failed processes are currently left down.
+func RestartsSuspended() bool {
+	return restartsSuspended.Load()
+}
+
+// leaveStopped finishes a process that was about to be restarted and is not,
+// because restarts are suspended: the keep-alive it held is released and the
+// callback fires, as for a process that ended for good. Its Done channel is
+// already closed by the restart path, so it is not touched here.
+func (pm *ProcessManager) leaveStopped(proc *ProcessInfo, callback func(*ProcessInfo)) {
+	log := logrus.WithFields(logrus.Fields{"process_pid": proc.PID, "process_name": proc.Name})
+	log.Info("[Process] Restarts are suspended, the process is left stopped")
+
+	pm.mu.RLock()
+	keepAlive := proc.KeepAlive
+	pm.mu.RUnlock()
+	if keepAlive {
+		if err := blaxel.ScaleEnable(); err != nil {
+			log.WithError(err).Warn("[KeepAlive] Failed to enable scale-to-zero")
+		}
+	}
+
+	proc.logLock.Lock()
+	proc.logWriters = nil
+	proc.logLock.Unlock()
+
+	if callback != nil {
+		callback(proc)
+	}
+}
+
 // shouldRestart reports whether a failed process is eligible for another
 // restart attempt. A negative MaxRestarts means unlimited restarts.
 func shouldRestart(p *ProcessInfo) bool {
+	if restartsSuspended.Load() {
+		return false
+	}
 	return p.Status == StatusFailed && p.RestartOnFailure &&
 		(p.MaxRestarts < 0 || p.RestartCount < p.MaxRestarts)
 }
@@ -460,6 +509,14 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 
 			// Small delay before restart to avoid rapid restart loops
 			time.Sleep(1 * time.Second)
+
+			// Looked at again after the delay: an archive that suspended restarts
+			// meanwhile is reading the filesystem, and this process would come
+			// back as a writer the archive has no way of stopping any more.
+			if restartsSuspended.Load() {
+				pm.leaveStopped(process, callback)
+				return
+			}
 
 			// Restart the process with updated restart count
 			// The PID remains the same across restarts for user transparency
@@ -884,6 +941,13 @@ func (pm *ProcessManager) restartProcess(oldProcess *ProcessInfo, callback func(
 
 			// Small delay before restart to avoid rapid restart loops
 			time.Sleep(1 * time.Second)
+
+			// See the same check in StartProcessWithName: an archive may have
+			// suspended restarts while this one was waiting.
+			if restartsSuspended.Load() {
+				pm.leaveStopped(oldProcess, callback)
+				return
+			}
 
 			// Restart the process recursively
 			// The PID remains the same across restarts for user transparency

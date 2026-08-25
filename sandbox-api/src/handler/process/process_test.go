@@ -938,3 +938,67 @@ func TestLargeOutputStreaming(t *testing.T) {
 		}
 	})
 }
+
+// TestSuspendedRestartsLeaveAFailedProcessDown covers what an archive relies on:
+// while it reads the filesystem, a failed process may not come back as a writer,
+// even one with unlimited restarts that would otherwise never stop.
+func TestSuspendedRestartsLeaveAFailedProcessDown(t *testing.T) {
+	pm := GetProcessManager()
+	allow := SuspendRestarts()
+	defer allow()
+
+	done := make(chan *ProcessInfo, 1)
+	pid, err := pm.StartProcess(`echo failing; exit 1`, "", nil, true, -1, false, 0, func(p *ProcessInfo) {
+		done <- p
+	})
+	if err != nil {
+		t.Fatalf("Error starting process: %v", err)
+	}
+
+	select {
+	case p := <-done:
+		if p.Status != StatusFailed {
+			t.Errorf("Expected the process to stay failed, got %s", p.Status)
+		}
+		if p.RestartCount != 0 {
+			t.Errorf("Expected no restart, got %d", p.RestartCount)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatalf("Process %s was restarted while restarts are suspended", pid)
+	}
+}
+
+// TestRestartsSuspendedDuringTheDelayLeaveTheProcessDown covers the same thing
+// for a process that had already been scheduled for a restart: the suspension
+// lands during the delay before the restart, which is where an export that
+// stopped the workload a moment earlier finds it.
+func TestRestartsSuspendedDuringTheDelayLeaveTheProcessDown(t *testing.T) {
+	pm := GetProcessManager()
+
+	done := make(chan *ProcessInfo, 1)
+	pid, err := pm.StartProcess(`echo failing; exit 1`, "", nil, true, -1, false, 0, func(p *ProcessInfo) {
+		done <- p
+	})
+	if err != nil {
+		t.Fatalf("Error starting process: %v", err)
+	}
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if p, ok := pm.GetProcessByIdentifier(pid); ok && p.Status == StatusFailed {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	allow := SuspendRestarts()
+	defer allow()
+
+	select {
+	case p := <-done:
+		if p.Status != StatusFailed {
+			t.Errorf("Expected the process to stay failed, got %s", p.Status)
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatalf("Process %s kept restarting while restarts are suspended", pid)
+	}
+}

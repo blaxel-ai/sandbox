@@ -20,7 +20,11 @@ import (
 
 const (
 	// DefaultMountPoint is where the pristine image is mounted for comparison.
-	// It is under /mnt, a tmpfs, so it never appears in the diff itself.
+	// It is under /mnt, which the diff never descends into, so the image the
+	// export compares against never appears in the archive it produces.
+	// /mnt itself is part of the root, not a filesystem of its own: creating
+	// this directory fails once the root is read-only, which is why the image is
+	// mounted before the root is frozen.
 	DefaultMountPoint = "/mnt/blaxel-archive-image"
 	// DefaultRoot is the filesystem archived.
 	DefaultRoot = "/"
@@ -249,16 +253,19 @@ func Export(ctx context.Context, options ExportOptions) (result *ExportResult, e
 		}()
 	}
 
-	// After the image is mounted, since mounting it needs a mountpoint to be
-	// created, and before the filesystem is read.
+	// The last step before the filesystem is read, and it cannot come earlier:
+	// mounting the image creates a directory under /mnt, which is part of the
+	// root, and quiescing writes too - the process list is saved to disk and the
+	// stopped processes keep writing their logs until they exit. Until here the
+	// freeze is the API refusing the routes that write.
 	if !options.DryRun {
 		completeQuiesce(result.StoppedProcesses, freezeRoot(options))
 	}
 
 	excludes := append(append([]string(nil), DefaultExcludes...), options.Excludes...)
 	excludes = append(excludes, executableExcludes()...)
-	// The comparison mount is on tmpfs and so already off the root device, but
-	// exclude it explicitly for the tests, which run entirely on one device.
+	// /mnt is excluded already, but the tests mount nothing and compare two
+	// directories of their own, so exclude the mountpoint explicitly too.
 	if rel, err := filepath.Rel(options.rootDir(), mountPoint); err == nil && rel != "." && !strings.HasPrefix(rel, "..") {
 		excludes = append(excludes, rel)
 	}
