@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"sync"
 	"syscall"
@@ -87,7 +86,7 @@ type ExportOptions struct {
 	// Excludes are added to the paths excluded by default.
 	Excludes []string `json:"excludes,omitempty"`
 	// ImageDevice is the device holding the pristine image, /dev/vda by default.
-	// mk3.0 exposes the same image as a ROM, /dev/ukp_rom0.
+	// A generation that attaches the image elsewhere names its device here.
 	ImageDevice string `json:"imageDevice,omitempty" example:"/dev/vda"`
 	// ImageMountPoint is a directory where the pristine image is already mounted.
 	// When set the image device is neither mounted nor unmounted.
@@ -194,7 +193,7 @@ func (o ExportOptions) validateImageSource() error {
 		// its own at this API's mountpoint, and a comparison against it reports
 		// every path as added. Only the root is taken on trust, since it is the
 		// filesystem being archived and nothing can be substituted for it.
-		if o.ImageMountPoint != DefaultRoot && !mountedFromImage(o.ImageMountPoint) {
+		if o.ImageMountPoint != DefaultRoot && !mountedFromImage(o.ImageMountPoint, o.imageDevice()) {
 			return invalidOptions("imageMountPoint %s does not hold the sandbox image", o.ImageMountPoint)
 		}
 	}
@@ -204,20 +203,21 @@ func (o ExportOptions) validateImageSource() error {
 		if device != o.ImageDevice || !strings.HasPrefix(device, "/dev/") {
 			return invalidOptions("imageDevice must be a path under /dev")
 		}
-		// A device under /dev is not enough, for the reason the mount point is
-		// restricted to two paths: any other mountable filesystem - an attached
-		// drive, an image the workload built - shares nothing with the root, so
-		// every path looks added and the archive becomes a copy of the whole root.
-		// The image only ever lives on the devices the generations attach it to.
-		if !slices.Contains(imageDevices, device) {
-			return invalidOptions("imageDevice must be one of %s", strings.Join(imageDevices, ", "))
-		}
 		info, err := os.Stat(device)
 		if err != nil {
 			return invalidOptions("image device %s is not available: %v", device, err)
 		}
 		if info.Mode()&os.ModeDevice == 0 {
 			return invalidOptions("imageDevice %s is not a device", device)
+		}
+		// A device under /dev is not enough, for the reason the mount point is
+		// restricted to two paths: any other mountable filesystem - a drive the
+		// workload attached, a volume - shares nothing with the root, so every
+		// path looks added and the archive becomes a copy of the whole root,
+		// streamed to a URL the caller chose. The image is an EROFS filesystem,
+		// and the device has to hold one.
+		if !deviceHoldsImage(device) {
+			return invalidOptions("imageDevice %s does not hold a sandbox image", device)
 		}
 	}
 	return nil

@@ -4,30 +4,30 @@ package archive
 
 import (
 	"bufio"
+	"encoding/binary"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"syscall"
 
 	"golang.org/x/sys/unix"
 )
 
-// DefaultImageDevice is where the pristine EROFS image is attached. mk3.1
-// attaches it as the first virtio drive; mk3.0 boots Unikraft and exposes the
-// same image as a ROM, so the device has to be overridden there.
+// DefaultImageDevice is where the pristine EROFS image is attached: the first
+// virtio drive. A generation that exposes the image somewhere else names that
+// device in the export request, which the control plane fills in — the sandbox
+// knows nothing of the platform it boots on.
 const DefaultImageDevice = "/dev/vda"
 
-// imageDevices are the only devices the platform ever attaches the pristine
-// image to: the first virtio drive on mk3.1, the Unikraft ROM on mk3.0. The
-// request comes from inside the sandbox, and any other mountable device - an
-// attached drive, another EROFS image the workload built - is a filesystem the
-// root shares nothing with, so comparing against it reports the whole root as
-// added and turns the export into a copy of it, streamed to a URL the caller
-// chose.
-var imageDevices = []string{DefaultImageDevice, "/dev/ukp_rom0"}
+// erofsSuperOffset and erofsMagic locate the signature an EROFS filesystem
+// starts with, which is how a device is told to hold an image rather than
+// anything else mountable.
+const (
+	erofsSuperOffset = 1024
+	erofsMagic       = 0xE0F5E1E2
+)
 
 // mountImage mounts the pristine image read-only at mountpoint. Mounting the
 // image a second time is safe: it is read-only for the guest either way, and it
@@ -112,23 +112,41 @@ func mounted(mountpoint string) bool {
 	return stat.Dev != parentStat.Dev
 }
 
-// mountedFromImage reports whether mountpoint holds the pristine image itself,
+// deviceHoldsImage reports whether device holds an EROFS filesystem, which the
+// pristine image is and a drive the workload attached is not: comparing the
+// root against a filesystem it shares nothing with reports every path as added
+// and turns the export into a copy of the whole root, streamed to a URL the
+// caller chose.
+func deviceHoldsImage(device string) bool {
+	file, err := os.Open(device)
+	if err != nil {
+		return false
+	}
+	defer file.Close()
+	signature := make([]byte, 4)
+	if _, err := file.ReadAt(signature, erofsSuperOffset); err != nil {
+		return false
+	}
+	return binary.LittleEndian.Uint32(signature) == erofsMagic
+}
+
+// mountedFromImage reports whether mountpoint holds the image device itself,
 // which being a mount does not say: anything the workload can mount - a drive it
 // attached, an image it built - shares nothing with the root, so comparing
 // against it reports the whole root as added. The mount table names both the
-// filesystem and the device it comes from, and only the devices the platform
-// attaches the image to, mounted as erofs, are the image.
-func mountedFromImage(mountpoint string) bool {
+// filesystem and the device it comes from, and only the image device, mounted
+// as erofs, is the image.
+func mountedFromImage(mountpoint, device string) bool {
 	file, err := os.Open("/proc/self/mountinfo")
 	if err != nil {
 		return false
 	}
 	defer file.Close()
-	return mountHoldsImage(file, mountpoint)
+	return mountHoldsImage(file, mountpoint, device)
 }
 
 // mountHoldsImage answers mountedFromImage from the mount table it is given.
-func mountHoldsImage(mountinfo io.Reader, mountpoint string) bool {
+func mountHoldsImage(mountinfo io.Reader, mountpoint, device string) bool {
 	wanted := filepath.Clean(mountpoint)
 	matched := false
 	scanner := bufio.NewScanner(mountinfo)
@@ -154,7 +172,7 @@ func mountHoldsImage(mountinfo io.Reader, mountpoint string) bool {
 		}
 		// The last mount of a path is the one seen through it, so the answer is
 		// whatever the last matching line says rather than the first.
-		matched = right[0] == "erofs" && slices.Contains(imageDevices, right[1])
+		matched = right[0] == "erofs" && right[1] == device
 	}
 	return matched
 }

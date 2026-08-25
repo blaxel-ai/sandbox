@@ -374,14 +374,11 @@ func TestExportRefusesAnUntrustworthyImageSource(t *testing.T) {
 		t.Errorf("expected the root to be accepted, got %v", err)
 	}
 
-	// The devices the platform attaches the image to are accepted, when the test
-	// runs on a sandbox that has them.
-	for _, device := range imageDevices {
-		if _, err := os.Stat(device); err != nil {
-			continue
-		}
-		if err := (ExportOptions{ImageDevice: device}).validateImageSource(); err != nil {
-			t.Errorf("expected %s to be accepted, got %v", device, err)
+	// The device the image is attached to is accepted, when the test runs on a
+	// sandbox that has one.
+	if deviceHoldsImage(DefaultImageDevice) {
+		if err := (ExportOptions{ImageDevice: DefaultImageDevice}).validateImageSource(); err != nil {
+			t.Errorf("expected %s to be accepted, got %v", DefaultImageDevice, err)
 		}
 	}
 }

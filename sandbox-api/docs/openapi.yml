@@ -1885,7 +1885,7 @@ components:
           description: >-
             ImageDevice is the device holding the pristine image, /dev/vda by default.
 
-            mk3.0 exposes the same image as a ROM, /dev/ukp_rom0.
+            A generation that attaches the image elsewhere names its device here.
           example: /dev/vda
           type: string
         imageMountPoint:
