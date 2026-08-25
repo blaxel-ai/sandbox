@@ -18,6 +18,7 @@ import (
 
 	_ "github.com/blaxel-ai/sandbox-api/docs" // Import generated docs
 	"github.com/blaxel-ai/sandbox-api/src/handler"
+	"github.com/blaxel-ai/sandbox-api/src/handler/archive"
 	"github.com/blaxel-ai/sandbox-api/src/lib/audit"
 )
 
@@ -40,6 +41,9 @@ func SetupRouter(disableRequestLogging bool, enableProcessingTime bool) *gin.Eng
 
 	// Add middleware to prevent caching
 	r.Use(noCacheMiddleware())
+
+	// Refuse the calls that would write to the filesystem while it is archived
+	r.Use(quiesceMiddleware())
 
 	// Add processing time middleware if enabled
 	if enableProcessingTime {
@@ -65,6 +69,7 @@ func SetupRouter(disableRequestLogging bool, enableProcessingTime bool) *gin.Eng
 	codegenHandler := handler.NewCodegenHandler(fsHandler)
 	systemHandler := handler.NewSystemHandler()
 	driveHandler := handler.NewDriveHandler()
+	archiveHandler := handler.NewArchiveHandler()
 
 	// Check if terminal is disabled via environment variable
 	disableTerminal := os.Getenv("DISABLE_TERMINAL") == "true" || os.Getenv("DISABLE_TERMINAL") == "1"
@@ -193,6 +198,12 @@ func SetupRouter(disableRequestLogging bool, enableProcessingTime bool) *gin.Eng
 	environmentHandler := handler.NewEnvironmentHandler()
 	r.POST("/environment/reload", environmentHandler.HandleReload)
 
+	// Archive routes (export the filesystem changes, freeze the sandbox for it)
+	r.POST("/archive/export", archiveHandler.HandleExport)
+	r.GET("/archive/status", archiveHandler.HandleStatus)
+	r.HEAD("/archive/status", head)
+	r.POST("/archive/resume", archiveHandler.HandleResume)
+
 	// System routes
 	r.POST("/upgrade", systemHandler.HandleUpgrade)
 	r.HEAD("/upgrade", head)
@@ -235,7 +246,51 @@ func SetupRouter(disableRequestLogging bool, enableProcessingTime bool) *gin.Eng
 	return r
 }
 
+// quiesceAllowedPrefixes are the routes still served while the sandbox is
+// frozen for an archive export.
+//
+// The terminal is deliberately among them: an operator locked out of a frozen
+// sandbox has no way to see why an export is stuck, and the terminal is also how
+// the archive is inspected. It does allow writing to the filesystem, so it is a
+// tool for the operator, not an exemption from the freeze — anything typed there
+// during an export may or may not be part of the archive.
+var quiesceAllowedPrefixes = []string{
+	"/archive",
+	"/terminal",
+	"/health",
+	"/swagger",
+}
 
+// quiesceMiddleware refuses new calls once an archive export has started, so
+// nothing changes the filesystem while it is being read. Requests already in
+// flight are not interrupted; the export waits for the workload to stop, which
+// is what actually holds the writers.
+func quiesceMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if !archive.Quiesced() {
+			c.Next()
+			return
+		}
+
+		path := c.Request.URL.Path
+		if path == "/" {
+			c.Next()
+			return
+		}
+		for _, prefix := range quiesceAllowedPrefixes {
+			if path == prefix || strings.HasPrefix(path, prefix+"/") {
+				c.Next()
+				return
+			}
+		}
+
+		status := archive.Status()
+		c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{
+			"error":  fmt.Sprintf("sandbox is %s (%s): this endpoint is unavailable until the archive completes", status.State, status.Reason),
+			"status": status,
+		})
+	}
+}
 
 // corsMiddleware adds CORS headers to all responses
 func corsMiddleware() gin.HandlerFunc {

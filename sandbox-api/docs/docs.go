@@ -15,6 +15,98 @@ const docTemplate = `{
     "host": "{{.Host}}",
     "basePath": "{{.BasePath}}",
     "paths": {
+        "/archive/export": {
+            "post": {
+                "description": "Archives everything the sandbox changed on top of its base image and streams it, uncompressed, to a presigned S3 PUT URL. The memory of the sandbox is not archived.\nThe sandbox is quiesced first: the process list is saved (unless saveProcesses is false), every process is stopped, and the API then refuses the calls that would write to the filesystem. The freeze is not lifted afterwards, since an exported sandbox is meant to be restored elsewhere; call POST /archive/resume to lift it.\nUse dryRun to get the archive's content and exact size without stopping anything and without uploading.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "archive"
+                ],
+                "summary": "Export the filesystem changes to a presigned URL",
+                "parameters": [
+                    {
+                        "description": "Export options",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/ExportOptions"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Export result",
+                        "schema": {
+                            "$ref": "#/definitions/ExportResult"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "An export is already in progress",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Export failed",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/archive/resume": {
+            "post": {
+                "description": "Makes the API serve every route again after an export. The processes stopped for the export are not relaunched: this exists so a failed or aborted export does not leave the sandbox unusable.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "archive"
+                ],
+                "summary": "Lift the archive freeze",
+                "responses": {
+                    "200": {
+                        "description": "Archive status",
+                        "schema": {
+                            "$ref": "#/definitions/QuiesceStatus"
+                        }
+                    }
+                }
+            }
+        },
+        "/archive/status": {
+            "get": {
+                "description": "Reports whether the sandbox is frozen for an archive export, and which processes were stopped for it.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "archive"
+                ],
+                "summary": "Get the archive status",
+                "responses": {
+                    "200": {
+                        "description": "Archive status",
+                        "schema": {
+                            "$ref": "#/definitions/QuiesceStatus"
+                        }
+                    }
+                }
+            }
+        },
         "/codegen/fastapply/{path}": {
             "put": {
                 "description": "Uses the configured LLM provider (Relace or Morph) to apply a code edit to the original content.\n\nTo use this endpoint as an agent tool, follow these guidelines:\n\nUse this tool to make an edit to an existing file. This will be read by a less intelligent model, which will quickly apply the edit. You should make it clear what the edit is, while also minimizing the unchanged code you write.\n\nWhen writing the edit, you should specify each edit in sequence, with the special comment \"// ... existing code ...\" to represent unchanged code in between edited lines.\n\nExample format:\n// ... existing code ...\nFIRST_EDIT\n// ... existing code ...\nSECOND_EDIT\n// ... existing code ...\nTHIRD_EDIT\n// ... existing code ...\n\nYou should still bias towards repeating as few lines of the original file as possible to convey the change. But, each edit should contain minimally sufficient context of unchanged lines around the code you're editing to resolve ambiguity.\n\nDO NOT omit spans of pre-existing code (or comments) without using the \"// ... existing code ...\" comment to indicate its absence. If you omit the existing code comment, the model may inadvertently delete these lines.\n\nIf you plan on deleting a section, you must provide context before and after to delete it. If the initial code is \"Block 1\\nBlock 2\\nBlock 3\", and you want to remove Block 2, you would output \"// ... existing code ...\\nBlock 1\\nBlock 3\\n// ... existing code ...\".\n\nMake sure it is clear what the edit should be, and where it should be applied. Make edits to a file in a single edit_file call instead of multiple edit_file calls to the same file. The apply model can handle many distinct edits at once.",
@@ -1876,6 +1968,71 @@ const docTemplate = `{
                 }
             }
         },
+        "ArchiveManifest": {
+            "type": "object",
+            "required": [
+                "createdAt",
+                "root",
+                "version"
+            ],
+            "properties": {
+                "added": {
+                    "description": "Added and Modified count the archive's payload members.",
+                    "type": "integer",
+                    "example": 11
+                },
+                "apiVersion": {
+                    "description": "APIVersion is the sandbox-api build that produced the archive.",
+                    "type": "string",
+                    "example": "v0.1.0"
+                },
+                "createdAt": {
+                    "type": "string"
+                },
+                "deleted": {
+                    "description": "Deleted are paths the image has and the sandbox deleted. Tar cannot carry\na deletion, so import applies these from the manifest.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "excludes": {
+                    "description": "Excludes are the paths left out of the comparison.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "imageDevice": {
+                    "description": "ImageDevice is the device the pristine image was read from, for the record:\nit says which generation exported the archive (/dev/vda on mk3.1).",
+                    "type": "string",
+                    "example": "/dev/vda"
+                },
+                "modified": {
+                    "type": "integer",
+                    "example": 3
+                },
+                "payloadBytes": {
+                    "description": "PayloadBytes is the total content size of the payload members.",
+                    "type": "integer",
+                    "example": 3073449
+                },
+                "processes": {
+                    "description": "Processes tells whether ProcessesName is present.",
+                    "type": "boolean",
+                    "example": true
+                },
+                "root": {
+                    "description": "Root is the directory the paths are relative to.",
+                    "type": "string",
+                    "example": "/"
+                },
+                "version": {
+                    "type": "integer",
+                    "example": 1
+                }
+            }
+        },
         "ContentSearchMatch": {
             "type": "object",
             "required": [
@@ -2082,6 +2239,87 @@ const docTemplate = `{
                 "error": {
                     "type": "string",
                     "example": "Error message"
+                }
+            }
+        },
+        "ExportOptions": {
+            "type": "object",
+            "properties": {
+                "dryRun": {
+                    "description": "DryRun reports what would be archived, and its exact size, without\nstopping anything and without uploading.",
+                    "type": "boolean",
+                    "example": false
+                },
+                "excludes": {
+                    "description": "Excludes are added to the paths excluded by default.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "imageDevice": {
+                    "description": "ImageDevice is the device holding the pristine image, /dev/vda by default.\nmk3.0 exposes the same image as a ROM, /dev/ukp_rom0.",
+                    "type": "string",
+                    "example": "/dev/vda"
+                },
+                "imageMountPoint": {
+                    "description": "ImageMountPoint is a directory where the pristine image is already mounted.\nWhen set the image device is neither mounted nor unmounted.",
+                    "type": "string",
+                    "example": "/mnt/lower"
+                },
+                "saveProcesses": {
+                    "description": "SaveProcesses stores the process list in the archive so restore can\nrelaunch the workload. Defaults to true; set it to false to archive\nstorage only.",
+                    "type": "boolean",
+                    "example": true
+                },
+                "stopTimeoutSeconds": {
+                    "description": "StopTimeoutSeconds bounds the graceful stop of each process.",
+                    "type": "integer",
+                    "example": 30
+                },
+                "url": {
+                    "description": "URL is a presigned S3 PUT URL the archive is streamed to. Empty is only\nvalid with DryRun.",
+                    "type": "string",
+                    "example": "https://bucket.s3.amazonaws.com/key?..."
+                }
+            }
+        },
+        "ExportResult": {
+            "type": "object",
+            "required": [
+                "manifest"
+            ],
+            "properties": {
+                "changes": {
+                    "description": "Changes lists every path in the archive. Only filled for a dry run,\nwhere it is the point of the call.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/archive.Change"
+                    }
+                },
+                "duration": {
+                    "type": "string",
+                    "example": "4.2s"
+                },
+                "manifest": {
+                    "$ref": "#/definitions/ArchiveManifest"
+                },
+                "size": {
+                    "description": "Size is the exact number of bytes uploaded, known before the upload\nstarts since the archive is not compressed.",
+                    "type": "integer",
+                    "example": 3074211
+                },
+                "stoppedProcesses": {
+                    "description": "StoppedProcesses are the processes stopped to freeze the filesystem.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "uploaded": {
+                    "description": "Uploaded is false for a dry run.",
+                    "type": "boolean",
+                    "example": true
                 }
             }
         },
@@ -2590,6 +2828,38 @@ const docTemplate = `{
                 }
             }
         },
+        "QuiesceStatus": {
+            "type": "object",
+            "required": [
+                "state"
+            ],
+            "properties": {
+                "reason": {
+                    "description": "Reason is a human readable explanation of why the sandbox is frozen.",
+                    "type": "string",
+                    "example": "archive export"
+                },
+                "since": {
+                    "description": "Since is when the sandbox left StateActive.",
+                    "type": "string"
+                },
+                "state": {
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/archive.QuiesceState"
+                        }
+                    ],
+                    "example": "quiesced"
+                },
+                "stoppedProcesses": {
+                    "description": "StoppedProcesses are the process identifiers stopped while quiescing.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
         "RankedFile": {
             "type": "object",
             "properties": {
@@ -2749,6 +3019,59 @@ const docTemplate = `{
                     "example": "latest"
                 }
             }
+        },
+        "archive.Change": {
+            "type": "object",
+            "required": [
+                "kind",
+                "path"
+            ],
+            "properties": {
+                "kind": {
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/archive.ChangeKind"
+                        }
+                    ],
+                    "example": "added"
+                },
+                "path": {
+                    "description": "Path is relative to the root, without a leading slash.",
+                    "type": "string",
+                    "example": "usr/bin/curl"
+                },
+                "size": {
+                    "description": "Size is the file content size in bytes, 0 for anything but a regular file.",
+                    "type": "integer",
+                    "example": 256216
+                }
+            }
+        },
+        "archive.ChangeKind": {
+            "type": "string",
+            "enum": [
+                "added",
+                "modified",
+                "deleted"
+            ],
+            "x-enum-varnames": [
+                "ChangeAdded",
+                "ChangeModified",
+                "ChangeDeleted"
+            ]
+        },
+        "archive.QuiesceState": {
+            "type": "string",
+            "enum": [
+                "active",
+                "quiescing",
+                "quiesced"
+            ],
+            "x-enum-varnames": [
+                "StateActive",
+                "StateQuiescing",
+                "StateQuiesced"
+            ]
         },
         "filesystem.MultipartUpload": {
             "type": "object",

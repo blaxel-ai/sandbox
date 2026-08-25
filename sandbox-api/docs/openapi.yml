@@ -5,6 +5,75 @@ info:
   title: Sandbox API
   version: 0.0.1
 paths:
+  /archive/export:
+    post:
+      description: >-
+        Archives everything the sandbox changed on top of its base image and streams it, uncompressed, to a presigned S3 PUT URL. The memory of the sandbox is not archived.
+
+        The sandbox is quiesced first: the process list is saved (unless saveProcesses is false), every process is stopped, and the API then refuses the calls that would write to the filesystem. The freeze is not lifted afterwards, since an exported sandbox is meant to be restored elsewhere; call POST /archive/resume to lift it.
+
+        Use dryRun to get the archive's content and exact size without stopping anything and without uploading.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExportOptions"
+        description: Export options
+        required: true
+      responses:
+        "200":
+          description: Export result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExportResult"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: An export is already in progress
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Export failed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+      summary: Export the filesystem changes to a presigned URL
+      tags:
+        - archive
+  /archive/resume:
+    post:
+      description: "Makes the API serve every route again after an export. The processes stopped for the export are not relaunched: this exists so a failed or aborted export does not leave the sandbox unusable."
+      responses:
+        "200":
+          description: Archive status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuiesceStatus"
+      summary: Lift the archive freeze
+      tags:
+        - archive
+  /archive/status:
+    get:
+      description: Reports whether the sandbox is frozen for an archive export, and which processes were stopped for it.
+      responses:
+        "200":
+          description: Archive status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuiesceStatus"
+      summary: Get the archive status
+      tags:
+        - archive
   "/codegen/fastapply/{path}":
     put:
       description: >-
@@ -1553,6 +1622,61 @@ components:
             }
           type: string
       type: object
+    ArchiveManifest:
+      properties:
+        added:
+          description: Added and Modified count the archive's payload members.
+          example: 11
+          type: integer
+        apiVersion:
+          description: APIVersion is the sandbox-api build that produced the archive.
+          example: v0.1.0
+          type: string
+        createdAt:
+          type: string
+        deleted:
+          description: >-
+            Deleted are paths the image has and the sandbox deleted. Tar cannot carry
+
+            a deletion, so import applies these from the manifest.
+          items:
+            type: string
+          type: array
+        excludes:
+          description: Excludes are the paths left out of the comparison.
+          items:
+            type: string
+          type: array
+        imageDevice:
+          description: >-
+            ImageDevice is the device the pristine image was read from, for the record:
+
+            it says which generation exported the archive (/dev/vda on mk3.1).
+          example: /dev/vda
+          type: string
+        modified:
+          example: 3
+          type: integer
+        payloadBytes:
+          description: PayloadBytes is the total content size of the payload members.
+          example: 3073449
+          type: integer
+        processes:
+          description: Processes tells whether ProcessesName is present.
+          example: true
+          type: boolean
+        root:
+          description: Root is the directory the paths are relative to.
+          example: /
+          type: string
+        version:
+          example: 1
+          type: integer
+      required:
+        - createdAt
+        - root
+        - version
+      type: object
     ContentSearchMatch:
       properties:
         column:
@@ -1700,6 +1824,84 @@ components:
           type: string
       required:
         - error
+      type: object
+    ExportOptions:
+      properties:
+        dryRun:
+          description: |-
+            DryRun reports what would be archived, and its exact size, without
+            stopping anything and without uploading.
+          example: false
+          type: boolean
+        excludes:
+          description: Excludes are added to the paths excluded by default.
+          items:
+            type: string
+          type: array
+        imageDevice:
+          description: >-
+            ImageDevice is the device holding the pristine image, /dev/vda by default.
+
+            mk3.0 exposes the same image as a ROM, /dev/ukp_rom0.
+          example: /dev/vda
+          type: string
+        imageMountPoint:
+          description: >-
+            ImageMountPoint is a directory where the pristine image is already mounted.
+
+            When set the image device is neither mounted nor unmounted.
+          example: /mnt/lower
+          type: string
+        saveProcesses:
+          description: |-
+            SaveProcesses stores the process list in the archive so restore can
+            relaunch the workload. Defaults to true; set it to false to archive
+            storage only.
+          example: true
+          type: boolean
+        stopTimeoutSeconds:
+          description: StopTimeoutSeconds bounds the graceful stop of each process.
+          example: 30
+          type: integer
+        url:
+          description: >-
+            URL is a presigned S3 PUT URL the archive is streamed to. Empty is only
+
+            valid with DryRun.
+          example: https://bucket.s3.amazonaws.com/key?...
+          type: string
+      type: object
+    ExportResult:
+      properties:
+        changes:
+          description: |-
+            Changes lists every path in the archive. Only filled for a dry run,
+            where it is the point of the call.
+          items:
+            $ref: "#/components/schemas/archive.Change"
+          type: array
+        duration:
+          example: 4.2s
+          type: string
+        manifest:
+          $ref: "#/components/schemas/ArchiveManifest"
+        size:
+          description: |-
+            Size is the exact number of bytes uploaded, known before the upload
+            starts since the archive is not compressed.
+          example: 3074211
+          type: integer
+        stoppedProcesses:
+          description: StoppedProcesses are the processes stopped to freeze the filesystem.
+          items:
+            type: string
+          type: array
+        uploaded:
+          description: Uploaded is false for a dry run.
+          example: true
+          type: boolean
+      required:
+        - manifest
       type: object
     File:
       properties:
@@ -2068,6 +2270,27 @@ components:
         - stdout
         - workingDir
       type: object
+    QuiesceStatus:
+      properties:
+        reason:
+          description: Reason is a human readable explanation of why the sandbox is frozen.
+          example: archive export
+          type: string
+        since:
+          description: Since is when the sandbox left StateActive.
+          type: string
+        state:
+          allOf:
+            - $ref: "#/components/schemas/archive.QuiesceState"
+          example: quiesced
+        stoppedProcesses:
+          description: StoppedProcesses are the process identifiers stopped while quiescing.
+          items:
+            type: string
+          type: array
+      required:
+        - state
+      type: object
     RankedFile:
       properties:
         content:
@@ -2180,6 +2403,44 @@ components:
         - step
         - version
       type: object
+    archive.Change:
+      properties:
+        kind:
+          allOf:
+            - $ref: "#/components/schemas/archive.ChangeKind"
+          example: added
+        path:
+          description: Path is relative to the root, without a leading slash.
+          example: usr/bin/curl
+          type: string
+        size:
+          description: Size is the file content size in bytes, 0 for anything but a regular file.
+          example: 256216
+          type: integer
+      required:
+        - kind
+        - path
+      type: object
+    archive.ChangeKind:
+      enum:
+        - added
+        - modified
+        - deleted
+      type: string
+      x-enum-varnames:
+        - ChangeAdded
+        - ChangeModified
+        - ChangeDeleted
+    archive.QuiesceState:
+      enum:
+        - active
+        - quiescing
+        - quiesced
+      type: string
+      x-enum-varnames:
+        - StateActive
+        - StateQuiescing
+        - StateQuiesced
     filesystem.MultipartUpload:
       properties:
         initiatedAt:
