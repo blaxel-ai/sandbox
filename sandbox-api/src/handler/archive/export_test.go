@@ -63,12 +63,14 @@ func TestExportUploadsWithKnownLengthAndQuiesces(t *testing.T) {
 
 	var uploaded bytes.Buffer
 	var contentLength string
+	var contentType string
 	var chunked bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPut {
 			t.Errorf("expected a PUT, got %s", r.Method)
 		}
 		contentLength = r.Header.Get("Content-Length")
+		contentType = r.Header.Get("Content-Type")
 		chunked = len(r.TransferEncoding) > 0
 		if _, err := io.Copy(&uploaded, r.Body); err != nil {
 			t.Errorf("failed to read the upload: %v", err)
@@ -98,6 +100,11 @@ func TestExportUploadsWithKnownLengthAndQuiesces(t *testing.T) {
 	}
 	if int64(uploaded.Len()) != result.Size {
 		t.Errorf("uploaded %d bytes, announced %d", uploaded.Len(), result.Size)
+	}
+	// A presigned URL signs the headers it was generated for, so sending a
+	// content type the signature does not cover fails with SignatureDoesNotMatch.
+	if contentType != "" {
+		t.Errorf("the upload must not send a Content-Type, got %q", contentType)
 	}
 	if !Quiesced() {
 		t.Error("expected the sandbox to stay frozen after an export")

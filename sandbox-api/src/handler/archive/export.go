@@ -357,7 +357,9 @@ func upload(ctx context.Context, url string, size int64, write func(io.Writer) e
 		return fmt.Errorf("failed to build the upload request: %w", err)
 	}
 	request.ContentLength = size
-	request.Header.Set("Content-Type", "application/x-tar")
+	// No Content-Type: a presigned URL signs the headers it was generated for,
+	// and a signature computed without a content type does not match a request
+	// that sends one (S3 answers SignatureDoesNotMatch).
 
 	response, err := http.DefaultClient.Do(request)
 	if err != nil {
