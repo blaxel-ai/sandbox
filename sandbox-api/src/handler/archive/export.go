@@ -420,6 +420,11 @@ func processState() ([]byte, error) {
 
 // upload streams the archive to a presigned URL with a known length.
 func upload(ctx context.Context, url string, size int64, write func(io.Writer) error) error {
+	// The export holds the sandbox frozen until it returns, so the upload is not
+	// allowed to hang on storage indefinitely.
+	ctx, cancel := context.WithTimeout(ctx, transferTimeout)
+	defer cancel()
+
 	reader, writer := io.Pipe()
 	go func() {
 		err := write(writer)
@@ -438,7 +443,7 @@ func upload(ctx context.Context, url string, size int64, write func(io.Writer) e
 	// and a signature computed without a content type does not match a request
 	// that sends one (S3 answers SignatureDoesNotMatch).
 
-	response, err := http.DefaultClient.Do(request)
+	response, err := transferClient.Do(request)
 	if err != nil {
 		return fmt.Errorf("failed to upload the archive: %w", redactURL(err))
 	}

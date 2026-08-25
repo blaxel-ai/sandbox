@@ -174,6 +174,12 @@ func Import(ctx context.Context, options ImportOptions) (*ImportResult, error) {
 		return nil, ErrNoImport
 	}
 
+	// The download runs before anything is served, so a storage stall would hold
+	// up the boot: it covers reading the body too, which is where a stalled
+	// transfer actually hangs.
+	ctx, cancel := context.WithTimeout(ctx, transferTimeout)
+	defer cancel()
+
 	started := time.Now()
 	body, err := download(ctx, options.URL)
 	if err != nil {
@@ -209,7 +215,7 @@ func download(ctx context.Context, url string) (io.ReadCloser, error) {
 		return nil, fmt.Errorf("failed to build the download request: %w", err)
 	}
 
-	response, err := http.DefaultClient.Do(request)
+	response, err := transferClient.Do(request)
 	if err != nil {
 		return nil, fmt.Errorf("failed to download the archive: %w", redactURL(err))
 	}
@@ -359,6 +365,14 @@ func restore(root, target string, header *tar.Header, content io.Reader) error {
 
 	switch header.Typeflag {
 	case tar.TypeDir:
+		// The path may hold the image's file, or symlink, where the archived
+		// sandbox has a directory: mkdir over it fails with ENOTDIR, and the
+		// type change is exactly what the archive is there to reproduce.
+		if info, err := os.Lstat(target); err == nil && !info.IsDir() {
+			if err := os.Remove(target); err != nil {
+				return fmt.Errorf("failed to replace %s: %w", target, err)
+			}
+		}
 		if err := os.MkdirAll(target, header.FileInfo().Mode().Perm()); err != nil {
 			return fmt.Errorf("failed to create %s: %w", target, err)
 		}

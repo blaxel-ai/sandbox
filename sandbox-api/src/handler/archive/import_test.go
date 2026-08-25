@@ -323,6 +323,27 @@ func TestImportDeletesADirectoryTheImageStillFills(t *testing.T) {
 	}
 }
 
+func TestImportRestoresADirectoryOverAnImageFile(t *testing.T) {
+	// The archived sandbox replaced one of the image's files with a directory,
+	// which mkdir over the file would refuse with ENOTDIR.
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "data"), []byte("image"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	body := buildArchive(t, Manifest{Version: ManifestVersion, Root: "/"}, nil, []archiveMember{
+		{name: "data", dir: true, mode: 0o755},
+		{name: "data/file", content: "workload", mode: 0o644},
+	})
+	if _, err := Import(context.Background(), ImportOptions{URL: serve(t, body), root: root, MarkerPath: filepath.Join(root, "marker.json")}); err != nil {
+		t.Fatal(err)
+	}
+
+	if content, err := os.ReadFile(filepath.Join(root, "data/file")); err != nil || string(content) != "workload" {
+		t.Errorf("expected the archived directory to replace the image's file, got %q (%v)", content, err)
+	}
+}
+
 func TestImportResolvesAHardlinkAgainstTheArchiveRoot(t *testing.T) {
 	root := t.TempDir()
 	body := buildArchive(t, Manifest{Version: ManifestVersion, Root: "/"}, nil, []archiveMember{
