@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"net/http"
@@ -18,6 +19,7 @@ import (
 	"github.com/getsentry/sentry-go"
 
 	"github.com/blaxel-ai/sandbox-api/src/handler"
+	"github.com/blaxel-ai/sandbox-api/src/handler/archive"
 	"github.com/blaxel-ai/sandbox-api/src/handler/process"
 	"github.com/blaxel-ai/sandbox-api/src/lib/blaxel"
 	"github.com/blaxel-ai/sandbox-api/src/lib/envfile"
@@ -178,6 +180,13 @@ func main() {
 		logrus.Infof("Shell args: %s", os.Getenv("SHELL_ARGS"))
 	}
 
+	// Restore an archived filesystem before anything of the workload runs, so
+	// the command below and the relaunched processes see the restored files
+	// rather than race the extraction. It is a no-op unless the sandbox was
+	// started with an archive to import, and it happens once per filesystem:
+	// see archive.DefaultImportMarker.
+	importArchive(ctx)
+
 	// Start background command if specified
 	if commandValue != "" {
 		startBackgroundCommand(ctx, commandValue)
@@ -252,6 +261,30 @@ func newHTTPServer(addr string, handler http.Handler) *http.Server {
 		IdleTimeout:       2 * time.Minute,  // Keep-alive connections timeout
 		MaxHeaderBytes:    1 << 20,          // 1 MB max header size
 	}
+}
+
+// importArchive restores the filesystem of an archived sandbox, if this one was
+// given one to restore and has not restored it yet.
+//
+// A failure is not fatal: the sandbox boots without the archived data instead of
+// not booting at all, which leaves an operator something to look at and retry
+// from. It is synchronous — the whole point is that the workload starts on top of
+// the restored filesystem.
+func importArchive(ctx context.Context) {
+	result, err := archive.ImportOnBoot(ctx)
+	if errors.Is(err, archive.ErrNoImport) {
+		return
+	}
+	if err != nil {
+		logrus.WithError(err).Error("Failed to restore the archive this sandbox was started from - it boots with the filesystem of its image instead")
+		return
+	}
+	logrus.WithFields(logrus.Fields{
+		"restored":   result.Restored,
+		"deleted":    result.Deleted,
+		"relaunched": len(result.Relaunched),
+		"duration":   result.Duration,
+	}).Info("Restored the sandbox filesystem from an archive")
 }
 
 // startBackgroundCommand runs the given command string in a goroutine using the

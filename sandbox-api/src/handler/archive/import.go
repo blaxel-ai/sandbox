@@ -1,0 +1,534 @@
+package archive
+
+import (
+	"archive/tar"
+	"bufio"
+	"compress/gzip"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"time"
+
+	"github.com/blaxel-ai/sandbox-api/src/handler/process"
+	"github.com/sirupsen/logrus"
+)
+
+const (
+	// EnvImportURL holds a presigned GET URL of an archive to restore. It is
+	// read once, at boot, before the workload starts.
+	EnvImportURL = "BL_ARCHIVE_IMPORT_URL"
+	// DefaultImportMarker records the archive this sandbox restored.
+	//
+	// It lives on the archived filesystem on purpose, and its lifetime is what
+	// makes an import happen exactly once. The upper layer is a tmpfs, so:
+	//   - sandbox-api restarting (a crash, an OOM kill, a hot upgrade) finds the
+	//     marker and the restored files still there, and does not import again,
+	//     which would undo whatever the workload has done since;
+	//   - the VM booting again starts from the pristine image with neither the
+	//     marker nor the restored files, and imports, which is the only way the
+	//     sandbox comes back to the state the archive describes.
+	DefaultImportMarker = "/var/lib/blaxel/archive-import.json"
+)
+
+// ErrNoImport is returned when there is nothing to import, so a caller can tell
+// it from a failed import.
+var ErrNoImport = errors.New("no archive to import")
+
+// ImportOptions drives an import.
+type ImportOptions struct {
+	// URL is a presigned S3 GET URL of the archive.
+	URL string `json:"url,omitempty"`
+	// RelaunchProcesses starts the processes the archive recorded as running.
+	// Defaults to true; they are relaunched from their command, never adopted by
+	// the PID they had in the archived sandbox.
+	RelaunchProcesses *bool `json:"relaunchProcesses,omitempty"`
+	// Excludes are added to the paths never restored.
+	Excludes []string `json:"excludes,omitempty"`
+	// MarkerPath overrides where the import is recorded.
+	MarkerPath string `json:"markerPath,omitempty"`
+
+	// root is only set by tests, which restore into a plain directory.
+	root string
+}
+
+// ImportResult reports an import.
+type ImportResult struct {
+	Manifest Manifest `json:"manifest"`
+	// Restored is the number of paths written, Deleted the number removed.
+	Restored int `json:"restored"`
+	Deleted  int `json:"deleted"`
+	// Skipped are the archive members left out because they are excluded.
+	Skipped []string `json:"skipped,omitempty"`
+	// Relaunched are the identifiers of the newly started processes. They are
+	// new: the archived sandbox's PIDs mean nothing here.
+	Relaunched []string `json:"relaunched,omitempty"`
+	Bytes      int64    `json:"bytes"`
+	Duration   string   `json:"duration"`
+}
+
+// Marker is what an import leaves behind.
+type Marker struct {
+	Version int `json:"version"`
+	// Archive identifies the archive, without the presigned query string, which
+	// is a credential and differs between two URLs of the same object.
+	Archive    string    `json:"archive"`
+	ImportedAt time.Time `json:"importedAt"`
+	Restored   int       `json:"restored"`
+	Deleted    int       `json:"deleted"`
+	Relaunched []string  `json:"relaunched,omitempty"`
+	// CreatedAt is when the archive was taken.
+	CreatedAt time.Time `json:"createdAt"`
+}
+
+func (o ImportOptions) relaunchProcesses() bool {
+	return o.RelaunchProcesses == nil || *o.RelaunchProcesses
+}
+
+func (o ImportOptions) rootDir() string {
+	if o.root != "" {
+		return o.root
+	}
+	return DefaultRoot
+}
+
+func (o ImportOptions) markerPath() string {
+	if o.MarkerPath != "" {
+		return o.MarkerPath
+	}
+	if o.root != "" {
+		return filepath.Join(o.root, strings.TrimPrefix(DefaultImportMarker, "/"))
+	}
+	return DefaultImportMarker
+}
+
+// ImportOnBoot restores the archive named by EnvImportURL, once.
+//
+// It returns ErrNoImport when there is nothing to do, which is the normal case:
+// no URL, or a marker saying this filesystem already carries the archive.
+func ImportOnBoot(ctx context.Context) (*ImportResult, error) {
+	return importOnBoot(ctx, ImportOptions{URL: os.Getenv(EnvImportURL)})
+}
+
+func importOnBoot(ctx context.Context, options ImportOptions) (*ImportResult, error) {
+	if options.URL == "" {
+		return nil, ErrNoImport
+	}
+
+	identity := archiveIdentity(options.URL)
+	marker, err := readMarker(options.markerPath())
+	if err != nil {
+		return nil, err
+	}
+	if marker != nil {
+		// Any marker stops the import, not only one for this archive: the
+		// filesystem has already been restored once, and applying another
+		// archive over it would mix two sandboxes' state.
+		logrus.WithFields(logrus.Fields{
+			"archive":    marker.Archive,
+			"importedAt": marker.ImportedAt,
+			"requested":  identity,
+		}).Info("[Archive] Filesystem already restored, skipping the import")
+		return nil, ErrNoImport
+	}
+
+	logrus.WithField("archive", identity).Info("[Archive] Restoring the filesystem from the archive before the workload starts")
+	result, err := Import(ctx, options)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := writeMarker(options.markerPath(), Marker{
+		Version:    ManifestVersion,
+		Archive:    identity,
+		ImportedAt: time.Now(),
+		Restored:   result.Restored,
+		Deleted:    result.Deleted,
+		Relaunched: result.Relaunched,
+		CreatedAt:  result.Manifest.CreatedAt,
+	}); err != nil {
+		// The filesystem is restored; failing here would only mean importing it
+		// again on the next start, over a filesystem that already has it.
+		logrus.WithError(err).Error("[Archive] Failed to record the import: a restart may restore the archive a second time")
+	}
+	return result, nil
+}
+
+// Import downloads the archive and applies it to the filesystem: the members are
+// written, the manifest's deletions are applied, and the processes the archive
+// recorded are relaunched from their command line.
+//
+// It is meant to run before the workload starts. Nothing here freezes the
+// sandbox: an import that races the workload is a caller's mistake, not
+// something this can detect.
+func Import(ctx context.Context, options ImportOptions) (*ImportResult, error) {
+	if options.URL == "" {
+		return nil, ErrNoImport
+	}
+
+	started := time.Now()
+	body, err := download(ctx, options.URL)
+	if err != nil {
+		return nil, err
+	}
+	defer body.Close()
+
+	result, processes, err := extract(body, options)
+	if err != nil {
+		return nil, err
+	}
+
+	if options.relaunchProcesses() && len(processes) > 0 {
+		result.Relaunched = relaunch(processes)
+	}
+
+	result.Duration = time.Since(started).String()
+	logrus.WithFields(logrus.Fields{
+		"restored":   result.Restored,
+		"deleted":    result.Deleted,
+		"relaunched": len(result.Relaunched),
+		"bytes":      result.Bytes,
+		"duration":   result.Duration,
+	}).Info("[Archive] Import complete")
+	return result, nil
+}
+
+// download fetches the archive. The URL is presigned, so it is a credential:
+// it never reaches an error message or a log line.
+func download(ctx context.Context, url string) (io.ReadCloser, error) {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build the download request: %w", err)
+	}
+
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		return nil, fmt.Errorf("failed to download the archive: %w", err)
+	}
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		defer response.Body.Close()
+		message, _ := io.ReadAll(io.LimitReader(response.Body, 2048))
+		return nil, fmt.Errorf("archive download rejected with status %d: %s", response.StatusCode, string(message))
+	}
+	return response.Body, nil
+}
+
+// extract applies the archive to the filesystem and returns the process state it
+// carried, if any. Both compressed and uncompressed archives are accepted: the
+// export writes plain tar, but the manual procedure this replaces produced
+// tar.gz and those archives stay readable.
+func extract(body io.Reader, options ImportOptions) (*ImportResult, []byte, error) {
+	buffered := bufio.NewReader(body)
+	var reader io.Reader = buffered
+	if magic, err := buffered.Peek(2); err == nil && magic[0] == 0x1f && magic[1] == 0x8b {
+		gz, err := gzip.NewReader(buffered)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to read the compressed archive: %w", err)
+		}
+		defer gz.Close()
+		reader = gz
+	}
+
+	root := options.rootDir()
+	excludes := append(append([]string(nil), DefaultExcludes...), options.Excludes...)
+	result := &ImportResult{}
+	var processes []byte
+
+	tr := tar.NewReader(reader)
+	for {
+		header, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to read the archive: %w", err)
+		}
+
+		name := strings.Trim(filepath.ToSlash(header.Name), "/")
+		switch name {
+		case ManifestName:
+			if err := json.NewDecoder(tr).Decode(&result.Manifest); err != nil {
+				return nil, nil, fmt.Errorf("failed to read the archive manifest: %w", err)
+			}
+			if result.Manifest.Version > ManifestVersion {
+				return nil, nil, fmt.Errorf("archive format version %d is newer than this sandbox understands (%d)", result.Manifest.Version, ManifestVersion)
+			}
+			continue
+		case ProcessesName:
+			if processes, err = io.ReadAll(tr); err != nil {
+				return nil, nil, fmt.Errorf("failed to read the archived process list: %w", err)
+			}
+			continue
+		}
+		if name == MetadataDir || strings.HasPrefix(name, MetadataDir+"/") {
+			continue
+		}
+
+		// The excludes are applied again here, not only on export: an archive is
+		// a file the sandbox is handed, and one carrying etc/resolv.conf or a
+		// path climbing out of the root must not be able to use it.
+		if excludedPath(name, excludes) {
+			result.Skipped = append(result.Skipped, name)
+			continue
+		}
+		target, err := resolve(root, name)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		if err := restore(target, header, tr); err != nil {
+			return nil, nil, err
+		}
+		result.Restored++
+		result.Bytes += header.Size
+	}
+
+	deleted, err := applyDeletions(root, result.Manifest.Deleted, excludes)
+	if err != nil {
+		return nil, nil, err
+	}
+	result.Deleted = deleted
+	return result, processes, nil
+}
+
+// resolve turns an archive member name into a path inside the root, refusing the
+// ones that would escape it.
+func resolve(root, name string) (string, error) {
+	target := filepath.Join(root, filepath.FromSlash(name))
+	rel, err := filepath.Rel(root, target)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+		return "", fmt.Errorf("archive member %q escapes the root", name)
+	}
+	return target, nil
+}
+
+// restore writes one archive member, with the mode, ownership and modification
+// time it was archived with. Ownership is best effort: it needs privileges the
+// API does not always have, and a restored file the workload can read is better
+// than a failed import.
+func restore(target string, header *tar.Header, content io.Reader) error {
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		return fmt.Errorf("failed to create the parent of %s: %w", target, err)
+	}
+
+	switch header.Typeflag {
+	case tar.TypeDir:
+		if err := os.MkdirAll(target, header.FileInfo().Mode().Perm()); err != nil {
+			return fmt.Errorf("failed to create %s: %w", target, err)
+		}
+	case tar.TypeSymlink:
+		// A symlink cannot be reopened to be rewritten, and the path may hold
+		// the image's version of it.
+		if err := os.RemoveAll(target); err != nil {
+			return fmt.Errorf("failed to replace %s: %w", target, err)
+		}
+		if err := os.Symlink(header.Linkname, target); err != nil {
+			return fmt.Errorf("failed to link %s: %w", target, err)
+		}
+		// A symlink's own mode and times are not the target's, and lchown is the
+		// only one of the three that means anything here.
+		if err := os.Lchown(target, header.Uid, header.Gid); err != nil {
+			logrus.WithError(err).WithField("path", target).Debug("[Archive] Failed to restore the symlink ownership")
+		}
+		return nil
+	case tar.TypeLink:
+		source, err := resolve(filepath.Dir(target), header.Linkname)
+		if err != nil {
+			return err
+		}
+		if err := os.RemoveAll(target); err != nil {
+			return fmt.Errorf("failed to replace %s: %w", target, err)
+		}
+		if err := os.Link(source, target); err != nil {
+			return fmt.Errorf("failed to hardlink %s: %w", target, err)
+		}
+		return nil
+	case tar.TypeReg:
+		if err := writeFile(target, header.FileInfo().Mode().Perm(), content); err != nil {
+			return err
+		}
+	default:
+		// Devices, fifos and sockets: the export never produces them, since the
+		// devices live on a tmpfs that is not archived.
+		logrus.WithFields(logrus.Fields{"path": target, "type": header.Typeflag}).Warn("[Archive] Skipping an archive member of an unsupported type")
+		return nil
+	}
+
+	if err := os.Chown(target, header.Uid, header.Gid); err != nil {
+		logrus.WithError(err).WithField("path", target).Debug("[Archive] Failed to restore the ownership")
+	}
+	if err := os.Chmod(target, header.FileInfo().Mode().Perm()); err != nil {
+		return fmt.Errorf("failed to set the mode of %s: %w", target, err)
+	}
+	if !header.ModTime.IsZero() {
+		if err := os.Chtimes(target, header.ModTime, header.ModTime); err != nil {
+			logrus.WithError(err).WithField("path", target).Debug("[Archive] Failed to restore the modification time")
+		}
+	}
+	return nil
+}
+
+// writeFile replaces target's content. The file is written and renamed, so a
+// binary the sandbox is running is replaced rather than overwritten in place,
+// which would fail with ETXTBSY.
+func writeFile(target string, mode os.FileMode, content io.Reader) error {
+	if info, err := os.Lstat(target); err == nil && info.IsDir() {
+		if err := os.RemoveAll(target); err != nil {
+			return fmt.Errorf("failed to replace the directory %s: %w", target, err)
+		}
+	}
+
+	temporary := target + ".blaxel-import"
+	file, err := os.OpenFile(temporary, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode)
+	if err != nil {
+		return fmt.Errorf("failed to create %s: %w", target, err)
+	}
+	if _, err := io.Copy(file, content); err != nil {
+		file.Close()
+		os.Remove(temporary)
+		return fmt.Errorf("failed to write %s: %w", target, err)
+	}
+	if err := file.Close(); err != nil {
+		os.Remove(temporary)
+		return fmt.Errorf("failed to close %s: %w", target, err)
+	}
+	if err := os.Rename(temporary, target); err != nil {
+		os.Remove(temporary)
+		return fmt.Errorf("failed to install %s: %w", target, err)
+	}
+	return nil
+}
+
+// applyDeletions removes the paths the archived sandbox had deleted from the
+// image. Tar cannot carry a deletion, so they travel in the manifest.
+func applyDeletions(root string, deleted, excludes []string) (int, error) {
+	// Deepest first, so a directory is removed after what the manifest lists
+	// inside it rather than taking it along.
+	paths := append([]string(nil), deleted...)
+	sort.Sort(sort.Reverse(sort.StringSlice(paths)))
+
+	count := 0
+	for _, path := range paths {
+		name := strings.Trim(filepath.ToSlash(path), "/")
+		if name == "" || excludedPath(name, excludes) {
+			continue
+		}
+		target, err := resolve(root, name)
+		if err != nil {
+			return 0, err
+		}
+		if err := os.Remove(target); err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			// A directory the image has and this sandbox created files in is not
+			// the archive's to empty.
+			logrus.WithError(err).WithField("path", target).Warn("[Archive] Failed to apply a deletion from the manifest")
+			continue
+		}
+		count++
+	}
+	return count, nil
+}
+
+// relaunch starts the processes the archive recorded as running, oldest first.
+//
+// They are started, not adopted: the archive carries no memory, so the PIDs it
+// records belong to a VM that no longer exists. Each process keeps its name, so
+// a caller that knew it by name still finds it, but its identifier is new.
+func relaunch(state []byte) []string {
+	var saved process.ManagerState
+	if err := json.Unmarshal(state, &saved); err != nil {
+		logrus.WithError(err).Error("[Archive] Failed to read the archived process list, the workload is not relaunched")
+		return nil
+	}
+
+	candidates := make([]process.ProcessState, 0, len(saved.Processes))
+	for _, archived := range saved.Processes {
+		if archived.Status != process.StatusRunning {
+			continue
+		}
+		candidates = append(candidates, archived)
+	}
+	sort.Slice(candidates, func(i, j int) bool { return candidates[i].StartedAt.Before(candidates[j].StartedAt) })
+
+	pm := process.GetProcessManager()
+	var relaunched []string
+	for _, archived := range candidates {
+		identifier, err := pm.StartProcessWithName(
+			archived.Command,
+			archived.WorkingDir,
+			archived.Name,
+			archived.Env,
+			archived.RestartOnFailure,
+			archived.MaxRestarts,
+			archived.KeepAlive,
+			archived.Timeout,
+			nil,
+		)
+		if err != nil {
+			logrus.WithError(err).WithFields(logrus.Fields{
+				"name":    archived.Name,
+				"command": archived.Command,
+			}).Error("[Archive] Failed to relaunch an archived process")
+			continue
+		}
+		relaunched = append(relaunched, identifier)
+		logrus.WithFields(logrus.Fields{
+			"name":       archived.Name,
+			"command":    archived.Command,
+			"identifier": identifier,
+		}).Info("[Archive] Relaunched an archived process")
+	}
+	return relaunched
+}
+
+// archiveIdentity is what a presigned URL says about which object it points to:
+// its path, without the query string, which carries the signature and the
+// expiry and so differs between two URLs of the same archive.
+func archiveIdentity(presigned string) string {
+	parsed, err := url.Parse(presigned)
+	if err != nil {
+		return ""
+	}
+	return parsed.Host + parsed.Path
+}
+
+func readMarker(path string) (*Marker, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to read the import marker %s: %w", path, err)
+	}
+	marker := &Marker{}
+	if err := json.Unmarshal(data, marker); err != nil {
+		// A marker that cannot be read still says an import happened, and
+		// importing again is the more destructive of the two answers.
+		logrus.WithError(err).WithField("path", path).Warn("[Archive] The import marker is unreadable, treating it as an import that already happened")
+		return &Marker{}, nil
+	}
+	return marker, nil
+}
+
+func writeMarker(path string, marker Marker) error {
+	data, err := json.MarshalIndent(marker, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to serialize the import marker: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("failed to create the import marker directory: %w", err)
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		return fmt.Errorf("failed to write the import marker %s: %w", path, err)
+	}
+	return nil
+}

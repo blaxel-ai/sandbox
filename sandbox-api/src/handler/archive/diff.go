@@ -58,6 +58,10 @@ var DefaultExcludes = []string{
 	// This API's own logs and state: process output belongs to the sandbox being
 	// archived, not to the one restoring it.
 	"var/log/sandbox-api",
+	// The marker saying this sandbox already imported an archive: it describes
+	// this sandbox's history, and carrying it into the next archive would
+	// overwrite the marker of whichever sandbox restores that one.
+	strings.TrimPrefix(DefaultImportMarker, "/"),
 }
 
 // scanner walks the live root and the pristine image and reports the difference.
@@ -131,7 +135,12 @@ func Diff(root, lower string, excludes []string) ([]Change, error) {
 
 // excluded reports whether rel is an excluded path or below one.
 func (s *scanner) excluded(rel string) bool {
-	for _, exclude := range s.excludes {
+	return excludedPath(rel, s.excludes)
+}
+
+// excludedPath reports whether rel is one of the excluded paths or below one.
+func excludedPath(rel string, excludes []string) bool {
+	for _, exclude := range excludes {
 		exclude = strings.Trim(exclude, "/")
 		if exclude == "" {
 			continue
