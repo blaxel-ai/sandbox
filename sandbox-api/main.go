@@ -207,6 +207,11 @@ func main() {
 		}
 	}
 	if archive.PendingImport() {
+		// Frozen here rather than by the import itself: the import starts
+		// below and the server starts right after, so a freeze taken once the
+		// import is running would leave the routes that write served on a
+		// filesystem the import is about to overwrite.
+		archive.MarkRestorePending()
 		go func() {
 			if importArchive(ctx) {
 				startWorkload()

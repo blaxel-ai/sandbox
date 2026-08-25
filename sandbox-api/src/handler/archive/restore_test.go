@@ -133,6 +133,37 @@ func TestImportReportsAFailedRestore(t *testing.T) {
 	}
 }
 
+// The boot freezes the sandbox before it serves anything, since the import
+// runs behind the API: a freeze taken once the import is running would arrive
+// after the first request that writes. The freeze then has to be given back
+// when the import turns out to have nothing to restore, or the sandbox would
+// refuse those calls for the rest of its life.
+func TestABootWithAnArchiveIsFrozenBeforeTheImportRunsAndGivenBackWhenItDoesNot(t *testing.T) {
+	resetRestore(t)
+
+	MarkRestorePending()
+	if state := Status().State; state != StateRestoring {
+		t.Fatalf("a sandbox with an archive to restore must refuse the calls that write before it serves anything, got %q", state)
+	}
+
+	root := t.TempDir()
+	marker := filepath.Join(root, "marker.json")
+	if err := writeMarker(marker, Marker{Version: ManifestVersion, Archive: "archive.tar", Restored: 1}); err != nil {
+		t.Fatal(err)
+	}
+
+	body := buildArchive(t, Manifest{Version: ManifestVersion, Root: "/"}, nil, []archiveMember{
+		{name: "srv/data", content: "restored", mode: 0o644},
+	})
+	if _, err := importOnBoot(context.Background(), ImportOptions{URL: serve(t, body), root: root, MarkerPath: marker}); err == nil {
+		t.Fatal("a filesystem that already carries an archive has nothing to import")
+	}
+
+	if state := Status().State; state != StateActive {
+		t.Errorf("a boot that restored nothing gives the sandbox back, got %q", state)
+	}
+}
+
 func waitFor(t *testing.T, condition func() bool) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)

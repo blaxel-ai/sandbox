@@ -183,10 +183,22 @@ func ImportOnBoot(ctx context.Context) (*ImportResult, error) {
 	return importOnBoot(ctx, ImportOptions{URL: os.Getenv(EnvImportURL)})
 }
 
-func importOnBoot(ctx context.Context, options ImportOptions) (*ImportResult, error) {
+func importOnBoot(ctx context.Context, options ImportOptions) (_ *ImportResult, err error) {
 	if options.URL == "" {
 		return nil, ErrNoImport
 	}
+
+	// The boot froze the sandbox before it started serving, since an import
+	// running behind the API must not have its freeze arrive after the first
+	// request. Everything below that ends without importing has to give the
+	// sandbox back, or it would answer as frozen forever. Import ends its own
+	// freeze, and a partial import keeps it on purpose.
+	imported := false
+	defer func() {
+		if !imported && !errors.Is(err, ErrPartialImport) {
+			cancelRestore()
+		}
+	}()
 
 	identity := archiveIdentity(options.URL)
 	marker, err := readMarker(options.markerPath())
@@ -237,6 +249,7 @@ func importOnBoot(ctx context.Context, options ImportOptions) (*ImportResult, er
 		return writeMarker(markerPath, marker)
 	}
 
+	imported = true
 	result, err := Import(ctx, options)
 	if err != nil {
 		if errors.Is(err, ErrPartialImport) {

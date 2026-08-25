@@ -66,6 +66,35 @@ func PendingImport() bool {
 	return os.Getenv(EnvImportURL) != ""
 }
 
+// MarkRestorePending freezes the sandbox for a restore that has not started
+// yet.
+//
+// The import runs behind the API, so the boot starts it and goes on to serve.
+// Whatever the import does first - reading the marker, opening the download -
+// happens after the server is accepting connections, and the freeze the import
+// takes when it begins would come too late: the routes that write would be
+// served on a filesystem about to be overwritten. Freezing here, before the
+// server exists, is what closes that window; cancelRestore gives the sandbox
+// back when the import turns out to have nothing to do.
+func MarkRestorePending() {
+	beginRestore("restoring the archived filesystem")
+}
+
+// cancelRestore gives back a sandbox frozen for an import that never ran: the
+// filesystem already carries the archive, or the marker could not be read. It
+// leaves any other freeze alone.
+func cancelRestore() {
+	restoreMu.Lock()
+	restoreProgress = nil
+	restoreMu.Unlock()
+
+	quiesceMu.Lock()
+	defer quiesceMu.Unlock()
+	if quiesceStatus.State == StateRestoring {
+		quiesceStatus = QuiesceStatus{State: StateActive}
+	}
+}
+
 // beginRestore records a restore as started and makes the API refuse the calls
 // that would write to the filesystem while it is being written.
 //
@@ -82,7 +111,7 @@ func beginRestore(reason string) {
 
 	quiesceMu.Lock()
 	defer quiesceMu.Unlock()
-	if quiesceStatus.State != StateActive {
+	if quiesceStatus.State != StateActive && quiesceStatus.State != StateRestoring {
 		// Something already froze the sandbox - an interrupted archive adopted
 		// at startup. It knows more about this filesystem than the restore
 		// does, and the import will refuse to run anyway.
