@@ -784,10 +784,13 @@ func readMarker(path string) (*Marker, error) {
 	}
 	marker := &Marker{}
 	if err := json.Unmarshal(data, marker); err != nil {
-		// A marker that cannot be read still says an import happened, and
-		// importing again is the more destructive of the two answers.
-		logrus.WithError(err).WithField("path", path).Warn("[Archive] The import marker is unreadable, treating it as an import that already happened")
-		return &Marker{}, nil
+		// A marker that cannot be read says an import happened without saying
+		// how it ended, which is the state a partial one describes: importing
+		// again would restore over files the first import wrote, and starting
+		// the workload would run it on a filesystem that may be half restored.
+		// Neither is safe, so the sandbox is left for someone to look at.
+		logrus.WithError(err).WithField("path", path).Error("[Archive] The import marker is unreadable, treating the filesystem as partially restored")
+		return &Marker{Partial: true, Error: "the import marker is unreadable"}, nil
 	}
 	return marker, nil
 }
@@ -800,8 +803,16 @@ func writeMarker(path string, marker Marker) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("failed to create the import marker directory: %w", err)
 	}
-	if err := os.WriteFile(path, data, 0o600); err != nil {
+	// Written beside the marker and renamed over it: a crash or a full
+	// filesystem halfway through a plain write leaves a truncated marker, and a
+	// marker that cannot be read is a sandbox nobody can boot any more.
+	temporary := path + ".tmp"
+	if err := os.WriteFile(temporary, data, 0o600); err != nil {
 		return fmt.Errorf("failed to write the import marker %s: %w", path, err)
+	}
+	if err := os.Rename(temporary, path); err != nil {
+		os.Remove(temporary)
+		return fmt.Errorf("failed to install the import marker %s: %w", path, err)
 	}
 	return nil
 }

@@ -81,10 +81,9 @@ func TestStatusIsACopy(t *testing.T) {
 
 func TestResumeIsRefusedWhileAnExportReadsTheFilesystem(t *testing.T) {
 	t.Cleanup(func() { forceResume() })
-	if err := Freeze("archive export"); err != nil {
+	if err := freezeForExport("archive export"); err != nil {
 		t.Fatal(err)
 	}
-	beginExport()
 	completeQuiesce(nil, false)
 
 	if _, err := Resume(); !errors.Is(err, ErrExportInProgress) {
@@ -97,5 +96,21 @@ func TestResumeIsRefusedWhileAnExportReadsTheFilesystem(t *testing.T) {
 	endExport()
 	if _, err := Resume(); err != nil {
 		t.Fatalf("the freeze should be liftable once the export is done: %v", err)
+	}
+}
+
+func TestFreezingForAnExportClaimsTheFilesystemAtOnce(t *testing.T) {
+	// Freezing and claiming in two steps leaves a window where a resume finds
+	// no export in progress and lifts the freeze the export is about to rely
+	// on, which would let the API serve mutating calls while it reads.
+	t.Cleanup(func() { forceResume() })
+	if err := freezeForExport("archive export"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Resume(); !errors.Is(err, ErrExportInProgress) {
+		t.Fatalf("a resume right after the freeze must be refused, got %v", err)
+	}
+	if !Quiesced() {
+		t.Error("the sandbox must still be frozen for the export that claimed it")
 	}
 }

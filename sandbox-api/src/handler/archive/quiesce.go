@@ -96,6 +96,25 @@ func Status() QuiesceStatus {
 func Freeze(reason string) error {
 	quiesceMu.Lock()
 	defer quiesceMu.Unlock()
+	return freezeLocked(reason)
+}
+
+// freezeForExport freezes the sandbox and claims the filesystem for the export
+// in one step. Freezing and claiming separately leaves a window a resume fits
+// into: it would find no export in progress, lift the freeze the export is
+// about to rely on, and the export would then read a filesystem the API is
+// serving mutating calls on again.
+func freezeForExport(reason string) error {
+	quiesceMu.Lock()
+	defer quiesceMu.Unlock()
+	if err := freezeLocked(reason); err != nil {
+		return err
+	}
+	exporting = true
+	return nil
+}
+
+func freezeLocked(reason string) error {
 	if quiesceStatus.State != StateActive {
 		return fmt.Errorf("%w: %s (%s)", ErrAlreadyQuiesced, quiesceStatus.State, quiesceStatus.Reason)
 	}
@@ -171,14 +190,7 @@ func quarantine(root, reason string) error {
 	return nil
 }
 
-// beginExport marks the export as reading the filesystem. It must be called
-// with the sandbox frozen, and its counterpart endExport always called after.
-func beginExport() {
-	quiesceMu.Lock()
-	defer quiesceMu.Unlock()
-	exporting = true
-}
-
+// endExport releases the claim freezeForExport took on the filesystem.
 func endExport() {
 	quiesceMu.Lock()
 	defer quiesceMu.Unlock()

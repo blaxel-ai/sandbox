@@ -205,9 +205,14 @@ func Export(ctx context.Context, options ExportOptions) (result *ExportResult, e
 		// dies with the sandbox.
 		defer blaxel.HoldAwake("the archive export")()
 
-		if err = Freeze("archive export"); err != nil {
+		// Frozen and claimed at once: a resume between the two would lift the
+		// freeze the export relies on, and the filesystem would be read while
+		// the API serves mutating calls again. From here a resume is refused
+		// until the export is done.
+		if err = freezeForExport("archive export"); err != nil {
 			return nil, err
 		}
+		defer endExport()
 		// The freeze only earns its keep when there is an archive to protect: a
 		// failed export must not leave the sandbox locked out with no archive
 		// and no way back.
@@ -216,11 +221,6 @@ func Export(ctx context.Context, options ExportOptions) (result *ExportResult, e
 				forceResume()
 			}
 		}()
-
-		// From here on a resume would let the workload write to the filesystem
-		// this is about to read, so it is refused until the export is done.
-		beginExport()
-		defer endExport()
 
 		if result.StoppedProcesses, err = quiesceWorkload(options); err != nil {
 			return nil, err

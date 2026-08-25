@@ -729,6 +729,45 @@ func TestImportThatCannotBeRecordedIsPartial(t *testing.T) {
 	}
 }
 
+func TestImportOnBootDoesNotBootOnAnUnreadableMarker(t *testing.T) {
+	// A truncated marker - a crash or a full filesystem while it was written -
+	// says an import happened without saying how it ended. Restoring again
+	// would write over what the first one did, and starting the workload would
+	// run it on a filesystem that may be half the image's, so neither happens.
+	root := t.TempDir()
+	marker := filepath.Join(root, "marker.json")
+	if err := os.WriteFile(marker, []byte(`{"version":1,"archi`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	body := buildArchive(t, Manifest{Version: ManifestVersion, Root: "/"}, nil, []archiveMember{
+		{name: "srv/data", content: "restored", mode: 0o644},
+	})
+
+	if _, err := importOnBoot(context.Background(), ImportOptions{URL: serve(t, body), root: root, MarkerPath: marker}); !errors.Is(err, ErrPartialImport) {
+		t.Fatalf("an unreadable marker must keep the workload from starting, got %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(root, "srv/data")); !os.IsNotExist(err) {
+		t.Fatalf("nothing may be restored over a filesystem of unknown state, got %v", err)
+	}
+}
+
+func TestMarkerIsInstalledAtomically(t *testing.T) {
+	// The marker is what keeps an archive from being applied twice, so it is
+	// never the file a partial write left behind.
+	root := t.TempDir()
+	marker := filepath.Join(root, "var/lib/blaxel/archive-import.json")
+	if err := writeMarker(marker, Marker{Version: ManifestVersion, Archive: "bucket/key"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(marker + ".tmp"); !os.IsNotExist(err) {
+		t.Errorf("the temporary marker must not survive the write, got %v", err)
+	}
+	recorded, err := readMarker(marker)
+	if err != nil || recorded == nil || recorded.Archive != "bucket/key" || recorded.Partial {
+		t.Fatalf("expected the marker to read back as written, got %+v (%v)", recorded, err)
+	}
+}
+
 func TestImportOnBootNeverRestoresOverAPartialImport(t *testing.T) {
 	// The freeze a partial import triggers only lives in memory, and the
 	// read-only root it remounts to may not have taken: sandbox-api starting
