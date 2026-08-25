@@ -97,12 +97,22 @@ func (c *WireGuardConfig) ApplyDefaults() {
 		c.InterfaceName = DefaultWgName
 	}
 	if len(c.AllowedIPs) == 0 {
-		c.AllowedIPs = []string{"0.0.0.0/0"}
+		c.AllowedIPs = []string{defaultAllowedIP(c.LocalIP)}
 	}
 	if c.PersistentKeepalive == nil {
 		defaultKeepalive := 25
 		c.PersistentKeepalive = &defaultKeepalive
 	}
+}
+
+// defaultAllowedIP returns the prefix to tunnel when none is configured: the
+// whole address family of the tunnel's own address, so an IPv6 tunnel does not
+// silently default to routing IPv4.
+func defaultAllowedIP(localIP string) string {
+	if ip, _, err := net.ParseCIDR(localIP); err == nil && ip.To4() == nil {
+		return "::/0"
+	}
+	return "0.0.0.0/0"
 }
 
 // Validate checks if the configuration is valid
