@@ -37,6 +37,25 @@ func unmountImage(mountpoint string) error {
 	return nil
 }
 
+// setRootReadOnly flips the read-only flag of the root mount, so every write to
+// it fails with EROFS whoever attempts it — a terminal session, a process that
+// survived the stop, a request that was already in flight.
+//
+// The flag is set on the mount rather than on the superblock (MS_BIND, as in
+// `mount -o remount,bind,ro /`): a read-only superblock is refused with EBUSY
+// while any file is open for writing, which the API's own log files always are,
+// and it would also revoke the writes of those already open descriptors.
+func setRootReadOnly(root string, readOnly bool) error {
+	flags := uintptr(syscall.MS_BIND | syscall.MS_REMOUNT)
+	if readOnly {
+		flags |= syscall.MS_RDONLY
+	}
+	if err := syscall.Mount("", root, "", flags, ""); err != nil {
+		return fmt.Errorf("failed to remount %s (readOnly=%t): %w", root, readOnly, err)
+	}
+	return nil
+}
+
 // syncFilesystem flushes pending writes before the filesystem is read.
 func syncFilesystem() {
 	syscall.Sync()

@@ -10,28 +10,59 @@ import (
 	"github.com/blaxel-ai/sandbox-api/src/handler/archive"
 )
 
+type call struct {
+	method string
+	path   string
+}
+
 // quiesceRouter is a router carrying only the gate, so the test exercises the
 // routing decision without starting processes or touching the filesystem.
-func quiesceRouter() *gin.Engine {
+func quiesceRouter(calls []call) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	r.Use(quiesceMiddleware())
 	served := func(c *gin.Context) { c.String(http.StatusOK, "served") }
-	for _, route := range []string{"/", "/health", "/terminal", "/terminal/ws", "/archive/status", "/archive/export", "/process", "/filesystem/tmp/file", "/drives/mount"} {
-		r.GET(route, served)
+	for _, c := range calls {
+		r.Handle(c.method, c.path, served)
 	}
 	return r
 }
 
 func TestQuiesceMiddleware(t *testing.T) {
-	router := quiesceRouter()
+	// Refused while frozen: they would write to the filesystem, or start work on
+	// a sandbox that is being archived.
+	refused := []call{
+		{http.MethodPut, "/filesystem/tmp/file"},
+		{http.MethodDelete, "/filesystem/tmp/file"},
+		{http.MethodPost, "/process"},
+		{http.MethodPost, "/drives/mount"},
+		{http.MethodPut, "/codegen/fastapply/tmp/file"},
+		{http.MethodPost, "/upgrade"},
+	}
+	// Served while frozen: reading anything, watching the export, interrupting
+	// what it could not stop, and the terminal.
+	allowed := []call{
+		{http.MethodGet, "/"},
+		{http.MethodGet, "/health"},
+		{http.MethodGet, "/terminal"},
+		{http.MethodGet, "/terminal/ws"},
+		{http.MethodGet, "/archive/status"},
+		{http.MethodPost, "/archive/export"},
+		{http.MethodPost, "/archive/resume"},
+		{http.MethodGet, "/process"},
+		{http.MethodGet, "/process/api/logs"},
+		{http.MethodGet, "/filesystem/tmp/file"},
+		{http.MethodDelete, "/process/api"},
+		{http.MethodDelete, "/process/api/kill"},
+	}
+	router := quiesceRouter(append(append([]call(nil), refused...), allowed...))
 
 	// Not frozen: everything is served.
-	for _, path := range []string{"/process", "/filesystem/tmp/file"} {
+	for _, c := range refused {
 		recorder := httptest.NewRecorder()
-		router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, path, nil))
+		router.ServeHTTP(recorder, httptest.NewRequest(c.method, c.path, nil))
 		if recorder.Code != http.StatusOK {
-			t.Errorf("%s should be served when no export is running, got %d", path, recorder.Code)
+			t.Errorf("%s %s should be served when no export is running, got %d", c.method, c.path, recorder.Code)
 		}
 	}
 
@@ -40,30 +71,24 @@ func TestQuiesceMiddleware(t *testing.T) {
 	}
 	t.Cleanup(func() { archive.Resume() })
 
-	// Frozen: the routes that could write to the filesystem are refused, and
-	// the terminal stays reachable so an operator is not locked out of a frozen
-	// sandbox.
-	refused := []string{"/process", "/filesystem/tmp/file", "/drives/mount"}
-	allowed := []string{"/", "/health", "/terminal", "/terminal/ws", "/archive/status", "/archive/export"}
-
-	for _, path := range refused {
+	for _, c := range refused {
 		recorder := httptest.NewRecorder()
-		router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, path, nil))
+		router.ServeHTTP(recorder, httptest.NewRequest(c.method, c.path, nil))
 		if recorder.Code != http.StatusServiceUnavailable {
-			t.Errorf("%s should be refused during an export, got %d", path, recorder.Code)
+			t.Errorf("%s %s should be refused during an export, got %d", c.method, c.path, recorder.Code)
 		}
 	}
-	for _, path := range allowed {
+	for _, c := range allowed {
 		recorder := httptest.NewRecorder()
-		router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, path, nil))
+		router.ServeHTTP(recorder, httptest.NewRequest(c.method, c.path, nil))
 		if recorder.Code != http.StatusOK {
-			t.Errorf("%s should stay available during an export, got %d", path, recorder.Code)
+			t.Errorf("%s %s should stay available during an export, got %d", c.method, c.path, recorder.Code)
 		}
 	}
 
 	archive.Resume()
 	recorder := httptest.NewRecorder()
-	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/process", nil))
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/process", nil))
 	if recorder.Code != http.StatusOK {
 		t.Errorf("routes should be served again once the freeze is lifted, got %d", recorder.Code)
 	}

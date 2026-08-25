@@ -2272,6 +2272,15 @@ components:
       type: object
     QuiesceStatus:
       properties:
+        readOnlyRoot:
+          description: >-
+            ReadOnlyRoot reports whether the root mount was remounted read-only, which
+
+            is what actually stops writes; false means the freeze relies only on the
+
+            API refusing calls, and the reason says why.
+          example: true
+          type: boolean
         reason:
           description: Reason is a human readable explanation of why the sandbox is frozen.
           example: archive export

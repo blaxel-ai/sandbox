@@ -16,6 +16,10 @@ func unmountImage(mountpoint string) error {
 	return fmt.Errorf("mounting the sandbox image is only supported on linux")
 }
 
+func setRootReadOnly(root string, readOnly bool) error {
+	return fmt.Errorf("remounting the sandbox root is only supported on linux")
+}
+
 func syncFilesystem() {}
 
 func mounted(mountpoint string) bool { return false }

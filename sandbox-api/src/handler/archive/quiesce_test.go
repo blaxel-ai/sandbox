@@ -25,7 +25,7 @@ func TestQuiesceLifecycle(t *testing.T) {
 		t.Errorf("a refused export must not overwrite the reason, got %q", status.Reason)
 	}
 
-	completeQuiesce([]string{"proc-1"})
+	completeQuiesce([]string{"proc-1"}, false)
 	if status := Status(); status.State != StateQuiesced || len(status.StoppedProcesses) != 1 {
 		t.Errorf("unexpected status %+v", status)
 	}
@@ -43,7 +43,7 @@ func TestStatusIsACopy(t *testing.T) {
 	if err := Freeze("archive export"); err != nil {
 		t.Fatal(err)
 	}
-	completeQuiesce([]string{"proc-1"})
+	completeQuiesce([]string{"proc-1"}, false)
 
 	status := Status()
 	status.StoppedProcesses[0] = "tampered"

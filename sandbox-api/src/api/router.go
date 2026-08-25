@@ -246,14 +246,14 @@ func SetupRouter(disableRequestLogging bool, enableProcessingTime bool) *gin.Eng
 	return r
 }
 
-// quiesceAllowedPrefixes are the routes still served while the sandbox is
-// frozen for an archive export.
+// quiesceAllowedPrefixes are the routes still served while the sandbox is frozen
+// for an archive export, on top of the read-only methods.
 //
-// The terminal is deliberately among them: an operator locked out of a frozen
-// sandbox has no way to see why an export is stuck, and the terminal is also how
-// the archive is inspected. It does allow writing to the filesystem, so it is a
-// tool for the operator, not an exemption from the freeze — anything typed there
-// during an export may or may not be part of the archive.
+// The terminal and stopping a process are deliberately among them: interrupting
+// what the export could not stop, and looking at why, is exactly what an operator
+// needs a frozen sandbox for. Neither is an exemption from the freeze — the root
+// mount is read-only, so what they attempt to write fails with EROFS rather than
+// ending up in an archive that has already been read.
 var quiesceAllowedPrefixes = []string{
 	"/archive",
 	"/terminal",
@@ -261,10 +261,11 @@ var quiesceAllowedPrefixes = []string{
 	"/swagger",
 }
 
-// quiesceMiddleware refuses new calls once an archive export has started, so
-// nothing changes the filesystem while it is being read. Requests already in
-// flight are not interrupted; the export waits for the workload to stop, which
-// is what actually holds the writers.
+// quiesceMiddleware refuses the calls that would write to the filesystem once an
+// archive export has started. Requests already in flight are not interrupted,
+// and neither the middleware nor the stopped workload is what makes the archive
+// consistent: the read-only root mount is. This keeps the failures readable
+// rather than surfacing EROFS from the middle of a handler.
 func quiesceMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if !archive.Quiesced() {
@@ -273,7 +274,8 @@ func quiesceMiddleware() gin.HandlerFunc {
 		}
 
 		path := c.Request.URL.Path
-		if path == "/" {
+		method := c.Request.Method
+		if path == "/" || method == http.MethodGet || method == http.MethodHead || method == http.MethodOptions {
 			c.Next()
 			return
 		}
@@ -282,6 +284,11 @@ func quiesceMiddleware() gin.HandlerFunc {
 				c.Next()
 				return
 			}
+		}
+		// Stopping and killing a process, but not starting one.
+		if method == http.MethodDelete && strings.HasPrefix(path, "/process/") {
+			c.Next()
+			return
 		}
 
 		status := archive.Status()

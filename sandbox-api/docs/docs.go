@@ -2834,6 +2834,11 @@ const docTemplate = `{
                 "state"
             ],
             "properties": {
+                "readOnlyRoot": {
+                    "description": "ReadOnlyRoot reports whether the root mount was remounted read-only, which\nis what actually stops writes; false means the freeze relies only on the\nAPI refusing calls, and the reason says why.",
+                    "type": "boolean",
+                    "example": true
+                },
                 "reason": {
                     "description": "Reason is a human readable explanation of why the sandbox is frozen.",
                     "type": "string",

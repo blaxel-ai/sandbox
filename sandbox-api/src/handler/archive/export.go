@@ -142,7 +142,6 @@ func Export(ctx context.Context, options ExportOptions) (result *ExportResult, e
 		if result.StoppedProcesses, err = quiesceWorkload(options); err != nil {
 			return nil, err
 		}
-		completeQuiesce(result.StoppedProcesses)
 	}
 
 	mountPoint := options.imageMountPoint()
@@ -155,6 +154,12 @@ func Export(ctx context.Context, options ExportOptions) (result *ExportResult, e
 				logrus.WithError(err).Warn("[Archive] Failed to unmount the image")
 			}
 		}()
+	}
+
+	// After the image is mounted, since mounting it needs a mountpoint to be
+	// created, and before the filesystem is read.
+	if !options.DryRun {
+		completeQuiesce(result.StoppedProcesses, freezeRoot(options))
 	}
 
 	excludes := append(append([]string(nil), DefaultExcludes...), options.Excludes...)
@@ -291,6 +296,26 @@ func quiesceWorkload(options ExportOptions) ([]string, error) {
 	// log files this API keeps for them are not necessarily written back yet.
 	syncFilesystem()
 	return stopped, nil
+}
+
+// freezeRoot makes the root read-only and reports whether it worked. Stopping
+// the processes and refusing the mutating routes leaves ways to write to the
+// filesystem — a terminal session, a request already in flight, a process that
+// outlived its stop — and the read-only mount is what closes them, so a failure
+// is loud. It is not fatal: an archive of a filesystem nobody is writing to is
+// still worth having, and refusing to export because the remount failed would
+// leave the sandbox with no way out.
+func freezeRoot(options ExportOptions) bool {
+	// A test compares two directories rather than a live root, and remounting
+	// the machine it runs on read-only is not what it asked for.
+	if options.root != "" {
+		return false
+	}
+	if err := setRootReadOnly(options.rootDir(), true); err != nil {
+		logrus.WithError(err).Error("[Archive] Failed to remount the root read-only: the archive may not be consistent if anything writes to it")
+		return false
+	}
+	return true
 }
 
 func runningProcesses(pm *process.ProcessManager) []string {

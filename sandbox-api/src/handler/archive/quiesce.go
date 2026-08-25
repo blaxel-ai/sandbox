@@ -7,16 +7,19 @@
 // VM; an archive is the difference between the live merged root and that
 // pristine image, which is small compared to the image itself.
 //
-// Guest memory is not preserved, so an export first quiesces the sandbox:
-// the process list is saved (to be relaunched on the other side), the
-// processes are stopped, and the API stops accepting the calls that would
-// write to the filesystem while it is being read. See Freeze and Export.
+// Guest memory is not preserved, so an export first quiesces the sandbox: the
+// process list is saved (to be relaunched on the other side), the processes are
+// stopped, the root mount is remounted read-only so nothing can write to the
+// filesystem while it is read, and the API refuses the calls that would try to.
+// See Freeze and Export.
 package archive
 
 import (
 	"fmt"
 	"sync"
 	"time"
+
+	"github.com/sirupsen/logrus"
 )
 
 // QuiesceState is the lifecycle of the sandbox with respect to archiving.
@@ -41,6 +44,10 @@ type QuiesceStatus struct {
 	Since *time.Time `json:"since,omitempty"`
 	// StoppedProcesses are the process identifiers stopped while quiescing.
 	StoppedProcesses []string `json:"stoppedProcesses,omitempty"`
+	// ReadOnlyRoot reports whether the root mount was remounted read-only, which
+	// is what actually stops writes; false means the freeze relies only on the
+	// API refusing calls, and the reason says why.
+	ReadOnlyRoot bool `json:"readOnlyRoot" example:"true"`
 } // @name QuiesceStatus
 
 var (
@@ -85,11 +92,12 @@ func Freeze(reason string) error {
 
 // completeQuiesce records that the workload is stopped and the filesystem is
 // stable.
-func completeQuiesce(stopped []string) {
+func completeQuiesce(stopped []string, readOnlyRoot bool) {
 	quiesceMu.Lock()
 	defer quiesceMu.Unlock()
 	quiesceStatus.State = StateQuiesced
 	quiesceStatus.StoppedProcesses = stopped
+	quiesceStatus.ReadOnlyRoot = readOnlyRoot
 }
 
 // Resume lifts the freeze. The sandbox does not come back to what it was: the
@@ -99,6 +107,13 @@ func completeQuiesce(stopped []string) {
 func Resume() QuiesceStatus {
 	quiesceMu.Lock()
 	defer quiesceMu.Unlock()
+	if quiesceStatus.ReadOnlyRoot {
+		if err := setRootReadOnly(DefaultRoot, false); err != nil {
+			// Reported rather than returned: the caller's problem is an API that
+			// refuses calls, and that part is fixed here regardless.
+			logrus.WithError(err).Error("[Archive] Failed to make the root writable again")
+		}
+	}
 	quiesceStatus = QuiesceStatus{State: StateActive}
 	return quiesceStatus
 }
