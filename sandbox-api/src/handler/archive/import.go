@@ -14,6 +14,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"syscall"
@@ -100,6 +101,11 @@ type ImportOptions struct {
 	// list still to be relaunched, so the record says the filesystem is restored
 	// and the workload is not started yet.
 	onRestored func(result *ImportResult, pendingProcesses []byte) error
+	// onWriting runs once, just before the first member is written. Until it
+	// has run the filesystem is still the image's, which is what tells a start
+	// following a killed import whether it has a mix to deal with or an attempt
+	// that never got past its download.
+	onWriting func()
 }
 
 // ImportResult reports an import.
@@ -151,6 +157,12 @@ type Marker struct {
 	// OOM, a crash - while it was writing, which leaves nothing else behind
 	// since the freeze lives in memory and the quarantine never ran.
 	Started bool `json:"started,omitempty"`
+	// Wrote says that import had begun writing when it stopped. One killed
+	// before that - during its download, which is where a large restore spends
+	// most of its time - left the image's files untouched, and the start that
+	// follows it is an ordinary first import: failing it is not a partial
+	// import, and must not quarantine a filesystem nothing ever changed.
+	Wrote bool `json:"wrote,omitempty"`
 	// PendingProcesses is the archived process list, carried by the marker for as
 	// long as those processes have not been started. The record has to be written
 	// before anything is relaunched - a crash after the relaunch and before the
@@ -248,11 +260,17 @@ func importOnBoot(ctx context.Context, options ImportOptions) (_ *ImportResult, 
 			}).Info("[Archive] Filesystem already restored, skipping the import")
 			return nil, ErrNoImport
 		}
-		retrying = true
+		// Only an attempt that had begun writing leaves a filesystem this one
+		// has to finish restoring. One killed during its download changed
+		// nothing, and treating it as a retry would turn any later failure -
+		// an expired URL, a storage hiccup - into a quarantine of an untouched
+		// sandbox.
+		retrying = marker.Wrote
 		logrus.WithFields(logrus.Fields{
 			"archive":   marker.Archive,
 			"startedAt": marker.ImportedAt,
-		}).Warn("[Archive] An earlier import was killed while it was writing, restoring the archive again over what it left")
+			"wrote":     marker.Wrote,
+		}).Warn("[Archive] An earlier import was killed before it reported an outcome, restoring the archive again")
 	}
 
 	if status := Status(); status.ReadOnlyRoot {
@@ -272,6 +290,20 @@ func importOnBoot(ctx context.Context, options ImportOptions) (_ *ImportResult, 
 	// leaves is indistinguishable from the image's own.
 	if err := writeMarker(markerPath, startedMarker(identity)); err != nil {
 		return nil, fmt.Errorf("failed to record the start of the import: %w", err)
+	}
+	// The record says the import is writing only once it is about to, so a kill
+	// during the download - where a large restore spends most of its time - is
+	// told from one that left a mix behind. An attempt already known to have
+	// written keeps its record, since rewriting it would only lose when it
+	// began.
+	if !retrying {
+		options.onWriting = func() {
+			writing := startedMarker(identity)
+			writing.Wrote = true
+			if err := writeMarker(markerPath, writing); err != nil {
+				logrus.WithError(err).Error("[Archive] Failed to record that the import started writing, a kill from here on would read as an attempt that wrote nothing")
+			}
+		}
 	}
 	options.onRestored = func(result *ImportResult, pendingProcesses []byte) error {
 		marker := markerFor(identity, result)
@@ -486,7 +518,7 @@ func download(ctx context.Context, url string) (io.ReadCloser, int64, error) {
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		defer response.Body.Close()
 		message, _ := io.ReadAll(io.LimitReader(response.Body, 2048))
-		return nil, 0, fmt.Errorf("archive download rejected with status %d: %s", response.StatusCode, string(message))
+		return nil, 0, fmt.Errorf("archive download rejected with status %d: %s", response.StatusCode, redactAnswer(message))
 	}
 	return response.Body, response.ContentLength, nil
 }
@@ -502,6 +534,17 @@ func extract(body io.Reader, options ImportOptions) (_ *ImportResult, _ []byte, 
 	// top of these files - so the one thing that must not happen is starting the
 	// workload on top of half of them without anyone knowing.
 	written := 0
+	// announceWriting tells the caller, once, that the filesystem is about to
+	// stop being the image's. It runs before the write rather than after, since
+	// the kill this guards against can land in the middle of one.
+	announced := false
+	announceWriting := func() {
+		if announced || options.onWriting == nil {
+			return
+		}
+		announced = true
+		options.onWriting()
+	}
 	defer func() {
 		if err != nil && written > 0 {
 			err = fmt.Errorf("%w: %w", ErrPartialImport, err)
@@ -565,6 +608,7 @@ func extract(body io.Reader, options ImportOptions) (_ *ImportResult, _ []byte, 
 			result.Skipped = append(result.Skipped, name)
 			continue
 		}
+		announceWriting()
 		wrote, err := restore(root, name, excludes, header, tr)
 		if wrote {
 			// Counted before the error is looked at: a member that failed
@@ -587,6 +631,9 @@ func extract(body io.Reader, options ImportOptions) (_ *ImportResult, _ []byte, 
 		result.Bytes += header.Size
 	}
 
+	if len(result.Manifest.Deleted) > 0 {
+		announceWriting()
+	}
 	deleted, err := applyDeletions(root, result.Manifest.Deleted, excludes)
 	written += deleted
 	if err != nil {
@@ -1105,6 +1152,36 @@ func redactURL(err error) error {
 		return fmt.Errorf("%s %s: %w", urlErr.Op, archiveIdentity(urlErr.URL), urlErr.Err)
 	}
 	return err
+}
+
+// signedMaterial matches the parts of a storage error document that quote the
+// request back: an S3 SignatureDoesNotMatch answers with the canonical request
+// and the string that was signed, both of which carry the credential and the
+// signed query of the presigned URL.
+var signedMaterial = func() []*regexp.Regexp {
+	names := []string{"StringToSign", "StringToSignBytes", "CanonicalRequest", "CanonicalRequestBytes", "AWSAccessKeyId"}
+	patterns := make([]*regexp.Regexp, 0, len(names))
+	for _, name := range names {
+		patterns = append(patterns, regexp.MustCompile(`(?is)<`+name+`>.*?</`+name+`>`))
+	}
+	return patterns
+}()
+
+// signedParameter matches a signed query parameter wherever it appears in a
+// storage answer, since not every store wraps it in an element.
+var signedParameter = regexp.MustCompile(`(?i)(x-amz-signature|x-amz-credential|x-amz-security-token|awsaccesskeyid|signature)=[^&\s"'<]*`)
+
+// redactAnswer is a storage answer as it may be reported: what the store said
+// went wrong, without the credential it may have quoted back. The answer of a
+// failed transfer reaches an error message, a log line and /archive/status,
+// and the URL it is about is presigned - a signature copied out of one of
+// those is a usable key to the archive until it expires.
+func redactAnswer(body []byte) string {
+	answer := string(body)
+	for _, pattern := range signedMaterial {
+		answer = pattern.ReplaceAllString(answer, "[redacted]")
+	}
+	return signedParameter.ReplaceAllString(answer, "$1=[redacted]")
 }
 
 // archiveIdentity is what a presigned URL says about which object it points to:

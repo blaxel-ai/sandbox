@@ -574,6 +574,43 @@ func TestTransportErrorsDoNotCarryThePresignedURL(t *testing.T) {
 	}
 }
 
+func TestARejectedTransferDoesNotReportTheSignatureTheStorageQuotedBack(t *testing.T) {
+	// A store answering SignatureDoesNotMatch quotes the request it computed
+	// its signature over, presigned query included. That answer is reported as
+	// the reason the transfer failed - to a log, to /archive/status - so
+	// whatever it carries of the credential is readable from the sandbox.
+	resetRestore(t)
+	root := t.TempDir()
+	rejecting := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?>
+<Error><Code>SignatureDoesNotMatch</Code><Message>The request signature we calculated does not match the signature you provided.</Message>` +
+			`<AWSAccessKeyId>AKIAIOSFODNN7EXAMPLE</AWSAccessKeyId>` +
+			`<StringToSign>AWS4-HMAC-SHA256&#10;20260825T000000Z</StringToSign>` +
+			`<CanonicalRequest>GET
+/bucket/archive.tar
+X-Amz-Credential=AKIAIOSFODNN7EXAMPLE%2F20260825%2Fus-east-1%2Fs3%2Faws4_request&amp;X-Amz-Signature=6f1cdeadbeefcafe
+host:bucket.s3.amazonaws.com</CanonicalRequest></Error>`))
+	}))
+	defer rejecting.Close()
+
+	_, err := Import(context.Background(), ImportOptions{URL: rejecting.URL, root: root, MarkerPath: filepath.Join(root, "marker.json")})
+	if err == nil {
+		t.Fatal("expected the rejected download to fail")
+	}
+	for _, secret := range []string{"6f1cdeadbeefcafe", "AKIAIOSFODNN7EXAMPLE", "aws4_request"} {
+		if strings.Contains(err.Error(), secret) {
+			t.Errorf("the reported answer must not carry %q: %v", secret, err)
+		}
+	}
+	if !strings.Contains(err.Error(), "SignatureDoesNotMatch") {
+		t.Errorf("what the storage refused must still be readable, got %v", err)
+	}
+	if status := Status(); status.Restore != nil && strings.Contains(status.Restore.Error, "6f1cdeadbeefcafe") {
+		t.Errorf("the reported restore must not carry the signature: %s", status.Restore.Error)
+	}
+}
+
 func TestImportRefusesToReplaceADirectoryHoldingAnExcludedPath(t *testing.T) {
 	// etc/resolv.conf is never restored, but a symlink named etc carries the
 	// whole directory off with it, this VM's resolver configuration included.
@@ -1007,7 +1044,7 @@ func TestImportKilledWhileWritingIsNeverReadAsACleanImage(t *testing.T) {
 	// the next start must not take it for the image's own.
 	root := t.TempDir()
 	marker := filepath.Join(root, "marker.json")
-	if err := writeMarker(marker, startedMarker("bucket/key")); err != nil {
+	if err := writeMarker(marker, writingMarker("bucket/key")); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1031,7 +1068,7 @@ func TestImportKilledWhileWritingIsNeverReadAsACleanImage(t *testing.T) {
 	// retry that succeeds boots the workload as usual.
 	root = t.TempDir()
 	marker = filepath.Join(root, "marker.json")
-	if err := writeMarker(marker, startedMarker("bucket/key")); err != nil {
+	if err := writeMarker(marker, writingMarker("bucket/key")); err != nil {
 		t.Fatal(err)
 	}
 	body := buildArchive(t, Manifest{Version: ManifestVersion, Root: "/"}, nil, []archiveMember{
@@ -1046,6 +1083,119 @@ func TestImportKilledWhileWritingIsNeverReadAsACleanImage(t *testing.T) {
 	}
 	if recorded, err := readMarker(marker); err != nil || recorded == nil || recorded.Started || recorded.Partial {
 		t.Fatalf("a finished import must replace the record of the attempt, got %+v (%v)", recorded, err)
+	}
+}
+
+// writingMarker is what an import killed in the middle of its extraction
+// leaves: it had begun writing, so the filesystem is a mix.
+func writingMarker(identity string) Marker {
+	marker := startedMarker(identity)
+	marker.Wrote = true
+	return marker
+}
+
+func TestAnImportKilledBeforeItWroteBootsTheImageAgain(t *testing.T) {
+	resetRestore(t)
+	// Most of a large restore is its download, so that is where a kill - an
+	// infrastructure hibernation, a crash - usually lands, and it leaves the
+	// image's filesystem untouched. The start that follows must be an ordinary
+	// first import: a failure of its own is a sandbox booting on the image, not
+	// a sandbox quarantined for a mix that never existed.
+	root := t.TempDir()
+	marker := filepath.Join(root, "marker.json")
+	stalled := make(chan struct{})
+	hangUp := make(chan struct{})
+	killed := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		close(stalled)
+		<-hangUp
+	}))
+	defer killed.Close()
+	// Released before the server is closed, which waits for its handlers.
+	defer close(hangUp)
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		<-stalled
+		cancel()
+	}()
+	if _, err := importOnBoot(ctx, ImportOptions{URL: killed.URL, root: root, MarkerPath: marker}); err == nil {
+		t.Fatal("expected the interrupted download to fail")
+	}
+	recorded, err := readMarker(marker)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recorded != nil && recorded.Wrote {
+		t.Fatalf("a download that never reached the filesystem must not be recorded as writing, got %+v", recorded)
+	}
+	// The record is put back by hand: the kill this stands for takes the whole
+	// process, so it never runs the cleanup the cancelled import above does.
+	if err := writeMarker(marker, startedMarker("bucket/key")); err != nil {
+		t.Fatal(err)
+	}
+
+	unreachable := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer unreachable.Close()
+	_, err = importOnBoot(context.Background(), ImportOptions{URL: unreachable.URL, root: root, MarkerPath: marker})
+	if err == nil {
+		t.Fatal("expected the archive that cannot be downloaded to fail")
+	}
+	if errors.Is(err, ErrPartialImport) {
+		t.Fatalf("a sandbox whose filesystem nothing wrote to must boot on the image, got %v", err)
+	}
+	if status := Status(); status.State != StateActive {
+		t.Errorf("the sandbox must be given back rather than quarantined, got %q", status.State)
+	}
+	if _, err := os.Lstat(marker); !os.IsNotExist(err) {
+		t.Fatalf("the attempt must be forgotten so a later start can restore, got %v", err)
+	}
+}
+
+func TestAnImportRecordsThatItIsWritingBeforeItDoes(t *testing.T) {
+	resetRestore(t)
+	// The record is upgraded before the first member is written, which is what
+	// tells the start that follows a kill whether it has a mix to finish.
+	root := t.TempDir()
+	marker := filepath.Join(root, "marker.json")
+	body := buildArchive(t, Manifest{Version: ManifestVersion, Root: "/"}, nil, []archiveMember{
+		{name: "srv/first", content: "restored", mode: 0o644},
+		{name: "srv/second", content: strings.Repeat("x", 4096), mode: 0o644},
+	})
+
+	// The archive stops halfway, so the import is still extracting while the
+	// record is read: what it says then is what a kill would leave behind.
+	release := make(chan struct{})
+	stalling := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(body[:len(body)-3072])
+		if flusher, ok := w.(http.Flusher); ok {
+			flusher.Flush()
+		}
+		<-release
+	}))
+	defer stalling.Close()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = importOnBoot(context.Background(), ImportOptions{URL: stalling.URL, root: root, MarkerPath: marker})
+	}()
+
+	deadline := time.Now().Add(10 * time.Second)
+	writing := false
+	for time.Now().Before(deadline) && !writing {
+		if recorded, err := readMarker(marker); err == nil && recorded != nil {
+			writing = recorded.Wrote
+		}
+		if !writing {
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+	close(release)
+	<-done
+
+	if !writing {
+		t.Error("the import must record that it is writing before the workload's files change")
 	}
 }
 

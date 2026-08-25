@@ -645,7 +645,7 @@ func upload(ctx context.Context, url string, headers map[string]string, size int
 		body, _ := io.ReadAll(io.LimitReader(response.Body, 2048))
 		// The URL carries credentials, so it is the status and the storage
 		// response that are reported, never the request.
-		return fmt.Errorf("archive upload rejected with status %d: %s", response.StatusCode, string(body))
+		return fmt.Errorf("archive upload rejected with status %d: %s", response.StatusCode, redactAnswer(body))
 	}
 	return nil
 }

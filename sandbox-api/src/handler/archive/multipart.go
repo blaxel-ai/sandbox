@@ -147,7 +147,7 @@ func uploadPart(ctx context.Context, url string, length int64, body io.Reader) (
 
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		message, _ := io.ReadAll(io.LimitReader(response.Body, 2048))
-		return "", fmt.Errorf("rejected with status %d: %s", response.StatusCode, string(message))
+		return "", fmt.Errorf("rejected with status %d: %s", response.StatusCode, redactAnswer(message))
 	}
 	// Draining is what lets the connection be reused for the next part, and
 	// there are as many parts as the archive is large.
@@ -186,13 +186,13 @@ func completeMultipart(ctx context.Context, url string, parts []completedPart) e
 		return fmt.Errorf("failed to read the archive upload completion: %w", redactURL(err))
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return fmt.Errorf("archive upload completion rejected with status %d: %s", response.StatusCode, string(answer))
+		return fmt.Errorf("archive upload completion rejected with status %d: %s", response.StatusCode, redactAnswer(answer))
 	}
 	// A completion that failed halfway answers 200 with an error document, and
 	// nothing else says the object was not created.
 	var result completeResponse
 	if err := xml.Unmarshal(answer, &result); err != nil {
-		return fmt.Errorf("the storage did not confirm the archive upload: %s", string(answer))
+		return fmt.Errorf("the storage did not confirm the archive upload: %s", redactAnswer(answer))
 	}
 	return nil
 }
