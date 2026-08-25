@@ -95,6 +95,16 @@ var DefaultExcludes = []string{
 	// Rebuilt by ldconfig from the image's libraries; carrying one sandbox's
 	// cache into another only names libraries that may not be there.
 	"etc/ld.so.cache",
+	// The same thing under musl, which the alpine images use and which reads
+	// none of the files above: its library search path, and the interpreter
+	// itself, named by the architecture it was built for.
+	"etc/ld-musl-*.path",
+	"lib/ld-musl-*.so.1",
+	"usr/lib/ld-musl-*.so.1",
+	// musl's libc, which the interpreter above is a link to on those images:
+	// the loader is that library, so replacing it replaces the loader.
+	"lib/libc.musl-*.so.1",
+	"usr/lib/libc.musl-*.so.1",
 }
 
 // executablePath reports the binary this process is running.
@@ -246,13 +256,31 @@ func (s *scanner) excluded(rel string) bool {
 }
 
 // excludedPath reports whether rel is one of the excluded paths or below one.
+// An excluded path holding a wildcard is matched with filepath.Match, a segment
+// at a time, so it too covers whatever is below what it names.
 func excludedPath(rel string, excludes []string) bool {
 	for _, exclude := range excludes {
 		exclude = strings.Trim(exclude, "/")
 		if exclude == "" {
 			continue
 		}
+		if strings.ContainsAny(exclude, "*?[") {
+			if matchesExcludeGlob(exclude, rel) {
+				return true
+			}
+			continue
+		}
 		if rel == exclude || strings.HasPrefix(rel, exclude+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+// matchesExcludeGlob reports whether pattern names rel or one of its parents.
+func matchesExcludeGlob(pattern string, rel string) bool {
+	for path := strings.Trim(rel, "/"); path != "" && path != "."; path = filepath.Dir(path) {
+		if ok, err := filepath.Match(pattern, path); err == nil && ok {
 			return true
 		}
 	}

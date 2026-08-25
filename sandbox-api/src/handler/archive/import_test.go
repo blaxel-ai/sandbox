@@ -1343,3 +1343,53 @@ func TestImportNeverRestoresTheDynamicLoaderConfiguration(t *testing.T) {
 		}
 	}
 }
+
+func TestImportNeverRestoresTheMuslLoader(t *testing.T) {
+	// The alpine images run musl, which reads none of the glibc files above:
+	// its search path is etc/ld-musl-<arch>.path, and its interpreter is the
+	// libc itself. Either one chooses the code the next root exec runs.
+	root := t.TempDir()
+	body := buildArchive(t, Manifest{Version: ManifestVersion, Root: "/"}, nil, []archiveMember{
+		{name: "etc/ld-musl-x86_64.path", content: "/srv", mode: 0o644},
+		{name: "etc/ld-musl-aarch64.path", content: "/srv", mode: 0o644},
+		{name: "lib/ld-musl-x86_64.so.1", content: "hijacked", mode: 0o755},
+		{name: "lib/libc.musl-x86_64.so.1", content: "hijacked", mode: 0o755},
+		{name: "usr/lib/ld-musl-aarch64.so.1", content: "hijacked", mode: 0o755},
+		{name: "usr/lib/libc.musl-aarch64.so.1", content: "hijacked", mode: 0o755},
+		{name: "srv/data", content: "payload", mode: 0o644},
+	})
+
+	result, err := Import(context.Background(), ImportOptions{URL: serve(t, body), root: root, MarkerPath: filepath.Join(root, "marker.json")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Restored != 1 {
+		t.Errorf("expected only the workload's file to be restored, got %d", result.Restored)
+	}
+	for _, name := range []string{
+		"etc/ld-musl-x86_64.path",
+		"etc/ld-musl-aarch64.path",
+		"lib/ld-musl-x86_64.so.1",
+		"lib/libc.musl-x86_64.so.1",
+		"usr/lib/ld-musl-aarch64.so.1",
+		"usr/lib/libc.musl-aarch64.so.1",
+	} {
+		if _, err := os.Lstat(filepath.Join(root, name)); !os.IsNotExist(err) {
+			t.Errorf("%s must never be restored, got %v", name, err)
+		}
+		if !excludedPath(name, DefaultExcludes) {
+			t.Errorf("%s should be excluded from an archive", name)
+		}
+	}
+	// The workload's own libraries still travel: only the loader is the
+	// platform's.
+	for _, name := range []string{
+		"lib/libsomething.so.1",
+		"usr/lib/python3.12/os.py",
+		"etc/ld-musl-x86_64.path.bak",
+	} {
+		if excludedPath(name, DefaultExcludes) {
+			t.Errorf("%s should still be archived", name)
+		}
+	}
+}
