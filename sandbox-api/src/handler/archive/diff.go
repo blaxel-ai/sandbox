@@ -42,13 +42,22 @@ type Change struct {
 // DefaultExcludes are paths never archived, relative to the root and matched on
 // the path itself or any path below it.
 //
-// The pseudo-filesystems and the tmpfs mounts are excluded by staying on the
-// root device, so what remains here is content that is real but belongs to this
-// specific sandbox rather than to the workload: the network configuration and
-// identity the host injects, and this API's own runtime state. Restoring those
-// over a fresh sandbox would hand it the archived sandbox's DNS resolver,
-// hostname and credentials.
+// Other mounts are pruned by the walk itself, which reads them from the mount
+// table; these are named anyway because a sandbox that lost a mount must still
+// never archive the runtime directories, and because the first group's content
+// is real but belongs to this specific sandbox rather than to the workload: the
+// network configuration and identity the host injects, and this API's own
+// runtime state. Restoring those over a fresh sandbox would hand it the
+// archived sandbox's DNS resolver, hostname and credentials.
 var DefaultExcludes = []string{
+	"proc",
+	"sys",
+	"dev",
+	"run",
+	"tmp",
+	"mnt",
+	// The unikraft filer mountpoint on mk3.0.
+	"uk",
 	"etc/resolv.conf",
 	"etc/hostname",
 	"etc/hosts",
@@ -70,44 +79,62 @@ type scanner struct {
 	lower    string
 	excludes []string
 
-	// rootDev is the device of the live root, used to stay on the overlay and
-	// so skip every other mount (/proc, /sys, /dev, /tmp, the image mounted for
-	// the comparison, attached drives) without naming them.
-	rootDev uint64
-	// lowerDev is the device of the image, which the same rule keeps the scan
-	// for deleted paths on.
-	lowerDev uint64
+	// mounts are the mountpoints below the root, pruned from both walks: their
+	// content belongs to another filesystem (/proc, /sys, an attached drive, the
+	// image mounted for this comparison), not to the sandbox's own writes.
+	//
+	// The device of an entry cannot be used for this: overlayfs reports the
+	// device of the layer a file actually lives on, so on a sandbox without
+	// inode mapping every file written since boot looks like it belongs to
+	// another filesystem - which silently emptied the archive of exactly the
+	// changes it exists to carry.
+	mounts map[string]bool
 }
 
-// device reads the device a path lives on.
-func device(path string) (uint64, error) {
-	info, err := os.Stat(path)
+// mountPointsBelow reads the mount table and returns the mountpoints strictly
+// below path, cleaned and absolute. A system without a mount table (a test, a
+// non-linux build) reports none, which is correct for a plain directory tree.
+func mountPointsBelow(path string) (map[string]bool, error) {
+	info, err := os.ReadFile("/proc/self/mountinfo")
+	if os.IsNotExist(err) {
+		return map[string]bool{}, nil
+	}
 	if err != nil {
-		return 0, fmt.Errorf("failed to stat %s: %w", path, err)
+		return nil, fmt.Errorf("failed to read the mount table: %w", err)
 	}
-	stat, ok := info.Sys().(*syscall.Stat_t)
-	if !ok {
-		return 0, fmt.Errorf("failed to read the device of %s", path)
-	}
-	return uint64(stat.Dev), nil
+	return parseMountPoints(info, path), nil
 }
 
-// onOtherDevice reports whether an entry belongs to a mount below the one being
-// walked, in which case it is not part of that filesystem's content.
-func onOtherDevice(info os.FileInfo, dev uint64) bool {
-	stat, ok := info.Sys().(*syscall.Stat_t)
-	return ok && uint64(stat.Dev) != dev
+// parseMountPoints reads mountinfo content and keeps the mountpoints strictly
+// below path.
+func parseMountPoints(info []byte, path string) map[string]bool {
+	mounts := map[string]bool{}
+
+	prefix := filepath.Clean(path)
+	for _, line := range strings.Split(string(info), "\n") {
+		// mountinfo: id parent major:minor rootOfMount mountPoint ...
+		fields := strings.Fields(line)
+		if len(fields) < 5 {
+			continue
+		}
+		// Mountpoints are recorded with the usual escapes for spaces and tabs.
+		point := strings.NewReplacer(`\040`, " ", `\011`, "\t", `\012`, "\n", `\134`, `\`).Replace(fields[4])
+		point = filepath.Clean(point)
+		if point == prefix {
+			continue
+		}
+		if rel, err := filepath.Rel(prefix, point); err == nil && rel != "." && !strings.HasPrefix(rel, "..") {
+			mounts[point] = true
+		}
+	}
+	return mounts
 }
 
 // Diff compares the live root against the pristine image mounted at lower and
 // returns the changes, sorted by path. Content is not read unless metadata alone
 // cannot decide, so an unchanged image costs one lstat per path.
 func Diff(root, lower string, excludes []string) ([]Change, error) {
-	rootDev, err := device(root)
-	if err != nil {
-		return nil, err
-	}
-	lowerDev, err := device(lower)
+	mounts, err := mountPointsBelow("/")
 	if err != nil {
 		return nil, err
 	}
@@ -116,8 +143,7 @@ func Diff(root, lower string, excludes []string) ([]Change, error) {
 		root:     filepath.Clean(root),
 		lower:    filepath.Clean(lower),
 		excludes: excludes,
-		rootDev:  rootDev,
-		lowerDev: lowerDev,
+		mounts:   mounts,
 	}
 
 	changes, err := s.scanLive()
@@ -183,8 +209,8 @@ func (s *scanner) scanLive() ([]Change, error) {
 			}
 			return nil
 		}
-		// Stay on the root device: anything else is a mount, not overlay content.
-		if onOtherDevice(info, s.rootDev) {
+		// Another filesystem mounted below the root is not overlay content.
+		if s.mounts[filepath.Clean(path)] {
 			if info.IsDir() {
 				return filepath.SkipDir
 			}
@@ -303,7 +329,7 @@ func (s *scanner) scanDeleted() ([]Change, error) {
 		if rel == "." {
 			return nil
 		}
-		if s.excluded(rel) || onOtherDevice(info, s.lowerDev) {
+		if s.excluded(rel) || s.mounts[filepath.Clean(path)] {
 			if info.IsDir() {
 				return filepath.SkipDir
 			}

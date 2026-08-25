@@ -3,6 +3,7 @@ package archive
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -147,5 +148,32 @@ func TestDiffHonoursExtraExcludes(t *testing.T) {
 	}
 	if changeFor(changes, "workspace/main.go") == nil {
 		t.Error("expected the rest of the directory to be archived")
+	}
+}
+
+func TestParseMountPointsKeepsOnlyPointsBelowTheRoot(t *testing.T) {
+	// A mk3.0 sandbox: an overlay root, the pseudo-filesystems, a fuse filer.
+	info := []byte(strings.Join([]string{
+		"21 1 0:21 / / rw,relatime shared:1 - overlay overlay rw,lowerdir=/uk/rom,upperdir=/uk/rw/upper",
+		"22 21 0:22 / /proc rw,nosuid - proc proc rw",
+		"23 21 0:23 / /uk rw,relatime - fuse uk rw",
+		"24 21 0:24 / /var/lib/kubelet/pods/x rw - tmpfs tmpfs rw",
+		"25 21 0:25 / /run/blaxel\\040data rw - tmpfs tmpfs rw",
+		"malformed line",
+	}, "\n"))
+
+	mounts := parseMountPoints(info, "/")
+
+	for _, point := range []string{"/proc", "/uk", "/var/lib/kubelet/pods/x", "/run/blaxel data"} {
+		if !mounts[point] {
+			t.Errorf("expected %q to be pruned from the walk", point)
+		}
+	}
+	// The root itself is walked, not pruned, or nothing would be archived.
+	if mounts["/"] {
+		t.Error("the root must not be pruned from its own walk")
+	}
+	if len(mounts) != 4 {
+		t.Errorf("expected 4 mountpoints, got %v", mounts)
 	}
 }
