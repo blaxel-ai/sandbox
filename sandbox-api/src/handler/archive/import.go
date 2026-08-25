@@ -877,6 +877,20 @@ func restorableProcessName(name string) error {
 	return nil
 }
 
+// runsUnderName reports whether a process of that name is already running. It
+// walks the processes rather than asking for the name as an identifier: an
+// identifier that reads as a number is a PID there, so a process the workload
+// named "42" would never be found by name and a resumed relaunch would start a
+// second copy of it.
+func runsUnderName(pm *process.ProcessManager, name string) bool {
+	for _, live := range pm.ListProcesses() {
+		if live.Name == name && live.Status == process.StatusRunning {
+			return true
+		}
+	}
+	return false
+}
+
 // relaunch starts the processes the archive recorded as running, oldest first,
 // and reports the identifiers of the ones that started along with the names of
 // the ones that did not.
@@ -937,7 +951,7 @@ func relaunch(root string, state []byte) (relaunched, failed []string) {
 			}).Info("[Archive] Recreated the working directory of an archived process, which the archive does not carry")
 		}
 
-		if live, known := pm.GetProcessByIdentifier(archived.Name); known && live.Status == process.StatusRunning {
+		if runsUnderName(pm, archived.Name) {
 			// An earlier relaunch already started it: the record naming it as still
 			// to be started could not be updated, and a second copy of the workload
 			// is worse than a record that lags.

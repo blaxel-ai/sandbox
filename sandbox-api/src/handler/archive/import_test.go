@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/blaxel-ai/sandbox-api/src/handler/drive"
+	"github.com/blaxel-ai/sandbox-api/src/handler/process"
 )
 
 // archiveMember is one entry to write into a test archive.
@@ -345,6 +346,33 @@ func TestRelaunchSkipsProcessesThatWereNotRunning(t *testing.T) {
 	relaunched, failed := relaunch(DefaultRoot, state)
 	if len(relaunched) != 0 || len(failed) != 0 {
 		t.Errorf("only the processes that were running are relaunched, got %v and %v as failures", relaunched, failed)
+	}
+}
+
+func TestRelaunchDoesNotStartASecondCopyOfAProcessNamedLikeANumber(t *testing.T) {
+	// The workload names its processes, so a name may read as a number - and a
+	// number is a PID for whoever looks a process up by identifier. A resumed
+	// relaunch that misses the running process starts the workload twice.
+	pm := process.GetProcessManager()
+	live, err := pm.StartProcessWithName("sleep 30", "", "42", nil, false, 0, false, 0, func(*process.ProcessInfo) {})
+	if err != nil {
+		t.Fatalf("failed to start the process the archive also carries: %v", err)
+	}
+	defer func() { _ = pm.KillProcess(live) }()
+
+	state, err := json.Marshal(map[string]any{
+		"version": 1,
+		"processes": map[string]any{
+			"proc-1": map[string]any{"pid": "proc-1", "name": "42", "command": "sleep 30", "status": "running"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("failed to build the archived process list: %v", err)
+	}
+
+	relaunched, failed := relaunch(DefaultRoot, state)
+	if len(relaunched) != 0 || len(failed) != 0 {
+		t.Fatalf("a process that already runs must not be started again, got %v and %v as failures", relaunched, failed)
 	}
 }
 
