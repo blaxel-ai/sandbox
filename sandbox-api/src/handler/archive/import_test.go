@@ -262,6 +262,56 @@ func TestImportOnBootHappensOncePerFilesystem(t *testing.T) {
 	}
 }
 
+func TestImportOnBootFinishesARelaunchAnEarlierBootRecordedButNeverStarted(t *testing.T) {
+	// The record is written before anything is relaunched, so stopping in
+	// between - a crash, an OOM kill - leaves a filesystem that carries the
+	// archive and a workload that never ran. The record says so, and the next
+	// boot starts the processes instead of restoring the archive again.
+	root := t.TempDir()
+	marker := filepath.Join(root, "marker.json")
+	if err := os.MkdirAll(filepath.Join(root, "srv"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "srv/data"), []byte("changed by the workload"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeMarker(marker, Marker{
+		Version:          ManifestVersion,
+		Archive:          "archive.tar",
+		Restored:         1,
+		PendingProcesses: json.RawMessage(`{"processes":{"resumed-by-the-next-boot":{"name":"resumed-by-the-next-boot","command":"sleep 0.1","status":"running"}}}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	body := buildArchive(t, Manifest{Version: ManifestVersion, Root: "/"}, nil, []archiveMember{
+		{name: "srv/data", content: "restored", mode: 0o644},
+	})
+	result, err := importOnBoot(context.Background(), ImportOptions{URL: serve(t, body), root: root, MarkerPath: marker})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Relaunched) != 1 {
+		t.Errorf("the process the earlier boot recorded should have been started, got %v and %v as failures", result.Relaunched, result.FailedRelaunches)
+	}
+	if content, err := os.ReadFile(filepath.Join(root, "srv/data")); err != nil || string(content) != "changed by the workload" {
+		t.Errorf("the archive must not be restored a second time, got %q (%v)", content, err)
+	}
+
+	// And the record no longer asks for the relaunch, so a later boot does not
+	// start a second copy of the workload.
+	recorded, err := readMarker(marker)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recorded.PendingProcesses) != 0 {
+		t.Error("the record must drop the processes once they are started")
+	}
+	if _, err := importOnBoot(context.Background(), ImportOptions{URL: serve(t, body), root: root, MarkerPath: marker}); !errors.Is(err, ErrNoImport) {
+		t.Errorf("a boot after the relaunch has nothing to do, got %v", err)
+	}
+}
+
 func TestImportOnBootWithoutURL(t *testing.T) {
 	if _, err := importOnBoot(context.Background(), ImportOptions{}); !errors.Is(err, ErrNoImport) {
 		t.Errorf("a sandbox with nothing to import must report ErrNoImport, got %v", err)
@@ -842,9 +892,11 @@ func TestImportRecordsItselfBeforeRelaunchingProcesses(t *testing.T) {
 	})
 
 	recordedBeforeRelaunch := false
+	var recordedPending []byte
 	options := ImportOptions{URL: serve(t, body), root: root, MarkerPath: filepath.Join(root, "marker.json")}
-	options.onRestored = func(*ImportResult) error {
+	options.onRestored = func(_ *ImportResult, pending []byte) error {
 		recordedBeforeRelaunch = true
+		recordedPending = pending
 		return nil
 	}
 	if _, err := Import(context.Background(), options); err != nil {
@@ -852,6 +904,12 @@ func TestImportRecordsItselfBeforeRelaunchingProcesses(t *testing.T) {
 	}
 	if !recordedBeforeRelaunch {
 		t.Error("the import must be recorded before anything is relaunched from it")
+	}
+	// And the record must say the processes are still to be started, so a crash
+	// here does not leave a filesystem that looks fully imported with a workload
+	// that never ran.
+	if len(recordedPending) == 0 {
+		t.Error("the record must carry the processes that are not started yet")
 	}
 }
 
@@ -865,7 +923,7 @@ func TestImportThatCannotBeRecordedIsPartial(t *testing.T) {
 	})
 
 	options := ImportOptions{URL: serve(t, body), root: root, MarkerPath: filepath.Join(root, "marker.json")}
-	options.onRestored = func(*ImportResult) error {
+	options.onRestored = func(*ImportResult, []byte) error {
 		return errors.New("no space left on device")
 	}
 	if _, err := Import(context.Background(), options); !errors.Is(err, ErrPartialImport) {

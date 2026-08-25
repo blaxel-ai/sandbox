@@ -96,8 +96,10 @@ type ImportOptions struct {
 	// anything is relaunched from it. It is how the import is recorded as done
 	// before it has any visible effect: a crash between the two would otherwise
 	// leave no record, and the next start would import the archive a second time
-	// over a filesystem already running the first one.
-	onRestored func(*ImportResult) error
+	// over a filesystem already running the first one. It is handed the process
+	// list still to be relaunched, so the record says the filesystem is restored
+	// and the workload is not started yet.
+	onRestored func(result *ImportResult, pendingProcesses []byte) error
 }
 
 // ImportResult reports an import.
@@ -142,6 +144,14 @@ type Marker struct {
 	Partial bool `json:"partial,omitempty"`
 	// Error is why a partial import stopped, for whoever comes to look.
 	Error string `json:"error,omitempty"`
+	// PendingProcesses is the archived process list, carried by the marker for as
+	// long as those processes have not been started. The record has to be written
+	// before anything is relaunched - a crash after the relaunch and before the
+	// record would import the archive again over a filesystem already running it -
+	// so without this the same crash the other way around leaves a filesystem that
+	// looks fully imported and a workload that was never started. Carrying the
+	// list lets the next start finish the relaunch instead.
+	PendingProcesses json.RawMessage `json:"pendingProcesses,omitempty"`
 }
 
 func (o ImportOptions) relaunchProcesses() bool {
@@ -194,6 +204,13 @@ func importOnBoot(ctx context.Context, options ImportOptions) (*ImportResult, er
 			return nil, fmt.Errorf("%w: an earlier import of %s stopped after writing to the filesystem (%s)",
 				ErrPartialImport, marker.Archive, marker.Error)
 		}
+		if len(marker.PendingProcesses) > 0 {
+			// The filesystem carries the archive and its workload was never
+			// started: the import was recorded and this API stopped before it
+			// relaunched anything. Restoring again is not what is missing, the
+			// processes are.
+			return resumeRelaunch(options, *marker)
+		}
 		logrus.WithFields(logrus.Fields{
 			"archive":    marker.Archive,
 			"importedAt": marker.ImportedAt,
@@ -214,8 +231,10 @@ func importOnBoot(ctx context.Context, options ImportOptions) (*ImportResult, er
 
 	logrus.WithField("archive", identity).Info("[Archive] Restoring the filesystem from the archive before the workload starts")
 	markerPath := options.markerPath()
-	options.onRestored = func(result *ImportResult) error {
-		return writeMarker(markerPath, markerFor(identity, result))
+	options.onRestored = func(result *ImportResult, pendingProcesses []byte) error {
+		marker := markerFor(identity, result)
+		marker.PendingProcesses = pendingProcesses
+		return writeMarker(markerPath, marker)
 	}
 
 	result, err := Import(ctx, options)
@@ -232,14 +251,40 @@ func importOnBoot(ctx context.Context, options ImportOptions) (*ImportResult, er
 		return nil, err
 	}
 
-	if len(result.Relaunched) > 0 || len(result.FailedRelaunches) > 0 {
-		// The processes exist now, so the record can name them - and name the
-		// ones that could not be started, which is the only lasting trace that
-		// part of the workload did not come back. The import itself is already
-		// recorded, which is the part that must not be lost.
-		if err := writeMarker(markerPath, markerFor(identity, result)); err != nil {
-			logrus.WithError(err).Warn("[Archive] Failed to record the relaunched processes of the import")
-		}
+	// The processes exist now, so the record can name them - and name the ones
+	// that could not be started, which is the only lasting trace that part of the
+	// workload did not come back. It also drops the list of processes still to
+	// start, which is what keeps another start from relaunching them. Failing
+	// leaves that list behind, and a relaunch already done is skipped by name, so
+	// the worst it costs is the attempt.
+	if err := writeMarker(markerPath, markerFor(identity, result)); err != nil {
+		logrus.WithError(err).Warn("[Archive] Failed to record the relaunched processes of the import")
+	}
+	return result, nil
+}
+
+// resumeRelaunch starts the processes an import restored the filesystem for but
+// never got to launch. It reports the import as the one that happened, since
+// that is what the sandbox now carries.
+func resumeRelaunch(options ImportOptions, marker Marker) (*ImportResult, error) {
+	logrus.WithFields(logrus.Fields{
+		"archive":    marker.Archive,
+		"importedAt": marker.ImportedAt,
+	}).Info("[Archive] Filesystem already restored, relaunching the workload the earlier import did not start")
+
+	result := &ImportResult{
+		Restored: marker.Restored,
+		Deleted:  marker.Deleted,
+	}
+	if options.relaunchProcesses() {
+		result.Relaunched, result.FailedRelaunches = relaunch(options.rootDir(), marker.PendingProcesses)
+	}
+
+	marker.PendingProcesses = nil
+	marker.Relaunched = append(marker.Relaunched, result.Relaunched...)
+	marker.FailedRelaunches = append(marker.FailedRelaunches, result.FailedRelaunches...)
+	if err := writeMarker(options.markerPath(), marker); err != nil {
+		logrus.WithError(err).Warn("[Archive] Failed to record the relaunched processes of the import")
 	}
 	return result, nil
 }
@@ -310,7 +355,11 @@ func Import(ctx context.Context, options ImportOptions) (*ImportResult, error) {
 	// sandbox cannot promise to import the archive only once, and importing it
 	// twice would undo whatever ran in between.
 	if options.onRestored != nil {
-		if err := options.onRestored(result); err != nil {
+		var pending []byte
+		if options.relaunchProcesses() {
+			pending = processes
+		}
+		if err := options.onRestored(result, pending); err != nil {
 			return nil, fmt.Errorf("%w: failed to record the import: %w", ErrPartialImport, err)
 		}
 	}
@@ -871,6 +920,14 @@ func relaunch(root string, state []byte) (relaunched, failed []string) {
 				"name":       archived.Name,
 				"workingDir": archived.WorkingDir,
 			}).Info("[Archive] Recreated the working directory of an archived process, which the archive does not carry")
+		}
+
+		if live, known := pm.GetProcessByIdentifier(archived.Name); known && live.Status == process.StatusRunning {
+			// An earlier relaunch already started it: the record naming it as still
+			// to be started could not be updated, and a second copy of the workload
+			// is worse than a record that lags.
+			logrus.WithField("name", archived.Name).Info("[Archive] The archived process already runs, not relaunching it")
+			continue
 		}
 
 		identifier, err := pm.StartProcessWithName(
