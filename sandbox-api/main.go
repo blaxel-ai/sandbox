@@ -283,7 +283,7 @@ func importArchive(ctx context.Context) bool {
 	}
 	if errors.Is(err, archive.ErrPartialImport) {
 		logrus.WithError(err).Error("The archive this sandbox was started from was only partially restored - the workload is not started and the filesystem is frozen")
-		if err := archive.Freeze("failed archive import"); err != nil {
+		if err := archive.Quarantine("failed archive import"); err != nil {
 			logrus.WithError(err).Error("Failed to freeze the sandbox after a partial import")
 		}
 		return false

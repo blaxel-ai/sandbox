@@ -103,6 +103,35 @@ func Freeze(reason string) error {
 	return nil
 }
 
+// Quarantine freezes the sandbox on a filesystem nothing may write to any more,
+// which is what a half restored archive leaves behind: neither the image's
+// filesystem nor the archived sandbox's.
+//
+// Freeze alone is not enough there. It only makes the API refuse the mutating
+// routes, and a route it still serves - a terminal session, a file read through
+// a shell - writes to the filesystem all the same. So the root is remounted
+// read-only and the sandbox is reported as quiesced, the state Resume undoes,
+// leaving an operator a sandbox to look at and nothing that can make its
+// filesystem worse.
+func Quarantine(reason string) error {
+	return quarantine(DefaultRoot, reason)
+}
+
+func quarantine(root, reason string) error {
+	if err := Freeze(reason); err != nil {
+		return err
+	}
+	readOnly := true
+	if err := setRootReadOnly(root, true); err != nil {
+		// Reported rather than returned: the sandbox stays frozen either way,
+		// and the status says whether writes are actually stopped.
+		logrus.WithError(err).Error("[Archive] Failed to remount the root read-only after a failed import")
+		readOnly = false
+	}
+	completeQuiesce(nil, readOnly)
+	return nil
+}
+
 // beginExport marks the export as reading the filesystem. It must be called
 // with the sandbox frozen, and its counterpart endExport always called after.
 func beginExport() {

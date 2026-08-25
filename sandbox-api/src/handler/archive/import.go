@@ -319,8 +319,17 @@ func extract(body io.Reader, options ImportOptions) (_ *ImportResult, _ []byte, 
 			return nil, nil, err
 		}
 
-		if err := restore(root, target, name, excludes, header, tr); err != nil {
+		wrote, err := restore(root, target, name, excludes, header, tr)
+		if err != nil {
 			return nil, nil, err
+		}
+		// A member of a type the sandbox does not restore changed nothing, so it
+		// counts as skipped: were it counted as written, a later failure would be
+		// reported as a partial import - and a partial import keeps the workload
+		// from starting - over a filesystem nothing had touched yet.
+		if !wrote {
+			result.Skipped = append(result.Skipped, name)
+			continue
 		}
 		result.Restored++
 		written++
@@ -386,7 +395,10 @@ func resolve(root, name string) (string, error) {
 // time it was archived with. Ownership is best effort: it needs privileges the
 // API does not always have, and a restored file the workload can read is better
 // than a failed import.
-func restore(root, target, name string, excludes []string, header *tar.Header, content io.Reader) error {
+//
+// It reports whether the filesystem was touched, which is false for a member of
+// a type this does not restore.
+func restore(root, target, name string, excludes []string, header *tar.Header, content io.Reader) (bool, error) {
 	// Excluding a path only protects that path; the directory holding it is not
 	// excluded, since the archive has to be able to restore what else lives in
 	// it. Replacing such a directory with something that is not one, though,
@@ -395,11 +407,21 @@ func restore(root, target, name string, excludes []string, header *tar.Header, c
 	// which appear as members of their own. An archive is data the sandbox is
 	// handed, so it does not get to do that.
 	if header.Typeflag != tar.TypeDir && excludesUnder(name, excludes) {
-		return fmt.Errorf("archive member %q would replace a directory holding paths that are never restored", name)
+		return false, fmt.Errorf("archive member %q would replace a directory holding paths that are never restored", name)
+	}
+
+	switch header.Typeflag {
+	case tar.TypeDir, tar.TypeSymlink, tar.TypeLink, tar.TypeReg:
+	default:
+		// Devices, fifos and sockets: the export never produces them, since the
+		// devices live on a tmpfs that is not archived. Nothing is written for
+		// them, not even the directory holding them.
+		logrus.WithFields(logrus.Fields{"path": target, "type": header.Typeflag}).Warn("[Archive] Skipping an archive member of an unsupported type")
+		return false, nil
 	}
 
 	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-		return fmt.Errorf("failed to create the parent of %s: %w", target, err)
+		return false, fmt.Errorf("failed to create the parent of %s: %w", target, err)
 	}
 
 	switch header.Typeflag {
@@ -409,78 +431,73 @@ func restore(root, target, name string, excludes []string, header *tar.Header, c
 		// type change is exactly what the archive is there to reproduce.
 		if info, err := os.Lstat(target); err == nil && !info.IsDir() {
 			if excludesUnder(name, excludes) {
-				return fmt.Errorf("archive member %q would replace %s, which holds paths that are never restored", name, target)
+				return false, fmt.Errorf("archive member %q would replace %s, which holds paths that are never restored", name, target)
 			}
 			if err := os.Remove(target); err != nil {
-				return fmt.Errorf("failed to replace %s: %w", target, err)
+				return true, fmt.Errorf("failed to replace %s: %w", target, err)
 			}
 		}
 		if err := os.MkdirAll(target, header.FileInfo().Mode().Perm()); err != nil {
-			return fmt.Errorf("failed to create %s: %w", target, err)
+			return true, fmt.Errorf("failed to create %s: %w", target, err)
 		}
 	case tar.TypeSymlink:
 		// A symlink cannot be reopened to be rewritten, and the path may hold
 		// the image's version of it.
 		if err := os.RemoveAll(target); err != nil {
-			return fmt.Errorf("failed to replace %s: %w", target, err)
+			return true, fmt.Errorf("failed to replace %s: %w", target, err)
 		}
 		if err := os.Symlink(header.Linkname, target); err != nil {
-			return fmt.Errorf("failed to link %s: %w", target, err)
+			return true, fmt.Errorf("failed to link %s: %w", target, err)
 		}
 		// A symlink's own mode and times are not the target's, and lchown is the
 		// only one of the three that means anything here.
 		if err := os.Lchown(target, header.Uid, header.Gid); err != nil {
 			logrus.WithError(err).WithField("path", target).Debug("[Archive] Failed to restore the symlink ownership")
 		}
-		return nil
+		return true, nil
 	case tar.TypeLink:
 		// A hardlink's target is a member name, relative to the archive root,
 		// not to the member's own directory.
 		linkname, err := memberName(header.Linkname)
 		if err != nil {
-			return err
+			return false, err
 		}
 		// Hardlinking an excluded path into the restored tree would hand the
 		// archive's owner the live file - a platform credential under bl/, the
 		// resolver configuration - under a name they choose, which is what the
 		// excludes exist to prevent.
 		if excludedPath(linkname, excludes) {
-			return fmt.Errorf("archive member %q would hardlink %q, which is never restored", name, linkname)
+			return false, fmt.Errorf("archive member %q would hardlink %q, which is never restored", name, linkname)
 		}
 		source, err := resolve(root, linkname)
 		if err != nil {
-			return err
+			return false, err
 		}
 		if err := os.RemoveAll(target); err != nil {
-			return fmt.Errorf("failed to replace %s: %w", target, err)
+			return true, fmt.Errorf("failed to replace %s: %w", target, err)
 		}
 		if err := os.Link(source, target); err != nil {
-			return fmt.Errorf("failed to hardlink %s: %w", target, err)
+			return true, fmt.Errorf("failed to hardlink %s: %w", target, err)
 		}
-		return nil
+		return true, nil
 	case tar.TypeReg:
 		if err := writeFile(target, header.FileInfo().Mode().Perm(), content); err != nil {
-			return err
+			return true, err
 		}
-	default:
-		// Devices, fifos and sockets: the export never produces them, since the
-		// devices live on a tmpfs that is not archived.
-		logrus.WithFields(logrus.Fields{"path": target, "type": header.Typeflag}).Warn("[Archive] Skipping an archive member of an unsupported type")
-		return nil
 	}
 
 	if err := os.Chown(target, header.Uid, header.Gid); err != nil {
 		logrus.WithError(err).WithField("path", target).Debug("[Archive] Failed to restore the ownership")
 	}
 	if err := os.Chmod(target, header.FileInfo().Mode().Perm()); err != nil {
-		return fmt.Errorf("failed to set the mode of %s: %w", target, err)
+		return true, fmt.Errorf("failed to set the mode of %s: %w", target, err)
 	}
 	if !header.ModTime.IsZero() {
 		if err := os.Chtimes(target, header.ModTime, header.ModTime); err != nil {
 			logrus.WithError(err).WithField("path", target).Debug("[Archive] Failed to restore the modification time")
 		}
 	}
-	return nil
+	return true, nil
 }
 
 // writeFile replaces target's content. The file is written and renamed, so a
@@ -535,7 +552,10 @@ func applyDeletions(root string, deleted, excludes []string) (int, error) {
 	for _, deletion := range paths {
 		name, err := memberName(deletion)
 		if err != nil {
-			return 0, err
+			// The count is returned along with the error: what was already
+			// removed stays removed, and the caller has to know the filesystem
+			// was touched.
+			return count, err
 		}
 		if excludedPath(name, excludes) {
 			continue
@@ -548,7 +568,7 @@ func applyDeletions(root string, deleted, excludes []string) (int, error) {
 		}
 		target, err := resolve(root, name)
 		if err != nil {
-			return 0, err
+			return count, err
 		}
 		// RemoveAll, not Remove: a directory the archived sandbox deleted is
 		// recorded as the one path it deleted, and the image it is being
@@ -620,6 +640,15 @@ func relaunch(state []byte) []string {
 			"command":    archived.Command,
 			"identifier": identifier,
 		}).Info("[Archive] Relaunched an archived process")
+	}
+	// The relaunched processes exist only in memory until the state is written:
+	// this runs on boot, before anything else would save it, so a sandbox-api
+	// restarting right after the import would leave them running under PIDs it
+	// no longer knows.
+	if len(relaunched) > 0 {
+		if err := pm.SaveState(); err != nil {
+			logrus.WithError(err).Error("[Archive] Failed to persist the relaunched processes")
+		}
 	}
 	return relaunched
 }

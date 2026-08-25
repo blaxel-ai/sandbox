@@ -27,6 +27,9 @@ type archiveMember struct {
 	dir     bool
 	// hardlink makes link a hardlink target instead of a symlink one.
 	hardlink bool
+	// typeflag overrides the member type, for the ones the export never
+	// produces and the import does not restore.
+	typeflag byte
 }
 
 // buildArchive writes an archive shaped like the one Export produces.
@@ -59,6 +62,8 @@ func buildArchive(t *testing.T, manifest Manifest, processes []byte, members []a
 	for _, member := range members {
 		header := &tar.Header{Name: member.name, Mode: int64(member.mode), Format: tar.FormatPAX, ModTime: time.Unix(1700000000, 0)}
 		switch {
+		case member.typeflag != 0:
+			header.Typeflag = member.typeflag
 		case member.dir:
 			header.Typeflag = tar.TypeDir
 			header.Name += "/"
@@ -525,6 +530,50 @@ func TestImportReportsThatItWrotePartOfTheArchive(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(root, "marker.json")); !os.IsNotExist(err) {
 		t.Errorf("a failed import must not be recorded as done, got %v", err)
+	}
+}
+
+func TestImportDoesNotCountSkippedMembersAsWritten(t *testing.T) {
+	// A member of a type the import does not restore writes nothing, so a later
+	// failure is not a partial import and the sandbox may still boot on its
+	// image. Here the fifo is followed by a member the truncated stream cuts off.
+	root := t.TempDir()
+	body := buildArchive(t, Manifest{Version: ManifestVersion, Root: "/"}, nil, []archiveMember{
+		{name: "srv/pipe", mode: 0o644, typeflag: tar.TypeFifo},
+		{name: "srv/second", content: strings.Repeat("x", 4096), mode: 0o644},
+	})
+
+	result, err := Import(context.Background(), ImportOptions{URL: serve(t, body[:len(body)-4608]), root: root, MarkerPath: filepath.Join(root, "marker.json")})
+	if err == nil {
+		t.Fatal("expected the truncated archive to fail")
+	}
+	if errors.Is(err, ErrPartialImport) {
+		t.Errorf("a skipped member changes nothing, so nothing was written: %v", err)
+	}
+	if result != nil {
+		t.Errorf("expected no result for a failed import, got %+v", result)
+	}
+	if _, err := os.Lstat(filepath.Join(root, "srv/pipe")); !os.IsNotExist(err) {
+		t.Errorf("a member of an unsupported type must not be created, got %v", err)
+	}
+}
+
+func TestImportSkipsMembersOfAnUnsupportedType(t *testing.T) {
+	root := t.TempDir()
+	body := buildArchive(t, Manifest{Version: ManifestVersion, Root: "/"}, nil, []archiveMember{
+		{name: "srv/pipe", mode: 0o644, typeflag: tar.TypeFifo},
+		{name: "srv/data", content: "payload", mode: 0o644},
+	})
+
+	result, err := Import(context.Background(), ImportOptions{URL: serve(t, body), root: root, MarkerPath: filepath.Join(root, "marker.json")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Restored != 1 {
+		t.Errorf("expected only the regular file to be restored, got %d", result.Restored)
+	}
+	if len(result.Skipped) != 1 || result.Skipped[0] != "srv/pipe" {
+		t.Errorf("expected the fifo to be reported as skipped, got %v", result.Skipped)
 	}
 }
 

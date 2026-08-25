@@ -45,6 +45,26 @@ func TestQuiesceLifecycle(t *testing.T) {
 	}
 }
 
+func TestQuarantineFreezesTheSandboxCompletely(t *testing.T) {
+	t.Cleanup(func() { forceResume() })
+
+	// A directory that is not a mount: the remount fails, which is the case the
+	// status has to report honestly rather than claim the writes are stopped.
+	if err := quarantine(t.TempDir(), "failed archive import"); err != nil {
+		t.Fatalf("failed to quarantine: %v", err)
+	}
+	status := Status()
+	if status.State != StateQuiesced {
+		t.Errorf("a quarantined sandbox must be frozen, not settling: %+v", status)
+	}
+	if status.ReadOnlyRoot {
+		t.Error("the root was not remounted, the status must not say it was")
+	}
+	if status.Reason != "failed archive import" {
+		t.Errorf("unexpected reason %q", status.Reason)
+	}
+}
+
 func TestStatusIsACopy(t *testing.T) {
 	t.Cleanup(func() { forceResume() })
 	if err := Freeze("archive export"); err != nil {
