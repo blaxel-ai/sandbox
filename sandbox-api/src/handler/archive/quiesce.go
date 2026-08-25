@@ -210,8 +210,24 @@ func Quarantine(reason string) error {
 }
 
 func quarantine(root, reason string) error {
+	return quarantineWhile(root, reason, nil)
+}
+
+// quarantineWhile quarantines a sandbox that still has something to write on
+// the filesystem it is losing - the record of the failed import, which is what
+// keeps the next boot from restoring the archive over it again.
+//
+// The order is what matters: the API refuses the routes that write first, so
+// nothing else can reach the filesystem while the record is written, and only
+// then is the root remounted read-only. Writing the record before the freeze
+// would leave the gap this closes; remounting before it would leave nothing
+// able to write the record at all.
+func quarantineWhile(root, reason string, record func()) error {
 	if err := freezeQuarantined(reason); err != nil {
 		return err
+	}
+	if record != nil {
+		record()
 	}
 	readOnly := true
 	if err := setRootReadOnly(root, true); err != nil {
@@ -230,9 +246,15 @@ func quarantine(root, reason string) error {
 // writable through the routes the restore still serves.
 func freezeQuarantined(reason string) error {
 	quiesceMu.Lock()
-	if quiesceStatus.State == StateRestoring {
+	if quiesceStatus.State != StateActive {
+		// Already frozen: by the restore itself, or by a quarantine this one
+		// repeats - the import quarantines the filesystem it broke and the boot
+		// quarantines again on its way out. Refusing either would leave the
+		// filesystem writable through the routes those freezes still serve.
 		now := time.Now()
-		allowRestarts = process.SuspendRestarts()
+		if allowRestarts == nil {
+			allowRestarts = process.SuspendRestarts()
+		}
 		quiesceStatus = QuiesceStatus{State: StateQuiescing, Reason: reason, Since: &now}
 		quiesceMu.Unlock()
 		return nil

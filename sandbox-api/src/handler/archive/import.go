@@ -253,12 +253,22 @@ func importOnBoot(ctx context.Context, options ImportOptions) (_ *ImportResult, 
 	result, err := Import(ctx, options)
 	if err != nil {
 		if errors.Is(err, ErrPartialImport) {
-			// Recorded so the next start of sandbox-api does not restore the
-			// archive again over what this one already wrote. Nothing else can
-			// hold that back: the freeze this failure triggers lives in memory,
-			// and the read-only root it remounts to may not have taken.
-			if markerErr := writeMarker(markerPath, partialMarker(identity, err)); markerErr != nil {
-				logrus.WithError(markerErr).Error("[Archive] Failed to record a partially restored filesystem, another start would restore the archive over it again")
+			// The filesystem is a mix of the image and the archive, and it is
+			// quarantined here rather than by the caller: until the root is
+			// remounted read-only, a terminal - a route the restore's freeze
+			// still serves - writes into that mix.
+			//
+			// The record goes in while the root is still writable, since the
+			// next start of sandbox-api would otherwise restore the archive
+			// again over what this one already wrote. Nothing else can hold
+			// that back: the freeze lives in memory, and the read-only remount
+			// may not have taken.
+			if quarantineErr := quarantineWhile(options.rootDir(), "failed archive import", func() {
+				if markerErr := writeMarker(markerPath, partialMarker(identity, err)); markerErr != nil {
+					logrus.WithError(markerErr).Error("[Archive] Failed to record a partially restored filesystem, another start would restore the archive over it again")
+				}
+			}); quarantineErr != nil {
+				logrus.WithError(quarantineErr).Error("[Archive] Failed to freeze the sandbox after a partial import")
 			}
 		}
 		return nil, err

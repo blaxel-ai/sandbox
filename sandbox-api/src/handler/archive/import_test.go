@@ -960,6 +960,7 @@ func TestImportThatCannotBeRecordedIsPartial(t *testing.T) {
 }
 
 func TestImportOnBootDoesNotBootOnAnUnreadableMarker(t *testing.T) {
+	resetRestore(t)
 	// A truncated marker - a crash or a full filesystem while it was written -
 	// says an import happened without saying how it ended. Restoring again
 	// would write over what the first one did, and starting the workload would
@@ -999,6 +1000,7 @@ func TestMarkerIsInstalledAtomically(t *testing.T) {
 }
 
 func TestImportOnBootNeverRestoresOverAPartialImport(t *testing.T) {
+	resetRestore(t)
 	// The freeze a partial import triggers only lives in memory, and the
 	// read-only root it remounts to may not have taken: sandbox-api starting
 	// again is the case where the archive would be applied a second time, over
@@ -1021,6 +1023,14 @@ func TestImportOnBootNeverRestoresOverAPartialImport(t *testing.T) {
 	}
 	if !recorded.Partial {
 		t.Error("the record of a partial import must say so")
+	}
+
+	// The filesystem is a mix of the image and the archive, and nothing may add
+	// to it - not even a terminal, which the restore's own freeze still serves.
+	// The quarantine is taken by the import itself rather than left to whatever
+	// called it.
+	if state := Status().State; state != StateQuiesced {
+		t.Errorf("a partially restored filesystem must be quarantined as the import returns, got %q", state)
 	}
 
 	// The next start finds the record and refuses again, without downloading
