@@ -701,3 +701,66 @@ func TestImportThatCannotBeRecordedIsPartial(t *testing.T) {
 		t.Fatalf("an import that cannot be recorded must be reported as partial, got %v", err)
 	}
 }
+
+func TestImportOnBootNeverRestoresOverAPartialImport(t *testing.T) {
+	// The freeze a partial import triggers only lives in memory, and the
+	// read-only root it remounts to may not have taken: sandbox-api starting
+	// again is the case where the archive would be applied a second time, over
+	// files the first attempt already changed.
+	root := t.TempDir()
+	marker := filepath.Join(root, "marker.json")
+	body := buildArchive(t, Manifest{Version: ManifestVersion, Root: "/"}, nil, []archiveMember{
+		{name: "srv/first", content: "restored", mode: 0o644},
+		{name: "srv/second", content: strings.Repeat("x", 4096), mode: 0o644},
+	})
+	url := serve(t, body[:len(body)-3072])
+
+	if _, err := importOnBoot(context.Background(), ImportOptions{URL: url, root: root, MarkerPath: marker}); !errors.Is(err, ErrPartialImport) {
+		t.Fatalf("expected the truncated archive to be reported as partially applied, got %v", err)
+	}
+
+	recorded, err := readMarker(marker)
+	if err != nil || recorded == nil {
+		t.Fatalf("a partial import must be recorded, got %+v (%v)", recorded, err)
+	}
+	if !recorded.Partial {
+		t.Error("the record of a partial import must say so")
+	}
+
+	// The next start finds the record and refuses again, without downloading
+	// anything: a served archive would now succeed and hide the mixed state.
+	if _, err := importOnBoot(context.Background(), ImportOptions{URL: serve(t, body), root: root, MarkerPath: marker}); !errors.Is(err, ErrPartialImport) {
+		t.Fatalf("a filesystem left by a partial import must never be restored over, got %v", err)
+	}
+}
+
+func TestImportFailsWhenADeletionCannotBeApplied(t *testing.T) {
+	// A path the archived sandbox had deleted and that survives the import is
+	// not the filesystem the archive describes, so the workload must not start
+	// on it. Here the deletion is refused by the directory's permissions.
+	if os.Geteuid() == 0 {
+		// Root writes through the permissions this relies on.
+		t.Skip("the deletion cannot be made to fail as root")
+	}
+	root := t.TempDir()
+	locked := filepath.Join(root, "srv")
+	if err := os.MkdirAll(filepath.Join(locked, "gone"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(locked, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o755) })
+
+	body := buildArchive(t, Manifest{Version: ManifestVersion, Root: "/", Deleted: []string{"srv/gone"}}, nil, []archiveMember{
+		{name: "opt/data", content: "restored", mode: 0o644},
+	})
+
+	_, err := Import(context.Background(), ImportOptions{URL: serve(t, body), root: root, MarkerPath: filepath.Join(root, "marker.json")})
+	if err == nil {
+		t.Fatal("expected a deletion that cannot be applied to fail the import")
+	}
+	if !errors.Is(err, ErrPartialImport) {
+		t.Errorf("the members restored before the deletion were written, so the failure is partial: %v", err)
+	}
+}

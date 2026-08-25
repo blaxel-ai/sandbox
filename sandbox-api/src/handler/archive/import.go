@@ -101,6 +101,15 @@ type Marker struct {
 	Relaunched []string  `json:"relaunched,omitempty"`
 	// CreatedAt is when the archive was taken.
 	CreatedAt time.Time `json:"createdAt"`
+	// Partial records an import that failed after it had written to the
+	// filesystem. The marker is written for those too, and it is what keeps the
+	// archive from being applied a second time over the mix of the image's files
+	// and the archive's that the failure left: the freeze protecting that
+	// filesystem does not survive sandbox-api restarting, and a re-import would
+	// restore over files a first import had already changed.
+	Partial bool `json:"partial,omitempty"`
+	// Error is why a partial import stopped, for whoever comes to look.
+	Error string `json:"error,omitempty"`
 }
 
 func (o ImportOptions) relaunchProcesses() bool {
@@ -146,6 +155,13 @@ func importOnBoot(ctx context.Context, options ImportOptions) (*ImportResult, er
 		// Any marker stops the import, not only one for this archive: the
 		// filesystem has already been restored once, and applying another
 		// archive over it would mix two sandboxes' state.
+		if marker.Partial {
+			// The filesystem is the mix a failed import left, and it stays that
+			// way: the workload must not start on it, which is what reporting a
+			// partial import to the caller does.
+			return nil, fmt.Errorf("%w: an earlier import of %s stopped after writing to the filesystem (%s)",
+				ErrPartialImport, marker.Archive, marker.Error)
+		}
 		logrus.WithFields(logrus.Fields{
 			"archive":    marker.Archive,
 			"importedAt": marker.ImportedAt,
@@ -162,6 +178,15 @@ func importOnBoot(ctx context.Context, options ImportOptions) (*ImportResult, er
 
 	result, err := Import(ctx, options)
 	if err != nil {
+		if errors.Is(err, ErrPartialImport) {
+			// Recorded so the next start of sandbox-api does not restore the
+			// archive again over what this one already wrote. Nothing else can
+			// hold that back: the freeze this failure triggers lives in memory,
+			// and the read-only root it remounts to may not have taken.
+			if markerErr := writeMarker(markerPath, partialMarker(identity, err)); markerErr != nil {
+				logrus.WithError(markerErr).Error("[Archive] Failed to record a partially restored filesystem, another start would restore the archive over it again")
+			}
+		}
 		return nil, err
 	}
 
@@ -184,6 +209,18 @@ func markerFor(identity string, result *ImportResult) Marker {
 		Deleted:    result.Deleted,
 		Relaunched: result.Relaunched,
 		CreatedAt:  result.Manifest.CreatedAt,
+	}
+}
+
+// partialMarker is what a failed import leaves behind, so the filesystem it
+// half restored is never restored over again.
+func partialMarker(identity string, cause error) Marker {
+	return Marker{
+		Version:    ManifestVersion,
+		Archive:    identity,
+		ImportedAt: time.Now(),
+		Partial:    true,
+		Error:      cause.Error(),
 	}
 }
 
@@ -613,9 +650,12 @@ func applyDeletions(root string, deleted, excludes []string) (int, error) {
 		// recorded as the one path it deleted, and the image it is being
 		// restored over still fills that directory with the entries the
 		// deletion was meant to take along.
+		// A deletion that cannot be applied is fatal, like a member that cannot
+		// be written: the filesystem would carry a path the archived sandbox had
+		// removed, so it is not the filesystem the archive describes, and the
+		// workload would start on a state that never existed.
 		if err := os.RemoveAll(target); err != nil {
-			logrus.WithError(err).WithField("path", target).Warn("[Archive] Failed to apply a deletion from the manifest")
-			continue
+			return count, fmt.Errorf("failed to apply the deletion of %s: %w", name, err)
 		}
 		count++
 	}
