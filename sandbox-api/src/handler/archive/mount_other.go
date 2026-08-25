@@ -8,6 +8,9 @@ import "fmt"
 // to run there.
 const DefaultImageDevice = ""
 
+// imageDevices is empty for the same reason: no device is a sandbox image here.
+var imageDevices []string
+
 func mountImage(device, mountpoint string) error {
 	return fmt.Errorf("mounting the sandbox image is only supported on linux")
 }

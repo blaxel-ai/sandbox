@@ -16,6 +16,15 @@ import (
 // same image as a ROM, so the device has to be overridden there.
 const DefaultImageDevice = "/dev/vda"
 
+// imageDevices are the only devices the platform ever attaches the pristine
+// image to: the first virtio drive on mk3.1, the Unikraft ROM on mk3.0. The
+// request comes from inside the sandbox, and any other mountable device - an
+// attached drive, another EROFS image the workload built - is a filesystem the
+// root shares nothing with, so comparing against it reports the whole root as
+// added and turns the export into a copy of it, streamed to a URL the caller
+// chose.
+var imageDevices = []string{DefaultImageDevice, "/dev/ukp_rom0"}
+
 // mountImage mounts the pristine image read-only at mountpoint. Mounting the
 // image a second time is safe: it is read-only for the guest either way, and it
 // is already the lower layer of the root overlay.

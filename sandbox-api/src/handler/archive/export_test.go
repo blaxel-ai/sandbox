@@ -348,7 +348,10 @@ func TestExportRefusesAnUntrustworthyImageSource(t *testing.T) {
 		// request says.
 		"another filesystem's mount point": {ImageMountPoint: "/proc"},
 		"a device outside /dev":            {ImageDevice: regular},
-		"a device path that is not clean":  {ImageDevice: "/dev/../" + strings.TrimPrefix(regular, "/")},
+		// A real block device the workload can have attached is a filesystem the
+		// root shares nothing with, so it is refused like any other mount point.
+		"a device that is not an image":   {ImageDevice: "/dev/null"},
+		"a device path that is not clean": {ImageDevice: "/dev/../" + strings.TrimPrefix(regular, "/")},
 	}
 	for name, options := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -364,10 +367,14 @@ func TestExportRefusesAnUntrustworthyImageSource(t *testing.T) {
 		t.Errorf("expected the root to be accepted, got %v", err)
 	}
 
-	// The real device, when there is one, is accepted.
-	if _, err := os.Stat("/dev/null"); err == nil {
-		if err := (ExportOptions{ImageDevice: "/dev/null"}).validateImageSource(); err != nil {
-			t.Errorf("expected a real device to be accepted, got %v", err)
+	// The devices the platform attaches the image to are accepted, when the test
+	// runs on a sandbox that has them.
+	for _, device := range imageDevices {
+		if _, err := os.Stat(device); err != nil {
+			continue
+		}
+		if err := (ExportOptions{ImageDevice: device}).validateImageSource(); err != nil {
+			t.Errorf("expected %s to be accepted, got %v", device, err)
 		}
 	}
 }

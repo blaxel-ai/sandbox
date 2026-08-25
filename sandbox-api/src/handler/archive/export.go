@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"syscall"
@@ -175,6 +176,14 @@ func (o ExportOptions) validateImageSource() error {
 		device := filepath.Clean(o.ImageDevice)
 		if device != o.ImageDevice || !strings.HasPrefix(device, "/dev/") {
 			return fmt.Errorf("imageDevice must be a path under /dev")
+		}
+		// A device under /dev is not enough, for the reason the mount point is
+		// restricted to two paths: any other mountable filesystem - an attached
+		// drive, an image the workload built - shares nothing with the root, so
+		// every path looks added and the archive becomes a copy of the whole root.
+		// The image only ever lives on the devices the generations attach it to.
+		if !slices.Contains(imageDevices, device) {
+			return fmt.Errorf("imageDevice must be one of %s", strings.Join(imageDevices, ", "))
 		}
 		info, err := os.Stat(device)
 		if err != nil {
