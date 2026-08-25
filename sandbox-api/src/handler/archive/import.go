@@ -234,7 +234,11 @@ func importOnBoot(ctx context.Context, options ImportOptions) (_ *ImportResult, 
 			// started: the import was recorded and this API stopped before it
 			// relaunched anything. Restoring again is not what is missing, the
 			// processes are.
-			return resumeRelaunch(options, *marker)
+			imported = true
+			enterRestoreState(RestoreRelaunching)
+			result, err := resumeRelaunch(options, *marker)
+			endRestore(result, err)
+			return result, err
 		}
 		if !marker.Started {
 			logrus.WithFields(logrus.Fields{

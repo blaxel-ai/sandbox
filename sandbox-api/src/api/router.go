@@ -260,11 +260,17 @@ func SetupRouter(disableRequestLogging bool, enableProcessingTime bool) *gin.Eng
 // watching a restore that takes minutes is precisely what a terminal is opened
 // for there, and the API refusing the routes that write is what keeps the rest
 // of the world off a half-restored filesystem.
+// Reloading the environment is among them for a different reason: the host
+// pings it once, after it has applied a new metadata generation, and a freeze
+// that lasts minutes would swallow that notification and leave this process -
+// and everything it starts afterwards - on the previous generation. It writes
+// nothing but its own environ.
 var quiesceAllowedPrefixes = []string{
 	"/archive",
 	"/terminal",
 	"/health",
 	"/swagger",
+	"/environment",
 }
 
 // quiesceMiddleware refuses the calls that would write to the filesystem once an

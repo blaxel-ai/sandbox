@@ -2,6 +2,7 @@ package archive
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -161,6 +162,48 @@ func TestABootWithAnArchiveIsFrozenBeforeTheImportRunsAndGivenBackWhenItDoesNot(
 
 	if state := Status().State; state != StateActive {
 		t.Errorf("a boot that restored nothing gives the sandbox back, got %q", state)
+	}
+}
+
+// A boot that only has the relaunch left to do is still the end of a restore:
+// the filesystem carries the archive and the workload is being started from it.
+// Reporting nothing there makes the sandbox look like one that was never
+// restored, right as a client is watching the restore it asked for.
+func TestABootThatOnlyFinishesTheRelaunchStillReportsTheRestore(t *testing.T) {
+	resetRestore(t)
+
+	MarkRestorePending()
+
+	root := t.TempDir()
+	marker := filepath.Join(root, "marker.json")
+	if err := writeMarker(marker, Marker{
+		Version:          ManifestVersion,
+		Archive:          "archive.tar",
+		Restored:         12,
+		PendingProcesses: json.RawMessage(`{"processes":{"api":{"name":"api","command":"sleep 0.1","status":"running"}}}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	body := buildArchive(t, Manifest{Version: ManifestVersion, Root: "/"}, nil, []archiveMember{
+		{name: "srv/data", content: "restored", mode: 0o644},
+	})
+	if _, err := importOnBoot(context.Background(), ImportOptions{URL: serve(t, body), root: root, MarkerPath: marker}); err != nil {
+		t.Fatal(err)
+	}
+
+	status := Status()
+	if status.Restore == nil {
+		t.Fatal("a boot that finished the restore's relaunch must still report the restore")
+	}
+	if status.Restore.State != RestoreSucceeded {
+		t.Errorf("expected the restore to be reported as succeeded, got %q", status.Restore.State)
+	}
+	if status.Restore.Restored != 12 {
+		t.Errorf("expected the restore to report what the archive changed, got %d", status.Restore.Restored)
+	}
+	if status.State != StateActive {
+		t.Errorf("a finished restore gives the sandbox back, got %q", status.State)
 	}
 }
 

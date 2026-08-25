@@ -54,6 +54,10 @@ func TestQuiesceMiddleware(t *testing.T) {
 		{http.MethodGet, "/filesystem/tmp/file"},
 		{http.MethodDelete, "/process/api"},
 		{http.MethodDelete, "/process/api/kill"},
+		// The host pings this once after an environment update, so a freeze
+		// refusing it drops that generation for good. It writes nothing but
+		// this process's own environ.
+		{http.MethodPost, "/environment/reload"},
 	}
 	router := quiesceRouter(append(append([]call(nil), refused...), allowed...))
 
