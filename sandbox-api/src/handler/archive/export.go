@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/blaxel-ai/sandbox-api/src/handler/process"
@@ -25,6 +26,11 @@ const (
 	// DefaultStopTimeout is how long the workload is given to exit after
 	// SIGTERM before it is killed.
 	DefaultStopTimeout = 30 * time.Second
+	// killTimeout bounds the wait for a killed process to be gone.
+	killTimeout = 5 * time.Second
+	// processPollInterval is how often the stopped processes are looked at while
+	// waiting for them to exit.
+	processPollInterval = 100 * time.Millisecond
 )
 
 // APIVersion is the sandbox-api build recorded in the manifests it produces.
@@ -276,41 +282,39 @@ func quiesceWorkload(options ExportOptions) ([]string, error) {
 		}
 	}
 
-	var stopped []string
+	var stopped []stoppedProcess
 	for _, info := range pm.ListProcesses() {
 		if info.Status != process.StatusRunning {
 			continue
 		}
+		candidate := stoppedProcess{identifier: info.PID, pid: info.ProcessPid, done: info.Done}
 		if err := pm.StopProcess(info.PID); err != nil {
 			logrus.WithError(err).WithField("process", info.PID).Warn("[Archive] Failed to stop process")
 			continue
 		}
-		stopped = append(stopped, info.PID)
+		stopped = append(stopped, candidate)
 	}
 
-	deadline := time.Now().Add(options.stopTimeout())
-	for {
-		running := runningProcesses(pm)
-		if len(running) == 0 {
-			break
-		}
-		if time.Now().After(deadline) {
-			// A process that ignores SIGTERM would keep writing during the scan,
-			// which is exactly what the archive must not contain.
-			for _, identifier := range running {
-				if err := pm.KillProcess(identifier); err != nil {
-					logrus.WithError(err).WithField("process", identifier).Warn("[Archive] Failed to kill process")
-				}
+	// A process that ignores SIGTERM would keep writing during the scan, which is
+	// exactly what the archive must not contain, so the ones still alive at the
+	// deadline are killed.
+	if pending := waitForExit(stopped, options.stopTimeout()); len(pending) > 0 {
+		for _, candidate := range pending {
+			if err := pm.KillProcess(candidate.identifier); err != nil {
+				logrus.WithError(err).WithField("process", candidate.identifier).Warn("[Archive] Failed to kill process")
 			}
-			break
 		}
-		time.Sleep(100 * time.Millisecond)
+		// SIGKILL cannot be ignored, but the exit still has to have happened
+		// before the filesystem is read.
+		if alive := waitForExit(pending, killTimeout); len(alive) > 0 {
+			logrus.WithField("processes", identifiers(alive)).Error("[Archive] Processes survived SIGKILL: the archive may not be consistent")
+		}
 	}
 
 	// Flush what the stopped processes wrote: their pages are on tmpfs, but the
 	// log files this API keeps for them are not necessarily written back yet.
 	syncFilesystem()
-	return stopped, nil
+	return identifiers(stopped), nil
 }
 
 // freezeRoot makes the root read-only and reports whether it worked. Stopping
@@ -333,14 +337,72 @@ func freezeRoot(options ExportOptions) bool {
 	return true
 }
 
-func runningProcesses(pm *process.ProcessManager) []string {
-	var running []string
-	for _, info := range pm.ListProcesses() {
-		if info.Status == process.StatusRunning {
-			running = append(running, info.PID)
+// stoppedProcess is a process the export asked to stop, captured before the stop
+// so the wait below has the OS process it has to outlive.
+type stoppedProcess struct {
+	identifier string
+	pid        int
+	done       chan struct{}
+}
+
+// exited reports whether the OS process is gone. The manager's own status says
+// nothing about it: StopProcess marks a process stopped as soon as SIGTERM is
+// sent, while the process keeps running — and writing — until it decides to
+// exit. The completion channel is the authoritative answer when the manager
+// owns the process; the signal probe covers a process it adopted and does not
+// wait on.
+func (p stoppedProcess) exited() bool {
+	if p.done != nil {
+		select {
+		case <-p.done:
+			return true
+		default:
 		}
 	}
-	return running
+	return !processAlive(p.pid)
+}
+
+// waitForExit waits up to timeout for the processes to be gone and returns
+// those still alive.
+func waitForExit(processes []stoppedProcess, timeout time.Duration) []stoppedProcess {
+	deadline := time.Now().Add(timeout)
+	for {
+		var pending []stoppedProcess
+		for _, candidate := range processes {
+			if !candidate.exited() {
+				pending = append(pending, candidate)
+			}
+		}
+		if len(pending) == 0 || time.Now().After(deadline) {
+			return pending
+		}
+		time.Sleep(processPollInterval)
+	}
+}
+
+// processAlive reports whether an OS process still exists. A zombie answers
+// too, which only matters for a process the manager does not wait on: for the
+// ones it owns, exited() sees the completion channel first.
+func processAlive(pid int) bool {
+	if pid <= 0 {
+		return false
+	}
+	proc, err := os.FindProcess(pid)
+	if err != nil {
+		return false
+	}
+	return proc.Signal(syscall.Signal(0)) == nil
+}
+
+func identifiers(processes []stoppedProcess) []string {
+	if len(processes) == 0 {
+		return nil
+	}
+	list := make([]string, 0, len(processes))
+	for _, candidate := range processes {
+		list = append(list, candidate.identifier)
+	}
+	return list
 }
 
 // processState reads back the state file the process manager just wrote, so the

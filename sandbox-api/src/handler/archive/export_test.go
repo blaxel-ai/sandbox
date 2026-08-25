@@ -8,9 +8,12 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"testing"
+	"time"
 )
 
 func exportOptions(t *testing.T, root, lower string) ExportOptions {
@@ -212,5 +215,42 @@ func readManifest(t *testing.T, archived []byte) Manifest {
 			t.Fatal(err)
 		}
 		return manifest
+	}
+}
+
+func TestWaitForExitWatchesTheOSProcess(t *testing.T) {
+	cmd := exec.Command("sleep", "30")
+	if err := cmd.Start(); err != nil {
+		t.Skipf("cannot start a process to wait on: %v", err)
+	}
+	// The manager marks a process stopped as soon as SIGTERM is sent, so only
+	// the OS process can tell the export whether it still writes.
+	candidate := stoppedProcess{identifier: "1", pid: cmd.Process.Pid}
+
+	if pending := waitForExit([]stoppedProcess{candidate}, 200*time.Millisecond); len(pending) != 1 {
+		t.Fatalf("expected the process still running to be reported for the kill, got %d", len(pending))
+	}
+
+	if err := cmd.Process.Kill(); err != nil {
+		t.Fatalf("failed to kill the process: %v", err)
+	}
+	if _, err := cmd.Process.Wait(); err != nil {
+		t.Fatalf("failed to reap the process: %v", err)
+	}
+
+	if pending := waitForExit([]stoppedProcess{candidate}, time.Second); len(pending) != 0 {
+		t.Errorf("expected the exited process to settle, got %d pending", len(pending))
+	}
+}
+
+func TestWaitForExitSettlesOnTheCompletionChannel(t *testing.T) {
+	done := make(chan struct{})
+	close(done)
+	// The PID is this very test process, so anything but the completion channel
+	// would report it alive.
+	candidate := stoppedProcess{identifier: "1", pid: os.Getpid(), done: done}
+
+	if pending := waitForExit([]stoppedProcess{candidate}, 100*time.Millisecond); len(pending) != 0 {
+		t.Errorf("expected the completed process to settle, got %d pending", len(pending))
 	}
 }
