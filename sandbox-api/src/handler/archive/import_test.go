@@ -373,6 +373,17 @@ func TestMarkerIsNeverArchived(t *testing.T) {
 	if !excludedPath(rel, DefaultExcludes) {
 		t.Errorf("%s should be excluded from an archive", rel)
 	}
+	// Nothing beside it either: this API opens what it keeps there as root, so a
+	// member of the archive's choosing must not land in that directory.
+	for _, beside := range []string{
+		"var/lib/blaxel",
+		"var/lib/blaxel/archive-import.json.tmp",
+		"var/lib/blaxel/anything",
+	} {
+		if !excludedPath(beside, DefaultExcludes) {
+			t.Errorf("%s should be excluded from an archive", beside)
+		}
+	}
 }
 
 func TestImportDeletesADirectoryTheImageStillFills(t *testing.T) {

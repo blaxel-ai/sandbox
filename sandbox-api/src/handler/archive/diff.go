@@ -71,14 +71,13 @@ var DefaultExcludes = []string{
 	// This API's own logs and state: process output belongs to the sandbox being
 	// archived, not to the one restoring it.
 	"var/log/sandbox-api",
-	// The marker saying this sandbox already imported an archive: it describes
-	// this sandbox's history, and carrying it into the next archive would
-	// overwrite the marker of whichever sandbox restores that one.
-	strings.TrimPrefix(DefaultImportMarker, "/"),
-	// The name the marker is written under before it is renamed into place: an
-	// archive naming it plants what the next import's own marker write opens, as
-	// root, and a symlink there would send that write wherever it points.
-	strings.TrimPrefix(DefaultImportMarker+markerTemporarySuffix, "/"),
+	// This API's state directory, holding the marker that says this sandbox
+	// already imported an archive. The whole tree is excluded rather than the
+	// marker alone: the marker describes this sandbox's history, and a member
+	// beside it - the name the marker is written under before it is renamed into
+	// place, or whatever this API comes to keep there - is a file an archive
+	// would plant where this API opens files as root.
+	strings.TrimPrefix(filepath.Dir(DefaultImportMarker), "/"),
 	// The binary the drive mount runs, as root, on a route this API keeps
 	// serving. It is the image's, like this API's own binary: an archive that
 	// could replace it would choose the code the next mount executes.
