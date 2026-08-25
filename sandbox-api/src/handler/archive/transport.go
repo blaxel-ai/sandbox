@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -57,6 +58,13 @@ func refuseInstanceOnlyAddress(_, address string, _ syscall.RawConn) error {
 	host, _, err := net.SplitHostPort(address)
 	if err != nil {
 		host = address
+	}
+	// A scoped IPv6 address carries the interface it is bound to
+	// ("fe80::1%eth0"), which ParseIP does not accept - and a link-local
+	// address is exactly the kind this refuses, so the zone is dropped rather
+	// than left to make the address unreadable.
+	if zone := strings.IndexByte(host, '%'); zone >= 0 {
+		host = host[:zone]
 	}
 	ip := net.ParseIP(host)
 	if ip == nil {

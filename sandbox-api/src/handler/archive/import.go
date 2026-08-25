@@ -487,12 +487,7 @@ func extract(body io.Reader, options ImportOptions) (_ *ImportResult, _ []byte, 
 			result.Skipped = append(result.Skipped, name)
 			continue
 		}
-		target, err := resolve(root, name)
-		if err != nil {
-			return nil, nil, err
-		}
-
-		wrote, err := restore(root, target, name, excludes, header, tr)
+		wrote, err := restore(root, name, excludes, header, tr)
 		if wrote {
 			// Counted before the error is looked at: a member that failed
 			// halfway still changed the filesystem, and that is what decides
@@ -579,7 +574,9 @@ func resolve(root, name string) (string, error) {
 // neither the image's nor the archive's, and the caller decides what to make of
 // that. It is false for a member of a type this does not restore, and for one
 // that failed before it changed anything.
-func restore(root, target, name string, excludes []string, header *tar.Header, content io.Reader) (bool, error) {
+func restore(root, name string, excludes []string, header *tar.Header, content io.Reader) (bool, error) {
+	target := filepath.Join(root, filepath.FromSlash(name))
+
 	// Excluding a path only protects that path; the directory holding it is not
 	// excluded, since the archive has to be able to restore what else lives in
 	// it. Replacing such a directory with something that is not one, though,
@@ -602,32 +599,31 @@ func restore(root, target, name string, excludes []string, header *tar.Header, c
 	}
 
 	// Creating the parents is a write of its own, and one a failure can leave
-	// behind: MkdirAll creates the ones it gets through before it stops, and once
-	// they exist the filesystem holds directories the image did not have. Every
-	// failure below carries that state on, and adds its own only when it did
-	// remove or write something - a failure that changed nothing must not be
-	// reported as partial, or the sandbox is quarantined over a filesystem that
-	// is still exactly the image's.
-	parent := filepath.Dir(target)
-	touched := !exists(parent)
-	if err := os.MkdirAll(parent, 0o755); err != nil {
-		// touched, not true: the parents may all have existed already, in which
-		// case this failure changed nothing and the filesystem is still exactly
-		// the image's - quarantining a sandbox over it would refuse to start a
-		// workload that has nothing wrong with its files.
-		return touched, fmt.Errorf("failed to create the parent of %s: %w", target, err)
+	// behind: the components made before it stops exist afterwards, and the
+	// filesystem then holds directories the image did not have. Every failure
+	// below carries that state on, and adds its own only when it did remove or
+	// write something - a failure that changed nothing must not be reported as
+	// partial, or the sandbox is quarantined over a filesystem that is still
+	// exactly the image's.
+	parent, touched, err := openParent(root, name, true)
+	if err != nil {
+		return touched, err
 	}
+	defer parent.Close()
+	// Everything below writes through the directory held open rather than
+	// through the path, which the workload's user may still be changing.
+	writable := parent.path()
 
 	switch header.Typeflag {
 	case tar.TypeDir:
 		// The path may hold the image's file, or symlink, where the archived
 		// sandbox has a directory: mkdir over it fails with ENOTDIR, and the
 		// type change is exactly what the archive is there to reproduce.
-		if info, err := os.Lstat(target); err == nil && !info.IsDir() {
+		if info, err := os.Lstat(writable); err == nil && !info.IsDir() {
 			if excludesUnder(name, excludes) {
 				return touched, fmt.Errorf("archive member %q would replace %s, which holds paths that are never restored", name, target)
 			}
-			if err := os.Remove(target); err != nil {
+			if err := os.Remove(writable); err != nil {
 				return touched, fmt.Errorf("failed to replace %s: %w", target, err)
 			}
 			touched = true
@@ -642,32 +638,32 @@ func restore(root, target, name string, excludes []string, header *tar.Header, c
 			// changes nothing at all - and a change that did not happen must not
 			// be reported, or a later failure would quarantine a sandbox whose
 			// filesystem is still the image's.
-			created := !exists(target)
-			if err := os.MkdirAll(target, 0o755); err != nil {
+			created := !exists(writable)
+			if err := os.Mkdir(writable, 0o755); err != nil && !os.IsExist(err) {
 				return touched, fmt.Errorf("failed to create %s: %w", target, err)
 			}
 			return touched || created, nil
 		}
-		if !exists(target) {
+		if !exists(writable) {
 			touched = true
 		}
-		if err := os.MkdirAll(target, header.FileInfo().Mode().Perm()); err != nil {
+		if err := os.Mkdir(writable, header.FileInfo().Mode().Perm()); err != nil && !os.IsExist(err) {
 			return touched, fmt.Errorf("failed to create %s: %w", target, err)
 		}
 	case tar.TypeSymlink:
 		// A symlink cannot be reopened to be rewritten, and the path may hold
 		// the image's version of it. Removing nothing is not a change: the link
 		// failing afterwards then leaves the filesystem as the image had it.
-		removed := exists(target)
-		if err := os.RemoveAll(target); err != nil {
+		removed := exists(writable)
+		if err := os.RemoveAll(writable); err != nil {
 			return touched, fmt.Errorf("failed to replace %s: %w", target, err)
 		}
-		if err := os.Symlink(header.Linkname, target); err != nil {
+		if err := os.Symlink(header.Linkname, writable); err != nil {
 			return touched || removed, fmt.Errorf("failed to link %s: %w", target, err)
 		}
 		// A symlink's own mode and times are not the target's, and lchown is the
 		// only one of the three that means anything here.
-		if err := os.Lchown(target, header.Uid, header.Gid); err != nil {
+		if err := os.Lchown(writable, header.Uid, header.Gid); err != nil {
 			logrus.WithError(err).WithField("path", target).Debug("[Archive] Failed to restore the symlink ownership")
 		}
 		return true, nil
@@ -685,20 +681,25 @@ func restore(root, target, name string, excludes []string, header *tar.Header, c
 		if excludedPath(linkname, excludes) {
 			return touched, fmt.Errorf("archive member %q would hardlink %q, which is never restored", name, linkname)
 		}
-		source, err := resolve(root, linkname)
+		// The source is reached through its own directory held open, for the
+		// same reason the member is: a component of it turning into a symlink
+		// between the check and the link would hand the archive's owner a file
+		// they never named.
+		sourceDir, _, err := openParent(root, linkname, false)
 		if err != nil {
 			return touched, err
 		}
-		removed := exists(target)
-		if err := os.RemoveAll(target); err != nil {
+		defer sourceDir.Close()
+		removed := exists(writable)
+		if err := os.RemoveAll(writable); err != nil {
 			return touched, fmt.Errorf("failed to replace %s: %w", target, err)
 		}
-		if err := os.Link(source, target); err != nil {
+		if err := os.Link(sourceDir.path(), writable); err != nil {
 			return touched || removed, fmt.Errorf("failed to hardlink %s: %w", target, err)
 		}
 		return true, nil
 	case tar.TypeReg:
-		changed, err := writeFile(target, header.FileInfo().Mode().Perm(), content)
+		changed, err := writeFile(writable, target, header.FileInfo().Mode().Perm(), content)
 		if changed {
 			// Carried past the error too: the mode and the times are set below,
 			// and a failure there comes after the content was already replaced.
@@ -709,14 +710,14 @@ func restore(root, target, name string, excludes []string, header *tar.Header, c
 		}
 	}
 
-	if err := os.Chown(target, header.Uid, header.Gid); err != nil {
+	if err := os.Chown(writable, header.Uid, header.Gid); err != nil {
 		logrus.WithError(err).WithField("path", target).Debug("[Archive] Failed to restore the ownership")
 	}
-	if err := os.Chmod(target, header.FileInfo().Mode().Perm()); err != nil {
+	if err := os.Chmod(writable, header.FileInfo().Mode().Perm()); err != nil {
 		return touched, fmt.Errorf("failed to set the mode of %s: %w", target, err)
 	}
 	if !header.ModTime.IsZero() {
-		if err := os.Chtimes(target, header.ModTime, header.ModTime); err != nil {
+		if err := os.Chtimes(writable, header.ModTime, header.ModTime); err != nil {
 			logrus.WithError(err).WithField("path", target).Debug("[Archive] Failed to restore the modification time")
 		}
 	}
@@ -730,11 +731,13 @@ func restore(root, target, name string, excludes []string, header *tar.Header, c
 // It reports whether the filesystem was changed, which a failure does not do on
 // its own: the content goes to a temporary file that is removed again, so a
 // download cut short leaves the image's file as it was.
-func writeFile(target string, mode os.FileMode, content io.Reader) (bool, error) {
+// The path written to is the one reached through the directory held open, and
+// name is the same path as it reads, which is what the errors carry.
+func writeFile(target, name string, mode os.FileMode, content io.Reader) (bool, error) {
 	changed := false
 	if info, err := os.Lstat(target); err == nil && info.IsDir() {
 		if err := os.RemoveAll(target); err != nil {
-			return true, fmt.Errorf("failed to replace the directory %s: %w", target, err)
+			return true, fmt.Errorf("failed to replace the directory %s: %w", name, err)
 		}
 		changed = true
 	}
@@ -747,7 +750,7 @@ func writeFile(target string, mode os.FileMode, content io.Reader) (bool, error)
 	// standing under the name it picked nor replaces anything.
 	file, err := os.CreateTemp(filepath.Dir(target), ".blaxel-import-*")
 	if err != nil {
-		return changed, fmt.Errorf("failed to create %s: %w", target, err)
+		return changed, fmt.Errorf("failed to create %s: %w", name, err)
 	}
 	temporary := file.Name()
 	// CreateTemp opens at 0600, and the file is renamed onto the target, so the
@@ -755,20 +758,20 @@ func writeFile(target string, mode os.FileMode, content io.Reader) (bool, error)
 	if err := file.Chmod(mode); err != nil {
 		file.Close()
 		os.Remove(temporary)
-		return changed, fmt.Errorf("failed to set the mode of %s: %w", target, err)
+		return changed, fmt.Errorf("failed to set the mode of %s: %w", name, err)
 	}
 	if _, err := io.Copy(file, content); err != nil {
 		file.Close()
 		os.Remove(temporary)
-		return changed, fmt.Errorf("failed to write %s: %w", target, err)
+		return changed, fmt.Errorf("failed to write %s: %w", name, err)
 	}
 	if err := file.Close(); err != nil {
 		os.Remove(temporary)
-		return changed, fmt.Errorf("failed to close %s: %w", target, err)
+		return changed, fmt.Errorf("failed to close %s: %w", name, err)
 	}
 	if err := os.Rename(temporary, target); err != nil {
 		os.Remove(temporary)
-		return changed, fmt.Errorf("failed to install %s: %w", target, err)
+		return changed, fmt.Errorf("failed to install %s: %w", name, err)
 	}
 	return true, nil
 }
@@ -799,8 +802,13 @@ func applyDeletions(root string, deleted, excludes []string) (int, error) {
 			logrus.WithField("path", name).Warn("[Archive] Refusing a deletion that would remove paths that are never restored")
 			continue
 		}
-		target, err := resolve(root, name)
+		parent, _, err := openParent(root, name, false)
 		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				// The image never had the directory holding it, so there is
+				// nothing to delete.
+				continue
+			}
 			return count, err
 		}
 		// RemoveAll, not Remove: a directory the archived sandbox deleted is
@@ -813,10 +821,14 @@ func applyDeletions(root string, deleted, excludes []string) (int, error) {
 		// workload would start on a state that never existed.
 		// A path the image never had is nothing to remove, and counting it would
 		// report a filesystem the import has not touched as changed.
-		if !exists(target) {
+		removable := parent.path()
+		if !exists(removable) {
+			parent.Close()
 			continue
 		}
-		if err := os.RemoveAll(target); err != nil {
+		err = os.RemoveAll(removable)
+		parent.Close()
+		if err != nil {
 			return count, fmt.Errorf("failed to apply the deletion of %s: %w", name, err)
 		}
 		count++

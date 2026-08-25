@@ -13,6 +13,11 @@ func TestArchiveTransfersRefuseTheInstancesOwnAddresses(t *testing.T) {
 		"[fe80::1]:443",
 		"[fd00:ec2::254]:80",
 		"[fc00::1]:443",
+		// Scoped addresses: an IPv6 address carries the interface it is bound
+		// to, and the zone must not make the address unreadable - an address
+		// that cannot be read is one that is not refused.
+		"[fe80::1%eth0]:443",
+		"[fd00:ec2::254%eth0]:80",
 	}
 	for _, address := range refused {
 		if err := refuseInstanceOnlyAddress("tcp", address, nil); err == nil {
