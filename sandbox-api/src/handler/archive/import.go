@@ -66,6 +66,12 @@ type ImportOptions struct {
 
 	// root is only set by tests, which restore into a plain directory.
 	root string
+	// onRestored runs once the filesystem carries the archive and before
+	// anything is relaunched from it. It is how the import is recorded as done
+	// before it has any visible effect: a crash between the two would otherwise
+	// leave no record, and the next start would import the archive a second time
+	// over a filesystem already running the first one.
+	onRestored func(*ImportResult) error
 }
 
 // ImportResult reports an import.
@@ -149,12 +155,28 @@ func importOnBoot(ctx context.Context, options ImportOptions) (*ImportResult, er
 	}
 
 	logrus.WithField("archive", identity).Info("[Archive] Restoring the filesystem from the archive before the workload starts")
+	markerPath := options.markerPath()
+	options.onRestored = func(result *ImportResult) error {
+		return writeMarker(markerPath, markerFor(identity, result))
+	}
+
 	result, err := Import(ctx, options)
 	if err != nil {
 		return nil, err
 	}
 
-	if err := writeMarker(options.markerPath(), Marker{
+	if len(result.Relaunched) > 0 {
+		// The processes exist now, so the record can name them. The import
+		// itself is already recorded, which is the part that must not be lost.
+		if err := writeMarker(markerPath, markerFor(identity, result)); err != nil {
+			logrus.WithError(err).Warn("[Archive] Failed to record the relaunched processes of the import")
+		}
+	}
+	return result, nil
+}
+
+func markerFor(identity string, result *ImportResult) Marker {
+	return Marker{
 		Version:    ManifestVersion,
 		Archive:    identity,
 		ImportedAt: time.Now(),
@@ -162,12 +184,7 @@ func importOnBoot(ctx context.Context, options ImportOptions) (*ImportResult, er
 		Deleted:    result.Deleted,
 		Relaunched: result.Relaunched,
 		CreatedAt:  result.Manifest.CreatedAt,
-	}); err != nil {
-		// The filesystem is restored; failing here would only mean importing it
-		// again on the next start, over a filesystem that already has it.
-		logrus.WithError(err).Error("[Archive] Failed to record the import: a restart may restore the archive a second time")
 	}
-	return result, nil
 }
 
 // Import downloads the archive and applies it to the filesystem: the members are
@@ -204,6 +221,16 @@ func Import(ctx context.Context, options ImportOptions) (*ImportResult, error) {
 	result, processes, err := extract(body, options)
 	if err != nil {
 		return nil, err
+	}
+
+	// The filesystem now carries the archive, so the import is recorded before
+	// anything runs on top of it. A failure here is fatal on purpose: the
+	// sandbox cannot promise to import the archive only once, and importing it
+	// twice would undo whatever ran in between.
+	if options.onRestored != nil {
+		if err := options.onRestored(result); err != nil {
+			return nil, fmt.Errorf("%w: failed to record the import: %w", ErrPartialImport, err)
+		}
 	}
 
 	if options.relaunchProcesses() && len(processes) > 0 {

@@ -63,6 +63,11 @@ var (
 // filesystem, which is the one moment the freeze must not be lifted.
 var ErrExportInProgress = errors.New("an archive export is in progress")
 
+// ErrRootReadOnly is returned by Resume when the freeze was lifted on the API
+// but the root filesystem could not be made writable again, so the sandbox is
+// still not usable and says so rather than reporting itself active.
+var ErrRootReadOnly = errors.New("the root filesystem is still read-only")
+
 // ErrAlreadyQuiesced is returned by Freeze when the sandbox is already frozen,
 // so a second export is reported as the conflict it is rather than as a failure
 // of the export itself.
@@ -171,7 +176,11 @@ func Resume() (QuiesceStatus, error) {
 	if inProgress {
 		return Status(), ErrExportInProgress
 	}
-	return forceResume(), nil
+	status := forceResume()
+	if status.State != StateActive {
+		return status, ErrRootReadOnly
+	}
+	return status, nil
 }
 
 // forceResume lifts the freeze unconditionally. Only an export that is giving up
@@ -182,9 +191,15 @@ func forceResume() QuiesceStatus {
 	exporting = false
 	if quiesceStatus.ReadOnlyRoot {
 		if err := setRootReadOnly(DefaultRoot, false); err != nil {
-			// Reported rather than returned: the caller's problem is an API that
-			// refuses calls, and that part is fixed here regardless.
+			// The API would serve every route again while every write still
+			// fails, so the sandbox stays frozen and keeps saying that its root
+			// is read-only: a status claiming otherwise is worse than one
+			// admitting the sandbox needs to be recreated.
 			logrus.WithError(err).Error("[Archive] Failed to make the root writable again")
+			quiesceStatus.State = StateQuiesced
+			quiesceStatus.Reason = "the root filesystem could not be made writable again"
+			quiesceStatus.StoppedProcesses = nil
+			return quiesceStatus
 		}
 	}
 	quiesceStatus = QuiesceStatus{State: StateActive}

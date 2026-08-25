@@ -589,3 +589,45 @@ func TestImportFailingBeforeItWritesIsNotPartial(t *testing.T) {
 		t.Errorf("an import that wrote nothing must let the sandbox boot on its image: %v", err)
 	}
 }
+
+func TestImportRecordsItselfBeforeRelaunchingProcesses(t *testing.T) {
+	// The record has to exist before the archive has any effect: a crash between
+	// the two would leave the next boot importing the archive again, on top of
+	// the processes the first import already started.
+	root := t.TempDir()
+	processes := []byte(`[{"name":"ticker","command":"sleep 1","status":"running"}]`)
+	body := buildArchive(t, Manifest{Version: ManifestVersion, Root: "/", Processes: true}, processes, []archiveMember{
+		{name: "srv/data", content: "restored", mode: 0o644},
+	})
+
+	recordedBeforeRelaunch := false
+	options := ImportOptions{URL: serve(t, body), root: root, MarkerPath: filepath.Join(root, "marker.json")}
+	options.onRestored = func(*ImportResult) error {
+		recordedBeforeRelaunch = true
+		return nil
+	}
+	if _, err := Import(context.Background(), options); err != nil {
+		t.Fatal(err)
+	}
+	if !recordedBeforeRelaunch {
+		t.Error("the import must be recorded before anything is relaunched from it")
+	}
+}
+
+func TestImportThatCannotBeRecordedIsPartial(t *testing.T) {
+	// The filesystem carries the archive but the sandbox cannot promise to
+	// import it only once, so it must not boot on it: importing it twice would
+	// undo whatever ran in between.
+	root := t.TempDir()
+	body := buildArchive(t, Manifest{Version: ManifestVersion, Root: "/"}, nil, []archiveMember{
+		{name: "srv/data", content: "restored", mode: 0o644},
+	})
+
+	options := ImportOptions{URL: serve(t, body), root: root, MarkerPath: filepath.Join(root, "marker.json")}
+	options.onRestored = func(*ImportResult) error {
+		return errors.New("no space left on device")
+	}
+	if _, err := Import(context.Background(), options); !errors.Is(err, ErrPartialImport) {
+		t.Fatalf("an import that cannot be recorded must be reported as partial, got %v", err)
+	}
+}
