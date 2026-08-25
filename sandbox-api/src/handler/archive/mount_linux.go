@@ -5,6 +5,7 @@ package archive
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"syscall"
 )
 
@@ -64,6 +65,11 @@ func syncFilesystem() {
 // mounted reports whether mountpoint holds a mount, so an export can reuse one
 // left behind by a previous run instead of failing.
 func mounted(mountpoint string) bool {
+	// The root is always a mount, and it is the one case the comparison below
+	// cannot see: / and /.. are the same directory, hence the same device.
+	if filepath.Clean(mountpoint) == "/" {
+		return true
+	}
 	info, err := os.Stat(mountpoint)
 	if err != nil {
 		return false
