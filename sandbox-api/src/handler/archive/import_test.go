@@ -1237,3 +1237,71 @@ func TestImportDoesNotQuarantineOnAFailureThatWroteNothing(t *testing.T) {
 		t.Fatalf("a failure that wrote nothing must not report a partial import, got %v", err)
 	}
 }
+
+func TestImportKeepsAMemberNamedLikeTheStagingFile(t *testing.T) {
+	// The staging name used to be derived from the target, so restoring "app"
+	// removed a member the archive had already restored beside it.
+	root := t.TempDir()
+	body := buildArchive(t, Manifest{Version: ManifestVersion, Root: "/"}, nil, []archiveMember{
+		{name: "srv/app.blaxel-import", content: "restored", mode: 0o644},
+		{name: "srv/app", content: "binary", mode: 0o755},
+	})
+
+	result, err := Import(context.Background(), ImportOptions{URL: serve(t, body), root: root, MarkerPath: filepath.Join(root, "marker.json")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Restored != 2 {
+		t.Errorf("expected both members to be restored, got %d", result.Restored)
+	}
+	if content, err := os.ReadFile(filepath.Join(root, "srv/app.blaxel-import")); err != nil || string(content) != "restored" {
+		t.Errorf("the member was removed to stage another one: %q, %v", content, err)
+	}
+	if content, err := os.ReadFile(filepath.Join(root, "srv/app")); err != nil || string(content) != "binary" {
+		t.Errorf("expected the file to be restored: %q, %v", content, err)
+	}
+	// Nothing of the import's own is left behind.
+	entries, err := os.ReadDir(filepath.Join(root, "srv"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 2 {
+		t.Errorf("expected only the archived members in the directory, got %d entries", len(entries))
+	}
+}
+
+func TestImportNeverRestoresTheDynamicLoaderConfiguration(t *testing.T) {
+	// The archive is data the sandbox is handed, and the binaries this API execs
+	// as root - blfs on the drive route - resolve their libraries through these
+	// files, so a member here would choose the code they run just as replacing
+	// the binary would.
+	root := t.TempDir()
+	body := buildArchive(t, Manifest{Version: ManifestVersion, Root: "/"}, nil, []archiveMember{
+		{name: "etc/ld.so.preload", content: "/srv/hijack.so", mode: 0o644},
+		{name: "etc/ld.so.conf", content: "/srv", mode: 0o644},
+		{name: "etc/ld.so.conf.d/hijack.conf", content: "/srv", mode: 0o644},
+		{name: "etc/ld.so.cache", content: "cache", mode: 0o644},
+		{name: "srv/data", content: "payload", mode: 0o644},
+	})
+
+	result, err := Import(context.Background(), ImportOptions{URL: serve(t, body), root: root, MarkerPath: filepath.Join(root, "marker.json")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Restored != 1 {
+		t.Errorf("expected only the workload's file to be restored, got %d", result.Restored)
+	}
+	for _, name := range []string{
+		"etc/ld.so.preload",
+		"etc/ld.so.conf",
+		"etc/ld.so.conf.d/hijack.conf",
+		"etc/ld.so.cache",
+	} {
+		if _, err := os.Lstat(filepath.Join(root, name)); !os.IsNotExist(err) {
+			t.Errorf("%s must never be restored, got %v", name, err)
+		}
+		if !excludedPath(name, DefaultExcludes) {
+			t.Errorf("%s should be excluded from an archive", name)
+		}
+	}
+}

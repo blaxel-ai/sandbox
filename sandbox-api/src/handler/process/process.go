@@ -130,11 +130,42 @@ func init() {
 // listed the processes it had to stop.
 var restartsSuspended atomic.Bool
 
+// restartGate serializes the suspension against the restarts themselves. The
+// flag alone leaves a window: a restart that read it just before it was set
+// spawns its process afterwards, and the export, which lists the processes as
+// soon as SuspendRestarts returns, never sees that one - it comes up while the
+// filesystem is being read and writes into an archive that will not carry what
+// it wrote.
+//
+// A restart holds it while it decides and spawns, and the suspension takes it
+// exclusively: SuspendRestarts therefore returns only once no restart is in
+// flight, and every restart that starts after it observes the flag.
+var restartGate sync.RWMutex
+
 // SuspendRestarts stops failed processes from being restarted, and returns the
-// function that allows restarts again.
+// function that allows restarts again. It waits for the restarts already
+// spawning, so its caller can then list every process that is running.
 func SuspendRestarts() func() {
+	restartGate.Lock()
+	defer restartGate.Unlock()
 	restartsSuspended.Store(true)
 	return func() { restartsSuspended.Store(false) }
+}
+
+// beginRestart claims the right to spawn a restart. It reports false when
+// restarts are suspended, and holds the gate until endRestart when it is true,
+// so the process is spawned before any suspension can conclude.
+func beginRestart() bool {
+	restartGate.RLock()
+	if restartsSuspended.Load() {
+		restartGate.RUnlock()
+		return false
+	}
+	return true
+}
+
+func endRestart() {
+	restartGate.RUnlock()
 }
 
 // RestartsSuspended reports whether failed processes are currently left down.
@@ -537,7 +568,7 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 			// Looked at again after the delay: an archive that suspended restarts
 			// meanwhile is reading the filesystem, and this process would come
 			// back as a writer the archive has no way of stopping any more.
-			if restartsSuspended.Load() {
+			if !beginRestart() {
 				pm.leaveStopped(process, callback)
 				return
 			}
@@ -545,6 +576,7 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 			// Restart the process with updated restart count
 			// The PID remains the same across restarts for user transparency
 			_, restartErr := pm.restartProcess(process, callback)
+			endRestart()
 			if restartErr != nil {
 				// If restart fails, log the error and call the callback
 				errorMsg := fmt.Sprintf("\n[Failed to restart process: %v]\n", restartErr)
@@ -968,7 +1000,7 @@ func (pm *ProcessManager) restartProcess(oldProcess *ProcessInfo, callback func(
 
 			// See the same check in StartProcessWithName: an archive may have
 			// suspended restarts while this one was waiting.
-			if restartsSuspended.Load() {
+			if !beginRestart() {
 				pm.leaveStopped(oldProcess, callback)
 				return
 			}
@@ -976,6 +1008,7 @@ func (pm *ProcessManager) restartProcess(oldProcess *ProcessInfo, callback func(
 			// Restart the process recursively
 			// The PID remains the same across restarts for user transparency
 			_, restartErr := pm.restartProcess(oldProcess, callback)
+			endRestart()
 			if restartErr != nil {
 				// If restart fails, log the error and call the callback
 				errorMsg := fmt.Sprintf("\n[Failed to restart process: %v]\n", restartErr)

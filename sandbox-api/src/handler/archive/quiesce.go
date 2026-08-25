@@ -50,6 +50,10 @@ type QuiesceStatus struct {
 	// is what actually stops writes; false means the freeze relies only on the
 	// API refusing calls, and the reason says why.
 	ReadOnlyRoot bool `json:"readOnlyRoot" example:"true"`
+	// Export reports the export started asynchronously, if there was one. It is
+	// how a caller that did not wait for the export learns that the archive is
+	// on the storage, or why it is not.
+	Export *ExportProgress `json:"export,omitempty"`
 } // @name QuiesceStatus
 
 var (
@@ -94,6 +98,7 @@ func Status() QuiesceStatus {
 func statusLocked() QuiesceStatus {
 	status := quiesceStatus
 	status.StoppedProcesses = append([]string(nil), quiesceStatus.StoppedProcesses...)
+	status.Export = exportProgress()
 	return status
 }
 

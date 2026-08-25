@@ -82,6 +82,19 @@ var DefaultExcludes = []string{
 	// serving. It is the image's, like this API's own binary: an archive that
 	// could replace it would choose the code the next mount executes.
 	strings.TrimPrefix(drive.BlfsPath, "/"),
+	// The dynamic loader's configuration, which decides what every binary this
+	// API execs as root loads before its own code. Excluding the binaries alone
+	// would leave "replace the code blfs runs" available as a preload entry or
+	// a library search path, so the loader configuration is treated as the
+	// platform's, not the workload's. The library trees themselves stay
+	// archived: the workload installs its own libraries there, and the images
+	// resolve them by the loader's built-in paths rather than by these files.
+	"etc/ld.so.preload",
+	"etc/ld.so.conf",
+	"etc/ld.so.conf.d",
+	// Rebuilt by ldconfig from the image's libraries; carrying one sandbox's
+	// cache into another only names libraries that may not be there.
+	"etc/ld.so.cache",
 }
 
 // executablePath reports the binary this process is running.

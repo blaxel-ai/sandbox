@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -984,13 +985,9 @@ func TestRestartsSuspendedDuringTheDelayLeaveTheProcessDown(t *testing.T) {
 		t.Fatalf("Error starting process: %v", err)
 	}
 
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		if p, ok := pm.GetProcessByIdentifier(pid); ok && p.Status == StatusFailed {
-			break
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
+	// The process fails immediately and the restart waits a second, so this
+	// lands the suspension in the middle of that delay.
+	time.Sleep(300 * time.Millisecond)
 	allow := SuspendRestarts()
 	defer allow()
 
@@ -1032,4 +1029,43 @@ func TestLogFilePathsStayInTheLogDirectory(t *testing.T) {
 	if stdout != ProcessLogDir+"/my-worker.1.stdout.log" {
 		t.Errorf("an ordinary name should be used as it is, got %s", stdout)
 	}
+}
+
+// TestSuspendRestartsWaitsForARestartAlreadySpawning covers the window the flag
+// alone leaves: a restart that read it just before it was set would spawn its
+// process afterwards, and the export - which lists the processes as soon as the
+// suspension returns - would never see it, leaving a writer on a filesystem
+// being archived.
+func TestSuspendRestartsWaitsForARestartAlreadySpawning(t *testing.T) {
+	defer restartsSuspended.Store(false)
+
+	var spawning atomic.Int32
+	var wg sync.WaitGroup
+	for range 64 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if !beginRestart() {
+				return
+			}
+			defer endRestart()
+			spawning.Add(1)
+			// Stands for the spawn itself, which is not instantaneous.
+			time.Sleep(time.Millisecond)
+			spawning.Add(-1)
+		}()
+	}
+
+	allow := SuspendRestarts()
+	defer allow()
+
+	if count := spawning.Load(); count != 0 {
+		t.Errorf("%d restarts were still spawning when the suspension returned", count)
+	}
+	// And none starts afterwards, however late the goroutine gets there.
+	time.Sleep(50 * time.Millisecond)
+	if count := spawning.Load(); count != 0 {
+		t.Errorf("%d restarts spawned after the suspension", count)
+	}
+	wg.Wait()
 }

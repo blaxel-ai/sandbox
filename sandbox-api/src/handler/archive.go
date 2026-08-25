@@ -27,11 +27,13 @@ func NewArchiveHandler() *ArchiveHandler {
 // @Description Archives everything the sandbox changed on top of its base image and streams it, uncompressed, to a presigned S3 PUT URL. The memory of the sandbox is not archived.
 // @Description The sandbox is quiesced first: the process list is saved (unless saveProcesses is false), every process is stopped, and the API then refuses the calls that would write to the filesystem. The freeze is not lifted afterwards, since an exported sandbox is meant to be restored elsewhere; call POST /archive/resume to lift it.
 // @Description Use dryRun to get the archive's content and exact size without stopping anything and without uploading.
+// @Description Set async to start the export and answer immediately, which is what archiving a large filesystem needs: the export then reports itself through GET /archive/status.
 // @Tags archive
 // @Accept json
 // @Produce json
 // @Param request body ExportOptions true "Export options"
 // @Success 200 {object} ExportResult "Export result"
+// @Success 202 {object} ExportProgress "The export was started and runs in the background"
 // @Failure 400 {object} ErrorResponse "Invalid request"
 // @Failure 409 {object} ErrorResponse "An export is already in progress"
 // @Failure 500 {object} ErrorResponse "Export failed"
@@ -48,6 +50,11 @@ func (h *ArchiveHandler) HandleExport(c *gin.Context) {
 		// from the error field, and /archive/status is where the state itself is
 		// asked for.
 		h.SendError(c, http.StatusConflict, archive.ErrAlreadyQuiesced)
+		return
+	}
+
+	if options.Async {
+		h.startExport(c, options)
 		return
 	}
 
@@ -76,6 +83,29 @@ func (h *ArchiveHandler) HandleExport(c *gin.Context) {
 		return
 	}
 	h.SendJSON(c, http.StatusOK, result)
+}
+
+// startExport launches the export and answers that it is running. Everything
+// the caller could have got wrong is answered here; everything that takes time,
+// stopping the workload included, happens after the answer.
+func (h *ArchiveHandler) startExport(c *gin.Context, options archive.ExportOptions) {
+	// The request's context dies with the response, and the export outlives it
+	// by design.
+	progress, err := archive.StartExport(context.WithoutCancel(c.Request.Context()), options)
+	var invalid *archive.InvalidOptionsError
+	if errors.As(err, &invalid) {
+		h.SendError(c, http.StatusBadRequest, err)
+		return
+	}
+	if errors.Is(err, archive.ErrExportInProgress) || errors.Is(err, archive.ErrAlreadyQuiesced) {
+		h.SendError(c, http.StatusConflict, err)
+		return
+	}
+	if err != nil {
+		h.SendError(c, http.StatusInternalServerError, err)
+		return
+	}
+	h.SendJSON(c, http.StatusAccepted, progress)
 }
 
 // HandleStatus handles GET requests to /archive/status

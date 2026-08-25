@@ -725,22 +725,23 @@ func writeFile(target string, mode os.FileMode, content io.Reader) (bool, error)
 		changed = true
 	}
 
-	temporary := target + ".blaxel-import"
-	// O_EXCL and O_NOFOLLOW rather than O_TRUNC: the name is derived from the
-	// archive, so it may already exist as a symlink pointing at a path the
-	// import would never write to, and opening it would write through it.
-	file, err := os.OpenFile(temporary, os.O_CREATE|os.O_WRONLY|os.O_EXCL|syscall.O_NOFOLLOW, mode)
-	if os.IsExist(err) {
-		if err = os.RemoveAll(temporary); err != nil {
-			return changed, fmt.Errorf("failed to replace %s: %w", target, err)
-		}
-		// Whatever stood under the temporary name is gone, and the archive is
-		// what named it: the filesystem is not the image's any more.
-		changed = true
-		file, err = os.OpenFile(temporary, os.O_CREATE|os.O_WRONLY|os.O_EXCL|syscall.O_NOFOLLOW, mode)
-	}
+	// A name of its own, in the target's directory, rather than one derived
+	// from the target: an archive carrying both "app" and "app.blaxel-import"
+	// would otherwise have the second member removed to stage the first, which
+	// is a member of the archive deleted by the import that was restoring it.
+	// CreateTemp opens with O_CREATE|O_EXCL, so it neither follows a symlink
+	// standing under the name it picked nor replaces anything.
+	file, err := os.CreateTemp(filepath.Dir(target), ".blaxel-import-*")
 	if err != nil {
 		return changed, fmt.Errorf("failed to create %s: %w", target, err)
+	}
+	temporary := file.Name()
+	// CreateTemp opens at 0600, and the file is renamed onto the target, so the
+	// archived mode has to be set on it before it is installed.
+	if err := file.Chmod(mode); err != nil {
+		file.Close()
+		os.Remove(temporary)
+		return changed, fmt.Errorf("failed to set the mode of %s: %w", target, err)
 	}
 	if _, err := io.Copy(file, content); err != nil {
 		file.Close()

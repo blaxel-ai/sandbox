@@ -17,7 +17,7 @@ const docTemplate = `{
     "paths": {
         "/archive/export": {
             "post": {
-                "description": "Archives everything the sandbox changed on top of its base image and streams it, uncompressed, to a presigned S3 PUT URL. The memory of the sandbox is not archived.\nThe sandbox is quiesced first: the process list is saved (unless saveProcesses is false), every process is stopped, and the API then refuses the calls that would write to the filesystem. The freeze is not lifted afterwards, since an exported sandbox is meant to be restored elsewhere; call POST /archive/resume to lift it.\nUse dryRun to get the archive's content and exact size without stopping anything and without uploading.",
+                "description": "Archives everything the sandbox changed on top of its base image and streams it, uncompressed, to a presigned S3 PUT URL. The memory of the sandbox is not archived.\nThe sandbox is quiesced first: the process list is saved (unless saveProcesses is false), every process is stopped, and the API then refuses the calls that would write to the filesystem. The freeze is not lifted afterwards, since an exported sandbox is meant to be restored elsewhere; call POST /archive/resume to lift it.\nUse dryRun to get the archive's content and exact size without stopping anything and without uploading.\nSet async to start the export and answer immediately, which is what archiving a large filesystem needs: the export then reports itself through GET /archive/status.",
                 "consumes": [
                     "application/json"
                 ],
@@ -44,6 +44,12 @@ const docTemplate = `{
                         "description": "Export result",
                         "schema": {
                             "$ref": "#/definitions/ExportResult"
+                        }
+                    },
+                    "202": {
+                        "description": "The export was started and runs in the background",
+                        "schema": {
+                            "$ref": "#/definitions/ExportProgress"
                         }
                     },
                     "400": {
@@ -86,6 +92,12 @@ const docTemplate = `{
                     },
                     "409": {
                         "description": "An export is in progress",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "The root filesystem could not be made writable again",
                         "schema": {
                             "$ref": "#/definitions/ErrorResponse"
                         }
@@ -2251,6 +2263,11 @@ const docTemplate = `{
         "ExportOptions": {
             "type": "object",
             "properties": {
+                "async": {
+                    "description": "Async starts the export and answers immediately, leaving it to run: an\narchive of a large filesystem takes longer than a request may be held\nopen. Its progress is reported by /archive/status.",
+                    "type": "boolean",
+                    "example": false
+                },
                 "dryRun": {
                     "description": "DryRun reports what would be archived, and its exact size, without\nstopping anything and without uploading.",
                     "type": "boolean",
@@ -2280,6 +2297,14 @@ const docTemplate = `{
                     "type": "string",
                     "example": "/mnt/lower"
                 },
+                "multipart": {
+                    "description": "Multipart uploads the archive part by part instead, which is how an\narchive larger than the 5 GB a single PUT accepts is stored. It takes\nprecedence over URL.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/MultipartUpload"
+                        }
+                    ]
+                },
                 "saveProcesses": {
                     "description": "SaveProcesses stores the process list in the archive so restore can\nrelaunch the workload. Defaults to true; set it to false to archive\nstorage only.",
                     "type": "boolean",
@@ -2291,9 +2316,42 @@ const docTemplate = `{
                     "example": 30
                 },
                 "url": {
-                    "description": "URL is a presigned S3 PUT URL the archive is streamed to. Empty is only\nvalid with DryRun.",
+                    "description": "URL is a presigned S3 PUT URL the archive is streamed to. Empty is only\nvalid with DryRun, or with Multipart.",
                     "type": "string",
                     "example": "https://bucket.s3.amazonaws.com/key?..."
+                }
+            }
+        },
+        "ExportProgress": {
+            "type": "object",
+            "properties": {
+                "error": {
+                    "description": "Error is why the export failed, without the presigned URL it used.",
+                    "type": "string"
+                },
+                "finishedAt": {
+                    "type": "string"
+                },
+                "size": {
+                    "description": "Size is the archive's exact size, known once the filesystem is scanned.",
+                    "type": "integer",
+                    "example": 3074211
+                },
+                "startedAt": {
+                    "type": "string"
+                },
+                "state": {
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/archive.ExportState"
+                        }
+                    ],
+                    "example": "running"
+                },
+                "uploaded": {
+                    "description": "Uploaded reports whether the storage holds the archive.",
+                    "type": "boolean",
+                    "example": false
                 }
             }
         },
@@ -2644,6 +2702,31 @@ const docTemplate = `{
                 }
             }
         },
+        "MultipartUpload": {
+            "type": "object",
+            "properties": {
+                "abortUrl": {
+                    "description": "AbortURL is a presigned DELETE URL that discards the parts already\nuploaded. Without it a failed export leaves them on the storage until a\nlifecycle rule removes them.",
+                    "type": "string"
+                },
+                "completeUrl": {
+                    "description": "CompleteURL is a presigned POST URL that assembles the parts.",
+                    "type": "string"
+                },
+                "partSize": {
+                    "description": "PartSize is the number of bytes sent to every part but the last.",
+                    "type": "integer",
+                    "example": 536870912
+                },
+                "partUrls": {
+                    "description": "PartURLs are presigned PUT URLs, one per part, in order. Extra ones are\nleft unused.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
         "MultipartUploadPartResponse": {
             "type": "object",
             "properties": {
@@ -2847,6 +2930,14 @@ const docTemplate = `{
                 "state"
             ],
             "properties": {
+                "export": {
+                    "description": "Export reports the export started asynchronously, if there was one. It is\nhow a caller that did not wait for the export learns that the archive is\non the storage, or why it is not.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/ExportProgress"
+                        }
+                    ]
+                },
                 "readOnlyRoot": {
                     "description": "ReadOnlyRoot reports whether the root mount was remounted read-only, which\nis what actually stops writes; false means the freeze relies only on the\nAPI refusing calls, and the reason says why.",
                     "type": "boolean",
@@ -3076,6 +3167,19 @@ const docTemplate = `{
                 "ChangeAdded",
                 "ChangeModified",
                 "ChangeDeleted"
+            ]
+        },
+        "archive.ExportState": {
+            "type": "string",
+            "enum": [
+                "running",
+                "succeeded",
+                "failed"
+            ],
+            "x-enum-varnames": [
+                "ExportRunning",
+                "ExportSucceeded",
+                "ExportFailed"
             ]
         },
         "archive.QuiesceState": {

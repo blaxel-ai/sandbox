@@ -67,8 +67,16 @@ func invalidOptions(format string, args ...any) error {
 // ExportOptions drives an export.
 type ExportOptions struct {
 	// URL is a presigned S3 PUT URL the archive is streamed to. Empty is only
-	// valid with DryRun.
+	// valid with DryRun, or with Multipart.
 	URL string `json:"url,omitempty" example:"https://bucket.s3.amazonaws.com/key?..."`
+	// Multipart uploads the archive part by part instead, which is how an
+	// archive larger than the 5 GB a single PUT accepts is stored. It takes
+	// precedence over URL.
+	Multipart *MultipartUpload `json:"multipart,omitempty"`
+	// Async starts the export and answers immediately, leaving it to run: an
+	// archive of a large filesystem takes longer than a request may be held
+	// open. Its progress is reported by /archive/status.
+	Async bool `json:"async,omitempty" example:"false"`
 	// SaveProcesses stores the process list in the archive so restore can
 	// relaunch the workload. Defaults to true; set it to false to archive
 	// storage only.
@@ -223,8 +231,11 @@ func (o ExportOptions) validateImageSource() error {
 // silently diverged from the archive it just took. Call Resume to lift it
 // deliberately, for instance after a failure.
 func Export(ctx context.Context, options ExportOptions) (result *ExportResult, err error) {
-	if options.URL == "" && !options.DryRun {
+	if options.URL == "" && options.Multipart == nil && !options.DryRun {
 		return nil, ErrURLRequired
+	}
+	if err = options.Multipart.validate(); err != nil {
+		return nil, err
 	}
 	if err = options.validateImageSource(); err != nil {
 		return nil, err
@@ -373,10 +384,18 @@ func Export(ctx context.Context, options ExportOptions) (result *ExportResult, e
 		return result, nil
 	}
 
-	if err = upload(ctx, options.URL, options.Headers, size, func(w io.Writer) error {
+	write := func(w io.Writer) error {
 		_, err := writeArchive(w, options.rootDir(), metadata, changes, true)
 		return err
-	}); err != nil {
+	}
+	if options.Multipart != nil {
+		// The storage class and anything else the caller signed belongs to the
+		// upload it created, not to the parts, so the headers are not sent here.
+		err = uploadMultipart(ctx, options.Multipart, size, write)
+	} else {
+		err = upload(ctx, options.URL, options.Headers, size, write)
+	}
+	if err != nil {
 		return nil, err
 	}
 
