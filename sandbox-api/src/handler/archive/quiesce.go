@@ -35,6 +35,12 @@ const (
 	// StateQuiesced means the sandbox is frozen: the workload is stopped and
 	// the mutating routes are refused. The filesystem can be read consistently.
 	StateQuiesced QuiesceState = "quiesced"
+	// StateRestoring means an archive is being written over this sandbox's
+	// filesystem. The mutating routes are refused like they are for an export -
+	// the filesystem is halfway between the image and the archive, and a caller
+	// writing into it would be building on a state that never existed - but the
+	// root stays writable, since the import is what writes to it.
+	StateRestoring QuiesceState = "restoring"
 )
 
 // QuiesceStatus reports the quiesce lifecycle.
@@ -54,6 +60,9 @@ type QuiesceStatus struct {
 	// how a caller that did not wait for the export learns that the archive is
 	// on the storage, or why it is not.
 	Export *ExportProgress `json:"export,omitempty"`
+	// Restore reports the archive this sandbox was started from, if it was
+	// started from one: how far its restore has got, and how it ended.
+	Restore *RestoreProgress `json:"restore,omitempty"`
 } // @name QuiesceStatus
 
 var (
@@ -75,6 +84,11 @@ var ErrExportInProgress = errors.New("an archive export is in progress")
 // but the root filesystem could not be made writable again, so the sandbox is
 // still not usable and says so rather than reporting itself active.
 var ErrRootReadOnly = errors.New("the root filesystem is still read-only")
+
+// ErrRestoreInProgress is returned by Resume while an archive is being written
+// to the filesystem: lifting the freeze then would let the workload write into
+// a filesystem the import is still building.
+var ErrRestoreInProgress = errors.New("an archive is being restored")
 
 // ErrAlreadyQuiesced is returned by Freeze when the sandbox is already frozen,
 // so a second export is reported as the conflict it is rather than as a failure
@@ -99,6 +113,7 @@ func statusLocked() QuiesceStatus {
 	status := quiesceStatus
 	status.StoppedProcesses = append([]string(nil), quiesceStatus.StoppedProcesses...)
 	status.Export = exportProgress()
+	status.Restore = restoring()
 	return status
 }
 
@@ -195,7 +210,7 @@ func Quarantine(reason string) error {
 }
 
 func quarantine(root, reason string) error {
-	if err := Freeze(reason); err != nil {
+	if err := freezeQuarantined(reason); err != nil {
 		return err
 	}
 	readOnly := true
@@ -207,6 +222,23 @@ func quarantine(root, reason string) error {
 	}
 	completeQuiesce(nil, readOnly)
 	return nil
+}
+
+// freezeQuarantined freezes a sandbox that may already be frozen for a restore.
+// A failed import is exactly that case, and refusing to quarantine it because
+// the restore's own freeze is still in place would leave the filesystem
+// writable through the routes the restore still serves.
+func freezeQuarantined(reason string) error {
+	quiesceMu.Lock()
+	if quiesceStatus.State == StateRestoring {
+		now := time.Now()
+		allowRestarts = process.SuspendRestarts()
+		quiesceStatus = QuiesceStatus{State: StateQuiescing, Reason: reason, Since: &now}
+		quiesceMu.Unlock()
+		return nil
+	}
+	quiesceMu.Unlock()
+	return Freeze(reason)
 }
 
 // endExport releases the claim freezeForExport took on the filesystem.
@@ -243,6 +275,9 @@ func Resume() (QuiesceStatus, error) {
 	defer quiesceMu.Unlock()
 	if exporting {
 		return statusLocked(), ErrExportInProgress
+	}
+	if quiesceStatus.State == StateRestoring {
+		return statusLocked(), ErrRestoreInProgress
 	}
 	status := resumeLocked()
 	if status.State != StateActive {

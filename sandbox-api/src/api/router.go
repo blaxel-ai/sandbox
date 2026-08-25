@@ -254,6 +254,12 @@ func SetupRouter(disableRequestLogging bool, enableProcessingTime bool) *gin.Eng
 // needs a frozen sandbox for. Neither is an exemption from the freeze — the root
 // mount is read-only, so what they attempt to write fails with EROFS rather than
 // ending up in an archive that has already been read.
+//
+// They are served during a restore too (archive.StateRestoring), which is the
+// one freeze that leaves the root writable, since the import writes to it:
+// watching a restore that takes minutes is precisely what a terminal is opened
+// for there, and the API refusing the routes that write is what keeps the rest
+// of the world off a half-restored filesystem.
 var quiesceAllowedPrefixes = []string{
 	"/archive",
 	"/terminal",
@@ -293,7 +299,7 @@ func quiesceMiddleware() gin.HandlerFunc {
 
 		status := archive.Status()
 		c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{
-			"error":  fmt.Sprintf("sandbox is %s (%s): this endpoint is unavailable until the archive completes", status.State, status.Reason),
+			"error":  fmt.Sprintf("sandbox is %s (%s): this endpoint is unavailable until the archive completes, follow it on /archive/status", status.State, status.Reason),
 			"status": status,
 		})
 	}

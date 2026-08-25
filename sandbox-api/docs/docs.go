@@ -2948,6 +2948,14 @@ const docTemplate = `{
                     "type": "string",
                     "example": "archive export"
                 },
+                "restore": {
+                    "description": "Restore reports the archive this sandbox was started from, if it was\nstarted from one: how far its restore has got, and how it ended.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/RestoreProgress"
+                        }
+                    ]
+                },
                 "since": {
                     "description": "Since is when the sandbox left StateActive.",
                     "type": "string"
@@ -2999,6 +3007,48 @@ const docTemplate = `{
                 "success": {
                     "type": "boolean",
                     "example": true
+                }
+            }
+        },
+        "RestoreProgress": {
+            "type": "object",
+            "properties": {
+                "deleted": {
+                    "type": "integer",
+                    "example": 3
+                },
+                "downloaded": {
+                    "description": "Downloaded is how much of the archive has been read so far.",
+                    "type": "integer",
+                    "example": 1048576
+                },
+                "error": {
+                    "description": "Error is why the restore failed, without the presigned URL it used.",
+                    "type": "string"
+                },
+                "finishedAt": {
+                    "type": "string"
+                },
+                "restored": {
+                    "description": "Restored and Deleted count what the archive changed on the filesystem.",
+                    "type": "integer",
+                    "example": 1204
+                },
+                "size": {
+                    "description": "Size is the archive's size as the storage announced it, and zero when it\nannounced none - a client showing a percentage has to allow for that.",
+                    "type": "integer",
+                    "example": 3074211
+                },
+                "startedAt": {
+                    "type": "string"
+                },
+                "state": {
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/archive.RestoreState"
+                        }
+                    ],
+                    "example": "extracting"
                 }
             }
         },
@@ -3187,12 +3237,31 @@ const docTemplate = `{
             "enum": [
                 "active",
                 "quiescing",
-                "quiesced"
+                "quiesced",
+                "restoring"
             ],
             "x-enum-varnames": [
                 "StateActive",
                 "StateQuiescing",
-                "StateQuiesced"
+                "StateQuiesced",
+                "StateRestoring"
+            ]
+        },
+        "archive.RestoreState": {
+            "type": "string",
+            "enum": [
+                "downloading",
+                "extracting",
+                "relaunching",
+                "succeeded",
+                "failed"
+            ],
+            "x-enum-varnames": [
+                "RestoreDownloading",
+                "RestoreExtracting",
+                "RestoreRelaunching",
+                "RestoreSucceeded",
+                "RestoreFailed"
             ]
         },
         "filesystem.MultipartUpload": {

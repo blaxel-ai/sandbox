@@ -2394,6 +2394,12 @@ components:
           description: Reason is a human readable explanation of why the sandbox is frozen.
           example: archive export
           type: string
+        restore:
+          allOf:
+            - $ref: "#/components/schemas/RestoreProgress"
+          description: |-
+            Restore reports the archive this sandbox was started from, if it was
+            started from one: how far its restore has got, and how it ended.
         since:
           description: Since is when the sandbox left StateActive.
           type: string
@@ -2430,6 +2436,38 @@ components:
         success:
           example: true
           type: boolean
+      type: object
+    RestoreProgress:
+      properties:
+        deleted:
+          example: 3
+          type: integer
+        downloaded:
+          description: Downloaded is how much of the archive has been read so far.
+          example: 1048576
+          type: integer
+        error:
+          description: Error is why the restore failed, without the presigned URL it used.
+          type: string
+        finishedAt:
+          type: string
+        restored:
+          description: Restored and Deleted count what the archive changed on the filesystem.
+          example: 1204
+          type: integer
+        size:
+          description: >-
+            Size is the archive's size as the storage announced it, and zero when it
+
+            announced none - a client showing a percentage has to allow for that.
+          example: 3074211
+          type: integer
+        startedAt:
+          type: string
+        state:
+          allOf:
+            - $ref: "#/components/schemas/archive.RestoreState"
+          example: extracting
       type: object
     Subdirectory:
       properties:
@@ -2564,11 +2602,27 @@ components:
         - active
         - quiescing
         - quiesced
+        - restoring
       type: string
       x-enum-varnames:
         - StateActive
         - StateQuiescing
         - StateQuiesced
+        - StateRestoring
+    archive.RestoreState:
+      enum:
+        - downloading
+        - extracting
+        - relaunching
+        - succeeded
+        - failed
+      type: string
+      x-enum-varnames:
+        - RestoreDownloading
+        - RestoreExtracting
+        - RestoreRelaunching
+        - RestoreSucceeded
+        - RestoreFailed
     filesystem.MultipartUpload:
       properties:
         initiatedAt:

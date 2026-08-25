@@ -321,7 +321,7 @@ func partialMarker(identity string, cause error) Marker {
 // It is meant to run before the workload starts. Nothing here freezes the
 // sandbox: an import that races the workload is a caller's mistake, not
 // something this can detect.
-func Import(ctx context.Context, options ImportOptions) (*ImportResult, error) {
+func Import(ctx context.Context, options ImportOptions) (_ *ImportResult, err error) {
 	if options.URL == "" {
 		return nil, ErrNoImport
 	}
@@ -338,14 +338,25 @@ func Import(ctx context.Context, options ImportOptions) (*ImportResult, error) {
 	ctx, cancel := context.WithTimeout(ctx, transferTimeout)
 	defer cancel()
 
+	// The sandbox exists and answers while this runs, so how far the restore
+	// has got is reported all along rather than only at the end - and the
+	// mutating routes are refused until it is done, since the filesystem is
+	// neither the image's nor the archive's until then.
+	beginRestore("restoring the archived filesystem")
+	var result *ImportResult
+	defer func() { endRestore(result, err) }()
+
 	started := time.Now()
-	body, err := download(ctx, options.URL)
+	body, size, err := download(ctx, options.URL)
 	if err != nil {
 		return nil, err
 	}
 	defer body.Close()
+	recordArchiveSize(size)
+	enterRestoreState(RestoreExtracting)
 
-	result, processes, err := extract(body, options)
+	var processes []byte
+	result, processes, err = extract(&countingReader{reader: body}, options)
 	if err != nil {
 		return nil, err
 	}
@@ -365,6 +376,7 @@ func Import(ctx context.Context, options ImportOptions) (*ImportResult, error) {
 	}
 
 	if options.relaunchProcesses() && len(processes) > 0 {
+		enterRestoreState(RestoreRelaunching)
 		result.Relaunched, result.FailedRelaunches = relaunch(options.rootDir(), processes)
 	}
 
@@ -381,22 +393,24 @@ func Import(ctx context.Context, options ImportOptions) (*ImportResult, error) {
 
 // download fetches the archive. The URL is presigned, so it is a credential:
 // it never reaches an error message or a log line.
-func download(ctx context.Context, url string) (io.ReadCloser, error) {
+// The size it returns is what the storage announced, and zero when it announced
+// nothing: it is only used to say how far the restore has got.
+func download(ctx context.Context, url string) (io.ReadCloser, int64, error) {
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return nil, fmt.Errorf("failed to build the download request: %w", err)
+		return nil, 0, fmt.Errorf("failed to build the download request: %w", err)
 	}
 
 	response, err := transferClient.Do(request)
 	if err != nil {
-		return nil, fmt.Errorf("failed to download the archive: %w", redactURL(err))
+		return nil, 0, fmt.Errorf("failed to download the archive: %w", redactURL(err))
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		defer response.Body.Close()
 		message, _ := io.ReadAll(io.LimitReader(response.Body, 2048))
-		return nil, fmt.Errorf("archive download rejected with status %d: %s", response.StatusCode, string(message))
+		return nil, 0, fmt.Errorf("archive download rejected with status %d: %s", response.StatusCode, string(message))
 	}
-	return response.Body, nil
+	return response.Body, response.ContentLength, nil
 }
 
 // extract applies the archive to the filesystem and returns the process state it

@@ -188,17 +188,32 @@ func main() {
 
 	// Restore an archived filesystem before anything of the workload runs, so
 	// the command below and the relaunched processes see the restored files
-	// rather than race the extraction. It is a no-op unless the sandbox was
-	// started with an archive to import, and it happens once per filesystem:
-	// see archive.DefaultImportMarker.
-	restored := importArchive(ctx)
-
-	// Start background command if specified, unless the sandbox is frozen: on a
-	// read-only root every write of the workload fails, and starting it there
-	// only buries the reason under its own errors. Resuming the sandbox is what
-	// makes it startable, and the operator does that knowingly.
-	if commandValue != "" && restored && !archive.Quiesced() {
-		startBackgroundCommand(ctx, commandValue)
+	// rather than race the extraction. It happens once per filesystem: see
+	// archive.DefaultImportMarker.
+	//
+	// Restoring a large archive takes minutes, and a sandbox that answers
+	// nothing for that long is a sandbox nobody can tell apart from a broken
+	// one. So the import runs behind the API rather than before it: the routes
+	// that would write to the half-restored filesystem are refused while it
+	// runs (archive.StateRestoring), and /archive/status says how far it has
+	// got. Only the workload waits for it.
+	startWorkload := func() {
+		// Not started when the sandbox is frozen: on a read-only root every
+		// write of the workload fails, and starting it there only buries the
+		// reason under its own errors. Resuming the sandbox is what makes it
+		// startable, and the operator does that knowingly.
+		if commandValue != "" && !archive.Quiesced() {
+			startBackgroundCommand(ctx, commandValue)
+		}
+	}
+	if archive.PendingImport() {
+		go func() {
+			if importArchive(ctx) {
+				startWorkload()
+			}
+		}()
+	} else {
+		startWorkload()
 	}
 
 	// Set up the router with all our API routes
