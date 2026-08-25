@@ -1,9 +1,12 @@
 package archive
 
-import "testing"
+import (
+	"errors"
+	"testing"
+)
 
 func TestQuiesceLifecycle(t *testing.T) {
-	t.Cleanup(func() { Resume() })
+	t.Cleanup(func() { forceResume() })
 
 	if Quiesced() {
 		t.Fatal("a sandbox starts serving every route")
@@ -30,7 +33,11 @@ func TestQuiesceLifecycle(t *testing.T) {
 		t.Errorf("unexpected status %+v", status)
 	}
 
-	if status := Resume(); status.State != StateActive {
+	status, err := Resume()
+	if err != nil {
+		t.Fatalf("unexpected resume error: %v", err)
+	}
+	if status.State != StateActive {
 		t.Errorf("expected the freeze to be lifted, got %+v", status)
 	}
 	if Quiesced() {
@@ -39,7 +46,7 @@ func TestQuiesceLifecycle(t *testing.T) {
 }
 
 func TestStatusIsACopy(t *testing.T) {
-	t.Cleanup(func() { Resume() })
+	t.Cleanup(func() { forceResume() })
 	if err := Freeze("archive export"); err != nil {
 		t.Fatal(err)
 	}
@@ -49,5 +56,26 @@ func TestStatusIsACopy(t *testing.T) {
 	status.StoppedProcesses[0] = "tampered"
 	if Status().StoppedProcesses[0] != "proc-1" {
 		t.Error("Status must not hand out the internal slice")
+	}
+}
+
+func TestResumeIsRefusedWhileAnExportReadsTheFilesystem(t *testing.T) {
+	t.Cleanup(func() { forceResume() })
+	if err := Freeze("archive export"); err != nil {
+		t.Fatal(err)
+	}
+	beginExport()
+	completeQuiesce(nil, false)
+
+	if _, err := Resume(); !errors.Is(err, ErrExportInProgress) {
+		t.Errorf("expected the resume to be refused, got %v", err)
+	}
+	if !Quiesced() {
+		t.Error("a refused resume must leave the sandbox frozen")
+	}
+
+	endExport()
+	if _, err := Resume(); err != nil {
+		t.Fatalf("the freeze should be liftable once the export is done: %v", err)
 	}
 }

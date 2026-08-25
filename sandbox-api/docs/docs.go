@@ -83,6 +83,12 @@ const docTemplate = `{
                         "schema": {
                             "$ref": "#/definitions/QuiesceStatus"
                         }
+                    },
+                    "409": {
+                        "description": "An export is in progress",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
                     }
                 }
             }

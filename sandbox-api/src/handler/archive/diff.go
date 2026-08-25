@@ -329,14 +329,19 @@ func (s *scanner) scanDeleted() ([]Change, error) {
 		if rel == "." {
 			return nil
 		}
-		if s.excluded(rel) || s.mounts[filepath.Clean(path)] {
+		// The mountpoints are live paths, so a path of the image is pruned by
+		// where it would be in the live root, not by where it is in the image:
+		// a directory the image has and a mount now covers is not a deletion,
+		// and reporting it as one would have the restore remove it.
+		live := filepath.Join(s.root, rel)
+		if s.excluded(rel) || s.mounts[filepath.Clean(live)] {
 			if info.IsDir() {
 				return filepath.SkipDir
 			}
 			return nil
 		}
 
-		if _, err := os.Lstat(filepath.Join(s.root, rel)); err == nil {
+		if _, err := os.Lstat(live); err == nil {
 			return nil
 		} else if !os.IsNotExist(err) {
 			return fmt.Errorf("failed to stat %s: %w", rel, err)

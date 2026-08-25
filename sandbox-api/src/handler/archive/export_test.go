@@ -15,7 +15,7 @@ import (
 
 func exportOptions(t *testing.T, root, lower string) ExportOptions {
 	t.Helper()
-	t.Cleanup(func() { Resume() })
+	t.Cleanup(func() { forceResume() })
 	// Keep the process state the export saves out of the real sandbox path.
 	t.Setenv("SANDBOX_STATE_FILE", filepath.Join(t.TempDir(), "process-state.json"))
 	return ExportOptions{root: root, ImageMountPoint: lower}

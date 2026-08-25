@@ -69,7 +69,7 @@ func TestQuiesceMiddleware(t *testing.T) {
 	if err := archive.Freeze("archive export"); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { archive.Resume() })
+	t.Cleanup(func() { _, _ = archive.Resume() })
 
 	for _, c := range refused {
 		recorder := httptest.NewRecorder()
@@ -86,7 +86,7 @@ func TestQuiesceMiddleware(t *testing.T) {
 		}
 	}
 
-	archive.Resume()
+	_, _ = archive.Resume()
 	recorder := httptest.NewRecorder()
 	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/process", nil))
 	if recorder.Code != http.StatusOK {

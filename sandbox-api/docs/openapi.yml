@@ -58,6 +58,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/QuiesceStatus"
+        "409":
+          description: An export is in progress
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
       summary: Lift the archive freeze
       tags:
         - archive

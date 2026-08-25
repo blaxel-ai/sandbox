@@ -177,3 +177,28 @@ func TestParseMountPointsKeepsOnlyPointsBelowTheRoot(t *testing.T) {
 		t.Errorf("expected 4 mountpoints, got %v", mounts)
 	}
 }
+
+func TestScanDeletedPrunesLiveMounts(t *testing.T) {
+	// The image has a directory that a mount now covers in the live root: its
+	// content belongs to the mounted filesystem, and the path is not a deletion.
+	root, lower := fakeSandbox(t)
+	write(t, filepath.Join(lower, "data/from-image"), "image", 0o644)
+	if err := os.MkdirAll(filepath.Join(root, "data"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	s := &scanner{
+		root:   root,
+		lower:  lower,
+		mounts: map[string]bool{filepath.Join(root, "data"): true},
+	}
+	changes, err := s.scanDeleted()
+	if err != nil {
+		t.Fatalf("scanDeleted failed: %v", err)
+	}
+	for _, change := range changes {
+		if change.Path == "data" || strings.HasPrefix(change.Path, "data/") {
+			t.Errorf("a path covered by a mount must not be reported as deleted, got %s", change.Path)
+		}
+	}
+}

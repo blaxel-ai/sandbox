@@ -23,6 +23,8 @@ type archiveMember struct {
 	mode    os.FileMode
 	link    string
 	dir     bool
+	// hardlink makes link a hardlink target instead of a symlink one.
+	hardlink bool
 }
 
 // buildArchive writes an archive shaped like the one Export produces.
@@ -58,6 +60,9 @@ func buildArchive(t *testing.T, manifest Manifest, processes []byte, members []a
 		case member.dir:
 			header.Typeflag = tar.TypeDir
 			header.Name += "/"
+		case member.link != "" && member.hardlink:
+			header.Typeflag = tar.TypeLink
+			header.Linkname = member.link
 		case member.link != "":
 			header.Typeflag = tar.TypeSymlink
 			header.Linkname = member.link
@@ -289,5 +294,47 @@ func TestMarkerIsNeverArchived(t *testing.T) {
 	rel := "var/lib/blaxel/archive-import.json"
 	if !excludedPath(rel, DefaultExcludes) {
 		t.Errorf("%s should be excluded from an archive", rel)
+	}
+}
+
+func TestImportDeletesADirectoryTheImageStillFills(t *testing.T) {
+	// The export reports a deleted subtree as its top path, and the image being
+	// restored over still holds everything below it.
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "opt/tool/bin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "opt/tool/bin/tool"), []byte("ELF"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	body := buildArchive(t, Manifest{Version: ManifestVersion, Root: "/", Deleted: []string{"opt"}}, nil, nil)
+	result, err := Import(context.Background(), ImportOptions{URL: serve(t, body), root: root, MarkerPath: filepath.Join(root, "marker.json")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Deleted != 1 {
+		t.Errorf("expected the deletion to be applied, got %d", result.Deleted)
+	}
+	if _, err := os.Lstat(filepath.Join(root, "opt")); !os.IsNotExist(err) {
+		t.Errorf("the deleted subtree should be gone, got %v", err)
+	}
+}
+
+func TestImportResolvesAHardlinkAgainstTheArchiveRoot(t *testing.T) {
+	root := t.TempDir()
+	body := buildArchive(t, Manifest{Version: ManifestVersion, Root: "/"}, nil, []archiveMember{
+		{name: "usr/share/data", content: "shared", mode: 0o644},
+		// A hardlink's target is a member name, so it is relative to the archive
+		// root and not to the directory the link itself lives in.
+		{name: "opt/app/data", link: "usr/share/data", mode: 0o644, hardlink: true},
+	})
+
+	if _, err := Import(context.Background(), ImportOptions{URL: serve(t, body), root: root, MarkerPath: filepath.Join(root, "marker.json")}); err != nil {
+		t.Fatal(err)
+	}
+	content, err := os.ReadFile(filepath.Join(root, "opt/app/data"))
+	if err != nil || string(content) != "shared" {
+		t.Fatalf("expected the hardlink to point at the archived file, got %q (%v)", content, err)
 	}
 }

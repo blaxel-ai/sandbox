@@ -80,7 +80,15 @@ func (h *ArchiveHandler) HandleStatus(c *gin.Context) {
 // @Tags archive
 // @Produce json
 // @Success 200 {object} QuiesceStatus "Archive status"
+// @Failure 409 {object} ErrorResponse "An export is in progress"
 // @Router /archive/resume [post]
 func (h *ArchiveHandler) HandleResume(c *gin.Context) {
-	h.SendJSON(c, http.StatusOK, archive.Resume())
+	status, err := archive.Resume()
+	if err != nil {
+		// The export is reading the filesystem: unfreezing now would corrupt the
+		// archive it is producing, and it lifts the freeze itself if it fails.
+		h.SendError(c, http.StatusConflict, err)
+		return
+	}
+	h.SendJSON(c, http.StatusOK, status)
 }

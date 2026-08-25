@@ -15,6 +15,7 @@
 package archive
 
 import (
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -53,7 +54,14 @@ type QuiesceStatus struct {
 var (
 	quiesceMu     sync.RWMutex
 	quiesceStatus = QuiesceStatus{State: StateActive}
+	// exporting is set while an export reads and uploads the filesystem, so a
+	// resume cannot make the root writable underneath it.
+	exporting bool
 )
+
+// ErrExportInProgress is returned by Resume while an export is still reading the
+// filesystem, which is the one moment the freeze must not be lifted.
+var ErrExportInProgress = errors.New("an archive export is in progress")
 
 // Quiesced reports whether the sandbox currently refuses mutating calls.
 func Quiesced() bool {
@@ -90,6 +98,20 @@ func Freeze(reason string) error {
 	return nil
 }
 
+// beginExport marks the export as reading the filesystem. It must be called
+// with the sandbox frozen, and its counterpart endExport always called after.
+func beginExport() {
+	quiesceMu.Lock()
+	defer quiesceMu.Unlock()
+	exporting = true
+}
+
+func endExport() {
+	quiesceMu.Lock()
+	defer quiesceMu.Unlock()
+	exporting = false
+}
+
 // completeQuiesce records that the workload is stopped and the filesystem is
 // stable.
 func completeQuiesce(stopped []string, readOnlyRoot bool) {
@@ -104,9 +126,26 @@ func completeQuiesce(stopped []string, readOnlyRoot bool) {
 // processes stopped while quiescing are not relaunched, since an exported
 // sandbox is meant to be destroyed and restored elsewhere. It exists so a
 // failed or aborted export does not leave the API permanently refusing calls.
-func Resume() QuiesceStatus {
+//
+// It refuses to run while an export is still reading the filesystem: lifting the
+// freeze then would let the workload write into the archive being produced, and
+// the export lifts it itself when it fails.
+func Resume() (QuiesceStatus, error) {
+	quiesceMu.RLock()
+	inProgress := exporting
+	quiesceMu.RUnlock()
+	if inProgress {
+		return Status(), ErrExportInProgress
+	}
+	return forceResume(), nil
+}
+
+// forceResume lifts the freeze unconditionally. Only an export that is giving up
+// may use it: it is the one caller that knows it has stopped reading.
+func forceResume() QuiesceStatus {
 	quiesceMu.Lock()
 	defer quiesceMu.Unlock()
+	exporting = false
 	if quiesceStatus.ReadOnlyRoot {
 		if err := setRootReadOnly(DefaultRoot, false); err != nil {
 			// Reported rather than returned: the caller's problem is an API that

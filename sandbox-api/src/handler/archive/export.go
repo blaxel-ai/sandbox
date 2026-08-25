@@ -135,9 +135,14 @@ func Export(ctx context.Context, options ExportOptions) (result *ExportResult, e
 		// and no way back.
 		defer func() {
 			if err != nil {
-				Resume()
+				forceResume()
 			}
 		}()
+
+		// From here on a resume would let the workload write to the filesystem
+		// this is about to read, so it is refused until the export is done.
+		beginExport()
+		defer endExport()
 
 		if result.StoppedProcesses, err = quiesceWorkload(options); err != nil {
 			return nil, err
@@ -145,7 +150,17 @@ func Export(ctx context.Context, options ExportOptions) (result *ExportResult, e
 	}
 
 	mountPoint := options.imageMountPoint()
-	if options.ImageMountPoint == "" && !mounted(mountPoint) {
+	if options.ImageMountPoint == "" {
+		// A mount already sitting at this API's own mountpoint is the leftover of
+		// an export that could not unmount it. It is replaced rather than reused:
+		// what it holds is unknown, and comparing against the wrong filesystem
+		// silently produces a wrong archive.
+		if mounted(mountPoint) {
+			logrus.WithField("mountPoint", mountPoint).Warn("[Archive] Replacing a leftover image mount")
+			if err = unmountImage(mountPoint); err != nil {
+				return nil, err
+			}
+		}
 		if err = mountImage(options.imageDevice(), mountPoint); err != nil {
 			return nil, err
 		}

@@ -283,7 +283,7 @@ func extract(body io.Reader, options ImportOptions) (*ImportResult, []byte, erro
 			return nil, nil, err
 		}
 
-		if err := restore(target, header, tr); err != nil {
+		if err := restore(root, target, header, tr); err != nil {
 			return nil, nil, err
 		}
 		result.Restored++
@@ -313,7 +313,7 @@ func resolve(root, name string) (string, error) {
 // time it was archived with. Ownership is best effort: it needs privileges the
 // API does not always have, and a restored file the workload can read is better
 // than a failed import.
-func restore(target string, header *tar.Header, content io.Reader) error {
+func restore(root, target string, header *tar.Header, content io.Reader) error {
 	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 		return fmt.Errorf("failed to create the parent of %s: %w", target, err)
 	}
@@ -339,7 +339,9 @@ func restore(target string, header *tar.Header, content io.Reader) error {
 		}
 		return nil
 	case tar.TypeLink:
-		source, err := resolve(filepath.Dir(target), header.Linkname)
+		// A hardlink's target is a member name, relative to the archive root,
+		// not to the member's own directory.
+		source, err := resolve(root, header.Linkname)
 		if err != nil {
 			return err
 		}
@@ -424,12 +426,11 @@ func applyDeletions(root string, deleted, excludes []string) (int, error) {
 		if err != nil {
 			return 0, err
 		}
-		if err := os.Remove(target); err != nil {
-			if os.IsNotExist(err) {
-				continue
-			}
-			// A directory the image has and this sandbox created files in is not
-			// the archive's to empty.
+		// RemoveAll, not Remove: a directory the archived sandbox deleted is
+		// recorded as the one path it deleted, and the image it is being
+		// restored over still fills that directory with the entries the
+		// deletion was meant to take along.
+		if err := os.RemoveAll(target); err != nil {
 			logrus.WithError(err).WithField("path", target).Warn("[Archive] Failed to apply a deletion from the manifest")
 			continue
 		}
@@ -471,7 +472,16 @@ func relaunch(state []byte) []string {
 			archived.MaxRestarts,
 			archived.KeepAlive,
 			archived.Timeout,
-			nil,
+			// The process manager calls the completion callback unconditionally,
+			// so a relaunched process exiting must find something to call.
+			func(finished *process.ProcessInfo) {
+				logrus.WithFields(logrus.Fields{
+					"name":      finished.Name,
+					"pid":       finished.PID,
+					"status":    finished.Status,
+					"exit_code": finished.ExitCode,
+				}).Info("[Archive] A relaunched process exited")
+			},
 		)
 		if err != nil {
 			logrus.WithError(err).WithFields(logrus.Fields{
