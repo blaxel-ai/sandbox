@@ -10,8 +10,10 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -336,5 +338,52 @@ func TestImportResolvesAHardlinkAgainstTheArchiveRoot(t *testing.T) {
 	content, err := os.ReadFile(filepath.Join(root, "opt/app/data"))
 	if err != nil || string(content) != "shared" {
 		t.Fatalf("expected the hardlink to point at the archived file, got %q (%v)", content, err)
+	}
+}
+
+func TestImportRefusesAMemberThatHidesATraversal(t *testing.T) {
+	root := t.TempDir()
+	body := buildArchive(t, Manifest{Version: ManifestVersion, Root: "/"}, nil, []archiveMember{
+		// Cleaning this name lands on an excluded path, so the exclude list has
+		// to be consulted on the cleaned name and a traversal refused outright.
+		{name: "etc/../etc/resolv.conf", content: "nameserver 10.0.0.1\n", mode: 0o644},
+	})
+
+	if _, err := Import(context.Background(), ImportOptions{URL: serve(t, body), root: root, MarkerPath: filepath.Join(root, "marker.json")}); err == nil {
+		t.Fatal("expected the import to refuse a member climbing out of its directory")
+	}
+	if _, err := os.Lstat(filepath.Join(root, "etc/resolv.conf")); !os.IsNotExist(err) {
+		t.Errorf("nothing should have been written, got %v", err)
+	}
+}
+
+func TestImportRefusesAMemberWrittenThroughASymlink(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "secret"), []byte("host"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	body := buildArchive(t, Manifest{Version: ManifestVersion, Root: "/"}, nil, []archiveMember{
+		{name: "link", link: outside, mode: 0o777},
+		{name: "link/secret", content: "owned", mode: 0o644},
+	})
+
+	if _, err := Import(context.Background(), ImportOptions{URL: serve(t, body), root: root, MarkerPath: filepath.Join(root, "marker.json")}); err == nil {
+		t.Fatal("expected the import to refuse writing through a restored symlink")
+	}
+	if content, err := os.ReadFile(filepath.Join(outside, "secret")); err != nil || string(content) != "host" {
+		t.Errorf("the file behind the symlink must be untouched, got %q (%v)", content, err)
+	}
+}
+
+func TestTransportErrorsDoNotCarryThePresignedURL(t *testing.T) {
+	presigned := "https://bucket.s3.amazonaws.com/archive.tar?X-Amz-Signature=deadbeef"
+	err := redactURL(&url.Error{Op: "Get", URL: presigned, Err: errors.New("dial tcp: i/o timeout")})
+	if strings.Contains(err.Error(), "X-Amz-Signature") {
+		t.Errorf("a transport error must not carry the signature: %v", err)
+	}
+	if !strings.Contains(err.Error(), "bucket.s3.amazonaws.com/archive.tar") || !strings.Contains(err.Error(), "i/o timeout") {
+		t.Errorf("the object and the reason should survive the redaction, got %v", err)
 	}
 }

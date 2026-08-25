@@ -378,7 +378,7 @@ func upload(ctx context.Context, url string, size int64, write func(io.Writer) e
 
 	response, err := http.DefaultClient.Do(request)
 	if err != nil {
-		return fmt.Errorf("failed to upload the archive: %w", err)
+		return fmt.Errorf("failed to upload the archive: %w", redactURL(err))
 	}
 	defer response.Body.Close()
 

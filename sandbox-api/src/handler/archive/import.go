@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -210,7 +211,7 @@ func download(ctx context.Context, url string) (io.ReadCloser, error) {
 
 	response, err := http.DefaultClient.Do(request)
 	if err != nil {
-		return nil, fmt.Errorf("failed to download the archive: %w", err)
+		return nil, fmt.Errorf("failed to download the archive: %w", redactURL(err))
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		defer response.Body.Close()
@@ -251,7 +252,10 @@ func extract(body io.Reader, options ImportOptions) (*ImportResult, []byte, erro
 			return nil, nil, fmt.Errorf("failed to read the archive: %w", err)
 		}
 
-		name := strings.Trim(filepath.ToSlash(header.Name), "/")
+		name, err := memberName(header.Name)
+		if err != nil {
+			return nil, nil, err
+		}
 		switch name {
 		case ManifestName:
 			if err := json.NewDecoder(tr).Decode(&result.Manifest); err != nil {
@@ -298,15 +302,50 @@ func extract(body io.Reader, options ImportOptions) (*ImportResult, []byte, erro
 	return result, processes, nil
 }
 
-// resolve turns an archive member name into a path inside the root, refusing the
-// ones that would escape it.
-func resolve(root, name string) (string, error) {
-	target := filepath.Join(root, filepath.FromSlash(name))
-	rel, err := filepath.Rel(root, target)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
-		return "", fmt.Errorf("archive member %q escapes the root", name)
+// memberName is the name an archive member is applied under: relative to the
+// root, without a traversal component. A name is cleaned before it is compared
+// to the excludes, so "etc/../etc/resolv.conf" cannot smuggle a path past them.
+func memberName(name string) (string, error) {
+	slash := filepath.ToSlash(name)
+	for _, part := range strings.Split(slash, "/") {
+		if part == ".." {
+			return "", fmt.Errorf("archive member %q escapes the root", name)
+		}
 	}
-	return target, nil
+	clean := strings.Trim(path.Clean("/"+slash), "/")
+	if clean == "" || clean == "." {
+		return "", fmt.Errorf("archive member %q has no name", name)
+	}
+	return clean, nil
+}
+
+// resolve turns an archive member name into a path inside the root, refusing the
+// ones that would leave it — either by climbing out, or by being written through
+// a symlink that the image, or an earlier member, put on the way. Without the
+// second check a member named "link/resolv.conf", under a "link -> /etc" member,
+// writes outside everything the excludes protect.
+func resolve(root, name string) (string, error) {
+	clean, err := memberName(name)
+	if err != nil {
+		return "", err
+	}
+
+	parts := strings.Split(clean, "/")
+	target := root
+	for _, part := range parts[:len(parts)-1] {
+		target = filepath.Join(target, part)
+		info, err := os.Lstat(target)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return "", fmt.Errorf("failed to check %s: %w", target, err)
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return "", fmt.Errorf("archive member %q would be restored through the symlink %s", name, target)
+		}
+	}
+	return filepath.Join(target, parts[len(parts)-1]), nil
 }
 
 // restore writes one archive member, with the mode, ownership and modification
@@ -417,9 +456,12 @@ func applyDeletions(root string, deleted, excludes []string) (int, error) {
 	sort.Sort(sort.Reverse(sort.StringSlice(paths)))
 
 	count := 0
-	for _, path := range paths {
-		name := strings.Trim(filepath.ToSlash(path), "/")
-		if name == "" || excludedPath(name, excludes) {
+	for _, deletion := range paths {
+		name, err := memberName(deletion)
+		if err != nil {
+			return 0, err
+		}
+		if excludedPath(name, excludes) {
 			continue
 		}
 		target, err := resolve(root, name)
@@ -498,6 +540,17 @@ func relaunch(state []byte) []string {
 		}).Info("[Archive] Relaunched an archived process")
 	}
 	return relaunched
+}
+
+// redactURL strips the request URL out of a transport error. net/http reports a
+// failed request as `Get "<url>": ...`, and the URL is presigned: the reason the
+// transfer failed is worth logging, the signature in it is not.
+func redactURL(err error) error {
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) {
+		return fmt.Errorf("%s %s: %w", urlErr.Op, archiveIdentity(urlErr.URL), urlErr.Err)
+	}
+	return err
 }
 
 // archiveIdentity is what a presigned URL says about which object it points to:
