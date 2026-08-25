@@ -34,7 +34,8 @@ type JSONStreamWriter interface {
 	IsJSONStreamWriter() bool
 }
 
-// writeToLogWriter sends data to a log writer, using JSON format if supported
+// writeToLogWriter sends data that begins a line, tagging it for text writers.
+// Callers with a partial line must use writeChunkToLogWriter instead.
 func writeToLogWriter(w io.Writer, eventType string, data []byte) {
 	if jw, ok := w.(JSONStreamWriter); ok {
 		// JSON writer - send structured event
@@ -42,6 +43,26 @@ func writeToLogWriter(w io.Writer, eventType string, data []byte) {
 	} else {
 		// Regular writer - send prefixed text (stdout: or stderr:)
 		prefixed := append([]byte(eventType+":"), data...)
+		_, _ = w.Write(prefixed)
+	}
+	if f, ok := w.(interface{ Flush() }); ok {
+		f.Flush()
+	}
+}
+
+// writeChunkToLogWriter sends one read of process output. raw is the untagged
+// bytes, which JSON writers carry with the stream in the event type; prefixed
+// is the same bytes already tagged at their line starts, for text writers.
+//
+// A read is a fixed-size window, not a line, so the tag cannot be applied here:
+// doing so put it in the middle of any line longer than the buffer.
+func writeChunkToLogWriter(w io.Writer, eventType string, raw, prefixed []byte) {
+	// IsJSONStreamWriter, not just the type assertion: a pendingWriter accepts
+	// WriteEvent whatever its target is, and queueing raw bytes as an event
+	// would have it re-tag them per chunk on release, undoing the work above.
+	if jw, ok := w.(JSONStreamWriter); ok && jw.IsJSONStreamWriter() {
+		jw.WriteEvent(eventType, string(raw))
+	} else {
 		_, _ = w.Write(prefixed)
 	}
 	if f, ok := w.(interface{ Flush() }); ok {
@@ -100,12 +121,20 @@ type ProcessInfo struct {
 	// consumer waiting on Done sees "finished" every time the process merely
 	// bounces. Anything user-facing that means "this process is over" waits on
 	// Finished instead.
-	Finished        chan struct{}
-	finishOnce      sync.Once
-	stdout          *logBuffer
-	stderr          *logBuffer
-	logs            *logBuffer
-	logWriters      []io.Writer
+	Finished   chan struct{}
+	finishOnce sync.Once
+	stdout     *logBuffer
+	stderr     *logBuffer
+	logs       *logBuffer
+	logWriters []io.Writer
+	// Whether each stream is part-way through a line. A read is a fixed-size
+	// window, not a line, so a long line spans several reads and must be tagged
+	// only at its start. Phrased as "mid-line" so the zero value means "at a
+	// line start", which is what a fresh process is.
+	stdoutMidLine bool
+	stderrMidLine bool
+	// Reused across reads so tagging a chunk costs no allocation.
+	prefixBuf       []byte
 	logLock         sync.RWMutex
 	stopTimeout     chan struct{} // Channel to signal timeout goroutine to stop
 	stopTimeoutOnce sync.Once     // Protects stopTimeout channel from double-close
@@ -644,32 +673,50 @@ func (pm *ProcessManager) readAndBroadcast(file *os.File, buf []byte, proc *Proc
 				"stream":       streamType,
 			})
 		}
-		if combinedFile != nil || logEntry != nil {
-			prefix := []byte(streamType + ":")
-			for rest := data; len(rest) > 0; {
-				line := rest
-				if end := bytes.IndexByte(rest, '\n'); end >= 0 {
-					line, rest = rest[:end+1], rest[end+1:]
-				} else {
-					rest = nil
-				}
-
-				// Preserves the interleaved order of the two streams.
-				if combinedFile != nil {
-					_, _ = combinedFile.Write(prefix)
-					_, _ = combinedFile.Write(line)
-				}
-
-				// Structured attributes let the telemetry collector tell process
-				// logs from access logs.
-				if logEntry != nil {
-					logProcessLine(logEntry, streamType, line)
-				}
+		// Tag only real line starts. Tagging the chunk instead put the tag in
+		// the middle of any line longer than the read buffer, which corrupted
+		// it for every consumer: a >4KB JSON line came out with "stdout:"
+		// spliced in at byte 4096 and no longer parsed. atLineStart carries
+		// that across reads so a continuation resumes untagged.
+		atLineStart := !proc.stdoutMidLine
+		if streamType == "stderr" {
+			atLineStart = !proc.stderrMidLine
+		}
+		prefix := []byte(streamType + ":")
+		proc.prefixBuf = proc.prefixBuf[:0]
+		for rest := data; len(rest) > 0; {
+			line := rest
+			if end := bytes.IndexByte(rest, '\n'); end >= 0 {
+				line, rest = rest[:end+1], rest[end+1:]
+			} else {
+				rest = nil
 			}
+
+			if atLineStart {
+				proc.prefixBuf = append(proc.prefixBuf, prefix...)
+			}
+			proc.prefixBuf = append(proc.prefixBuf, line...)
+			atLineStart = line[len(line)-1] == '\n'
+
+			// Structured attributes let the telemetry collector tell process
+			// logs from access logs.
+			if logEntry != nil {
+				logProcessLine(logEntry, streamType, line)
+			}
+		}
+		if streamType == "stderr" {
+			proc.stderrMidLine = !atLineStart
+		} else {
+			proc.stdoutMidLine = !atLineStart
+		}
+
+		// Preserves the interleaved order of the two streams.
+		if combinedFile != nil {
+			_, _ = combinedFile.Write(proc.prefixBuf)
 		}
 		// Send to log writers for streaming
 		for _, w := range proc.logWriters {
-			writeToLogWriter(w, streamType, data)
+			writeChunkToLogWriter(w, streamType, data, proc.prefixBuf)
 		}
 		proc.logLock.Unlock()
 	}
@@ -779,6 +826,13 @@ func (pm *ProcessManager) restartProcess(oldProcess *ProcessInfo, callback func(
 	oldProcess.ExitCode = 0
 	oldProcess.stopTimeout = make(chan struct{})
 	oldProcess.stopTimeoutOnce = sync.Once{}
+	// Fresh run, fresh line state: a run that died mid-line must not leave the
+	// next one's first line untagged. The Done/TailDone swap happens earlier,
+	// before anything that can fail.
+	oldProcess.logLock.Lock()
+	oldProcess.stdoutMidLine = false
+	oldProcess.stderrMidLine = false
+	oldProcess.logLock.Unlock()
 
 	// Start the process
 	if err := cmd.Start(); err != nil {
@@ -1272,6 +1326,24 @@ func (pm *ProcessManager) getProcessOutput(identifier string, max int64) (Proces
 	}, nil
 }
 
+// endsWithNewline reports whether the first size bytes of path end a line.
+// A backlog cut mid-line must not be given a terminator of its own.
+func endsWithNewline(path string, size int64) bool {
+	if size <= 0 {
+		return true
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return true
+	}
+	defer file.Close()
+	var last [1]byte
+	if _, err := file.ReadAt(last[:], size-1); err != nil {
+		return true
+	}
+	return last[0] == '\n'
+}
+
 func (pm *ProcessManager) StreamProcessOutput(identifier string, w io.Writer) error {
 	process, exists := pm.GetProcessByIdentifier(identifier)
 	if !exists {
@@ -1302,18 +1374,38 @@ func (pm *ProcessManager) StreamProcessOutput(identifier string, w io.Writer) er
 			if truncated {
 				writeToLogWriter(w, "stdout", []byte(truncationMarker))
 			}
+			// backlogEnd is wherever the file happened to be when this writer
+			// attached, which can be mid-line. Ending that fragment with a
+			// newline would split one line in two, and the queued live output
+			// carrying its remainder would look like a second line.
+			backlogEndsMidLine := !endsWithNewline(process.LogFile, backlogEnd)
 			scanner := bufio.NewScanner(backlogReader(file, backlogEnd))
 			scanner.Buffer(make([]byte, 0, 64*1024), maxLogLineBytes)
-			for scanner.Scan() {
-				line := strings.TrimLeft(scanner.Text(), "\x00")
+			pendingLine := ""
+			havePending := false
+			emit := func(line string, last bool) {
+				terminator := "\n"
+				if last && backlogEndsMidLine {
+					terminator = ""
+				}
 				if strings.HasPrefix(line, "stdout:") {
-					writeToLogWriter(w, "stdout", []byte(strings.TrimPrefix(line, "stdout:")+"\n"))
+					writeToLogWriter(w, "stdout", []byte(strings.TrimPrefix(line, "stdout:")+terminator))
 				} else if strings.HasPrefix(line, "stderr:") {
-					writeToLogWriter(w, "stderr", []byte(strings.TrimPrefix(line, "stderr:")+"\n"))
+					writeToLogWriter(w, "stderr", []byte(strings.TrimPrefix(line, "stderr:")+terminator))
 				} else if line != "" {
 					// Fallback for unprefixed lines (shouldn't happen, but handle gracefully)
-					writeToLogWriter(w, "stdout", []byte(line+"\n"))
+					writeToLogWriter(w, "stdout", []byte(line+terminator))
 				}
+			}
+			for scanner.Scan() {
+				if havePending {
+					emit(pendingLine, false)
+				}
+				pendingLine = strings.TrimLeft(scanner.Text(), "\x00")
+				havePending = true
+			}
+			if havePending {
+				emit(pendingLine, true)
 			}
 			file.Close()
 		}
