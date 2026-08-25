@@ -90,8 +90,13 @@ type ImportResult struct {
 	// Relaunched are the identifiers of the newly started processes. They are
 	// new: the archived sandbox's PIDs mean nothing here.
 	Relaunched []string `json:"relaunched,omitempty"`
-	Bytes      int64    `json:"bytes"`
-	Duration   string   `json:"duration"`
+	// FailedRelaunches names the archived processes that could not be started
+	// again. The filesystem is the archive's, so the import itself succeeded, but
+	// part of the workload is missing and that has to be visible rather than
+	// living in a log line nobody reads.
+	FailedRelaunches []string `json:"failedRelaunches,omitempty"`
+	Bytes            int64    `json:"bytes"`
+	Duration         string   `json:"duration"`
 }
 
 // Marker is what an import leaves behind.
@@ -99,11 +104,12 @@ type Marker struct {
 	Version int `json:"version"`
 	// Archive identifies the archive, without the presigned query string, which
 	// is a credential and differs between two URLs of the same object.
-	Archive    string    `json:"archive"`
-	ImportedAt time.Time `json:"importedAt"`
-	Restored   int       `json:"restored"`
-	Deleted    int       `json:"deleted"`
-	Relaunched []string  `json:"relaunched,omitempty"`
+	Archive          string    `json:"archive"`
+	ImportedAt       time.Time `json:"importedAt"`
+	Restored         int       `json:"restored"`
+	Deleted          int       `json:"deleted"`
+	Relaunched       []string  `json:"relaunched,omitempty"`
+	FailedRelaunches []string  `json:"failedRelaunches,omitempty"`
 	// CreatedAt is when the archive was taken.
 	CreatedAt time.Time `json:"createdAt"`
 	// Partial records an import that failed after it had written to the
@@ -195,9 +201,11 @@ func importOnBoot(ctx context.Context, options ImportOptions) (*ImportResult, er
 		return nil, err
 	}
 
-	if len(result.Relaunched) > 0 {
-		// The processes exist now, so the record can name them. The import
-		// itself is already recorded, which is the part that must not be lost.
+	if len(result.Relaunched) > 0 || len(result.FailedRelaunches) > 0 {
+		// The processes exist now, so the record can name them - and name the
+		// ones that could not be started, which is the only lasting trace that
+		// part of the workload did not come back. The import itself is already
+		// recorded, which is the part that must not be lost.
 		if err := writeMarker(markerPath, markerFor(identity, result)); err != nil {
 			logrus.WithError(err).Warn("[Archive] Failed to record the relaunched processes of the import")
 		}
@@ -207,13 +215,14 @@ func importOnBoot(ctx context.Context, options ImportOptions) (*ImportResult, er
 
 func markerFor(identity string, result *ImportResult) Marker {
 	return Marker{
-		Version:    ManifestVersion,
-		Archive:    identity,
-		ImportedAt: time.Now(),
-		Restored:   result.Restored,
-		Deleted:    result.Deleted,
-		Relaunched: result.Relaunched,
-		CreatedAt:  result.Manifest.CreatedAt,
+		Version:          ManifestVersion,
+		Archive:          identity,
+		ImportedAt:       time.Now(),
+		Restored:         result.Restored,
+		Deleted:          result.Deleted,
+		Relaunched:       result.Relaunched,
+		FailedRelaunches: result.FailedRelaunches,
+		CreatedAt:        result.Manifest.CreatedAt,
 	}
 }
 
@@ -276,7 +285,7 @@ func Import(ctx context.Context, options ImportOptions) (*ImportResult, error) {
 	}
 
 	if options.relaunchProcesses() && len(processes) > 0 {
-		result.Relaunched = relaunch(processes)
+		result.Relaunched, result.FailedRelaunches = relaunch(processes)
 	}
 
 	result.Duration = time.Since(started).String()
@@ -716,16 +725,18 @@ func applyDeletions(root string, deleted, excludes []string) (int, error) {
 	return count, nil
 }
 
-// relaunch starts the processes the archive recorded as running, oldest first.
+// relaunch starts the processes the archive recorded as running, oldest first,
+// and reports the identifiers of the ones that started along with the names of
+// the ones that did not.
 //
 // They are started, not adopted: the archive carries no memory, so the PIDs it
 // records belong to a VM that no longer exists. Each process keeps its name, so
 // a caller that knew it by name still finds it, but its identifier is new.
-func relaunch(state []byte) []string {
+func relaunch(state []byte) (relaunched, failed []string) {
 	var saved process.ManagerState
 	if err := json.Unmarshal(state, &saved); err != nil {
 		logrus.WithError(err).Error("[Archive] Failed to read the archived process list, the workload is not relaunched")
-		return nil
+		return nil, nil
 	}
 
 	candidates := make([]process.ProcessState, 0, len(saved.Processes))
@@ -738,8 +749,28 @@ func relaunch(state []byte) []string {
 	sort.Slice(candidates, func(i, j int) bool { return candidates[i].StartedAt.Before(candidates[j].StartedAt) })
 
 	pm := process.GetProcessManager()
-	var relaunched []string
 	for _, archived := range candidates {
+		// The process manager refuses to start a process whose working directory
+		// is missing, and a directory the workload made under a path that is
+		// never archived - tmp, run - is missing on a restored sandbox. The
+		// directory is recreated rather than the process dropped: what the
+		// archive promises is the workload running again, and an empty working
+		// directory is what the archive says that path holds.
+		if archived.WorkingDir != "" && !exists(archived.WorkingDir) {
+			if err := os.MkdirAll(archived.WorkingDir, 0o755); err != nil {
+				logrus.WithError(err).WithFields(logrus.Fields{
+					"name":       archived.Name,
+					"workingDir": archived.WorkingDir,
+				}).Error("[Archive] Failed to recreate the working directory of an archived process")
+				failed = append(failed, archived.Name)
+				continue
+			}
+			logrus.WithFields(logrus.Fields{
+				"name":       archived.Name,
+				"workingDir": archived.WorkingDir,
+			}).Info("[Archive] Recreated the working directory of an archived process, which the archive does not carry")
+		}
+
 		identifier, err := pm.StartProcessWithName(
 			archived.Command,
 			archived.WorkingDir,
@@ -765,6 +796,7 @@ func relaunch(state []byte) []string {
 				"name":    archived.Name,
 				"command": archived.Command,
 			}).Error("[Archive] Failed to relaunch an archived process")
+			failed = append(failed, archived.Name)
 			continue
 		}
 		relaunched = append(relaunched, identifier)
@@ -783,7 +815,7 @@ func relaunch(state []byte) []string {
 			logrus.WithError(err).Error("[Archive] Failed to persist the relaunched processes")
 		}
 	}
-	return relaunched
+	return relaunched, failed
 }
 
 // redactURL strips the request URL out of a transport error. net/http reports a

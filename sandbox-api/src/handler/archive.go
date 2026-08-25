@@ -44,7 +44,10 @@ func (h *ArchiveHandler) HandleExport(c *gin.Context) {
 	}
 
 	if archive.Quiesced() {
-		h.SendJSON(c, http.StatusConflict, archive.Status())
+		// An error, not the bare status: a client reads the reason of a failure
+		// from the error field, and /archive/status is where the state itself is
+		// asked for.
+		h.SendError(c, http.StatusConflict, archive.ErrAlreadyQuiesced)
 		return
 	}
 
@@ -56,17 +59,13 @@ func (h *ArchiveHandler) HandleExport(c *gin.Context) {
 		h.SendError(c, http.StatusBadRequest, err)
 		return
 	}
-	if errors.Is(err, archive.ErrExportInProgress) {
-		// Another export, or a dry run, is reading the filesystem through the
-		// mountpoint this one would replace.
-		h.SendJSON(c, http.StatusConflict, archive.Status())
-		return
-	}
-	if errors.Is(err, archive.ErrAlreadyQuiesced) {
-		// The check above is not the authority: two exports arriving together
-		// both pass it, and only the export itself claims the sandbox
-		// atomically. The loser is a conflict, not a server error.
-		h.SendJSON(c, http.StatusConflict, archive.Status())
+	if errors.Is(err, archive.ErrExportInProgress) || errors.Is(err, archive.ErrAlreadyQuiesced) {
+		// ErrExportInProgress: another export, or a dry run, is reading the
+		// filesystem through the mountpoint this one would replace.
+		// ErrAlreadyQuiesced: the check above is not the authority - two exports
+		// arriving together both pass it, and only the export itself claims the
+		// sandbox atomically. The loser is a conflict, not a server error.
+		h.SendError(c, http.StatusConflict, err)
 		return
 	}
 	if err != nil {

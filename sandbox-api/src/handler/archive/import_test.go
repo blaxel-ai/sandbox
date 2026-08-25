@@ -292,8 +292,36 @@ func TestRelaunchSkipsProcessesThatWereNotRunning(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if relaunched := relaunch(state); len(relaunched) != 0 {
-		t.Errorf("only the processes that were running are relaunched, got %v", relaunched)
+	relaunched, failed := relaunch(state)
+	if len(relaunched) != 0 || len(failed) != 0 {
+		t.Errorf("only the processes that were running are relaunched, got %v and %v as failures", relaunched, failed)
+	}
+}
+
+func TestRelaunchRecreatesAWorkingDirectoryTheArchiveDoesNotCarry(t *testing.T) {
+	// A process working under tmp, or under any other path that is never
+	// archived, finds no such directory on a restored sandbox - and the process
+	// manager refuses to start a process whose working directory is missing.
+	workingDir := filepath.Join(t.TempDir(), "run", "worker")
+	state, err := json.Marshal(map[string]any{
+		"version": 1,
+		"processes": map[string]any{
+			"proc-1": map[string]any{
+				"pid": "proc-1", "name": "worker", "command": "true",
+				"status": "running", "workingDir": workingDir,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	relaunched, failed := relaunch(state)
+	if len(relaunched) != 1 || len(failed) != 0 {
+		t.Fatalf("the process should have been relaunched, got %v and %v as failures", relaunched, failed)
+	}
+	if info, err := os.Stat(workingDir); err != nil || !info.IsDir() {
+		t.Errorf("the working directory should have been recreated, got %v", err)
 	}
 }
 
