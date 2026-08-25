@@ -1844,6 +1844,20 @@ components:
           items:
             type: string
           type: array
+        headers:
+          additionalProperties:
+            type: string
+          description: >-
+            Headers are sent with the upload request as given. A presigned URL only
+
+            accepts the headers it was signed for, so these have to match what the
+
+            caller signed: sending one that was not signed, or signing one that is not
+
+            sent, is rejected as a signature mismatch. Typical use is a storage class,
+
+            x-amz-storage-class: GLACIER_IR.
+          type: object
         imageDevice:
           description: >-
             ImageDevice is the device holding the pristine image, /dev/vda by default.

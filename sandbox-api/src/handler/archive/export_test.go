@@ -131,6 +131,41 @@ func TestExportUploadsWithKnownLengthAndQuiesces(t *testing.T) {
 	}
 }
 
+func TestExportSendsTheSignedHeaders(t *testing.T) {
+	// A storage class has to be signed into the presigned URL and sent with the
+	// request, so the caller passes what it signed.
+	root, lower := fakeSandbox(t)
+	write(t, filepath.Join(root, "data/file"), "x", 0o644)
+
+	var storageClass, length string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		storageClass = r.Header.Get("x-amz-storage-class")
+		length = r.Header.Get("Content-Length")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	options := exportOptions(t, root, lower)
+	options.URL = server.URL
+	options.Headers = map[string]string{
+		"x-amz-storage-class": "GLACIER_IR",
+		// The request owns its length: honouring this one would announce a size
+		// that does not match the archive.
+		"Content-Length": "1",
+	}
+
+	result, err := Export(context.Background(), options)
+	if err != nil {
+		t.Fatalf("export failed: %v", err)
+	}
+	if storageClass != "GLACIER_IR" {
+		t.Errorf("expected the storage class to be sent, got %q", storageClass)
+	}
+	if parsed, err := strconv.ParseInt(length, 10, 64); err != nil || parsed != result.Size {
+		t.Errorf("expected Content-Length %d, got %q", result.Size, length)
+	}
+}
+
 func TestExportWithoutProcessesArchivesStorageOnly(t *testing.T) {
 	root, lower := fakeSandbox(t)
 	write(t, filepath.Join(root, "data/file"), "x", 0o644)

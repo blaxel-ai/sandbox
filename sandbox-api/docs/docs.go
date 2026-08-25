@@ -2263,6 +2263,13 @@ const docTemplate = `{
                         "type": "string"
                     }
                 },
+                "headers": {
+                    "description": "Headers are sent with the upload request as given. A presigned URL only\naccepts the headers it was signed for, so these have to match what the\ncaller signed: sending one that was not signed, or signing one that is not\nsent, is rejected as a signature mismatch. Typical use is a storage class,\nx-amz-storage-class: GLACIER_IR.",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
                 "imageDevice": {
                     "description": "ImageDevice is the device holding the pristine image, /dev/vda by default.\nmk3.0 exposes the same image as a ROM, /dev/ukp_rom0.",
                     "type": "string",

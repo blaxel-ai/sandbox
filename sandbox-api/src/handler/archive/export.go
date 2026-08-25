@@ -63,6 +63,12 @@ type ExportOptions struct {
 	ImageMountPoint string `json:"imageMountPoint,omitempty" example:"/mnt/lower"`
 	// StopTimeoutSeconds bounds the graceful stop of each process.
 	StopTimeoutSeconds int `json:"stopTimeoutSeconds,omitempty" example:"30"`
+	// Headers are sent with the upload request as given. A presigned URL only
+	// accepts the headers it was signed for, so these have to match what the
+	// caller signed: sending one that was not signed, or signing one that is not
+	// sent, is rejected as a signature mismatch. Typical use is a storage class,
+	// x-amz-storage-class: GLACIER_IR.
+	Headers map[string]string `json:"headers,omitempty"`
 
 	// root is only set by tests, which compare two plain directories instead of a
 	// live root and a mounted image.
@@ -250,7 +256,7 @@ func Export(ctx context.Context, options ExportOptions) (result *ExportResult, e
 		return result, nil
 	}
 
-	if err = upload(ctx, options.URL, size, func(w io.Writer) error {
+	if err = upload(ctx, options.URL, options.Headers, size, func(w io.Writer) error {
 		_, err := writeArchive(w, options.rootDir(), metadata, changes, true)
 		return err
 	}); err != nil {
@@ -419,7 +425,7 @@ func processState() ([]byte, error) {
 }
 
 // upload streams the archive to a presigned URL with a known length.
-func upload(ctx context.Context, url string, size int64, write func(io.Writer) error) error {
+func upload(ctx context.Context, url string, headers map[string]string, size int64, write func(io.Writer) error) error {
 	// The export holds the sandbox frozen until it returns, so the upload is not
 	// allowed to hang on storage indefinitely.
 	ctx, cancel := context.WithTimeout(ctx, transferTimeout)
@@ -439,9 +445,19 @@ func upload(ctx context.Context, url string, size int64, write func(io.Writer) e
 		return fmt.Errorf("failed to build the upload request: %w", err)
 	}
 	request.ContentLength = size
-	// No Content-Type: a presigned URL signs the headers it was generated for,
-	// and a signature computed without a content type does not match a request
-	// that sends one (S3 answers SignatureDoesNotMatch).
+	// No Content-Type by default: a presigned URL signs the headers it was
+	// generated for, and a signature computed without a content type does not
+	// match a request that sends one (S3 answers SignatureDoesNotMatch). The
+	// caller passes the headers it signed, if any.
+	for name, value := range headers {
+		// Content-Length and Host are the request's own, and letting a caller set
+		// them here would either be ignored or corrupt the request.
+		switch http.CanonicalHeaderKey(name) {
+		case "Content-Length", "Host":
+			continue
+		}
+		request.Header.Set(name, value)
+	}
 
 	response, err := transferClient.Do(request)
 	if err != nil {
