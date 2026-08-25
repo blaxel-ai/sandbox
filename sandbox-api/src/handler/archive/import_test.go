@@ -292,7 +292,7 @@ func TestRelaunchSkipsProcessesThatWereNotRunning(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	relaunched, failed := relaunch(state)
+	relaunched, failed := relaunch(DefaultRoot, state)
 	if len(relaunched) != 0 || len(failed) != 0 {
 		t.Errorf("only the processes that were running are relaunched, got %v and %v as failures", relaunched, failed)
 	}
@@ -316,12 +316,53 @@ func TestRelaunchRecreatesAWorkingDirectoryTheArchiveDoesNotCarry(t *testing.T) 
 		t.Fatal(err)
 	}
 
-	relaunched, failed := relaunch(state)
+	relaunched, failed := relaunch(DefaultRoot, state)
 	if len(relaunched) != 1 || len(failed) != 0 {
 		t.Fatalf("the process should have been relaunched, got %v and %v as failures", relaunched, failed)
 	}
 	if info, err := os.Stat(workingDir); err != nil || !info.IsDir() {
 		t.Errorf("the working directory should have been recreated, got %v", err)
+	}
+}
+
+func TestRelaunchRefusesAWorkingDirectoryThatBelongsToThePlatform(t *testing.T) {
+	// The process list comes out of the archive like any other member, so a
+	// crafted one names any working directory it likes - and recreating it would
+	// put a directory of the archive's choosing inside the trees holding the
+	// credentials and metadata this VM was given.
+	cases := map[string]string{
+		"the injected secrets":               "/run/secrets/blaxel",
+		"the platform's own tree":            "/bl/anything",
+		"this API's own state":               "/var/lib/blaxel/worker",
+		"a directory that is not absolute":   "relative/worker",
+		"a path climbing out of the sandbox": "/blaxel/../../etc/worker",
+	}
+	for name, workingDir := range cases {
+		t.Run(name, func(t *testing.T) {
+			if err := restorableWorkingDir(DefaultRoot, workingDir); err == nil {
+				t.Errorf("%s should not be recreated for an archived process", workingDir)
+			}
+		})
+	}
+
+	state, err := json.Marshal(map[string]any{
+		"version": 1,
+		"processes": map[string]any{
+			"proc-1": map[string]any{
+				"pid": "proc-1", "name": "worker", "command": "true",
+				"status": "running", "workingDir": "/run/secrets/blaxel",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	relaunched, failed := relaunch(DefaultRoot, state)
+	if len(relaunched) != 0 || len(failed) != 1 {
+		t.Fatalf("the process should have been reported as failed, got %v and %v as failures", relaunched, failed)
+	}
+	if exists("/run/secrets/blaxel") {
+		t.Error("a working directory under a path that is never restored must not be created")
 	}
 }
 

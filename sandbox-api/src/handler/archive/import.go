@@ -285,7 +285,7 @@ func Import(ctx context.Context, options ImportOptions) (*ImportResult, error) {
 	}
 
 	if options.relaunchProcesses() && len(processes) > 0 {
-		result.Relaunched, result.FailedRelaunches = relaunch(processes)
+		result.Relaunched, result.FailedRelaunches = relaunch(options.rootDir(), processes)
 	}
 
 	result.Duration = time.Since(started).String()
@@ -725,6 +725,41 @@ func applyDeletions(root string, deleted, excludes []string) (int, error) {
 	return count, nil
 }
 
+// platformPaths are the trees that belong to the platform rather than to the
+// workload: the credentials and metadata injected into this VM, and this API's
+// own state. They are excluded from an archive, and unlike the other excluded
+// paths - tmp, run - nothing may be created inside them on the archive's word.
+var platformPaths = []string{
+	"bl",
+	"run/secrets",
+	"var/run/secrets",
+	"var/lib/blaxel",
+	"var/log/sandbox-api",
+	"mnt/blaxel-archive-image",
+}
+
+// restorableWorkingDir reports whether a working directory an archive recorded
+// may be created here. The process list is part of the archive, so a crafted one
+// names any directory it likes, and creating it would put directories of the
+// archive's choosing inside the platform's own trees, or through a symlink a
+// restored member left on the way there.
+func restorableWorkingDir(root, dir string) error {
+	if !filepath.IsAbs(dir) {
+		// The archive records the absolute path the process ran in. Anything
+		// else would be created relative to wherever this API happens to run.
+		return fmt.Errorf("working directory %q is not absolute", dir)
+	}
+	name, err := memberName(dir)
+	if err != nil {
+		return err
+	}
+	if excludedPath(name, platformPaths) {
+		return fmt.Errorf("working directory %q belongs to the platform, not to the workload", dir)
+	}
+	_, err = resolve(root, name)
+	return err
+}
+
 // relaunch starts the processes the archive recorded as running, oldest first,
 // and reports the identifiers of the ones that started along with the names of
 // the ones that did not.
@@ -732,7 +767,7 @@ func applyDeletions(root string, deleted, excludes []string) (int, error) {
 // They are started, not adopted: the archive carries no memory, so the PIDs it
 // records belong to a VM that no longer exists. Each process keeps its name, so
 // a caller that knew it by name still finds it, but its identifier is new.
-func relaunch(state []byte) (relaunched, failed []string) {
+func relaunch(root string, state []byte) (relaunched, failed []string) {
 	var saved process.ManagerState
 	if err := json.Unmarshal(state, &saved); err != nil {
 		logrus.WithError(err).Error("[Archive] Failed to read the archived process list, the workload is not relaunched")
@@ -757,6 +792,14 @@ func relaunch(state []byte) (relaunched, failed []string) {
 		// archive promises is the workload running again, and an empty working
 		// directory is what the archive says that path holds.
 		if archived.WorkingDir != "" && !exists(archived.WorkingDir) {
+			if err := restorableWorkingDir(root, archived.WorkingDir); err != nil {
+				logrus.WithError(err).WithFields(logrus.Fields{
+					"name":       archived.Name,
+					"workingDir": archived.WorkingDir,
+				}).Error("[Archive] Refusing to recreate the working directory of an archived process")
+				failed = append(failed, archived.Name)
+				continue
+			}
 			if err := os.MkdirAll(archived.WorkingDir, 0o755); err != nil {
 				logrus.WithError(err).WithFields(logrus.Fields{
 					"name":       archived.Name,
