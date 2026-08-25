@@ -13,6 +13,7 @@ import (
 	"syscall"
 
 	"github.com/blaxel-ai/sandbox-api/src/handler/drive"
+	"github.com/blaxel-ai/sandbox-api/src/handler/process"
 )
 
 // ChangeKind classifies a path with respect to the pristine image.
@@ -87,35 +88,54 @@ var DefaultExcludes = []string{
 // executablePath reports the binary this process is running.
 var executablePath = os.Executable
 
-// executableExcludes names this API's own binary, relative to the root, so an
-// archive can neither carry it nor replace it.
+// apiBinaryDirs are the directories the images place this API in. They are named
+// statically rather than derived from the running process alone, since
+// os.Executable only reports the binary of the moment: after a hot upgrade that
+// is sandbox-api-upgraded, and the image's own path - the one the supervisor
+// execs on the next boot - would be left unprotected.
+var apiBinaryDirs = []string{"/usr/local/bin", "/blaxel"}
+
+// apiBinaryNames are the names this API is exec'd under: the image's, and the
+// one a hot upgrade installs beside it.
+var apiBinaryNames = []string{"sandbox-api", process.UpgradedBinaryName}
+
+// executableExcludes names every path this API may be exec'd from, relative to
+// the root, so an archive can neither carry one nor replace one.
 //
 // An archive is data the sandbox is handed - the URL it is read from comes from
-// the caller - and this binary is the one the supervisor execs again after a
-// crash, an OOM kill or a hot upgrade, as root. Restoring it would turn "restore
-// the workload's files" into "choose the code this sandbox runs next". It is not
-// workload state either: which build serves the API is the platform's business,
-// and an archive taken before an upgrade would otherwise put the old one back.
+// the caller - and these are the binaries the supervisor execs again after a
+// crash, an OOM kill or a hot upgrade, as root. Restoring one would turn "restore
+// the workload's files" into "choose the code this sandbox runs next". They are
+// not workload state either: which build serves the API is the platform's
+// business, and an archive taken before an upgrade would otherwise put the old
+// one back.
 //
-// The path is whatever is running, since the images do not agree on one
-// (/usr/local/bin/sandbox-api, /blaxel/sandbox-api), and it is resolved through
-// symlinks, since either may be a link to the other.
+// Both names are excluded in every directory an API binary is known to live in,
+// plus the directory of whatever is running, resolved through symlinks since the
+// image paths may be links to each other. The known directories are what makes
+// this hold when the running path says nothing about the image's - an upgraded
+// build, or an os.Executable that fails.
 //
 // executablePath is a variable so the tests can name a path outside their own
 // temporary directory, which the default excludes already cover.
 func executableExcludes() []string {
-	executable, err := executablePath()
-	if err != nil {
-		return nil
-	}
-	paths := []string{executable}
-	if resolved, err := filepath.EvalSymlinks(executable); err == nil && resolved != executable {
-		paths = append(paths, resolved)
+	dirs := append([]string(nil), apiBinaryDirs...)
+	if executable, err := executablePath(); err == nil {
+		dirs = append(dirs, filepath.Dir(executable))
+		if resolved, err := filepath.EvalSymlinks(executable); err == nil {
+			dirs = append(dirs, filepath.Dir(resolved))
+		}
 	}
 
 	var excludes []string
-	for _, path := range paths {
-		if rel := strings.TrimPrefix(filepath.Clean(path), "/"); rel != "" && rel != "." {
+	named := make(map[string]bool, len(dirs)*len(apiBinaryNames))
+	for _, dir := range dirs {
+		for _, name := range apiBinaryNames {
+			rel := strings.TrimPrefix(filepath.Join(dir, name), "/")
+			if rel == "" || rel == "." || named[rel] {
+				continue
+			}
+			named[rel] = true
 			excludes = append(excludes, rel)
 		}
 	}

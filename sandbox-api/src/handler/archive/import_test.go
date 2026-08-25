@@ -969,3 +969,44 @@ func TestImportNeverReplacesTheDriveMountBinary(t *testing.T) {
 		t.Errorf("the drive mount binary should be untouched, got %q (%v)", content, err)
 	}
 }
+
+func TestImportNeverReplacesAnAPIBinaryThisProcessIsNotRunning(t *testing.T) {
+	// A hot upgrade execs into sandbox-api-upgraded, so os.Executable stops
+	// naming the image's own binary - the one the supervisor execs on the next
+	// boot. Both names are excluded in every directory an API binary lives in,
+	// whatever is running and even when nothing can be read about it.
+	for name, executable := range map[string]func() (string, error){
+		"after an upgrade": func() (string, error) { return "/usr/local/bin/sandbox-api-upgraded", nil },
+		"unknown":          func() (string, error) { return "", errors.New("no executable") },
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			previous := executablePath
+			executablePath = executable
+			defer func() { executablePath = previous }()
+
+			members := []archiveMember{}
+			for _, path := range []string{"usr/local/bin/sandbox-api", "usr/local/bin/sandbox-api-upgraded", "blaxel/sandbox-api"} {
+				live := filepath.Join(root, path)
+				if err := os.MkdirAll(filepath.Dir(live), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(live, []byte("the platform's build"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				members = append(members, archiveMember{name: path, content: "the archive's build", mode: 0o755})
+			}
+
+			body := buildArchive(t, Manifest{Version: ManifestVersion, Root: "/"}, nil, members)
+			if _, err := Import(context.Background(), ImportOptions{URL: serve(t, body), root: root, MarkerPath: filepath.Join(root, "marker.json")}); err != nil {
+				t.Fatal(err)
+			}
+			for _, member := range members {
+				content, err := os.ReadFile(filepath.Join(root, member.name))
+				if err != nil || string(content) != "the platform's build" {
+					t.Errorf("%s should be untouched, got %q (%v)", member.name, content, err)
+				}
+			}
+		})
+	}
+}

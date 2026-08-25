@@ -1267,6 +1267,11 @@ func validateBinaryFormat(binaryPath string) error {
 	return nil
 }
 
+// UpgradedBinaryName is the file a hot upgrade installs next to the running
+// binary and execs into. It is exported because the paths this API may be
+// exec'd from have to be named where they are protected from being replaced.
+const UpgradedBinaryName = "sandbox-api-upgraded"
+
 // upgradeWithNewBinary moves the new binary to a permanent location and execs into it
 // We can't overwrite the running binary ("text file busy"), so we exec into a new file
 func upgradeWithNewBinary(newBinaryPath string) {
@@ -1295,7 +1300,7 @@ func upgradeWithNewBinary(newBinaryPath string) {
 	// Determine the permanent path for the new binary
 	// We place it in the same directory as the current binary
 	currentDir := filepath.Dir(currentExe)
-	permanentPath := filepath.Join(currentDir, "sandbox-api-upgraded")
+	permanentPath := filepath.Join(currentDir, UpgradedBinaryName)
 
 	logger.WithFields(logrus.Fields{
 		"current":       currentExe,
