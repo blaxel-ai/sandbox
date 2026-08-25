@@ -219,8 +219,32 @@ func buildProcessEnv(custom map[string]string) []string {
 	return finalEnv
 }
 
+// logFileName is the name a process's logs are written under. A process name is
+// whoever named it - an API caller, or the process list an archive carried - so
+// it is not a path component: one holding a separator, or "..", would open the
+// log files as root outside the log directory, following any symlink standing
+// where it lands.
+func logFileName(name string) string {
+	escaped := strings.Map(func(r rune) rune {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+			return r
+		case r == '-', r == '_', r == '.':
+			return r
+		default:
+			return '_'
+		}
+	}, name)
+	// A name made only of dots names the log directory itself, or its parent.
+	if strings.Trim(escaped, ".") == "" {
+		return strings.Repeat("_", len(escaped))
+	}
+	return escaped
+}
+
 // getLogFilePaths returns the log file paths for a process (stdout, stderr, combined)
 func getLogFilePaths(name string) (stdout, stderr, combined string) {
+	name = logFileName(name)
 	stdout = fmt.Sprintf("%s/%s.stdout.log", ProcessLogDir, name)
 	stderr = fmt.Sprintf("%s/%s.stderr.log", ProcessLogDir, name)
 	combined = fmt.Sprintf("%s/%s.log", ProcessLogDir, name)

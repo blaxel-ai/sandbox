@@ -760,6 +760,24 @@ func restorableWorkingDir(root, dir string) error {
 	return err
 }
 
+// restorableProcessName reports whether a name an archive recorded may be given
+// to a relaunched process. The name is not just a label: the process manager
+// builds this process's log files out of it, and opens them as root. A name
+// carrying a path of its own would therefore have a crafted process list decide
+// what those root-privileged writes truncate, anywhere on the filesystem.
+func restorableProcessName(name string) error {
+	if name == "" {
+		return errors.New("process name is empty")
+	}
+	if name != filepath.Base(name) || name == "." || name == ".." {
+		return fmt.Errorf("process name %q is a path, not a name", name)
+	}
+	if strings.ContainsRune(name, os.PathSeparator) || strings.ContainsRune(name, 0) {
+		return fmt.Errorf("process name %q contains a path separator", name)
+	}
+	return nil
+}
+
 // relaunch starts the processes the archive recorded as running, oldest first,
 // and reports the identifiers of the ones that started along with the names of
 // the ones that did not.
@@ -785,6 +803,12 @@ func relaunch(root string, state []byte) (relaunched, failed []string) {
 
 	pm := process.GetProcessManager()
 	for _, archived := range candidates {
+		if err := restorableProcessName(archived.Name); err != nil {
+			logrus.WithError(err).WithField("command", archived.Command).
+				Error("[Archive] Refusing to relaunch an archived process, its name is not one")
+			failed = append(failed, archived.Name)
+			continue
+		}
 		// The process manager refuses to start a process whose working directory
 		// is missing, and a directory the workload made under a path that is
 		// never archived - tmp, run - is missing on a restored sandbox. The

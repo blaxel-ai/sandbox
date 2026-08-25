@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -1000,5 +1001,35 @@ func TestRestartsSuspendedDuringTheDelayLeaveTheProcessDown(t *testing.T) {
 		}
 	case <-time.After(15 * time.Second):
 		t.Fatalf("Process %s kept restarting while restarts are suspended", pid)
+	}
+}
+
+func TestLogFilePathsStayInTheLogDirectory(t *testing.T) {
+	// A process name comes from whoever started it - an API caller, or the
+	// process list an archive carried - and the log files are opened as root, so
+	// a name that is a path would write outside the log directory.
+	for _, name := range []string{
+		"../../etc/passwd",
+		"../..",
+		"..",
+		".",
+		"/bl/credentials",
+		"worker/../../run/secrets/token",
+	} {
+		t.Run(name, func(t *testing.T) {
+			stdout, stderr, combined := getLogFilePaths(name)
+			for _, path := range []string{stdout, stderr, combined} {
+				if filepath.Dir(path) != ProcessLogDir {
+					t.Errorf("%s should have been written under %s", path, ProcessLogDir)
+				}
+			}
+		})
+	}
+
+	// Ordinary names are untouched, so the logs of a process keep the name they
+	// have always had.
+	stdout, _, _ := getLogFilePaths("my-worker.1")
+	if stdout != ProcessLogDir+"/my-worker.1.stdout.log" {
+		t.Errorf("an ordinary name should be used as it is, got %s", stdout)
 	}
 }

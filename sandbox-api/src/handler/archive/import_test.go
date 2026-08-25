@@ -1079,3 +1079,26 @@ func TestImportNeverReplacesAnAPIBinaryThisProcessIsNotRunning(t *testing.T) {
 		})
 	}
 }
+
+func TestImportRefusesAProcessNameThatIsAPath(t *testing.T) {
+	// The process manager builds a relaunched process's log files out of its
+	// name and opens them as root, so a name carrying a path of its own would
+	// have the archive choose what those writes truncate.
+	for _, name := range []string{
+		"",
+		".",
+		"..",
+		"../../bl/credentials",
+		"sub/worker",
+		"/etc/hostname",
+	} {
+		if err := restorableProcessName(name); err == nil {
+			t.Fatalf("process name %q was accepted", name)
+		}
+	}
+	for _, name := range []string{"worker", "my-worker.1", "worker_2"} {
+		if err := restorableProcessName(name); err != nil {
+			t.Fatalf("process name %q was refused: %v", name, err)
+		}
+	}
+}
