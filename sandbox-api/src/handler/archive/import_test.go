@@ -709,6 +709,46 @@ func TestImportIsPartialWhenOnlyTheParentsOfAFailedMemberWereCreated(t *testing.
 	}
 }
 
+func TestImportIsNotPartialWhenAFailedMemberRemovedNothing(t *testing.T) {
+	// The hardlink names a source the archive never carries, like the test
+	// above, but nothing stands under the member's own name: the failure
+	// removed nothing, so the filesystem is still the image's and the sandbox
+	// may boot on it rather than being quarantined.
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "srv"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := buildArchive(t, Manifest{Version: ManifestVersion, Root: "/"}, nil, []archiveMember{
+		{name: "srv/data", link: "srv/missing", hardlink: true, mode: 0o644},
+	})
+
+	_, err := Import(context.Background(), ImportOptions{URL: serve(t, body), root: root, MarkerPath: filepath.Join(root, "marker.json")})
+	if err == nil {
+		t.Fatal("expected the import to fail")
+	}
+	if errors.Is(err, ErrPartialImport) {
+		t.Errorf("a failure that removed nothing must let the sandbox boot on its image: %v", err)
+	}
+}
+
+func TestImportDoesNotCountDeletionsOfPathsTheImageNeverHad(t *testing.T) {
+	// A deletion of a path this image does not carry removes nothing, and
+	// counting it would report a filesystem the import never touched as
+	// changed - which is what decides whether the workload may start.
+	root := t.TempDir()
+	body := buildArchive(t, Manifest{Version: ManifestVersion, Root: "/", Deleted: []string{"srv/never-existed"}}, nil, []archiveMember{
+		{name: "srv/data", content: "restored", mode: 0o644},
+	})
+
+	result, err := Import(context.Background(), ImportOptions{URL: serve(t, body), root: root, MarkerPath: filepath.Join(root, "marker.json")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Deleted != 0 {
+		t.Errorf("expected no deletion to be counted, got %d", result.Deleted)
+	}
+}
+
 func TestImportRecordsItselfBeforeRelaunchingProcesses(t *testing.T) {
 	// The record has to exist before the archive has any effect: a crash between
 	// the two would leave the next boot importing the archive again, on top of

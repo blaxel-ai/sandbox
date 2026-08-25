@@ -493,10 +493,13 @@ func restore(root, target, name string, excludes []string, header *tar.Header, c
 		return false, nil
 	}
 
-	// The parents count as a write of their own, whether MkdirAll succeeds or
+	// Creating the parents is a write of its own, whether MkdirAll succeeds or
 	// not: it creates the ones it gets through before it stops, and once they
-	// exist the filesystem holds directories the image did not have - so every
-	// failure below this point is one that already changed the filesystem.
+	// exist the filesystem holds directories the image did not have. Every
+	// failure below carries that state on, and adds its own only when it did
+	// remove or write something - a failure that changed nothing must not be
+	// reported as partial, or the sandbox is quarantined over a filesystem that
+	// is still exactly the image's.
 	parent := filepath.Dir(target)
 	touched := !exists(parent)
 	if err := os.MkdirAll(parent, 0o755); err != nil {
@@ -513,8 +516,9 @@ func restore(root, target, name string, excludes []string, header *tar.Header, c
 				return touched, fmt.Errorf("archive member %q would replace %s, which holds paths that are never restored", name, target)
 			}
 			if err := os.Remove(target); err != nil {
-				return true, fmt.Errorf("failed to replace %s: %w", target, err)
+				return touched, fmt.Errorf("failed to replace %s: %w", target, err)
 			}
+			touched = true
 		}
 		// A directory holding paths that are never restored - etc, var/lib/blaxel -
 		// keeps the mode and ownership the image gave it. Taking the archive's
@@ -522,22 +526,32 @@ func restore(root, target, name string, excludes []string, header *tar.Header, c
 		// API's own state to the workload without ever naming those files as
 		// members, which is exactly what excluding them is for.
 		if excludesUnder(name, excludes) {
+			// The image already holds these directories, so restoring one usually
+			// changes nothing at all - and a change that did not happen must not
+			// be reported, or a later failure would quarantine a sandbox whose
+			// filesystem is still the image's.
+			created := !exists(target)
 			if err := os.MkdirAll(target, 0o755); err != nil {
-				return true, fmt.Errorf("failed to create %s: %w", target, err)
+				return touched, fmt.Errorf("failed to create %s: %w", target, err)
 			}
-			return true, nil
+			return touched || created, nil
+		}
+		if !exists(target) {
+			touched = true
 		}
 		if err := os.MkdirAll(target, header.FileInfo().Mode().Perm()); err != nil {
-			return true, fmt.Errorf("failed to create %s: %w", target, err)
+			return touched, fmt.Errorf("failed to create %s: %w", target, err)
 		}
 	case tar.TypeSymlink:
 		// A symlink cannot be reopened to be rewritten, and the path may hold
-		// the image's version of it.
+		// the image's version of it. Removing nothing is not a change: the link
+		// failing afterwards then leaves the filesystem as the image had it.
+		removed := exists(target)
 		if err := os.RemoveAll(target); err != nil {
-			return true, fmt.Errorf("failed to replace %s: %w", target, err)
+			return touched, fmt.Errorf("failed to replace %s: %w", target, err)
 		}
 		if err := os.Symlink(header.Linkname, target); err != nil {
-			return true, fmt.Errorf("failed to link %s: %w", target, err)
+			return touched || removed, fmt.Errorf("failed to link %s: %w", target, err)
 		}
 		// A symlink's own mode and times are not the target's, and lchown is the
 		// only one of the three that means anything here.
@@ -563,11 +577,12 @@ func restore(root, target, name string, excludes []string, header *tar.Header, c
 		if err != nil {
 			return touched, err
 		}
+		removed := exists(target)
 		if err := os.RemoveAll(target); err != nil {
-			return true, fmt.Errorf("failed to replace %s: %w", target, err)
+			return touched, fmt.Errorf("failed to replace %s: %w", target, err)
 		}
 		if err := os.Link(source, target); err != nil {
-			return true, fmt.Errorf("failed to hardlink %s: %w", target, err)
+			return touched || removed, fmt.Errorf("failed to hardlink %s: %w", target, err)
 		}
 		return true, nil
 	case tar.TypeReg:
@@ -580,7 +595,7 @@ func restore(root, target, name string, excludes []string, header *tar.Header, c
 		logrus.WithError(err).WithField("path", target).Debug("[Archive] Failed to restore the ownership")
 	}
 	if err := os.Chmod(target, header.FileInfo().Mode().Perm()); err != nil {
-		return true, fmt.Errorf("failed to set the mode of %s: %w", target, err)
+		return touched, fmt.Errorf("failed to set the mode of %s: %w", target, err)
 	}
 	if !header.ModTime.IsZero() {
 		if err := os.Chtimes(target, header.ModTime, header.ModTime); err != nil {
@@ -677,6 +692,11 @@ func applyDeletions(root string, deleted, excludes []string) (int, error) {
 		// be written: the filesystem would carry a path the archived sandbox had
 		// removed, so it is not the filesystem the archive describes, and the
 		// workload would start on a state that never existed.
+		// A path the image never had is nothing to remove, and counting it would
+		// report a filesystem the import has not touched as changed.
+		if !exists(target) {
+			continue
+		}
 		if err := os.RemoveAll(target); err != nil {
 			return count, fmt.Errorf("failed to apply the deletion of %s: %w", name, err)
 		}
