@@ -178,6 +178,27 @@ func excludedPath(rel string, excludes []string) bool {
 	return false
 }
 
+// excludesUnder reports whether rel is a directory holding an excluded path.
+// Such a directory is restored - the archive carries everything else in it - but
+// it cannot be replaced by something that is not a directory, nor deleted, since
+// either takes the excluded path away with it.
+func excludesUnder(rel string, excludes []string) bool {
+	rel = strings.Trim(rel, "/")
+	if rel == "" {
+		return len(excludes) > 0
+	}
+	for _, exclude := range excludes {
+		exclude = strings.Trim(exclude, "/")
+		if exclude == "" {
+			continue
+		}
+		if strings.HasPrefix(exclude, rel+"/") {
+			return true
+		}
+	}
+	return false
+}
+
 // scanLive walks the live root and reports added and modified paths.
 func (s *scanner) scanLive() ([]Change, error) {
 	var changes []Change

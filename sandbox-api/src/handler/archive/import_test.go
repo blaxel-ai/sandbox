@@ -408,3 +408,135 @@ func TestTransportErrorsDoNotCarryThePresignedURL(t *testing.T) {
 		t.Errorf("the object and the reason should survive the redaction, got %v", err)
 	}
 }
+
+func TestImportRefusesToReplaceADirectoryHoldingAnExcludedPath(t *testing.T) {
+	// etc/resolv.conf is never restored, but a symlink named etc carries the
+	// whole directory off with it, this VM's resolver configuration included.
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "etc"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "etc/resolv.conf"), []byte("platform"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	body := buildArchive(t, Manifest{Version: ManifestVersion, Root: "/"}, nil, []archiveMember{
+		{name: "etc", link: "/tmp/attacker", mode: 0o777},
+	})
+
+	if _, err := Import(context.Background(), ImportOptions{URL: serve(t, body), root: root, MarkerPath: filepath.Join(root, "marker.json")}); err == nil {
+		t.Fatal("expected a member shadowing a directory that holds an excluded path to be refused")
+	}
+	if content, err := os.ReadFile(filepath.Join(root, "etc/resolv.conf")); err != nil || string(content) != "platform" {
+		t.Errorf("the platform's resolver configuration should be untouched, got %q (%v)", content, err)
+	}
+}
+
+func TestImportRefusesToDeleteADirectoryHoldingAnExcludedPath(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "etc"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "etc/resolv.conf"), []byte("platform"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	body := buildArchive(t, Manifest{Version: ManifestVersion, Root: "/", Deleted: []string{"etc"}}, nil, nil)
+
+	result, err := Import(context.Background(), ImportOptions{URL: serve(t, body), root: root, MarkerPath: filepath.Join(root, "marker.json")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Deleted != 0 {
+		t.Errorf("expected the deletion to be refused, got %d applied", result.Deleted)
+	}
+	if content, err := os.ReadFile(filepath.Join(root, "etc/resolv.conf")); err != nil || string(content) != "platform" {
+		t.Errorf("the platform's resolver configuration should be untouched, got %q (%v)", content, err)
+	}
+}
+
+func TestImportRefusesAHardlinkToAnExcludedPath(t *testing.T) {
+	// A hardlink is the same file under another name: linking an excluded path
+	// into the restored tree hands over exactly what excluding it withheld.
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "bl"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "bl/token"), []byte("credential"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	body := buildArchive(t, Manifest{Version: ManifestVersion, Root: "/"}, nil, []archiveMember{
+		{name: "blaxel/stolen", link: "bl/token", hardlink: true, mode: 0o644},
+	})
+
+	if _, err := Import(context.Background(), ImportOptions{URL: serve(t, body), root: root, MarkerPath: filepath.Join(root, "marker.json")}); err == nil {
+		t.Fatal("expected a hardlink to an excluded path to be refused")
+	}
+	if _, err := os.Lstat(filepath.Join(root, "blaxel/stolen")); !os.IsNotExist(err) {
+		t.Errorf("nothing should have been linked, got %v", err)
+	}
+}
+
+func TestImportDoesNotWriteThroughASymlinkAtTheTemporaryPath(t *testing.T) {
+	// writeFile stages a member next to its target, at a name derived from the
+	// archive: a symlink planted there must not redirect the write.
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "srv"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(t.TempDir(), "elsewhere")
+	if err := os.WriteFile(outside, []byte("untouched"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, "srv/data.blaxel-import")); err != nil {
+		t.Fatal(err)
+	}
+
+	body := buildArchive(t, Manifest{Version: ManifestVersion, Root: "/"}, nil, []archiveMember{
+		{name: "srv/data", content: "payload", mode: 0o644},
+	})
+
+	if _, err := Import(context.Background(), ImportOptions{URL: serve(t, body), root: root, MarkerPath: filepath.Join(root, "marker.json")}); err != nil {
+		t.Fatal(err)
+	}
+	if content, err := os.ReadFile(filepath.Join(root, "srv/data")); err != nil || string(content) != "payload" {
+		t.Errorf("expected the member to be restored, got %q (%v)", content, err)
+	}
+	if content, err := os.ReadFile(outside); err != nil || string(content) != "untouched" {
+		t.Errorf("the import must not write through the planted symlink, got %q (%v)", content, err)
+	}
+}
+
+func TestImportReportsThatItWrotePartOfTheArchive(t *testing.T) {
+	// A truncated archive: the first member is restored, then the stream ends in
+	// the middle of the second. The caller has to be able to tell this from a
+	// failure that touched nothing, since the filesystem is now a mix of the
+	// image's files and the archive's.
+	root := t.TempDir()
+	body := buildArchive(t, Manifest{Version: ManifestVersion, Root: "/"}, nil, []archiveMember{
+		{name: "srv/first", content: "restored", mode: 0o644},
+		{name: "srv/second", content: strings.Repeat("x", 4096), mode: 0o644},
+	})
+
+	_, err := Import(context.Background(), ImportOptions{URL: serve(t, body[:len(body)-3072]), root: root, MarkerPath: filepath.Join(root, "marker.json")})
+	if !errors.Is(err, ErrPartialImport) {
+		t.Fatalf("expected a partially applied archive to be reported as such, got %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "marker.json")); !os.IsNotExist(err) {
+		t.Errorf("a failed import must not be recorded as done, got %v", err)
+	}
+}
+
+func TestImportFailingBeforeItWritesIsNotPartial(t *testing.T) {
+	root := t.TempDir()
+	body := buildArchive(t, Manifest{Version: ManifestVersion + 1, Root: "/"}, nil, nil)
+
+	_, err := Import(context.Background(), ImportOptions{URL: serve(t, body), root: root, MarkerPath: filepath.Join(root, "marker.json")})
+	if err == nil {
+		t.Fatal("expected the import to fail")
+	}
+	if errors.Is(err, ErrPartialImport) {
+		t.Errorf("an import that wrote nothing must let the sandbox boot on its image: %v", err)
+	}
+}

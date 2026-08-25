@@ -1,8 +1,10 @@
 package archive
 
 import (
+	"fmt"
 	"net"
 	"net/http"
+	"syscall"
 	"time"
 )
 
@@ -27,9 +29,39 @@ const (
 // request context carries transferTimeout for that.
 var transferClient = &http.Client{
 	Transport: &http.Transport{
-		DialContext:           (&net.Dialer{Timeout: dialTimeout}).DialContext,
+		DialContext: (&net.Dialer{
+			Timeout: dialTimeout,
+			Control: refuseLinkLocal,
+		}).DialContext,
 		TLSHandshakeTimeout:   handshakeTimeout,
 		IdleConnTimeout:       90 * time.Second,
 		ExpectContinueTimeout: 1 * time.Second,
 	},
+}
+
+// refuseLinkLocal refuses to connect to a link-local address.
+//
+// The archive URL comes from the caller - it has to, it is a presigned URL this
+// API cannot mint - and the caller may be the workload itself, so it decides
+// where an archive is read from and written to. That is its point, but it must not
+// double as a way to reach the addresses that answer only because of where this
+// process runs: the instance metadata service and the rest of the link-local
+// range are reachable from inside the VM and from nowhere else, and a request
+// this API makes to them carries the VM's identity rather than the caller's.
+//
+// The check is on the resolved address, after the name is looked up, so a
+// hostname resolving to a link-local address is refused too.
+func refuseLinkLocal(_, address string, _ syscall.RawConn) error {
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		host = address
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return nil
+	}
+	if ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
+		return fmt.Errorf("refusing to transfer an archive to or from the link-local address %s", ip)
+	}
+	return nil
 }

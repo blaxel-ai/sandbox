@@ -185,10 +185,10 @@ func main() {
 	// rather than race the extraction. It is a no-op unless the sandbox was
 	// started with an archive to import, and it happens once per filesystem:
 	// see archive.DefaultImportMarker.
-	importArchive(ctx)
+	restored := importArchive(ctx)
 
 	// Start background command if specified
-	if commandValue != "" {
+	if commandValue != "" && restored {
 		startBackgroundCommand(ctx, commandValue)
 	}
 
@@ -266,18 +266,31 @@ func newHTTPServer(addr string, handler http.Handler) *http.Server {
 // importArchive restores the filesystem of an archived sandbox, if this one was
 // given one to restore and has not restored it yet.
 //
-// A failure is not fatal: the sandbox boots without the archived data instead of
-// not booting at all, which leaves an operator something to look at and retry
-// from. It is synchronous — the whole point is that the workload starts on top of
-// the restored filesystem.
-func importArchive(ctx context.Context) {
+// A failure before anything was written is not fatal: the sandbox boots without
+// the archived data instead of not booting at all, which leaves an operator
+// something to look at and retry from. It is synchronous — the whole point is
+// that the workload starts on top of the restored filesystem.
+//
+// It returns false when the workload must not be started: a failure that already
+// wrote part of the archive leaves a filesystem that is neither the image's nor
+// the archived sandbox's, and running the workload on it would write more state
+// on top of a state that never existed. The sandbox stays up, frozen, so the
+// failure is visible through /archive/status rather than silently absorbed.
+func importArchive(ctx context.Context) bool {
 	result, err := archive.ImportOnBoot(ctx)
 	if errors.Is(err, archive.ErrNoImport) {
-		return
+		return true
+	}
+	if errors.Is(err, archive.ErrPartialImport) {
+		logrus.WithError(err).Error("The archive this sandbox was started from was only partially restored - the workload is not started and the filesystem is frozen")
+		if err := archive.Freeze("failed archive import"); err != nil {
+			logrus.WithError(err).Error("Failed to freeze the sandbox after a partial import")
+		}
+		return false
 	}
 	if err != nil {
 		logrus.WithError(err).Error("Failed to restore the archive this sandbox was started from - it boots with the filesystem of its image instead")
-		return
+		return true
 	}
 	logrus.WithFields(logrus.Fields{
 		"restored":   result.Restored,
@@ -285,6 +298,7 @@ func importArchive(ctx context.Context) {
 		"relaunched": len(result.Relaunched),
 		"duration":   result.Duration,
 	}).Info("Restored the sandbox filesystem from an archive")
+	return true
 }
 
 // startBackgroundCommand runs the given command string in a goroutine using the
@@ -323,6 +337,12 @@ func startBackgroundCommand(ctx context.Context, command string) {
 			return
 		}
 		oom.PreferAsVictim(cmd.Process.Pid)
+		// The process manager never hears about this command, and an archive
+		// export has to stop it like any other process: it is usually the
+		// workload, so leaving it running would let it write to the filesystem
+		// while the archive is read.
+		archive.RegisterStartupWorkload(cmd.Process.Pid)
+		defer archive.UnregisterStartupWorkload(cmd.Process.Pid)
 		logrus.Infof("Command started successfully")
 
 		if err := cmd.Wait(); err != nil {

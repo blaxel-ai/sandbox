@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -287,5 +288,38 @@ func TestWaitForExitSettlesOnTheCompletionChannel(t *testing.T) {
 
 	if pending := waitForExit([]stoppedProcess{candidate}, 100*time.Millisecond); len(pending) != 0 {
 		t.Errorf("expected the completed process to settle, got %d pending", len(pending))
+	}
+}
+
+func TestExportRefusesAnUntrustworthyImageSource(t *testing.T) {
+	// The export compares the live filesystem against the image the sandbox
+	// booted from, and what it compares against decides what ends up in the
+	// archive: a comparison against an empty directory reports the whole
+	// filesystem as changed, so a request cannot name one.
+	empty := t.TempDir()
+	regular := filepath.Join(t.TempDir(), "device")
+	if err := os.WriteFile(regular, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cases := map[string]ExportOptions{
+		"a mount point that is not a mount": {ImageMountPoint: empty},
+		"a relative mount point":            {ImageMountPoint: "mnt/lower"},
+		"a device outside /dev":             {ImageDevice: regular},
+		"a device path that is not clean":   {ImageDevice: "/dev/../" + strings.TrimPrefix(regular, "/")},
+	}
+	for name, options := range cases {
+		t.Run(name, func(t *testing.T) {
+			if err := options.validateImageSource(); err == nil {
+				t.Errorf("expected %s to be refused", name)
+			}
+		})
+	}
+
+	// The real device, when there is one, is accepted.
+	if _, err := os.Stat("/dev/null"); err == nil {
+		if err := (ExportOptions{ImageDevice: "/dev/null"}).validateImageSource(); err != nil {
+			t.Errorf("expected a real device to be accepted, got %v", err)
+		}
 	}
 }

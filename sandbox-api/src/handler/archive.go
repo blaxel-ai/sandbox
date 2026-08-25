@@ -56,6 +56,13 @@ func (h *ArchiveHandler) HandleExport(c *gin.Context) {
 		h.SendError(c, http.StatusBadRequest, err)
 		return
 	}
+	if errors.Is(err, archive.ErrAlreadyQuiesced) {
+		// The check above is not the authority: two exports arriving together
+		// both pass it, and only the export itself claims the sandbox
+		// atomically. The loser is a conflict, not a server error.
+		h.SendJSON(c, http.StatusConflict, archive.Status())
+		return
+	}
 	if err != nil {
 		h.SendError(c, http.StatusInternalServerError, err)
 		return

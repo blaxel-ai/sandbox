@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/blaxel-ai/sandbox-api/src/handler/process"
+	"github.com/blaxel-ai/sandbox-api/src/lib/blaxel"
 	"github.com/sirupsen/logrus"
 )
 
@@ -123,6 +124,48 @@ func (o ExportOptions) imageDevice() string {
 	return DefaultImageDevice
 }
 
+// validateImageSource checks what the archive is compared against, which decides
+// what ends up in it: a comparison against something that is not the image the
+// sandbox booted from reports the whole filesystem as added, and an archive of
+// the whole filesystem carries files the sandbox's own file API would refuse to
+// read. The request reaches this API from inside the sandbox, so neither field is
+// trusted:
+//   - the mount point must actually be a mount, which an empty directory the
+//     workload created is not;
+//   - the device must be a block device under /dev, not a file the workload
+//     wrote and can therefore choose the contents of.
+func (o ExportOptions) validateImageSource() error {
+	// A test compares two plain directories, deliberately, and neither of these
+	// is a mount or a device.
+	if o.root != "" {
+		return nil
+	}
+
+	if o.ImageMountPoint != "" {
+		if !filepath.IsAbs(o.ImageMountPoint) || o.ImageMountPoint != filepath.Clean(o.ImageMountPoint) {
+			return fmt.Errorf("imageMountPoint must be an absolute, clean path")
+		}
+		if !mounted(o.ImageMountPoint) {
+			return fmt.Errorf("imageMountPoint %s is not a mount point", o.ImageMountPoint)
+		}
+	}
+
+	if o.ImageDevice != "" {
+		device := filepath.Clean(o.ImageDevice)
+		if device != o.ImageDevice || !strings.HasPrefix(device, "/dev/") {
+			return fmt.Errorf("imageDevice must be a path under /dev")
+		}
+		info, err := os.Stat(device)
+		if err != nil {
+			return fmt.Errorf("image device %s is not available: %w", device, err)
+		}
+		if info.Mode()&os.ModeDevice == 0 {
+			return fmt.Errorf("imageDevice %s is not a device", device)
+		}
+	}
+	return nil
+}
+
 // Export archives the sandbox's filesystem changes to the presigned URL.
 //
 // A real export quiesces the sandbox first and never lifts the freeze: the
@@ -134,11 +177,22 @@ func Export(ctx context.Context, options ExportOptions) (result *ExportResult, e
 	if options.URL == "" && !options.DryRun {
 		return nil, ErrURLRequired
 	}
+	if err = options.validateImageSource(); err != nil {
+		return nil, err
+	}
 
 	started := time.Now()
 	result = &ExportResult{}
 
 	if !options.DryRun {
+		// Stopping the workload is what makes the sandbox look idle to the
+		// infrastructure: the processes holding the keep-alive are gone, and an
+		// export triggered from inside the sandbox is not an inbound connection
+		// either. A large archive takes longer than the idle deadline, so without
+		// this the VM is hibernated in the middle of the upload and the export
+		// dies with the sandbox.
+		defer blaxel.HoldAwake("the archive export")()
+
 		if err = Freeze("archive export"); err != nil {
 			return nil, err
 		}
@@ -293,11 +347,24 @@ func quiesceWorkload(options ExportOptions) ([]string, error) {
 		if info.Status != process.StatusRunning {
 			continue
 		}
-		candidate := stoppedProcess{identifier: info.PID, pid: info.ProcessPid, done: info.Done}
-		if err := pm.StopProcess(info.PID); err != nil {
-			logrus.WithError(err).WithField("process", info.PID).Warn("[Archive] Failed to stop process")
-			continue
+		identifier := info.PID
+		candidate := stoppedProcess{
+			identifier: identifier,
+			pid:        info.ProcessPid,
+			done:       info.Done,
+			kill:       func() error { return pm.KillProcess(identifier) },
 		}
+		// A process that could not be asked to stop is kept in the list rather
+		// than dropped: it is still running, so it is precisely the one that must
+		// go through the wait-and-kill path below instead of being left to write
+		// into the archive.
+		if err := pm.StopProcess(identifier); err != nil {
+			logrus.WithError(err).WithField("process", identifier).Warn("[Archive] Failed to stop process gracefully, it will be killed")
+		}
+		stopped = append(stopped, candidate)
+	}
+
+	if candidate, running := stopStartupWorkload(); running {
 		stopped = append(stopped, candidate)
 	}
 
@@ -306,7 +373,7 @@ func quiesceWorkload(options ExportOptions) ([]string, error) {
 	// deadline are killed.
 	if pending := waitForExit(stopped, options.stopTimeout()); len(pending) > 0 {
 		for _, candidate := range pending {
-			if err := pm.KillProcess(candidate.identifier); err != nil {
+			if err := candidate.kill(); err != nil {
 				logrus.WithError(err).WithField("process", candidate.identifier).Warn("[Archive] Failed to kill process")
 			}
 		}
@@ -349,6 +416,9 @@ type stoppedProcess struct {
 	identifier string
 	pid        int
 	done       chan struct{}
+	// kill sends SIGKILL, through the process manager for a process it owns and
+	// directly otherwise.
+	kill func() error
 }
 
 // exited reports whether the OS process is gone. The manager's own status says

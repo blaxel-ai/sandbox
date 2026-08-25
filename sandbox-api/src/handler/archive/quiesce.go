@@ -63,6 +63,11 @@ var (
 // filesystem, which is the one moment the freeze must not be lifted.
 var ErrExportInProgress = errors.New("an archive export is in progress")
 
+// ErrAlreadyQuiesced is returned by Freeze when the sandbox is already frozen,
+// so a second export is reported as the conflict it is rather than as a failure
+// of the export itself.
+var ErrAlreadyQuiesced = errors.New("sandbox is already frozen")
+
 // Quiesced reports whether the sandbox currently refuses mutating calls.
 func Quiesced() bool {
 	quiesceMu.RLock()
@@ -87,7 +92,7 @@ func Freeze(reason string) error {
 	quiesceMu.Lock()
 	defer quiesceMu.Unlock()
 	if quiesceStatus.State != StateActive {
-		return fmt.Errorf("sandbox is already %s (%s)", quiesceStatus.State, quiesceStatus.Reason)
+		return fmt.Errorf("%w: %s (%s)", ErrAlreadyQuiesced, quiesceStatus.State, quiesceStatus.Reason)
 	}
 	now := time.Now()
 	quiesceStatus = QuiesceStatus{

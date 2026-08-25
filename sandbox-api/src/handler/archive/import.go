@@ -16,9 +16,11 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/blaxel-ai/sandbox-api/src/handler/process"
+	"github.com/blaxel-ai/sandbox-api/src/lib/blaxel"
 	"github.com/sirupsen/logrus"
 )
 
@@ -42,6 +44,12 @@ const (
 // ErrNoImport is returned when there is nothing to import, so a caller can tell
 // it from a failed import.
 var ErrNoImport = errors.New("no archive to import")
+
+// ErrPartialImport reports an import that failed after it had already written to
+// the filesystem, which is the one failure a sandbox must not simply boot
+// through: the files are a mix of the image's and the archive's, and a workload
+// running on them would build on a state that never existed.
+var ErrPartialImport = errors.New("the archive was partially restored")
 
 // ImportOptions drives an import.
 type ImportOptions struct {
@@ -174,6 +182,12 @@ func Import(ctx context.Context, options ImportOptions) (*ImportResult, error) {
 		return nil, ErrNoImport
 	}
 
+	// A sandbox restoring a large archive has no workload running yet and no
+	// connection to answer, so it looks idle for as long as the download takes -
+	// long enough for the infrastructure to hibernate it in the middle of the
+	// restore.
+	defer blaxel.HoldAwake("the archive import")()
+
 	// The download runs before anything is served, so a storage stall would hold
 	// up the boot: it covers reading the body too, which is where a stalled
 	// transfer actually hangs.
@@ -231,7 +245,19 @@ func download(ctx context.Context, url string) (io.ReadCloser, error) {
 // carried, if any. Both compressed and uncompressed archives are accepted: the
 // export writes plain tar, but the manual procedure this replaces produced
 // tar.gz and those archives stay readable.
-func extract(body io.Reader, options ImportOptions) (*ImportResult, []byte, error) {
+func extract(body io.Reader, options ImportOptions) (_ *ImportResult, _ []byte, err error) {
+	// The archive is applied to the live filesystem, so a failure halfway through
+	// leaves a filesystem that is neither the image's nor the archive's. Nothing
+	// can be rolled back - the point of the import is that the workload starts on
+	// top of these files - so the one thing that must not happen is starting the
+	// workload on top of half of them without anyone knowing.
+	written := 0
+	defer func() {
+		if err != nil && written > 0 {
+			err = fmt.Errorf("%w: %w", ErrPartialImport, err)
+		}
+	}()
+
 	buffered := bufio.NewReader(body)
 	var reader io.Reader = buffered
 	if magic, err := buffered.Peek(2); err == nil && magic[0] == 0x1f && magic[1] == 0x8b {
@@ -293,14 +319,16 @@ func extract(body io.Reader, options ImportOptions) (*ImportResult, []byte, erro
 			return nil, nil, err
 		}
 
-		if err := restore(root, target, header, tr); err != nil {
+		if err := restore(root, target, name, excludes, header, tr); err != nil {
 			return nil, nil, err
 		}
 		result.Restored++
+		written++
 		result.Bytes += header.Size
 	}
 
 	deleted, err := applyDeletions(root, result.Manifest.Deleted, excludes)
+	written += deleted
 	if err != nil {
 		return nil, nil, err
 	}
@@ -358,7 +386,18 @@ func resolve(root, name string) (string, error) {
 // time it was archived with. Ownership is best effort: it needs privileges the
 // API does not always have, and a restored file the workload can read is better
 // than a failed import.
-func restore(root, target string, header *tar.Header, content io.Reader) error {
+func restore(root, target, name string, excludes []string, header *tar.Header, content io.Reader) error {
+	// Excluding a path only protects that path; the directory holding it is not
+	// excluded, since the archive has to be able to restore what else lives in
+	// it. Replacing such a directory with something that is not one, though,
+	// takes everything below it away - a symlink named "etc" would carry off the
+	// resolver configuration and the hostname the platform injected, none of
+	// which appear as members of their own. An archive is data the sandbox is
+	// handed, so it does not get to do that.
+	if header.Typeflag != tar.TypeDir && excludesUnder(name, excludes) {
+		return fmt.Errorf("archive member %q would replace a directory holding paths that are never restored", name)
+	}
+
 	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 		return fmt.Errorf("failed to create the parent of %s: %w", target, err)
 	}
@@ -369,6 +408,9 @@ func restore(root, target string, header *tar.Header, content io.Reader) error {
 		// sandbox has a directory: mkdir over it fails with ENOTDIR, and the
 		// type change is exactly what the archive is there to reproduce.
 		if info, err := os.Lstat(target); err == nil && !info.IsDir() {
+			if excludesUnder(name, excludes) {
+				return fmt.Errorf("archive member %q would replace %s, which holds paths that are never restored", name, target)
+			}
 			if err := os.Remove(target); err != nil {
 				return fmt.Errorf("failed to replace %s: %w", target, err)
 			}
@@ -394,7 +436,18 @@ func restore(root, target string, header *tar.Header, content io.Reader) error {
 	case tar.TypeLink:
 		// A hardlink's target is a member name, relative to the archive root,
 		// not to the member's own directory.
-		source, err := resolve(root, header.Linkname)
+		linkname, err := memberName(header.Linkname)
+		if err != nil {
+			return err
+		}
+		// Hardlinking an excluded path into the restored tree would hand the
+		// archive's owner the live file - a platform credential under bl/, the
+		// resolver configuration - under a name they choose, which is what the
+		// excludes exist to prevent.
+		if excludedPath(linkname, excludes) {
+			return fmt.Errorf("archive member %q would hardlink %q, which is never restored", name, linkname)
+		}
+		source, err := resolve(root, linkname)
 		if err != nil {
 			return err
 		}
@@ -441,7 +494,16 @@ func writeFile(target string, mode os.FileMode, content io.Reader) error {
 	}
 
 	temporary := target + ".blaxel-import"
-	file, err := os.OpenFile(temporary, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode)
+	// O_EXCL and O_NOFOLLOW rather than O_TRUNC: the name is derived from the
+	// archive, so it may already exist as a symlink pointing at a path the
+	// import would never write to, and opening it would write through it.
+	file, err := os.OpenFile(temporary, os.O_CREATE|os.O_WRONLY|os.O_EXCL|syscall.O_NOFOLLOW, mode)
+	if os.IsExist(err) {
+		if err = os.RemoveAll(temporary); err != nil {
+			return fmt.Errorf("failed to replace %s: %w", target, err)
+		}
+		file, err = os.OpenFile(temporary, os.O_CREATE|os.O_WRONLY|os.O_EXCL|syscall.O_NOFOLLOW, mode)
+	}
 	if err != nil {
 		return fmt.Errorf("failed to create %s: %w", target, err)
 	}
@@ -476,6 +538,12 @@ func applyDeletions(root string, deleted, excludes []string) (int, error) {
 			return 0, err
 		}
 		if excludedPath(name, excludes) {
+			continue
+		}
+		// Deleting a directory takes what is inside it along, including the paths
+		// that are never restored and that the platform injected into this VM.
+		if excludesUnder(name, excludes) {
+			logrus.WithField("path", name).Warn("[Archive] Refusing a deletion that would remove paths that are never restored")
 			continue
 		}
 		target, err := resolve(root, name)
