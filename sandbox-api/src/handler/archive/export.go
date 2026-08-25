@@ -145,6 +145,18 @@ func (o ExportOptions) validateImageSource() error {
 		if !filepath.IsAbs(o.ImageMountPoint) || o.ImageMountPoint != filepath.Clean(o.ImageMountPoint) {
 			return fmt.Errorf("imageMountPoint must be an absolute, clean path")
 		}
+		// Only two comparison sources make sense, and any other one is a way to
+		// choose what the archive carries: compared against a filesystem that is
+		// not the image - /proc, /dev, an attached drive - every path looks added,
+		// so the archive becomes a copy of the whole root, including the files the
+		// sandbox's file API refuses to read, streamed to a URL the caller chose.
+		//   - this API's own mountpoint, where the image is or was mounted, which is
+		//     how a caller reuses a mount instead of paying for another one;
+		//   - the root itself, which reports what a comparison against an identical
+		//     filesystem reports: nothing.
+		if o.ImageMountPoint != DefaultMountPoint && o.ImageMountPoint != DefaultRoot {
+			return fmt.Errorf("imageMountPoint must be %s or %s", DefaultMountPoint, DefaultRoot)
+		}
 		if !mounted(o.ImageMountPoint) {
 			return fmt.Errorf("imageMountPoint %s is not a mount point", o.ImageMountPoint)
 		}
@@ -244,6 +256,7 @@ func Export(ctx context.Context, options ExportOptions) (result *ExportResult, e
 	}
 
 	excludes := append(append([]string(nil), DefaultExcludes...), options.Excludes...)
+	excludes = append(excludes, executableExcludes()...)
 	// The comparison mount is on tmpfs and so already off the root device, but
 	// exclude it explicitly for the tests, which run entirely on one device.
 	if rel, err := filepath.Rel(options.rootDir(), mountPoint); err == nil && rel != "." && !strings.HasPrefix(rel, "..") {

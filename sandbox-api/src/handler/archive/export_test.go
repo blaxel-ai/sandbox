@@ -305,8 +305,12 @@ func TestExportRefusesAnUntrustworthyImageSource(t *testing.T) {
 	cases := map[string]ExportOptions{
 		"a mount point that is not a mount": {ImageMountPoint: empty},
 		"a relative mount point":            {ImageMountPoint: "mnt/lower"},
-		"a device outside /dev":             {ImageDevice: regular},
-		"a device path that is not clean":   {ImageDevice: "/dev/../" + strings.TrimPrefix(regular, "/")},
+		// A real mount is not enough: compared against /proc, /dev or an attached
+		// drive the archive becomes a copy of the whole root, uploaded wherever the
+		// request says.
+		"another filesystem's mount point": {ImageMountPoint: "/proc"},
+		"a device outside /dev":            {ImageDevice: regular},
+		"a device path that is not clean":  {ImageDevice: "/dev/../" + strings.TrimPrefix(regular, "/")},
 	}
 	for name, options := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -314,6 +318,12 @@ func TestExportRefusesAnUntrustworthyImageSource(t *testing.T) {
 				t.Errorf("expected %s to be refused", name)
 			}
 		})
+	}
+
+	// Comparing the root against itself is how a dry run is checked, and it
+	// reports nothing, so it stays allowed.
+	if err := (ExportOptions{ImageMountPoint: "/"}).validateImageSource(); err != nil {
+		t.Errorf("expected the root to be accepted, got %v", err)
 	}
 
 	// The real device, when there is one, is accepted.

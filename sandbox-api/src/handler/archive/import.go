@@ -298,6 +298,7 @@ func extract(body io.Reader, options ImportOptions) (_ *ImportResult, _ []byte, 
 
 	root := options.rootDir()
 	excludes := append(append([]string(nil), DefaultExcludes...), options.Excludes...)
+	excludes = append(excludes, executableExcludes()...)
 	result := &ImportResult{}
 	var processes []byte
 
@@ -463,6 +464,17 @@ func restore(root, target, name string, excludes []string, header *tar.Header, c
 			if err := os.Remove(target); err != nil {
 				return true, fmt.Errorf("failed to replace %s: %w", target, err)
 			}
+		}
+		// A directory holding paths that are never restored - etc, var/lib/blaxel -
+		// keeps the mode and ownership the image gave it. Taking the archive's
+		// instead would let it hand the resolver configuration, the hostname or this
+		// API's own state to the workload without ever naming those files as
+		// members, which is exactly what excluding them is for.
+		if excludesUnder(name, excludes) {
+			if err := os.MkdirAll(target, 0o755); err != nil {
+				return true, fmt.Errorf("failed to create %s: %w", target, err)
+			}
+			return true, nil
 		}
 		if err := os.MkdirAll(target, header.FileInfo().Mode().Perm()); err != nil {
 			return true, fmt.Errorf("failed to create %s: %w", target, err)

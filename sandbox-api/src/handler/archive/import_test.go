@@ -437,6 +437,76 @@ func TestImportRefusesToReplaceADirectoryHoldingAnExcludedPath(t *testing.T) {
 	}
 }
 
+func TestImportKeepsTheModeOfADirectoryHoldingAnExcludedPath(t *testing.T) {
+	// A directory member for etc is legitimate - the archive has to be able to
+	// restore what else lives there - but its mode and ownership are not: 0777 on
+	// etc hands the workload the resolver configuration, the hostname and the
+	// hosts file the platform injected, without the archive ever naming them.
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "etc"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "etc/resolv.conf"), []byte("platform"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	body := buildArchive(t, Manifest{Version: ManifestVersion, Root: "/"}, nil, []archiveMember{
+		{name: "etc", dir: true, mode: 0o777},
+		{name: "etc/motd", content: "workload", mode: 0o644},
+	})
+
+	if _, err := Import(context.Background(), ImportOptions{URL: serve(t, body), root: root, MarkerPath: filepath.Join(root, "marker.json")}); err != nil {
+		t.Fatal(err)
+	}
+
+	info, err := os.Stat(filepath.Join(root, "etc"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm()&0o022 != 0 {
+		t.Errorf("etc should not have become writable by the workload, got %v", info.Mode().Perm())
+	}
+	// The rest of the directory is still restored, which is why the member is
+	// accepted at all.
+	if content, err := os.ReadFile(filepath.Join(root, "etc/motd")); err != nil || string(content) != "workload" {
+		t.Errorf("expected the archived file to be restored, got %q (%v)", content, err)
+	}
+}
+
+func TestImportNeverReplacesTheRunningAPI(t *testing.T) {
+	// The binary this API is running is the one the supervisor execs again after
+	// a crash, an OOM kill or an upgrade, as root. An archive is data the sandbox
+	// is handed, so restoring it would let the archive choose the code the
+	// sandbox runs next.
+	root := t.TempDir()
+	// The test binary itself lives under /tmp, which the default excludes already
+	// cover, so the path an image actually uses is named instead.
+	executable := "/usr/local/bin/sandbox-api"
+	previous := executablePath
+	executablePath = func() (string, error) { return executable, nil }
+	defer func() { executablePath = previous }()
+
+	name := strings.TrimPrefix(executable, "/")
+	live := filepath.Join(root, name)
+	if err := os.MkdirAll(filepath.Dir(live), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(live, []byte("the platform's build"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	body := buildArchive(t, Manifest{Version: ManifestVersion, Root: "/"}, nil, []archiveMember{
+		{name: name, content: "the archive's build", mode: 0o755},
+	})
+
+	if _, err := Import(context.Background(), ImportOptions{URL: serve(t, body), root: root, MarkerPath: filepath.Join(root, "marker.json")}); err != nil {
+		t.Fatal(err)
+	}
+	if content, err := os.ReadFile(live); err != nil || string(content) != "the platform's build" {
+		t.Errorf("the running API should be untouched, got %q (%v)", content, err)
+	}
+}
+
 func TestImportRefusesToDeleteADirectoryHoldingAnExcludedPath(t *testing.T) {
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "etc"), 0o755); err != nil {

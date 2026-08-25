@@ -73,6 +73,44 @@ var DefaultExcludes = []string{
 	strings.TrimPrefix(DefaultImportMarker, "/"),
 }
 
+// executablePath reports the binary this process is running.
+var executablePath = os.Executable
+
+// executableExcludes names this API's own binary, relative to the root, so an
+// archive can neither carry it nor replace it.
+//
+// An archive is data the sandbox is handed - the URL it is read from comes from
+// the caller - and this binary is the one the supervisor execs again after a
+// crash, an OOM kill or a hot upgrade, as root. Restoring it would turn "restore
+// the workload's files" into "choose the code this sandbox runs next". It is not
+// workload state either: which build serves the API is the platform's business,
+// and an archive taken before an upgrade would otherwise put the old one back.
+//
+// The path is whatever is running, since the images do not agree on one
+// (/usr/local/bin/sandbox-api, /blaxel/sandbox-api), and it is resolved through
+// symlinks, since either may be a link to the other.
+//
+// executablePath is a variable so the tests can name a path outside their own
+// temporary directory, which the default excludes already cover.
+func executableExcludes() []string {
+	executable, err := executablePath()
+	if err != nil {
+		return nil
+	}
+	paths := []string{executable}
+	if resolved, err := filepath.EvalSymlinks(executable); err == nil && resolved != executable {
+		paths = append(paths, resolved)
+	}
+
+	var excludes []string
+	for _, path := range paths {
+		if rel := strings.TrimPrefix(filepath.Clean(path), "/"); rel != "" && rel != "." {
+			excludes = append(excludes, rel)
+		}
+	}
+	return excludes
+}
+
 // scanner walks the live root and the pristine image and reports the difference.
 type scanner struct {
 	root     string
