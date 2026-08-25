@@ -3,9 +3,13 @@
 package archive
 
 import (
+	"bufio"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"syscall"
 
 	"golang.org/x/sys/unix"
@@ -106,4 +110,51 @@ func mounted(mountpoint string) bool {
 		return false
 	}
 	return stat.Dev != parentStat.Dev
+}
+
+// mountedFromImage reports whether mountpoint holds the pristine image itself,
+// which being a mount does not say: anything the workload can mount - a drive it
+// attached, an image it built - shares nothing with the root, so comparing
+// against it reports the whole root as added. The mount table names both the
+// filesystem and the device it comes from, and only the devices the platform
+// attaches the image to, mounted as erofs, are the image.
+func mountedFromImage(mountpoint string) bool {
+	file, err := os.Open("/proc/self/mountinfo")
+	if err != nil {
+		return false
+	}
+	defer file.Close()
+	return mountHoldsImage(file, mountpoint)
+}
+
+// mountHoldsImage answers mountedFromImage from the mount table it is given.
+func mountHoldsImage(mountinfo io.Reader, mountpoint string) bool {
+	wanted := filepath.Clean(mountpoint)
+	matched := false
+	scanner := bufio.NewScanner(mountinfo)
+	for scanner.Scan() {
+		// "36 35 253:0 / /mnt/x rw,relatime - erofs /dev/vda ro": the mount point
+		// is the fifth field of the left half, the filesystem type and its source
+		// the first two of the right half.
+		line := scanner.Text()
+		separator := strings.Index(line, " - ")
+		if separator < 0 {
+			continue
+		}
+		left := strings.Fields(line[:separator])
+		right := strings.Fields(line[separator+len(" - "):])
+		if len(left) < 5 || len(right) < 2 {
+			continue
+		}
+		// Octal escapes are how the kernel writes a path holding a space or a tab.
+		// The mount points compared here hold neither, so an escaped path simply
+		// does not match.
+		if left[4] != wanted {
+			continue
+		}
+		// The last mount of a path is the one seen through it, so the answer is
+		// whatever the last matching line says rather than the first.
+		matched = right[0] == "erofs" && slices.Contains(imageDevices, right[1])
+	}
+	return matched
 }

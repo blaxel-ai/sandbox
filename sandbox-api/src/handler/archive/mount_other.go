@@ -28,3 +28,5 @@ func rootReadOnly(root string) (bool, error) { return false, nil }
 func syncFilesystem() {}
 
 func mounted(mountpoint string) bool { return false }
+
+func mountedFromImage(mountpoint string) bool { return false }

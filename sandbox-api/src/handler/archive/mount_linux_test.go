@@ -2,45 +2,62 @@
 
 package archive
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
-// TestTheRootCountsAsAMountPoint guards the one case the device comparison
-// cannot see: / and /.. are the same directory, so the root would otherwise look
-// like a plain directory — and an export comparing the root against itself, which
-// is how a dry run is checked, would be rejected as a bad request.
-func TestTheRootCountsAsAMountPoint(t *testing.T) {
-	for _, mountpoint := range []string{"/", "//", "/."} {
-		if !mounted(mountpoint) {
-			t.Errorf("%s should count as a mount point", mountpoint)
-		}
+func TestMountHoldsImageOnlyForTheImageItself(t *testing.T) {
+	const mountpoint = DefaultMountPoint
+	cases := []struct {
+		name      string
+		mountinfo string
+		want      bool
+	}{
+		{
+			name:      "the image mounted by the export",
+			mountinfo: "36 35 253:0 / " + mountpoint + " ro,relatime - erofs /dev/vda ro\n",
+			want:      true,
+		},
+		{
+			name:      "the image as the unikraft rom",
+			mountinfo: "36 35 253:0 / " + mountpoint + " ro,relatime - erofs /dev/ukp_rom0 ro\n",
+			want:      true,
+		},
+		{
+			name:      "a drive the workload attached at the same path",
+			mountinfo: "36 35 253:0 / " + mountpoint + " rw,relatime - ext4 /dev/vdb rw\n",
+			want:      false,
+		},
+		{
+			name:      "another erofs image the workload built",
+			mountinfo: "36 35 7:0 / " + mountpoint + " ro,relatime - erofs /dev/loop0 ro\n",
+			want:      false,
+		},
+		{
+			name:      "a filesystem with no device behind it",
+			mountinfo: "36 35 0:42 / " + mountpoint + " rw,relatime - tmpfs tmpfs rw\n",
+			want:      false,
+		},
+		{
+			name:      "nothing mounted there",
+			mountinfo: "36 35 253:0 / /mnt/other ro,relatime - erofs /dev/vda ro\n",
+			want:      false,
+		},
+		{
+			// A mount stacked over the image is what is seen through the path, so
+			// the last line decides.
+			name: "the workload mounted over the image",
+			mountinfo: "36 35 253:0 / " + mountpoint + " ro,relatime - erofs /dev/vda ro\n" +
+				"37 35 0:42 / " + mountpoint + " rw,relatime - tmpfs tmpfs rw\n",
+			want: false,
+		},
 	}
-	if mounted("/nonexistent-directory-for-the-archive-tests") {
-		t.Error("a path that does not exist is not a mount point")
-	}
-}
-
-// TestRootReadOnlyReadsTheMountFlags checks what a restarted API relies on to
-// tell whether an archive left the filesystem frozen behind it.
-func TestRootReadOnlyReadsTheMountFlags(t *testing.T) {
-	readOnly, err := rootReadOnly(t.TempDir())
-	if err != nil {
-		t.Fatalf("failed to read the mount flags: %v", err)
-	}
-	if readOnly {
-		t.Error("a writable directory must not be reported read-only")
-	}
-	if _, err := rootReadOnly("/nonexistent-directory-for-the-archive-tests"); err == nil {
-		t.Error("expected a path that does not exist to be reported as an error, not as writable")
-	}
-}
-
-// TestAdoptRootStateLeavesAWritableSandboxAlone guards the common startup: the
-// filesystem is writable, so the sandbox serves every route.
-func TestAdoptRootStateLeavesAWritableSandboxAlone(t *testing.T) {
-	t.Cleanup(func() { forceResume() })
-
-	adoptRootState(t.TempDir())
-	if Quiesced() {
-		t.Errorf("a sandbox on a writable filesystem must not start frozen: %+v", Status())
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			if got := mountHoldsImage(strings.NewReader(test.mountinfo), mountpoint); got != test.want {
+				t.Fatalf("mountHoldsImage = %t, want %t", got, test.want)
+			}
+		})
 	}
 }

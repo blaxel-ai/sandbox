@@ -182,6 +182,13 @@ func (o ExportOptions) validateImageSource() error {
 		if !mounted(o.ImageMountPoint) {
 			return invalidOptions("imageMountPoint %s is not a mount point", o.ImageMountPoint)
 		}
+		// Being a mount is not being the image: the workload can mount a drive of
+		// its own at this API's mountpoint, and a comparison against it reports
+		// every path as added. Only the root is taken on trust, since it is the
+		// filesystem being archived and nothing can be substituted for it.
+		if o.ImageMountPoint != DefaultRoot && !mountedFromImage(o.ImageMountPoint) {
+			return invalidOptions("imageMountPoint %s does not hold the sandbox image", o.ImageMountPoint)
+		}
 	}
 
 	if o.ImageDevice != "" {
@@ -270,9 +277,9 @@ func Export(ctx context.Context, options ExportOptions) (result *ExportResult, e
 	mountPoint := options.imageMountPoint()
 	if options.ImageMountPoint == "" {
 		// A mount already sitting at this API's own mountpoint is the leftover of
-		// an export that could not unmount it. It is replaced rather than reused:
-		// what it holds is unknown, and comparing against the wrong filesystem
-		// silently produces a wrong archive.
+		// an export that could not unmount it, or anything the workload mounted
+		// there. It is replaced rather than reused: what it holds is unknown, and
+		// comparing against the wrong filesystem silently produces a wrong archive.
 		if mounted(mountPoint) {
 			logrus.WithField("mountPoint", mountPoint).Warn("[Archive] Replacing a leftover image mount")
 			if err = unmountImage(mountPoint); err != nil {
