@@ -20,6 +20,8 @@ func setRootReadOnly(root string, readOnly bool) error {
 	return fmt.Errorf("remounting the sandbox root is only supported on linux")
 }
 
+func rootReadOnly(root string) (bool, error) { return false, nil }
+
 func syncFilesystem() {}
 
 func mounted(mountpoint string) bool { return false }

@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"syscall"
+
+	"golang.org/x/sys/unix"
 )
 
 // DefaultImageDevice is where the pristine EROFS image is attached. mk3.1
@@ -55,6 +57,17 @@ func setRootReadOnly(root string, readOnly bool) error {
 		return fmt.Errorf("failed to remount %s (readOnly=%t): %w", root, readOnly, err)
 	}
 	return nil
+}
+
+// rootReadOnly reports whether root is currently mounted read-only, which is
+// the only durable trace an interrupted archive leaves: the quiesce state lives
+// in this process's memory and the mount outlives it.
+func rootReadOnly(root string) (bool, error) {
+	var stat unix.Statfs_t
+	if err := unix.Statfs(root, &stat); err != nil {
+		return false, fmt.Errorf("failed to read the mount flags of %s: %w", root, err)
+	}
+	return stat.Flags&unix.ST_RDONLY != 0, nil
 }
 
 // syncFilesystem flushes pending writes before the filesystem is read.

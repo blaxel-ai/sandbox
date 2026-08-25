@@ -108,6 +108,40 @@ func Freeze(reason string) error {
 	return nil
 }
 
+// AdoptRootState makes the quiesce status say what the filesystem actually is,
+// at startup. The status is process memory and the read-only root is a mount, so
+// a restart in the middle of an archive - a crash, an upgrade, the API being
+// killed - would otherwise come back reporting itself active on a filesystem
+// where every write fails, and Resume would not even try to remount it, having
+// no memory of a freeze.
+//
+// The sandbox is reported quiesced instead, which is both true and what Resume
+// undoes: an operator gets a usable sandbox back with one call.
+func AdoptRootState() {
+	adoptRootState(DefaultRoot)
+}
+
+func adoptRootState(root string) {
+	readOnly, err := rootReadOnly(root)
+	if err != nil {
+		logrus.WithError(err).Warn("[Archive] Could not tell whether the root filesystem is read-only")
+		return
+	}
+	if !readOnly {
+		return
+	}
+	logrus.Warn("[Archive] The root filesystem is read-only at startup, an archive was interrupted: freezing the sandbox until it is resumed")
+	now := time.Now()
+	quiesceMu.Lock()
+	defer quiesceMu.Unlock()
+	quiesceStatus = QuiesceStatus{
+		State:        StateQuiesced,
+		Reason:       "an interrupted archive left the root filesystem read-only",
+		Since:        &now,
+		ReadOnlyRoot: true,
+	}
+}
+
 // Quarantine freezes the sandbox on a filesystem nothing may write to any more,
 // which is what a half restored archive leaves behind: neither the image's
 // filesystem nor the archived sandbox's.

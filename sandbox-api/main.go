@@ -180,6 +180,12 @@ func main() {
 		logrus.Infof("Shell args: %s", os.Getenv("SHELL_ARGS"))
 	}
 
+	// An archive interrupted by a crash or an upgrade leaves the root read-only,
+	// and nothing else of its state survives the restart. Adopt the filesystem's
+	// own state first, so the sandbox says it is frozen instead of failing every
+	// write while reporting itself healthy.
+	archive.AdoptRootState()
+
 	// Restore an archived filesystem before anything of the workload runs, so
 	// the command below and the relaunched processes see the restored files
 	// rather than race the extraction. It is a no-op unless the sandbox was
