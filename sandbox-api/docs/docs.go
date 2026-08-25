@@ -2288,7 +2288,7 @@ const docTemplate = `{
                     }
                 },
                 "imageDevice": {
-                    "description": "ImageDevice is the device holding the pristine image, /dev/vda by default.\nmk3.0 exposes the same image as a ROM, /dev/ukp_rom0.",
+                    "description": "ImageDevice is the device holding the pristine image, /dev/vda by default.\nA generation that attaches the image elsewhere names its device here.",
                     "type": "string",
                     "example": "/dev/vda"
                 },

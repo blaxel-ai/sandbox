@@ -60,7 +60,7 @@ var DefaultExcludes = []string{
 	"run",
 	"tmp",
 	"mnt",
-	// The unikraft filer mountpoint on mk3.0.
+	// The platform filer mountpoint on mk3.0.
 	"uk",
 	"etc/resolv.conf",
 	"etc/hostname",

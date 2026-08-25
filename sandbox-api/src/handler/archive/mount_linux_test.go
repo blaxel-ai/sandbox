@@ -12,6 +12,7 @@ func TestMountHoldsImageOnlyForTheImageItself(t *testing.T) {
 	cases := []struct {
 		name      string
 		mountinfo string
+		device    string
 		want      bool
 	}{
 		{
@@ -20,8 +21,9 @@ func TestMountHoldsImageOnlyForTheImageItself(t *testing.T) {
 			want:      true,
 		},
 		{
-			name:      "the image as the unikraft rom",
-			mountinfo: "36 35 253:0 / " + mountpoint + " ro,relatime - erofs /dev/ukp_rom0 ro\n",
+			name:      "the image on the device the export was told to use",
+			mountinfo: "36 35 253:0 / " + mountpoint + " ro,relatime - erofs /dev/rom0 ro\n",
+			device:    "/dev/rom0",
 			want:      true,
 		},
 		{
@@ -55,7 +57,11 @@ func TestMountHoldsImageOnlyForTheImageItself(t *testing.T) {
 	}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
-			if got := mountHoldsImage(strings.NewReader(test.mountinfo), mountpoint); got != test.want {
+			device := test.device
+			if device == "" {
+				device = DefaultImageDevice
+			}
+			if got := mountHoldsImage(strings.NewReader(test.mountinfo), mountpoint, device); got != test.want {
 				t.Fatalf("mountHoldsImage = %t, want %t", got, test.want)
 			}
 		})
