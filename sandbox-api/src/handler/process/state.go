@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/blaxel-ai/sandbox-api/src/handler/constants"
+	"github.com/blaxel-ai/sandbox-api/src/lib/blaxel"
 	"github.com/sirupsen/logrus"
 )
 
@@ -321,6 +322,18 @@ func (pm *ProcessManager) LoadState() error {
 			// Note: Log file will be read on-demand when logs are requested
 			// We don't need to keep a file handle open for tailing since
 			// the child process writes directly to the log file
+
+			// Re-take the scale-to-zero hold the previous run held for this
+			// process: startup resets the counter to 0, so without this the
+			// sandbox could hibernate under a still-running keepAlive workload.
+			if proc.KeepAlive {
+				if err := blaxel.ScaleDisable(); err != nil {
+					logrus.WithError(err).WithFields(logrus.Fields{
+						"pid":  proc.PID,
+						"name": proc.Name,
+					}).Warn("[KeepAlive] Failed to disable scale-to-zero for adopted process")
+				}
+			}
 
 			// Start a goroutine to monitor the adopted process
 			go pm.monitorAdoptedProcess(proc)
@@ -636,6 +649,23 @@ func (pm *ProcessManager) monitorAdoptedProcess(proc *ProcessInfo) {
 				close(proc.Done)
 				close(proc.TailDone)
 				proc.markFinished()
+
+				// Release the scale-to-zero hold taken when the process was
+				// adopted. Stop/Kill clear KeepAlive under the lock before
+				// signalling, so this only fires when the process exited on
+				// its own and no other path released the hold.
+				pm.mu.Lock()
+				wasKeepAlive := proc.KeepAlive
+				proc.KeepAlive = false
+				pm.mu.Unlock()
+				if wasKeepAlive {
+					if err := blaxel.ScaleEnable(); err != nil {
+						logrus.WithError(err).WithFields(logrus.Fields{
+							"pid":  proc.PID,
+							"name": proc.Name,
+						}).Warn("[KeepAlive] Failed to enable scale-to-zero after adopted process exited")
+					}
+				}
 
 				logrus.WithFields(logrus.Fields{
 					"pid":         proc.PID,

@@ -105,11 +105,11 @@ func main() {
 	// every process, including ones started before the rotation.
 	proxy.Start(ctx)
 
-	// Parallel: all four tasks are independent of each other
+	// Parallel: the tasks are independent of each other
 	pm := process.GetProcessManager()
 	txn := sentry.StartSpan(ctx, "startup")
 	var wg sync.WaitGroup
-	wg.Add(4)
+	wg.Add(3)
 
 	go func() {
 		defer wg.Done()
@@ -129,15 +129,15 @@ func main() {
 	}()
 	go func() {
 		defer wg.Done()
+		// Reset the counter before loading state: LoadState re-takes the
+		// scale-to-zero hold of every adopted keepAlive process, and a
+		// concurrent reset would wipe those holds.
 		span := txn.StartChild("startup.scale_reset")
-		defer span.Finish()
 		if err := blaxel.ScaleReset(); err != nil {
 			logrus.Warnf("Failed to reset scale-to-zero counter on startup: %v", err)
 		}
-	}()
-	go func() {
-		defer wg.Done()
-		span := txn.StartChild("startup.load_state")
+		span.Finish()
+		span = txn.StartChild("startup.load_state")
 		defer span.Finish()
 		if err := pm.LoadState(); err != nil {
 			logrus.WithError(err).Warn("Failed to load process state from disk")

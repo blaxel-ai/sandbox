@@ -368,8 +368,20 @@ func (w *WireGuardClient) setupRoutes(wgLink netlink.Link) error {
 	// Get current default gateway
 	defaultGW, defaultIface, err := getDefaultGateway()
 	if err != nil {
-		logrus.WithError(err).Warn("Could not detect default gateway, skipping route setup")
-		return nil
+		// A previous run replaced the default route with one through its own
+		// TUN device and died without restoring it (e.g. reboot -f): the wg
+		// route vanished with the device and left no default route at all.
+		// The host route to the peer endpoint it installed on the physical
+		// interface survives, so the original gateway can be recovered from it.
+		defaultGW, defaultIface, err = getGatewayFromPeerRoute(peerIP, wgLink.Attrs().Index)
+		if err != nil {
+			logrus.WithError(err).Warn("Could not detect default gateway, skipping route setup")
+			return nil
+		}
+		logrus.WithFields(logrus.Fields{
+			"gateway":   defaultGW.String(),
+			"interface": defaultIface,
+		}).Info("No default route found, recovered original gateway from existing peer endpoint route")
 	}
 
 	// Store for later cleanup
@@ -557,6 +569,46 @@ func hexEncode(base64Key string) (string, error) {
 func isDefaultRoute(route netlink.Route) bool {
 	return route.Dst == nil ||
 		(route.Dst != nil && route.Dst.IP.Equal(net.IPv4zero) && route.Dst.Mask.String() == "00000000")
+}
+
+// getGatewayFromPeerRoute recovers the original default gateway from the host
+// route to the WireGuard peer endpoint. setupRoutes installs that route on the
+// physical interface, and it survives a crash of the process that owned the
+// TUN device, unlike the default route it replaced.
+func getGatewayFromPeerRoute(peerIP net.IP, wgLinkIndex int) (net.IP, string, error) {
+	routes, err := netlink.RouteList(nil, syscall.AF_INET)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to list routes: %w", err)
+	}
+
+	route, ok := findPeerRoute(routes, peerIP, wgLinkIndex)
+	if !ok {
+		return nil, "", fmt.Errorf("no route to peer endpoint %s found", peerIP)
+	}
+
+	link, err := netlink.LinkByIndex(route.LinkIndex)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to get link for peer route: %w", err)
+	}
+	return route.Gw, link.Attrs().Name, nil
+}
+
+// findPeerRoute returns the host route to peerIP that goes through a gateway
+// on an interface other than the WireGuard link itself.
+func findPeerRoute(routes []netlink.Route, peerIP net.IP, wgLinkIndex int) (netlink.Route, bool) {
+	for _, route := range routes {
+		if route.Dst == nil || !route.Dst.IP.Equal(peerIP) {
+			continue
+		}
+		if ones, bits := route.Dst.Mask.Size(); ones != bits {
+			continue
+		}
+		if route.Gw == nil || route.LinkIndex == wgLinkIndex {
+			continue
+		}
+		return route, true
+	}
+	return netlink.Route{}, false
 }
 
 // getDefaultGateway returns the default gateway IP and interface name using netlink
