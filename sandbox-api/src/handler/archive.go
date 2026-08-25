@@ -56,6 +56,12 @@ func (h *ArchiveHandler) HandleExport(c *gin.Context) {
 		h.SendError(c, http.StatusBadRequest, err)
 		return
 	}
+	if errors.Is(err, archive.ErrExportInProgress) {
+		// Another export, or a dry run, is reading the filesystem through the
+		// mountpoint this one would replace.
+		h.SendJSON(c, http.StatusConflict, archive.Status())
+		return
+	}
 	if errors.Is(err, archive.ErrAlreadyQuiesced) {
 		// The check above is not the authority: two exports arriving together
 		// both pass it, and only the export itself claims the sandbox

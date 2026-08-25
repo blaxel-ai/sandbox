@@ -586,8 +586,14 @@ func restore(root, target, name string, excludes []string, header *tar.Header, c
 		}
 		return true, nil
 	case tar.TypeReg:
-		if changed, err := writeFile(target, header.FileInfo().Mode().Perm(), content); err != nil {
-			return touched || changed, err
+		changed, err := writeFile(target, header.FileInfo().Mode().Perm(), content)
+		if changed {
+			// Carried past the error too: the mode and the times are set below,
+			// and a failure there comes after the content was already replaced.
+			touched = true
+		}
+		if err != nil {
+			return touched, err
 		}
 	}
 

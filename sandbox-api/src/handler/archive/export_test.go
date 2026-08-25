@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -204,6 +205,43 @@ func TestExportRefusesConcurrentExport(t *testing.T) {
 	}
 	if _, err := Export(context.Background(), options); err == nil {
 		t.Error("expected a second export to be refused while the sandbox is frozen")
+	}
+}
+
+func TestExportRefusesADryRunWhileAnExportIsReadingTheImage(t *testing.T) {
+	// A dry run is not held back by the freeze, but it mounts the pristine
+	// image at the same place: replacing that mount under a running export
+	// would have it compare the filesystem against an empty directory and
+	// archive the whole root.
+	root, lower := fakeSandbox(t)
+	uploading := make(chan struct{})
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(uploading)
+		<-release
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	options := exportOptions(t, root, lower)
+	options.URL = server.URL
+	done := make(chan error, 1)
+	go func() {
+		_, err := Export(context.Background(), options)
+		done <- err
+	}()
+	<-uploading
+
+	dry := options
+	dry.URL = ""
+	dry.DryRun = true
+	if _, err := Export(context.Background(), dry); !errors.Is(err, ErrExportInProgress) {
+		t.Errorf("expected the dry run to be refused while an export holds the image mount, got %v", err)
+	}
+
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatalf("export failed: %v", err)
 	}
 }
 

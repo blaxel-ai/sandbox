@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -37,6 +38,10 @@ const (
 	// waiting for them to exit.
 	processPollInterval = 100 * time.Millisecond
 )
+
+// exportMu is held for the whole of an export, dry run included, since they
+// share the mountpoint the pristine image is compared from.
+var exportMu sync.Mutex
 
 // APIVersion is the sandbox-api build recorded in the manifests it produces.
 // Set from the handler, which owns the build information.
@@ -196,6 +201,16 @@ func Export(ctx context.Context, options ExportOptions) (result *ExportResult, e
 	if err = options.validateImageSource(); err != nil {
 		return nil, err
 	}
+
+	// Dry runs and real exports alike: they all mount the pristine image at the
+	// same point, and the freeze only holds back the real ones. A second export
+	// replacing that mount while the first is reading it compares the filesystem
+	// against nothing, so the loser waits for another time rather than making
+	// both archives wrong.
+	if !exportMu.TryLock() {
+		return nil, ErrExportInProgress
+	}
+	defer exportMu.Unlock()
 
 	started := time.Now()
 	result = &ExportResult{}
