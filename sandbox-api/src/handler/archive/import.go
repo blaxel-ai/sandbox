@@ -385,6 +385,12 @@ func extract(body io.Reader, options ImportOptions) (_ *ImportResult, _ []byte, 
 		}
 
 		wrote, err := restore(root, target, name, excludes, header, tr)
+		if wrote {
+			// Counted before the error is looked at: a member that failed
+			// halfway still changed the filesystem, and that is what decides
+			// whether the workload may start on it.
+			written++
+		}
 		if err != nil {
 			return nil, nil, err
 		}
@@ -397,7 +403,6 @@ func extract(body io.Reader, options ImportOptions) (_ *ImportResult, _ []byte, 
 			continue
 		}
 		result.Restored++
-		written++
 		result.Bytes += header.Size
 	}
 
@@ -461,8 +466,11 @@ func resolve(root, name string) (string, error) {
 // API does not always have, and a restored file the workload can read is better
 // than a failed import.
 //
-// It reports whether the filesystem was touched, which is false for a member of
-// a type this does not restore.
+// It reports whether the filesystem was touched, which a failure can also do:
+// a member removed before it could be rewritten leaves a filesystem that is
+// neither the image's nor the archive's, and the caller decides what to make of
+// that. It is false for a member of a type this does not restore, and for one
+// that failed before it changed anything.
 func restore(root, target, name string, excludes []string, header *tar.Header, content io.Reader) (bool, error) {
 	// Excluding a path only protects that path; the directory holding it is not
 	// excluded, since the archive has to be able to restore what else lives in
@@ -485,8 +493,11 @@ func restore(root, target, name string, excludes []string, header *tar.Header, c
 		return false, nil
 	}
 
+	// Reported as a write even when it fails: MkdirAll creates the parents it
+	// gets through before it stops, so the filesystem may already be holding
+	// directories the image did not have.
 	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-		return false, fmt.Errorf("failed to create the parent of %s: %w", target, err)
+		return true, fmt.Errorf("failed to create the parent of %s: %w", target, err)
 	}
 
 	switch header.Typeflag {
@@ -557,8 +568,8 @@ func restore(root, target, name string, excludes []string, header *tar.Header, c
 		}
 		return true, nil
 	case tar.TypeReg:
-		if err := writeFile(target, header.FileInfo().Mode().Perm(), content); err != nil {
-			return true, err
+		if changed, err := writeFile(target, header.FileInfo().Mode().Perm(), content); err != nil {
+			return changed, err
 		}
 	}
 
@@ -579,11 +590,17 @@ func restore(root, target, name string, excludes []string, header *tar.Header, c
 // writeFile replaces target's content. The file is written and renamed, so a
 // binary the sandbox is running is replaced rather than overwritten in place,
 // which would fail with ETXTBSY.
-func writeFile(target string, mode os.FileMode, content io.Reader) error {
+//
+// It reports whether the filesystem was changed, which a failure does not do on
+// its own: the content goes to a temporary file that is removed again, so a
+// download cut short leaves the image's file as it was.
+func writeFile(target string, mode os.FileMode, content io.Reader) (bool, error) {
+	changed := false
 	if info, err := os.Lstat(target); err == nil && info.IsDir() {
 		if err := os.RemoveAll(target); err != nil {
-			return fmt.Errorf("failed to replace the directory %s: %w", target, err)
+			return true, fmt.Errorf("failed to replace the directory %s: %w", target, err)
 		}
+		changed = true
 	}
 
 	temporary := target + ".blaxel-import"
@@ -593,27 +610,30 @@ func writeFile(target string, mode os.FileMode, content io.Reader) error {
 	file, err := os.OpenFile(temporary, os.O_CREATE|os.O_WRONLY|os.O_EXCL|syscall.O_NOFOLLOW, mode)
 	if os.IsExist(err) {
 		if err = os.RemoveAll(temporary); err != nil {
-			return fmt.Errorf("failed to replace %s: %w", target, err)
+			return changed, fmt.Errorf("failed to replace %s: %w", target, err)
 		}
+		// Whatever stood under the temporary name is gone, and the archive is
+		// what named it: the filesystem is not the image's any more.
+		changed = true
 		file, err = os.OpenFile(temporary, os.O_CREATE|os.O_WRONLY|os.O_EXCL|syscall.O_NOFOLLOW, mode)
 	}
 	if err != nil {
-		return fmt.Errorf("failed to create %s: %w", target, err)
+		return changed, fmt.Errorf("failed to create %s: %w", target, err)
 	}
 	if _, err := io.Copy(file, content); err != nil {
 		file.Close()
 		os.Remove(temporary)
-		return fmt.Errorf("failed to write %s: %w", target, err)
+		return changed, fmt.Errorf("failed to write %s: %w", target, err)
 	}
 	if err := file.Close(); err != nil {
 		os.Remove(temporary)
-		return fmt.Errorf("failed to close %s: %w", target, err)
+		return changed, fmt.Errorf("failed to close %s: %w", target, err)
 	}
 	if err := os.Rename(temporary, target); err != nil {
 		os.Remove(temporary)
-		return fmt.Errorf("failed to install %s: %w", target, err)
+		return changed, fmt.Errorf("failed to install %s: %w", target, err)
 	}
-	return nil
+	return true, nil
 }
 
 // applyDeletions removes the paths the archived sandbox had deleted from the

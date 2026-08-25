@@ -660,6 +660,33 @@ func TestImportFailingBeforeItWritesIsNotPartial(t *testing.T) {
 	}
 }
 
+func TestImportIsPartialWhenAMemberFailsAfterTouchingTheFilesystem(t *testing.T) {
+	// A member can fail once it has already changed the filesystem: this
+	// hardlink names a source the archive never carries, and by then the file
+	// the image had under that name is gone. Nothing was restored, so counting
+	// restored members would call this a clean failure and let the workload
+	// start on a filesystem missing a file it expects.
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "srv"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	existing := filepath.Join(root, "srv/data")
+	if err := os.WriteFile(existing, []byte("from the image"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	body := buildArchive(t, Manifest{Version: ManifestVersion, Root: "/"}, nil, []archiveMember{
+		{name: "srv/data", link: "srv/missing", hardlink: true, mode: 0o644},
+	})
+
+	_, err := Import(context.Background(), ImportOptions{URL: serve(t, body), root: root, MarkerPath: filepath.Join(root, "marker.json")})
+	if !errors.Is(err, ErrPartialImport) {
+		t.Fatalf("a member that failed after removing the image's file must be reported as partial, got %v", err)
+	}
+	if _, err := os.Lstat(existing); !os.IsNotExist(err) {
+		t.Fatalf("expected the image's file to be gone, which is what makes this partial, got %v", err)
+	}
+}
+
 func TestImportRecordsItselfBeforeRelaunchingProcesses(t *testing.T) {
 	// The record has to exist before the archive has any effect: a crash between
 	// the two would leave the next boot importing the archive again, on top of
