@@ -15,6 +15,116 @@ const docTemplate = `{
     "host": "{{.Host}}",
     "basePath": "{{.BasePath}}",
     "paths": {
+        "/archive/export": {
+            "post": {
+                "description": "Archives everything the sandbox changed on top of its base image and streams it, uncompressed, to a presigned S3 PUT URL. The memory of the sandbox is not archived.\nThe sandbox is quiesced first: the process list is saved (unless saveProcesses is false), every process is stopped, and the API then refuses the calls that would write to the filesystem. The freeze is not lifted afterwards, since an exported sandbox is meant to be restored elsewhere; call POST /archive/resume to lift it.\nUse dryRun to get the archive's content and exact size without stopping anything and without uploading.\nSet async to start the export and answer immediately, which is what archiving a large filesystem needs: the export then reports itself through GET /archive/status.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "archive"
+                ],
+                "summary": "Export the filesystem changes to a presigned URL",
+                "parameters": [
+                    {
+                        "description": "Export options",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/ExportOptions"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Export result",
+                        "schema": {
+                            "$ref": "#/definitions/ExportResult"
+                        }
+                    },
+                    "202": {
+                        "description": "The export was started and runs in the background",
+                        "schema": {
+                            "$ref": "#/definitions/ExportProgress"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "An export is already in progress",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Export failed",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/archive/resume": {
+            "post": {
+                "description": "Makes the API serve every route again after an export. The processes stopped for the export are not relaunched: this exists so a failed or aborted export does not leave the sandbox unusable.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "archive"
+                ],
+                "summary": "Lift the archive freeze",
+                "responses": {
+                    "200": {
+                        "description": "Archive status",
+                        "schema": {
+                            "$ref": "#/definitions/QuiesceStatus"
+                        }
+                    },
+                    "409": {
+                        "description": "An export or a restore is in progress",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "The root filesystem could not be made writable again",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/archive/status": {
+            "get": {
+                "description": "Reports whether the sandbox is frozen for an archive export, and which processes were stopped for it.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "archive"
+                ],
+                "summary": "Get the archive status",
+                "responses": {
+                    "200": {
+                        "description": "Archive status",
+                        "schema": {
+                            "$ref": "#/definitions/QuiesceStatus"
+                        }
+                    }
+                }
+            }
+        },
         "/codegen/fastapply/{path}": {
             "put": {
                 "description": "Uses the configured LLM provider (Relace or Morph) to apply a code edit to the original content.\n\nTo use this endpoint as an agent tool, follow these guidelines:\n\nUse this tool to make an edit to an existing file. This will be read by a less intelligent model, which will quickly apply the edit. You should make it clear what the edit is, while also minimizing the unchanged code you write.\n\nWhen writing the edit, you should specify each edit in sequence, with the special comment \"// ... existing code ...\" to represent unchanged code in between edited lines.\n\nExample format:\n// ... existing code ...\nFIRST_EDIT\n// ... existing code ...\nSECOND_EDIT\n// ... existing code ...\nTHIRD_EDIT\n// ... existing code ...\n\nYou should still bias towards repeating as few lines of the original file as possible to convey the change. But, each edit should contain minimally sufficient context of unchanged lines around the code you're editing to resolve ambiguity.\n\nDO NOT omit spans of pre-existing code (or comments) without using the \"// ... existing code ...\" comment to indicate its absence. If you omit the existing code comment, the model may inadvertently delete these lines.\n\nIf you plan on deleting a section, you must provide context before and after to delete it. If the initial code is \"Block 1\\nBlock 2\\nBlock 3\", and you want to remove Block 2, you would output \"// ... existing code ...\\nBlock 1\\nBlock 3\\n// ... existing code ...\".\n\nMake sure it is clear what the edit should be, and where it should be applied. Make edits to a file in a single edit_file call instead of multiple edit_file calls to the same file. The apply model can handle many distinct edits at once.",
@@ -1876,6 +1986,71 @@ const docTemplate = `{
                 }
             }
         },
+        "ArchiveManifest": {
+            "type": "object",
+            "required": [
+                "createdAt",
+                "root",
+                "version"
+            ],
+            "properties": {
+                "added": {
+                    "description": "Added and Modified count the archive's payload members.",
+                    "type": "integer",
+                    "example": 11
+                },
+                "apiVersion": {
+                    "description": "APIVersion is the sandbox-api build that produced the archive.",
+                    "type": "string",
+                    "example": "v0.1.0"
+                },
+                "createdAt": {
+                    "type": "string"
+                },
+                "deleted": {
+                    "description": "Deleted are paths the image has and the sandbox deleted. Tar cannot carry\na deletion, so import applies these from the manifest.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "excludes": {
+                    "description": "Excludes are the paths left out of the comparison.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "imageDevice": {
+                    "description": "ImageDevice is the device the pristine image was read from, for the record:\nit says which generation exported the archive (/dev/vda on mk3.1).",
+                    "type": "string",
+                    "example": "/dev/vda"
+                },
+                "modified": {
+                    "type": "integer",
+                    "example": 3
+                },
+                "payloadBytes": {
+                    "description": "PayloadBytes is the total content size of the payload members.",
+                    "type": "integer",
+                    "example": 3073449
+                },
+                "processes": {
+                    "description": "Processes tells whether ProcessesName is present.",
+                    "type": "boolean",
+                    "example": true
+                },
+                "root": {
+                    "description": "Root is the directory the paths are relative to.",
+                    "type": "string",
+                    "example": "/"
+                },
+                "version": {
+                    "type": "integer",
+                    "example": 1
+                }
+            }
+        },
         "ContentSearchMatch": {
             "type": "object",
             "required": [
@@ -2082,6 +2257,140 @@ const docTemplate = `{
                 "error": {
                     "type": "string",
                     "example": "Error message"
+                }
+            }
+        },
+        "ExportOptions": {
+            "type": "object",
+            "properties": {
+                "async": {
+                    "description": "Async starts the export and answers immediately, leaving it to run: an\narchive of a large filesystem takes longer than a request may be held\nopen. Its progress is reported by /archive/status.",
+                    "type": "boolean",
+                    "example": false
+                },
+                "dryRun": {
+                    "description": "DryRun reports what would be archived, and its exact size, without\nstopping anything and without uploading.",
+                    "type": "boolean",
+                    "example": false
+                },
+                "excludes": {
+                    "description": "Excludes are added to the paths excluded by default.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "headers": {
+                    "description": "Headers are sent with the upload request as given. A presigned URL only\naccepts the headers it was signed for, so these have to match what the\ncaller signed: sending one that was not signed, or signing one that is not\nsent, is rejected as a signature mismatch. Typical use is a storage class,\nx-amz-storage-class: GLACIER_IR.",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "imageDevice": {
+                    "description": "ImageDevice is the device holding the pristine image, /dev/vda by default.\nmk3.0 exposes the same image as a ROM, /dev/ukp_rom0.",
+                    "type": "string",
+                    "example": "/dev/vda"
+                },
+                "imageMountPoint": {
+                    "description": "ImageMountPoint is a directory where the pristine image is already mounted.\nWhen set the image device is neither mounted nor unmounted.",
+                    "type": "string",
+                    "example": "/mnt/lower"
+                },
+                "multipart": {
+                    "description": "Multipart uploads the archive part by part instead, which is how an\narchive larger than the 5 GB a single PUT accepts is stored. It takes\nprecedence over URL.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/MultipartUpload"
+                        }
+                    ]
+                },
+                "saveProcesses": {
+                    "description": "SaveProcesses stores the process list in the archive so restore can\nrelaunch the workload. Defaults to true; set it to false to archive\nstorage only.",
+                    "type": "boolean",
+                    "example": true
+                },
+                "stopTimeoutSeconds": {
+                    "description": "StopTimeoutSeconds bounds the graceful stop of each process.",
+                    "type": "integer",
+                    "example": 30
+                },
+                "url": {
+                    "description": "URL is a presigned S3 PUT URL the archive is streamed to. Empty is only\nvalid with DryRun, or with Multipart.",
+                    "type": "string",
+                    "example": "https://bucket.s3.amazonaws.com/key?..."
+                }
+            }
+        },
+        "ExportProgress": {
+            "type": "object",
+            "properties": {
+                "error": {
+                    "description": "Error is why the export failed, without the presigned URL it used.",
+                    "type": "string"
+                },
+                "finishedAt": {
+                    "type": "string"
+                },
+                "size": {
+                    "description": "Size is the archive's exact size, known once the filesystem is scanned.",
+                    "type": "integer",
+                    "example": 3074211
+                },
+                "startedAt": {
+                    "type": "string"
+                },
+                "state": {
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/archive.ExportState"
+                        }
+                    ],
+                    "example": "running"
+                },
+                "uploaded": {
+                    "description": "Uploaded reports whether the storage holds the archive.",
+                    "type": "boolean",
+                    "example": false
+                }
+            }
+        },
+        "ExportResult": {
+            "type": "object",
+            "required": [
+                "manifest"
+            ],
+            "properties": {
+                "changes": {
+                    "description": "Changes lists every path in the archive. Only filled for a dry run,\nwhere it is the point of the call.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/archive.Change"
+                    }
+                },
+                "duration": {
+                    "type": "string",
+                    "example": "4.2s"
+                },
+                "manifest": {
+                    "$ref": "#/definitions/ArchiveManifest"
+                },
+                "size": {
+                    "description": "Size is the exact number of bytes uploaded, known before the upload\nstarts since the archive is not compressed.",
+                    "type": "integer",
+                    "example": 3074211
+                },
+                "stoppedProcesses": {
+                    "description": "StoppedProcesses are the processes stopped to freeze the filesystem.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "uploaded": {
+                    "description": "Uploaded is false for a dry run.",
+                    "type": "boolean",
+                    "example": true
                 }
             }
         },
@@ -2393,6 +2702,31 @@ const docTemplate = `{
                 }
             }
         },
+        "MultipartUpload": {
+            "type": "object",
+            "properties": {
+                "abortUrl": {
+                    "description": "AbortURL is a presigned DELETE URL that discards the parts already\nuploaded. Without it a failed export leaves them on the storage until a\nlifecycle rule removes them.",
+                    "type": "string"
+                },
+                "completeUrl": {
+                    "description": "CompleteURL is a presigned POST URL that assembles the parts.",
+                    "type": "string"
+                },
+                "partSize": {
+                    "description": "PartSize is the number of bytes sent to every part but the last.",
+                    "type": "integer",
+                    "example": 536870912
+                },
+                "partUrls": {
+                    "description": "PartURLs are presigned PUT URLs, one per part, in order. Extra ones are\nleft unused.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
         "MultipartUploadPartResponse": {
             "type": "object",
             "properties": {
@@ -2590,6 +2924,59 @@ const docTemplate = `{
                 }
             }
         },
+        "QuiesceStatus": {
+            "type": "object",
+            "required": [
+                "state"
+            ],
+            "properties": {
+                "export": {
+                    "description": "Export reports the export started asynchronously, if there was one. It is\nhow a caller that did not wait for the export learns that the archive is\non the storage, or why it is not.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/ExportProgress"
+                        }
+                    ]
+                },
+                "readOnlyRoot": {
+                    "description": "ReadOnlyRoot reports whether the root mount was remounted read-only, which\nis what actually stops writes; false means the freeze relies only on the\nAPI refusing calls, and the reason says why.",
+                    "type": "boolean",
+                    "example": true
+                },
+                "reason": {
+                    "description": "Reason is a human readable explanation of why the sandbox is frozen.",
+                    "type": "string",
+                    "example": "archive export"
+                },
+                "restore": {
+                    "description": "Restore reports the archive this sandbox was started from, if it was\nstarted from one: how far its restore has got, and how it ended.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/RestoreProgress"
+                        }
+                    ]
+                },
+                "since": {
+                    "description": "Since is when the sandbox left StateActive.",
+                    "type": "string"
+                },
+                "state": {
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/archive.QuiesceState"
+                        }
+                    ],
+                    "example": "quiesced"
+                },
+                "stoppedProcesses": {
+                    "description": "StoppedProcesses are the process identifiers stopped while quiescing.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
         "RankedFile": {
             "type": "object",
             "properties": {
@@ -2620,6 +3007,48 @@ const docTemplate = `{
                 "success": {
                     "type": "boolean",
                     "example": true
+                }
+            }
+        },
+        "RestoreProgress": {
+            "type": "object",
+            "properties": {
+                "deleted": {
+                    "type": "integer",
+                    "example": 3
+                },
+                "downloaded": {
+                    "description": "Downloaded is how much of the archive has been read so far.",
+                    "type": "integer",
+                    "example": 1048576
+                },
+                "error": {
+                    "description": "Error is why the restore failed, without the presigned URL it used.",
+                    "type": "string"
+                },
+                "finishedAt": {
+                    "type": "string"
+                },
+                "restored": {
+                    "description": "Restored and Deleted count what the archive changed on the filesystem.",
+                    "type": "integer",
+                    "example": 1204
+                },
+                "size": {
+                    "description": "Size is the archive's size as the storage announced it, and zero when it\nannounced none - a client showing a percentage has to allow for that.",
+                    "type": "integer",
+                    "example": 3074211
+                },
+                "startedAt": {
+                    "type": "string"
+                },
+                "state": {
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/archive.RestoreState"
+                        }
+                    ],
+                    "example": "extracting"
                 }
             }
         },
@@ -2749,6 +3178,91 @@ const docTemplate = `{
                     "example": "latest"
                 }
             }
+        },
+        "archive.Change": {
+            "type": "object",
+            "required": [
+                "kind",
+                "path"
+            ],
+            "properties": {
+                "kind": {
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/archive.ChangeKind"
+                        }
+                    ],
+                    "example": "added"
+                },
+                "path": {
+                    "description": "Path is relative to the root, without a leading slash.",
+                    "type": "string",
+                    "example": "usr/bin/curl"
+                },
+                "size": {
+                    "description": "Size is the file content size in bytes, 0 for anything but a regular file.",
+                    "type": "integer",
+                    "example": 256216
+                }
+            }
+        },
+        "archive.ChangeKind": {
+            "type": "string",
+            "enum": [
+                "added",
+                "modified",
+                "deleted"
+            ],
+            "x-enum-varnames": [
+                "ChangeAdded",
+                "ChangeModified",
+                "ChangeDeleted"
+            ]
+        },
+        "archive.ExportState": {
+            "type": "string",
+            "enum": [
+                "running",
+                "succeeded",
+                "failed"
+            ],
+            "x-enum-varnames": [
+                "ExportRunning",
+                "ExportSucceeded",
+                "ExportFailed"
+            ]
+        },
+        "archive.QuiesceState": {
+            "type": "string",
+            "enum": [
+                "active",
+                "quiescing",
+                "quiesced",
+                "restoring"
+            ],
+            "x-enum-varnames": [
+                "StateActive",
+                "StateQuiescing",
+                "StateQuiesced",
+                "StateRestoring"
+            ]
+        },
+        "archive.RestoreState": {
+            "type": "string",
+            "enum": [
+                "downloading",
+                "extracting",
+                "relaunching",
+                "succeeded",
+                "failed"
+            ],
+            "x-enum-varnames": [
+                "RestoreDownloading",
+                "RestoreExtracting",
+                "RestoreRelaunching",
+                "RestoreSucceeded",
+                "RestoreFailed"
+            ]
         },
         "filesystem.MultipartUpload": {
             "type": "object",

@@ -18,6 +18,7 @@ import (
 
 	_ "github.com/blaxel-ai/sandbox-api/docs" // Import generated docs
 	"github.com/blaxel-ai/sandbox-api/src/handler"
+	"github.com/blaxel-ai/sandbox-api/src/handler/archive"
 	"github.com/blaxel-ai/sandbox-api/src/lib/audit"
 )
 
@@ -40,6 +41,9 @@ func SetupRouter(disableRequestLogging bool, enableProcessingTime bool) *gin.Eng
 
 	// Add middleware to prevent caching
 	r.Use(noCacheMiddleware())
+
+	// Refuse the calls that would write to the filesystem while it is archived
+	r.Use(quiesceMiddleware())
 
 	// Add processing time middleware if enabled
 	if enableProcessingTime {
@@ -65,6 +69,7 @@ func SetupRouter(disableRequestLogging bool, enableProcessingTime bool) *gin.Eng
 	codegenHandler := handler.NewCodegenHandler(fsHandler)
 	systemHandler := handler.NewSystemHandler()
 	driveHandler := handler.NewDriveHandler()
+	archiveHandler := handler.NewArchiveHandler()
 
 	// Check if terminal is disabled via environment variable
 	disableTerminal := os.Getenv("DISABLE_TERMINAL") == "true" || os.Getenv("DISABLE_TERMINAL") == "1"
@@ -193,6 +198,12 @@ func SetupRouter(disableRequestLogging bool, enableProcessingTime bool) *gin.Eng
 	environmentHandler := handler.GetEnvironmentHandler()
 	r.POST("/environment/reload", environmentHandler.HandleReload)
 
+	// Archive routes (export the filesystem changes, freeze the sandbox for it)
+	r.POST("/archive/export", archiveHandler.HandleExport)
+	r.GET("/archive/status", archiveHandler.HandleStatus)
+	r.HEAD("/archive/status", head)
+	r.POST("/archive/resume", archiveHandler.HandleResume)
+
 	// System routes
 	r.POST("/upgrade", systemHandler.HandleUpgrade)
 	r.HEAD("/upgrade", head)
@@ -235,7 +246,70 @@ func SetupRouter(disableRequestLogging bool, enableProcessingTime bool) *gin.Eng
 	return r
 }
 
+// quiesceAllowedPrefixes are the routes still served while the sandbox is frozen
+// for an archive export, on top of the read-only methods.
+//
+// The terminal and stopping a process are deliberately among them: interrupting
+// what the export could not stop, and looking at why, is exactly what an operator
+// needs a frozen sandbox for. Neither is an exemption from the freeze — the root
+// mount is read-only, so what they attempt to write fails with EROFS rather than
+// ending up in an archive that has already been read.
+//
+// They are served during a restore too (archive.StateRestoring), which is the
+// one freeze that leaves the root writable, since the import writes to it:
+// watching a restore that takes minutes is precisely what a terminal is opened
+// for there, and the API refusing the routes that write is what keeps the rest
+// of the world off a half-restored filesystem.
+// Reloading the environment is among them for a different reason: the host
+// pings it once, after it has applied a new metadata generation, and a freeze
+// that lasts minutes would swallow that notification and leave this process -
+// and everything it starts afterwards - on the previous generation. It writes
+// nothing but its own environ.
+var quiesceAllowedPrefixes = []string{
+	"/archive",
+	"/terminal",
+	"/health",
+	"/swagger",
+	"/environment",
+}
 
+// quiesceMiddleware refuses the calls that would write to the filesystem once an
+// archive export has started. Requests already in flight are not interrupted,
+// and neither the middleware nor the stopped workload is what makes the archive
+// consistent: the read-only root mount is. This keeps the failures readable
+// rather than surfacing EROFS from the middle of a handler.
+func quiesceMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if !archive.Quiesced() {
+			c.Next()
+			return
+		}
+
+		path := c.Request.URL.Path
+		method := c.Request.Method
+		if path == "/" || method == http.MethodGet || method == http.MethodHead || method == http.MethodOptions {
+			c.Next()
+			return
+		}
+		for _, prefix := range quiesceAllowedPrefixes {
+			if path == prefix || strings.HasPrefix(path, prefix+"/") {
+				c.Next()
+				return
+			}
+		}
+		// Stopping and killing a process, but not starting one.
+		if method == http.MethodDelete && strings.HasPrefix(path, "/process/") {
+			c.Next()
+			return
+		}
+
+		status := archive.Status()
+		c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{
+			"error":  fmt.Sprintf("sandbox is %s (%s): this endpoint is unavailable until the archive completes, follow it on /archive/status", status.State, status.Reason),
+			"status": status,
+		})
+	}
+}
 
 // corsMiddleware adds CORS headers to all responses
 func corsMiddleware() gin.HandlerFunc {

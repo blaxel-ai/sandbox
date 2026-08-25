@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"net/http"
@@ -18,6 +19,7 @@ import (
 	"github.com/getsentry/sentry-go"
 
 	"github.com/blaxel-ai/sandbox-api/src/handler"
+	"github.com/blaxel-ai/sandbox-api/src/handler/archive"
 	"github.com/blaxel-ai/sandbox-api/src/handler/process"
 	"github.com/blaxel-ai/sandbox-api/src/lib/blaxel"
 	"github.com/blaxel-ai/sandbox-api/src/lib/envfile"
@@ -190,9 +192,45 @@ func main() {
 		logrus.Infof("Shell args: %s", os.Getenv("SHELL_ARGS"))
 	}
 
-	// Start background command if specified
-	if commandValue != "" {
-		startBackgroundCommand(ctx, commandValue)
+	// An archive interrupted by a crash or an upgrade leaves the root read-only,
+	// and nothing else of its state survives the restart. Adopt the filesystem's
+	// own state first, so the sandbox says it is frozen instead of failing every
+	// write while reporting itself healthy.
+	archive.AdoptRootState()
+
+	// Restore an archived filesystem before anything of the workload runs, so
+	// the command below and the relaunched processes see the restored files
+	// rather than race the extraction. It happens once per filesystem: see
+	// archive.DefaultImportMarker.
+	//
+	// Restoring a large archive takes minutes, and a sandbox that answers
+	// nothing for that long is a sandbox nobody can tell apart from a broken
+	// one. So the import runs behind the API rather than before it: the routes
+	// that would write to the half-restored filesystem are refused while it
+	// runs (archive.StateRestoring), and /archive/status says how far it has
+	// got. Only the workload waits for it.
+	startWorkload := func() {
+		// Not started when the sandbox is frozen: on a read-only root every
+		// write of the workload fails, and starting it there only buries the
+		// reason under its own errors. Resuming the sandbox is what makes it
+		// startable, and the operator does that knowingly.
+		if commandValue != "" && !archive.Quiesced() {
+			startBackgroundCommand(ctx, commandValue)
+		}
+	}
+	if archive.PendingImport() {
+		// Frozen here rather than by the import itself: the import starts
+		// below and the server starts right after, so a freeze taken once the
+		// import is running would leave the routes that write served on a
+		// filesystem the import is about to overwrite.
+		archive.MarkRestorePending()
+		go func() {
+			if importArchive(ctx) {
+				startWorkload()
+			}
+		}()
+	} else {
+		startWorkload()
 	}
 
 	// Set up the router with all our API routes
@@ -266,6 +304,44 @@ func newHTTPServer(addr string, handler http.Handler) *http.Server {
 	}
 }
 
+// importArchive restores the filesystem of an archived sandbox, if this one was
+// given one to restore and has not restored it yet.
+//
+// A failure before anything was written is not fatal: the sandbox boots without
+// the archived data instead of not booting at all, which leaves an operator
+// something to look at and retry from. It is synchronous — the whole point is
+// that the workload starts on top of the restored filesystem.
+//
+// It returns false when the workload must not be started: a failure that already
+// wrote part of the archive leaves a filesystem that is neither the image's nor
+// the archived sandbox's, and running the workload on it would write more state
+// on top of a state that never existed. The sandbox stays up, frozen, so the
+// failure is visible through /archive/status rather than silently absorbed.
+func importArchive(ctx context.Context) bool {
+	result, err := archive.ImportOnBoot(ctx)
+	if errors.Is(err, archive.ErrNoImport) {
+		return true
+	}
+	if errors.Is(err, archive.ErrPartialImport) {
+		logrus.WithError(err).Error("The archive this sandbox was started from was only partially restored - the workload is not started and the filesystem is frozen")
+		if err := archive.Quarantine("failed archive import"); err != nil {
+			logrus.WithError(err).Error("Failed to freeze the sandbox after a partial import")
+		}
+		return false
+	}
+	if err != nil {
+		logrus.WithError(err).Error("Failed to restore the archive this sandbox was started from - it boots with the filesystem of its image instead")
+		return true
+	}
+	logrus.WithFields(logrus.Fields{
+		"restored":   result.Restored,
+		"deleted":    result.Deleted,
+		"relaunched": len(result.Relaunched),
+		"duration":   result.Duration,
+	}).Info("Restored the sandbox filesystem from an archive")
+	return true
+}
+
 // startBackgroundCommand runs the given command string in a goroutine using the
 // configured SHELL and SHELL_ARGS environment variables.
 func startBackgroundCommand(ctx context.Context, command string) {
@@ -295,14 +371,25 @@ func startBackgroundCommand(ctx context.Context, command string) {
 	cmd.Env = identity.Get().DecorateEnv(os.Environ())
 	cmd.SysProcAttr = &syscall.SysProcAttr{Credential: identity.Get().Credential()}
 
-	// Start the command in a goroutine so it doesn't block the server
+	// Started before the goroutine, so the workload is known to be running by
+	// the time this returns and the server starts accepting calls: an export
+	// arriving right after boot has to stop it, and a registration done inside
+	// the goroutine could still be pending then, leaving the one process most
+	// likely to be writing running while the filesystem is read.
+	if err := cmd.Start(); err != nil {
+		logrus.Fatalf("Failed to start command: %v", err)
+		return
+	}
+	pid := cmd.Process.Pid
+	oom.PreferAsVictim(pid)
+	// The process manager never hears about this command, and an archive export
+	// has to stop it like any other process.
+	archive.RegisterStartupWorkload(pid)
+	logrus.Infof("Command started successfully")
+
+	// Waited on in a goroutine so it doesn't block the server
 	go func() {
-		if err := cmd.Start(); err != nil {
-			logrus.Fatalf("Failed to start command: %v", err)
-			return
-		}
-		oom.PreferAsVictim(cmd.Process.Pid)
-		logrus.Infof("Command started successfully")
+		defer archive.UnregisterStartupWorkload(pid)
 
 		if err := cmd.Wait(); err != nil {
 			select {
