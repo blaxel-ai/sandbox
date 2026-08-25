@@ -16,6 +16,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/blaxel-ai/sandbox-api/src/handler/drive"
 )
 
 // archiveMember is one entry to write into a test archive.
@@ -890,5 +892,80 @@ func TestImportFailsWhenADeletionCannotBeApplied(t *testing.T) {
 	}
 	if !errors.Is(err, ErrPartialImport) {
 		t.Errorf("the members restored before the deletion were written, so the failure is partial: %v", err)
+	}
+}
+
+func TestMarkerIsNotWrittenThroughASymlinkAtTheTemporaryPath(t *testing.T) {
+	// The marker is staged under a name of its own and renamed into place. That
+	// name is on the filesystem an archive was just applied to, so a symlink
+	// left there must not send the write - which runs as root - to whatever it
+	// points at.
+	root := t.TempDir()
+	marker := filepath.Join(root, "marker.json")
+	outside := filepath.Join(t.TempDir(), "elsewhere")
+	if err := os.WriteFile(outside, []byte("untouched"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, marker+markerTemporarySuffix); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := writeMarker(marker, Marker{Version: ManifestVersion, Archive: "bucket/key"}); err != nil {
+		t.Fatal(err)
+	}
+	if content, err := os.ReadFile(outside); err != nil || string(content) != "untouched" {
+		t.Errorf("the marker must not be written through the planted symlink, got %q (%v)", content, err)
+	}
+	recorded, err := readMarker(marker)
+	if err != nil || recorded == nil || recorded.Archive != "bucket/key" {
+		t.Fatalf("expected the marker to be installed anyway, got %+v (%v)", recorded, err)
+	}
+}
+
+func TestImportNeverRestoresTheMarkerTemporaryPath(t *testing.T) {
+	// An archive member named like the file the marker is staged under would be
+	// what the next marker write opens: excluded, so the archive cannot decide
+	// that at all.
+	root := t.TempDir()
+	name := strings.TrimPrefix(DefaultImportMarker+markerTemporarySuffix, "/")
+	body := buildArchive(t, Manifest{Version: ManifestVersion, Root: "/"}, nil, []archiveMember{
+		{name: name, content: "planted", mode: 0o644},
+	})
+
+	result, err := Import(context.Background(), ImportOptions{URL: serve(t, body), root: root, MarkerPath: filepath.Join(root, "marker.json")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Restored != 0 {
+		t.Errorf("expected the member to be skipped, got %d restored", result.Restored)
+	}
+	if _, err := os.Lstat(filepath.Join(root, name)); !os.IsNotExist(err) {
+		t.Errorf("nothing should have been written at the marker's temporary path, got %v", err)
+	}
+}
+
+func TestImportNeverReplacesTheDriveMountBinary(t *testing.T) {
+	// blfs is executed as root by a route this API keeps serving, so it belongs
+	// to the image the same way this API's own binary does: an archive that
+	// could replace it would choose the code the next mount runs.
+	root := t.TempDir()
+	name := strings.TrimPrefix(drive.BlfsPath, "/")
+	live := filepath.Join(root, name)
+	if err := os.MkdirAll(filepath.Dir(live), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(live, []byte("the platform's build"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	body := buildArchive(t, Manifest{Version: ManifestVersion, Root: "/"}, nil, []archiveMember{
+		{name: name, content: "the archive's build", mode: 0o755},
+	})
+
+	if _, err := Import(context.Background(), ImportOptions{URL: serve(t, body), root: root, MarkerPath: filepath.Join(root, "marker.json")}); err != nil {
+		t.Fatal(err)
+	}
+	if content, err := os.ReadFile(live); err != nil || string(content) != "the platform's build" {
+		t.Errorf("the drive mount binary should be untouched, got %q (%v)", content, err)
 	}
 }

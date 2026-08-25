@@ -2,6 +2,7 @@ package archive
 
 import (
 	"errors"
+	"sync"
 	"testing"
 
 	"github.com/blaxel-ai/sandbox-api/src/handler/process"
@@ -138,5 +139,37 @@ func TestFreezingLeavesFailedProcessesDown(t *testing.T) {
 	}
 	if process.RestartsSuspended() {
 		t.Error("a resumed sandbox must restart its failed processes as it did before")
+	}
+}
+
+func TestResumeCannotLiftTheFreezeAnExportJustTook(t *testing.T) {
+	// Reading the export claim and lifting the freeze under two separate locks
+	// leaves a window: the resume finds no export, an export freezes and claims
+	// the filesystem, and the resume then makes the root writable again while
+	// the export is already reading it.
+	for i := 0; i < 200; i++ {
+		var wait sync.WaitGroup
+		var claimed error
+		wait.Add(2)
+		go func() {
+			defer wait.Done()
+			_, _ = Resume()
+		}()
+		go func() {
+			defer wait.Done()
+			claimed = freezeForExport("archive export")
+		}()
+		wait.Wait()
+
+		if claimed == nil {
+			if !Quiesced() {
+				t.Fatal("the freeze an export took must outlive a concurrent resume")
+			}
+			if _, err := Resume(); !errors.Is(err, ErrExportInProgress) {
+				t.Fatalf("the export still holds the filesystem, so a resume must be refused, got %v", err)
+			}
+		}
+		endExport()
+		forceResume()
 	}
 }

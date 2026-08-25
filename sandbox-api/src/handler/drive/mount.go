@@ -17,7 +17,10 @@ import (
 )
 
 const (
-	blfsPath     = "/usr/local/bin/blfs"
+	// BlfsPath is the binary the drive mount runs, as root. It is exported so
+	// the paths this API executes with privileges can be named where they have
+	// to be protected from being replaced.
+	BlfsPath     = "/usr/local/bin/blfs"
 	pollInterval = 100 * time.Millisecond
 	mountTimeout = 30 * time.Second
 )
@@ -307,7 +310,7 @@ func MountDrive(driveName, mountPath, drivePath string, readOnly bool, uidMap, g
 	}).Debug("Executing blfs mount command")
 
 	// Start the blfs mount process in the background
-	cmd := exec.Command(blfsPath, args...)
+	cmd := exec.Command(BlfsPath, args...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
@@ -472,6 +475,6 @@ func mustReadAll(file *os.File) []byte {
 
 // CheckBlfsAvailable checks if the blfs binary is available
 func CheckBlfsAvailable() bool {
-	_, err := os.Stat(blfsPath)
+	_, err := os.Stat(BlfsPath)
 	return err == nil
 }

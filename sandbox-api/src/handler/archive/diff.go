@@ -11,6 +11,8 @@ import (
 	"sort"
 	"strings"
 	"syscall"
+
+	"github.com/blaxel-ai/sandbox-api/src/handler/drive"
 )
 
 // ChangeKind classifies a path with respect to the pristine image.
@@ -72,6 +74,14 @@ var DefaultExcludes = []string{
 	// this sandbox's history, and carrying it into the next archive would
 	// overwrite the marker of whichever sandbox restores that one.
 	strings.TrimPrefix(DefaultImportMarker, "/"),
+	// The name the marker is written under before it is renamed into place: an
+	// archive naming it plants what the next import's own marker write opens, as
+	// root, and a symlink there would send that write wherever it points.
+	strings.TrimPrefix(DefaultImportMarker+markerTemporarySuffix, "/"),
+	// The binary the drive mount runs, as root, on a route this API keeps
+	// serving. It is the image's, like this API's own binary: an archive that
+	// could replace it would choose the code the next mount executes.
+	strings.TrimPrefix(drive.BlfsPath, "/"),
 }
 
 // executablePath reports the binary this process is running.

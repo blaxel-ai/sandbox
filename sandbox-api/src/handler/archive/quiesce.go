@@ -88,6 +88,10 @@ func Quiesced() bool {
 func Status() QuiesceStatus {
 	quiesceMu.RLock()
 	defer quiesceMu.RUnlock()
+	return statusLocked()
+}
+
+func statusLocked() QuiesceStatus {
 	status := quiesceStatus
 	status.StoppedProcesses = append([]string(nil), quiesceStatus.StoppedProcesses...)
 	return status
@@ -226,13 +230,16 @@ func completeQuiesce(stopped []string, readOnlyRoot bool) {
 // freeze then would let the workload write into the archive being produced, and
 // the export lifts it itself when it fails.
 func Resume() (QuiesceStatus, error) {
-	quiesceMu.RLock()
-	inProgress := exporting
-	quiesceMu.RUnlock()
-	if inProgress {
-		return Status(), ErrExportInProgress
+	// The claim is read and the freeze lifted under the same lock: releasing it
+	// in between leaves a window an export starts in, and this resume would then
+	// make the root writable again while the export is already reading it -
+	// archiving a filesystem the workload can still change under it.
+	quiesceMu.Lock()
+	defer quiesceMu.Unlock()
+	if exporting {
+		return statusLocked(), ErrExportInProgress
 	}
-	status := forceResume()
+	status := resumeLocked()
 	if status.State != StateActive {
 		return status, ErrRootReadOnly
 	}
@@ -244,6 +251,10 @@ func Resume() (QuiesceStatus, error) {
 func forceResume() QuiesceStatus {
 	quiesceMu.Lock()
 	defer quiesceMu.Unlock()
+	return resumeLocked()
+}
+
+func resumeLocked() QuiesceStatus {
 	exporting = false
 	if allowRestarts != nil {
 		allowRestarts()

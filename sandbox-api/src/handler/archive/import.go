@@ -28,6 +28,11 @@ const (
 	// EnvImportURL holds a presigned GET URL of an archive to restore. It is
 	// read once, at boot, before the workload starts.
 	EnvImportURL = "BL_ARCHIVE_IMPORT_URL"
+	// markerTemporarySuffix names the file the marker is written to before it is
+	// renamed into place. It is excluded from an archive like the marker itself,
+	// since an archive that could create it would decide what this API's own
+	// root-privileged write opens.
+	markerTemporarySuffix = ".tmp"
 	// DefaultImportMarker records the archive this sandbox restored.
 	//
 	// It lives on the archived filesystem on purpose, and its lifetime is what
@@ -842,13 +847,41 @@ func writeMarker(path string, marker Marker) error {
 	// Written beside the marker and renamed over it: a crash or a full
 	// filesystem halfway through a plain write leaves a truncated marker, and a
 	// marker that cannot be read is a sandbox nobody can boot any more.
-	temporary := path + ".tmp"
-	if err := os.WriteFile(temporary, data, 0o600); err != nil {
+	temporary := path + markerTemporarySuffix
+	// O_EXCL and O_NOFOLLOW rather than a plain write: this runs right after an
+	// archive was applied to the filesystem, and a write that followed a symlink
+	// left under this name would put the marker - as root - wherever the archive
+	// pointed. Whatever is there is removed first, since a marker write
+	// interrupted earlier leaves the temporary behind.
+	if err := removeMarkerTemporary(temporary); err != nil {
+		return err
+	}
+	file, err := os.OpenFile(temporary, os.O_CREATE|os.O_WRONLY|os.O_EXCL|syscall.O_NOFOLLOW, 0o600)
+	if err != nil {
+		return fmt.Errorf("failed to create the import marker %s: %w", path, err)
+	}
+	if _, err := file.Write(data); err != nil {
+		file.Close()
+		os.Remove(temporary)
+		return fmt.Errorf("failed to write the import marker %s: %w", path, err)
+	}
+	if err := file.Close(); err != nil {
+		os.Remove(temporary)
 		return fmt.Errorf("failed to write the import marker %s: %w", path, err)
 	}
 	if err := os.Rename(temporary, path); err != nil {
 		os.Remove(temporary)
 		return fmt.Errorf("failed to install the import marker %s: %w", path, err)
+	}
+	return nil
+}
+
+// removeMarkerTemporary clears the name the marker is written under, symlink
+// included: os.Remove does not follow one, so what it removes is the link and
+// never what it points at.
+func removeMarkerTemporary(temporary string) error {
+	if err := os.RemoveAll(temporary); err != nil {
+		return fmt.Errorf("failed to clear the import marker temporary %s: %w", temporary, err)
 	}
 	return nil
 }
