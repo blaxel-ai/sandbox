@@ -125,14 +125,18 @@ func (h *ArchiveHandler) HandleStatus(c *gin.Context) {
 // @Tags archive
 // @Produce json
 // @Success 200 {object} QuiesceStatus "Archive status"
-// @Failure 409 {object} ErrorResponse "An export is in progress"
+// @Failure 409 {object} ErrorResponse "An export or a restore is in progress"
 // @Failure 500 {object} ErrorResponse "The root filesystem could not be made writable again"
 // @Router /archive/resume [post]
 func (h *ArchiveHandler) HandleResume(c *gin.Context) {
 	status, err := archive.Resume()
-	if errors.Is(err, archive.ErrExportInProgress) {
-		// The export is reading the filesystem: unfreezing now would corrupt the
-		// archive it is producing, and it lifts the freeze itself if it fails.
+	if errors.Is(err, archive.ErrExportInProgress) || errors.Is(err, archive.ErrRestoreInProgress) {
+		// ErrExportInProgress: the export is reading the filesystem, unfreezing
+		// now would corrupt the archive it is producing, and it lifts the freeze
+		// itself if it fails.
+		// ErrRestoreInProgress: the archive is being written over the filesystem,
+		// which the freeze is what keeps anything else out of. Neither is a
+		// failure of the sandbox: it is busy, and the caller may ask again.
 		h.SendError(c, http.StatusConflict, err)
 		return
 	}

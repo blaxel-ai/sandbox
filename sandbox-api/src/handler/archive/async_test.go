@@ -108,6 +108,29 @@ func TestStartExportReportsAFailedUpload(t *testing.T) {
 	}
 }
 
+// TestStartExportRefusesWhileTheFilesystemIsAlreadyRead covers the export a
+// dry run is already holding the sandbox for: the caller is told it conflicts
+// instead of being told the export started and left to poll the failure of
+// work that never began.
+func TestStartExportRefusesWhileTheFilesystemIsAlreadyRead(t *testing.T) {
+	resetAsyncExport(t)
+	root, lower := fakeSandbox(t)
+
+	if err := claimExport(); err != nil {
+		t.Fatalf("failed to claim the sandbox: %v", err)
+	}
+	defer releaseExport()
+
+	options := exportOptions(t, root, lower)
+	options.URL = "https://store.invalid/delta.tar"
+	if _, err := StartExport(context.Background(), options); !errors.Is(err, ErrExportInProgress) {
+		t.Fatalf("expected the export to be refused, got %v", err)
+	}
+	if progress := exportProgress(); progress != nil {
+		t.Errorf("a refused export must not be reported as started: %+v", progress)
+	}
+}
+
 func TestStartExportRefusesADryRun(t *testing.T) {
 	resetAsyncExport(t)
 	root, lower := fakeSandbox(t)

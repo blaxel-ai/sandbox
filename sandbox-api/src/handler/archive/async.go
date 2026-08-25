@@ -54,13 +54,7 @@ func StartExport(ctx context.Context, options ExportOptions) (ExportProgress, er
 	if options.DryRun {
 		return ExportProgress{}, invalidOptions("a dry run is not run asynchronously: it uploads nothing and answers with what it found")
 	}
-	if options.URL == "" && options.Multipart == nil {
-		return ExportProgress{}, ErrURLRequired
-	}
-	if err := options.Multipart.validate(); err != nil {
-		return ExportProgress{}, err
-	}
-	if err := options.validateImageSource(); err != nil {
+	if err := validateExport(options); err != nil {
 		return ExportProgress{}, err
 	}
 
@@ -69,12 +63,20 @@ func StartExport(ctx context.Context, options ExportOptions) (ExportProgress, er
 	if asyncProgress != nil && asyncProgress.State == ExportRunning {
 		return *asyncProgress, ErrExportInProgress
 	}
+	// The sandbox is claimed here rather than in the goroutine: a dry run or an
+	// export already reading the filesystem is a conflict the caller must be
+	// told about, and answering "accepted" for an export that fails a moment
+	// later leaves it polling a failure for work that never started.
+	if err := claimExport(); err != nil {
+		return ExportProgress{}, err
+	}
 
 	progress := ExportProgress{State: ExportRunning, StartedAt: time.Now()}
 	asyncProgress = &progress
 
 	go func() {
-		result, err := Export(ctx, options)
+		defer releaseExport()
+		result, err := exportClaimed(ctx, options)
 		finishExport(result, err)
 	}()
 

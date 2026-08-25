@@ -91,7 +91,7 @@ const docTemplate = `{
                         }
                     },
                     "409": {
-                        "description": "An export is in progress",
+                        "description": "An export or a restore is in progress",
                         "schema": {
                             "$ref": "#/definitions/ErrorResponse"
                         }

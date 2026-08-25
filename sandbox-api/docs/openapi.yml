@@ -67,7 +67,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/QuiesceStatus"
         "409":
-          description: An export is in progress
+          description: An export or a restore is in progress
           content:
             application/json:
               schema:

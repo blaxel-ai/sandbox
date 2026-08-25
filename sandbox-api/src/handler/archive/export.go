@@ -231,26 +231,50 @@ func (o ExportOptions) validateImageSource() error {
 // silently diverged from the archive it just took. Call Resume to lift it
 // deliberately, for instance after a failure.
 func Export(ctx context.Context, options ExportOptions) (result *ExportResult, err error) {
+	if err = validateExport(options); err != nil {
+		return nil, err
+	}
+	if err = claimExport(); err != nil {
+		return nil, err
+	}
+	defer releaseExport()
+
+	return exportClaimed(ctx, options)
+}
+
+// validateExport answers everything the caller could have got wrong, before
+// anything is claimed or stopped.
+func validateExport(options ExportOptions) error {
 	if options.URL == "" && options.Multipart == nil && !options.DryRun {
-		return nil, ErrURLRequired
+		return ErrURLRequired
 	}
-	if err = options.Multipart.validate(); err != nil {
-		return nil, err
+	if err := options.Multipart.validate(); err != nil {
+		return err
 	}
-	if err = options.validateImageSource(); err != nil {
-		return nil, err
-	}
+	return options.validateImageSource()
+}
 
-	// Dry runs and real exports alike: they all mount the pristine image at the
-	// same point, and the freeze only holds back the real ones. A second export
-	// replacing that mount while the first is reading it compares the filesystem
-	// against nothing, so the loser waits for another time rather than making
-	// both archives wrong.
+// claimExport reserves the sandbox for one export.
+//
+// Dry runs and real exports alike: they all mount the pristine image at the
+// same point, and the freeze only holds back the real ones. A second export
+// replacing that mount while the first is reading it compares the filesystem
+// against nothing, so the loser waits for another time rather than making both
+// archives wrong.
+func claimExport() error {
 	if !exportMu.TryLock() {
-		return nil, ErrExportInProgress
+		return ErrExportInProgress
 	}
-	defer exportMu.Unlock()
+	return nil
+}
 
+// releaseExport gives the sandbox back to the next export.
+func releaseExport() {
+	exportMu.Unlock()
+}
+
+// exportClaimed runs the export itself, on a sandbox already claimed for it.
+func exportClaimed(ctx context.Context, options ExportOptions) (result *ExportResult, err error) {
 	started := time.Now()
 	result = &ExportResult{}
 
