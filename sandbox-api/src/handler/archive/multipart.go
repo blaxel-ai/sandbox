@@ -1,8 +1,10 @@
 package archive
 
 import (
+	"bufio"
 	"context"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -179,7 +181,10 @@ func completeMultipart(ctx context.Context, url string, parts []completedPart) e
 	}
 	defer response.Body.Close()
 
-	answer, _ := io.ReadAll(io.LimitReader(response.Body, 8192))
+	answer, err := completionAnswer(response.Body)
+	if err != nil {
+		return fmt.Errorf("failed to read the archive upload completion: %w", redactURL(err))
+	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return fmt.Errorf("archive upload completion rejected with status %d: %s", response.StatusCode, string(answer))
 	}
@@ -190,6 +195,38 @@ func completeMultipart(ctx context.Context, url string, parts []completedPart) e
 		return fmt.Errorf("the storage did not confirm the archive upload: %s", string(answer))
 	}
 	return nil
+}
+
+// maxCompletionBytes bounds the completion answer, which is a short document -
+// the parts are already uploaded, nothing of the archive comes back here - but
+// still an untrusted body this cannot read without a limit.
+const maxCompletionBytes = 1 << 20
+
+// completionAnswer reads the body of a completion.
+//
+// Assembling the parts of a large archive takes the storage minutes, and it
+// holds the connection meanwhile by sending whitespace, then the document. That
+// padding is dropped as it arrives rather than counted towards the answer: a
+// document cut short parses as a failure, and reporting an archive that does
+// exist as missing is the one answer this must never give.
+func completionAnswer(body io.Reader) ([]byte, error) {
+	reader := bufio.NewReader(io.LimitReader(body, maxCompletionBytes))
+	for {
+		b, err := reader.ReadByte()
+		if errors.Is(err, io.EOF) {
+			return nil, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+		if b == ' ' || b == '\t' || b == '\r' || b == '\n' {
+			continue
+		}
+		if err := reader.UnreadByte(); err != nil {
+			return nil, err
+		}
+		return io.ReadAll(reader)
+	}
 }
 
 // abortMultipart discards the parts of an upload that will not be completed. It

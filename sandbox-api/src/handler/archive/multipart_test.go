@@ -136,6 +136,44 @@ func TestExportUploadsAnArchiveLargerThanOnePart(t *testing.T) {
 	}
 }
 
+func TestCompletionIsReadThroughTheStoragesWhitespace(t *testing.T) {
+	// Assembling the parts of a large archive takes minutes, and the storage
+	// holds the connection meanwhile by sending whitespace before the document.
+	// Reading a bounded prefix of the body drops the document itself, and the
+	// export would report an archive that exists as failed.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			t.Error("expected the test server to stream the answer")
+		}
+		for range 32 {
+			_, _ = w.Write(bytes.Repeat([]byte(" "), 4096))
+			flusher.Flush()
+		}
+		_, _ = w.Write([]byte("\n<CompleteMultipartUploadResult><ETag>\"final\"</ETag></CompleteMultipartUploadResult>"))
+	}))
+	defer server.Close()
+
+	if err := completeMultipart(context.Background(), server.URL, []completedPart{{PartNumber: 1, ETag: `"etag-1"`}}); err != nil {
+		t.Fatalf("expected the padded completion to be read as a success, got %v", err)
+	}
+}
+
+func TestCompletionThatFailsHalfwayIsNeverReadAsASuccess(t *testing.T) {
+	// The storage reports a completion that failed with a 200 and an error
+	// document, which whitespace precedes just the same.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("   \n<Error><Code>InternalError</Code></Error>"))
+	}))
+	defer server.Close()
+
+	if err := completeMultipart(context.Background(), server.URL, []completedPart{{PartNumber: 1, ETag: `"etag-1"`}}); err == nil {
+		t.Fatal("expected an error document to be reported as a failed upload")
+	}
+}
+
 func TestExportAbortsTheMultipartUploadWhenAPartIsRejected(t *testing.T) {
 	root, lower := fakeSandbox(t)
 	write(t, filepath.Join(root, "data/file"), "x", 0o644)
