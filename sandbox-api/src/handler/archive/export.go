@@ -3,7 +3,6 @@ package archive
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -50,7 +49,20 @@ var APIVersion = "dev"
 
 // ErrURLRequired is returned for an export with nowhere to upload to, which is
 // a bad request rather than a failed export.
-var ErrURLRequired = errors.New("url is required unless dryRun is set")
+var ErrURLRequired error = &InvalidOptionsError{Reason: "url is required unless dryRun is set"}
+
+// InvalidOptionsError is a mistake in the export options rather than a failed
+// export, so the request is answered 400 and neither the caller nor a monitor
+// reads it as the sandbox failing.
+type InvalidOptionsError struct {
+	Reason string
+}
+
+func (e *InvalidOptionsError) Error() string { return e.Reason }
+
+func invalidOptions(format string, args ...any) error {
+	return &InvalidOptionsError{Reason: fmt.Sprintf(format, args...)}
+}
 
 // ExportOptions drives an export.
 type ExportOptions struct {
@@ -153,7 +165,7 @@ func (o ExportOptions) validateImageSource() error {
 
 	if o.ImageMountPoint != "" {
 		if !filepath.IsAbs(o.ImageMountPoint) || o.ImageMountPoint != filepath.Clean(o.ImageMountPoint) {
-			return fmt.Errorf("imageMountPoint must be an absolute, clean path")
+			return invalidOptions("imageMountPoint must be an absolute, clean path")
 		}
 		// Only two comparison sources make sense, and any other one is a way to
 		// choose what the archive carries: compared against a filesystem that is
@@ -165,17 +177,17 @@ func (o ExportOptions) validateImageSource() error {
 		//   - the root itself, which reports what a comparison against an identical
 		//     filesystem reports: nothing.
 		if o.ImageMountPoint != DefaultMountPoint && o.ImageMountPoint != DefaultRoot {
-			return fmt.Errorf("imageMountPoint must be %s or %s", DefaultMountPoint, DefaultRoot)
+			return invalidOptions("imageMountPoint must be %s or %s", DefaultMountPoint, DefaultRoot)
 		}
 		if !mounted(o.ImageMountPoint) {
-			return fmt.Errorf("imageMountPoint %s is not a mount point", o.ImageMountPoint)
+			return invalidOptions("imageMountPoint %s is not a mount point", o.ImageMountPoint)
 		}
 	}
 
 	if o.ImageDevice != "" {
 		device := filepath.Clean(o.ImageDevice)
 		if device != o.ImageDevice || !strings.HasPrefix(device, "/dev/") {
-			return fmt.Errorf("imageDevice must be a path under /dev")
+			return invalidOptions("imageDevice must be a path under /dev")
 		}
 		// A device under /dev is not enough, for the reason the mount point is
 		// restricted to two paths: any other mountable filesystem - an attached
@@ -183,14 +195,14 @@ func (o ExportOptions) validateImageSource() error {
 		// every path looks added and the archive becomes a copy of the whole root.
 		// The image only ever lives on the devices the generations attach it to.
 		if !slices.Contains(imageDevices, device) {
-			return fmt.Errorf("imageDevice must be one of %s", strings.Join(imageDevices, ", "))
+			return invalidOptions("imageDevice must be one of %s", strings.Join(imageDevices, ", "))
 		}
 		info, err := os.Stat(device)
 		if err != nil {
-			return fmt.Errorf("image device %s is not available: %w", device, err)
+			return invalidOptions("image device %s is not available: %v", device, err)
 		}
 		if info.Mode()&os.ModeDevice == 0 {
-			return fmt.Errorf("imageDevice %s is not a device", device)
+			return invalidOptions("imageDevice %s is not a device", device)
 		}
 	}
 	return nil

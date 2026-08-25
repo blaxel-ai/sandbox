@@ -55,7 +55,10 @@ func (h *ArchiveHandler) HandleExport(c *gin.Context) {
 	// that gives up must not leave the sandbox stopped with a partial object in
 	// the bucket: the export runs to its end and the caller polls /archive/status.
 	result, err := archive.Export(context.WithoutCancel(c.Request.Context()), options)
-	if errors.Is(err, archive.ErrURLRequired) {
+	var invalid *archive.InvalidOptionsError
+	if errors.As(err, &invalid) {
+		// A missing url, or an image the archive cannot be compared against: the
+		// request is wrong, so the sandbox did not fail.
 		h.SendError(c, http.StatusBadRequest, err)
 		return
 	}

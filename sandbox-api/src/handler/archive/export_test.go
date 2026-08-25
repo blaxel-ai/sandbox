@@ -355,8 +355,15 @@ func TestExportRefusesAnUntrustworthyImageSource(t *testing.T) {
 	}
 	for name, options := range cases {
 		t.Run(name, func(t *testing.T) {
-			if err := options.validateImageSource(); err == nil {
-				t.Errorf("expected %s to be refused", name)
+			err := options.validateImageSource()
+			if err == nil {
+				t.Fatalf("expected %s to be refused", name)
+			}
+			// The request is what is wrong, so the handler has to be able to
+			// answer 400 rather than report the sandbox as failing.
+			var invalid *InvalidOptionsError
+			if !errors.As(err, &invalid) {
+				t.Errorf("expected %s to be refused as an invalid option, got %v", name, err)
 			}
 		})
 	}
