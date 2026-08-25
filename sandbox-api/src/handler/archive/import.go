@@ -538,9 +538,9 @@ func restore(root, target, name string, excludes []string, header *tar.Header, c
 		return false, nil
 	}
 
-	// Creating the parents is a write of its own, whether MkdirAll succeeds or
-	// not: it creates the ones it gets through before it stops, and once they
-	// exist the filesystem holds directories the image did not have. Every
+	// Creating the parents is a write of its own, and one a failure can leave
+	// behind: MkdirAll creates the ones it gets through before it stops, and once
+	// they exist the filesystem holds directories the image did not have. Every
 	// failure below carries that state on, and adds its own only when it did
 	// remove or write something - a failure that changed nothing must not be
 	// reported as partial, or the sandbox is quarantined over a filesystem that
@@ -548,7 +548,11 @@ func restore(root, target, name string, excludes []string, header *tar.Header, c
 	parent := filepath.Dir(target)
 	touched := !exists(parent)
 	if err := os.MkdirAll(parent, 0o755); err != nil {
-		return true, fmt.Errorf("failed to create the parent of %s: %w", target, err)
+		// touched, not true: the parents may all have existed already, in which
+		// case this failure changed nothing and the filesystem is still exactly
+		// the image's - quarantining a sandbox over it would refuse to start a
+		// workload that has nothing wrong with its files.
+		return touched, fmt.Errorf("failed to create the parent of %s: %w", target, err)
 	}
 
 	switch header.Typeflag {

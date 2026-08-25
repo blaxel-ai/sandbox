@@ -1146,3 +1146,25 @@ func TestImportRefusesAnOversizedProcessList(t *testing.T) {
 		t.Fatal("a process list larger than the bound must be refused")
 	}
 }
+
+func TestImportDoesNotQuarantineOnAFailureThatWroteNothing(t *testing.T) {
+	// The parents of this member cannot be created - the root holds a file where
+	// the archive has a directory - but they were not created either: the
+	// filesystem is still the image's, and quarantining it would refuse to start
+	// a workload whose files have nothing wrong with them.
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "srv"), []byte("a file, not a directory"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	url := serve(t, buildArchive(t, Manifest{Version: ManifestVersion, Root: "/"}, nil, []archiveMember{
+		{name: "srv/nested/file", content: "restored", mode: 0o644},
+	}))
+
+	_, err := Import(context.Background(), ImportOptions{URL: url, root: root})
+	if err == nil {
+		t.Fatal("expected the member to fail")
+	}
+	if errors.Is(err, ErrPartialImport) {
+		t.Fatalf("a failure that wrote nothing must not report a partial import, got %v", err)
+	}
+}
