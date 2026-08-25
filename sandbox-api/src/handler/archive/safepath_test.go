@@ -1,10 +1,12 @@
 package archive
 
 import (
+	"archive/tar"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestRestoringThroughAHeldDirectoryIgnoresADirectorySwappedForASymlink is the
@@ -42,6 +44,52 @@ func TestRestoringThroughAHeldDirectoryIgnoresADirectorySwappedForASymlink(t *te
 	}
 	if _, err := os.Lstat(filepath.Join(root, "home", "moved", "config")); err != nil {
 		t.Fatalf("the member was not restored into the directory that was checked: %v", err)
+	}
+}
+
+// TestRestoringMetadataIgnoresTheMemberSwappedForASymlink is the same race one
+// component further down: the member itself is replaced by a symlink after it
+// has been written, so the mode the archive carries - a setuid bit, a
+// world-writable mode - would be set on whatever the link points at.
+func TestRestoringMetadataIgnoresTheMemberSwappedForASymlink(t *testing.T) {
+	root := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "secret")
+	if err := os.WriteFile(outside, []byte("secret"), 0o600); err != nil {
+		t.Fatalf("failed to write the file the symlink points at: %v", err)
+	}
+
+	if err := os.MkdirAll(filepath.Join(root, "home"), 0o755); err != nil {
+		t.Fatalf("failed to build the tree the archive is restored into: %v", err)
+	}
+	parent, _, err := openParent(root, "home/config", true)
+	if err != nil {
+		t.Fatalf("failed to open the directory the member belongs in: %v", err)
+	}
+	defer parent.Close()
+
+	// The swap, between the write and the metadata calls.
+	if err := os.Symlink(outside, filepath.Join(root, "home", "config")); err != nil {
+		t.Fatalf("failed to put the symlink the terminal replaces the member with: %v", err)
+	}
+
+	header := &tar.Header{
+		Typeflag: tar.TypeReg,
+		Name:     "home/config",
+		Mode:     0o4777,
+		Uid:      12345,
+		Gid:      12345,
+		ModTime:  time.Unix(1_000_000, 0),
+	}
+	if err := restoreMetadata(parent, header, filepath.Join(root, "home/config")); err == nil {
+		t.Fatal("setting the metadata of a member replaced by a symlink should be refused")
+	}
+
+	info, err := os.Stat(outside)
+	if err != nil {
+		t.Fatalf("failed to read the file the symlink points at: %v", err)
+	}
+	if info.Mode().Perm() != 0o600 || info.Mode()&os.ModeSetuid != 0 {
+		t.Fatalf("the mode of the file outside the member was changed: %v", info.Mode())
 	}
 }
 

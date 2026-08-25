@@ -835,18 +835,37 @@ func restore(root, name string, excludes []string, header *tar.Header, content i
 		}
 	}
 
-	if err := os.Chown(writable, header.Uid, header.Gid); err != nil {
+	if err := restoreMetadata(parent, header, target); err != nil {
+		return touched, err
+	}
+	return true, nil
+}
+
+// restoreMetadata sets the ownership, the mode and the times of the member that
+// was just written. They are set on the descriptor the member is opened as, and
+// the member is opened without following it: chown, chmod and chtimes all
+// follow the last component of a path, so a name swapped for a symlink between
+// the write and these calls would otherwise carry a root chmod - a setuid bit,
+// a world-writable mode - onto a file the archive never named.
+func restoreMetadata(parent *parentDir, header *tar.Header, target string) error {
+	member, err := parent.open(header.Typeflag == tar.TypeDir)
+	if err != nil {
+		return fmt.Errorf("failed to reopen %s: %w", target, err)
+	}
+	defer member.Close()
+
+	if err := member.Chown(header.Uid, header.Gid); err != nil {
 		logrus.WithError(err).WithField("path", target).Debug("[Archive] Failed to restore the ownership")
 	}
-	if err := os.Chmod(writable, header.FileInfo().Mode().Perm()); err != nil {
-		return touched, fmt.Errorf("failed to set the mode of %s: %w", target, err)
+	if err := member.Chmod(header.FileInfo().Mode().Perm()); err != nil {
+		return fmt.Errorf("failed to set the mode of %s: %w", target, err)
 	}
 	if !header.ModTime.IsZero() {
-		if err := os.Chtimes(writable, header.ModTime, header.ModTime); err != nil {
+		if err := setTimes(member, header.ModTime); err != nil {
 			logrus.WithError(err).WithField("path", target).Debug("[Archive] Failed to restore the modification time")
 		}
 	}
-	return true, nil
+	return nil
 }
 
 // writeFile replaces target's content. The file is written and renamed, so a

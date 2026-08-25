@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"golang.org/x/sys/unix"
 )
@@ -57,6 +58,36 @@ func (p *parentDir) dirPath() string {
 		return filepath.Dir(p.logical)
 	}
 	return filepath.Join("/proc/self/fd", strconv.Itoa(int(p.dir.Fd())))
+}
+
+// open opens the member itself, refusing to follow it. Writing through the
+// directory held open only settles the components above the member: the name
+// the member was written under can still be swapped for a symlink before its
+// ownership, mode and times are set, and those three calls follow one. Opening
+// the member without following it and setting them through the descriptor
+// means they land on what was written or on nothing at all.
+func (p *parentDir) open(directory bool) (*os.File, error) {
+	flags := os.O_RDONLY | unix.O_NOFOLLOW | unix.O_CLOEXEC
+	if directory {
+		flags |= unix.O_DIRECTORY
+	}
+	fd, err := unix.Openat(int(p.dir.Fd()), p.base, flags, 0)
+	if err != nil {
+		if errors.Is(err, unix.ELOOP) {
+			return nil, fmt.Errorf("archive member %s was replaced by a symlink while it was restored", p.logical)
+		}
+		return nil, err
+	}
+	return os.NewFile(uintptr(fd), p.logical), nil
+}
+
+// setTimes sets the times of an open member, through its descriptor rather than
+// its name, which nothing else can then be standing under.
+func setTimes(file *os.File, when time.Time) error {
+	if !procFdAvailable() {
+		return os.Chtimes(file.Name(), when, when)
+	}
+	return os.Chtimes(filepath.Join("/proc/self/fd", strconv.Itoa(int(file.Fd()))), when, when)
 }
 
 func (p *parentDir) Close() {
