@@ -1102,3 +1102,47 @@ func TestImportRefusesAProcessNameThatIsAPath(t *testing.T) {
 		}
 	}
 }
+
+func TestImportOnBootRefusesAnAlreadyReadOnlyRoot(t *testing.T) {
+	// A partial import whose record could not be written leaves the root
+	// read-only and nothing else. sandbox-api starting again adopts that mount as
+	// a freeze, and importing then would restore over the files the first attempt
+	// changed - and a softer failure would boot the workload on the mix.
+	quiesceMu.Lock()
+	previous := quiesceStatus
+	quiesceStatus = QuiesceStatus{State: StateQuiesced, Reason: "an interrupted archive", ReadOnlyRoot: true}
+	quiesceMu.Unlock()
+	t.Cleanup(func() {
+		quiesceMu.Lock()
+		quiesceStatus = previous
+		quiesceMu.Unlock()
+	})
+
+	root := t.TempDir()
+	url := serve(t, buildArchive(t, Manifest{Version: ManifestVersion, Root: "/"}, nil, []archiveMember{
+		{name: "srv/file", content: "restored", mode: 0o644},
+	}))
+	if _, err := importOnBoot(context.Background(), ImportOptions{
+		URL:        url,
+		root:       root,
+		MarkerPath: filepath.Join(root, "marker.json"),
+	}); !errors.Is(err, ErrPartialImport) {
+		t.Fatalf("expected a read-only root to be reported as a partial import, got %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(root, "srv/file")); !os.IsNotExist(err) {
+		t.Errorf("nothing may be restored over the filesystem a failed import left, got %v", err)
+	}
+}
+
+func TestImportRefusesAnOversizedProcessList(t *testing.T) {
+	// The manifest and the process list are the two members read into memory, and
+	// an archive is data: a huge one would have the boot allocate until the API
+	// is killed.
+	if _, err := readMetadata(strings.NewReader(strings.Repeat("x", 16)), ProcessesName); err != nil {
+		t.Fatalf("a small process list must be read, got %v", err)
+	}
+	oversized := strings.NewReader(strings.Repeat("x", maxMetadataBytes+1))
+	if _, err := readMetadata(oversized, ProcessesName); err == nil {
+		t.Fatal("a process list larger than the bound must be refused")
+	}
+}

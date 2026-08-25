@@ -382,7 +382,15 @@ func (s *scanner) classify(rel string, live os.FileInfo) (ChangeKind, error) {
 		// ever wrote to it. A different inode means overlay copied it up, which
 		// happens on a mere open for write, so compare the content rather than
 		// archive every file the workload happened to open.
-		if liveOK && lowerOK && liveStat.Ino == lowerStat.Ino {
+		//
+		// The device is part of "the image's own inode": the upper tmpfs and the
+		// image number their inodes independently, so an inode number alone is
+		// two unrelated files agreeing by accident - and reading a modified file
+		// as unchanged is the one mistake an archive must not make. Overlay
+		// reports the device of the layer a file lives on, so this still holds
+		// for the files that were never copied up, which is what the shortcut is
+		// for.
+		if liveOK && lowerOK && liveStat.Dev == lowerStat.Dev && liveStat.Ino == lowerStat.Ino {
 			return "", nil
 		}
 		same, err := sameContent(filepath.Join(s.root, rel), filepath.Join(s.lower, rel))

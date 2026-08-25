@@ -56,6 +56,27 @@ var ErrNoImport = errors.New("no archive to import")
 // running on them would build on a state that never existed.
 var ErrPartialImport = errors.New("the archive was partially restored")
 
+// maxMetadataBytes bounds the archive members that are read into memory rather
+// than written to the filesystem - the manifest and the process list. An archive
+// is untrusted data read from a URL the caller chose, and these two are the only
+// members whose size a reader has to hold: a crafted one would otherwise have
+// the boot allocate until the API is killed. The bound is far above what a real
+// archive carries, where both are lists of paths and commands.
+const maxMetadataBytes = 32 << 20
+
+// readMetadata reads an archive member that is held in memory, refusing one
+// larger than a description of a filesystem has any reason to be.
+func readMetadata(reader io.Reader, name string) ([]byte, error) {
+	content, err := io.ReadAll(io.LimitReader(reader, maxMetadataBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("failed to read %s from the archive: %w", name, err)
+	}
+	if len(content) > maxMetadataBytes {
+		return nil, fmt.Errorf("%s is larger than %d bytes, which no archive of a filesystem is", name, maxMetadataBytes)
+	}
+	return content, nil
+}
+
 // ImportOptions drives an import.
 type ImportOptions struct {
 	// URL is a presigned S3 GET URL of the archive.
@@ -179,6 +200,16 @@ func importOnBoot(ctx context.Context, options ImportOptions) (*ImportResult, er
 			"requested":  identity,
 		}).Info("[Archive] Filesystem already restored, skipping the import")
 		return nil, ErrNoImport
+	}
+
+	if status := Status(); status.ReadOnlyRoot {
+		// The root was found read-only at startup and no marker says why. What
+		// leaves exactly that is an import that failed after writing and could
+		// not record it - the quarantine remounts the root, and the marker write
+		// is what fails on a filesystem with nowhere left to write. Importing
+		// again would restore over the files that first attempt already changed,
+		// and reporting anything softer would start the workload on the mix.
+		return nil, fmt.Errorf("%w: the root filesystem was already read-only before this import, an earlier one stopped without recording itself", ErrPartialImport)
 	}
 
 	logrus.WithField("archive", identity).Info("[Archive] Restoring the filesystem from the archive before the workload starts")
@@ -369,7 +400,7 @@ func extract(body io.Reader, options ImportOptions) (_ *ImportResult, _ []byte, 
 		}
 		switch name {
 		case ManifestName:
-			if err := json.NewDecoder(tr).Decode(&result.Manifest); err != nil {
+			if err := json.NewDecoder(io.LimitReader(tr, maxMetadataBytes)).Decode(&result.Manifest); err != nil {
 				return nil, nil, fmt.Errorf("failed to read the archive manifest: %w", err)
 			}
 			if result.Manifest.Version > ManifestVersion {
@@ -377,8 +408,8 @@ func extract(body io.Reader, options ImportOptions) (_ *ImportResult, _ []byte, 
 			}
 			continue
 		case ProcessesName:
-			if processes, err = io.ReadAll(tr); err != nil {
-				return nil, nil, fmt.Errorf("failed to read the archived process list: %w", err)
+			if processes, err = readMetadata(tr, ProcessesName); err != nil {
+				return nil, nil, err
 			}
 			continue
 		}
