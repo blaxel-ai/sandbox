@@ -193,8 +193,11 @@ func main() {
 	// see archive.DefaultImportMarker.
 	restored := importArchive(ctx)
 
-	// Start background command if specified
-	if commandValue != "" && restored {
+	// Start background command if specified, unless the sandbox is frozen: on a
+	// read-only root every write of the workload fails, and starting it there
+	// only buries the reason under its own errors. Resuming the sandbox is what
+	// makes it startable, and the operator does that knowingly.
+	if commandValue != "" && restored && !archive.Quiesced() {
 		startBackgroundCommand(ctx, commandValue)
 	}
 
