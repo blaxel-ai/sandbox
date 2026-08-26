@@ -1,8 +1,12 @@
 package drive
 
 import (
+	"bytes"
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -94,6 +98,91 @@ func TestChownMountPointRefusesSymlinks(t *testing.T) {
 
 	if err := chownMountPoint(link, os.Getuid(), os.Getgid()); err == nil {
 		t.Fatal("chownMountPoint followed a symlink, want a failure")
+	}
+}
+
+// TestClassifyBlfsFailure covers the classification that decides whether a
+// failed mount is reported as a client error or a server fault.
+func TestClassifyBlfsFailure(t *testing.T) {
+	tests := []struct {
+		name   string
+		output string
+		want   error
+	}{
+		{
+			name:   "filer refusal on mkdir",
+			output: `failed to create dir /buckets/drv-acl-and-4e2e3989-esb1qo on filer [172.16.199.182:49200]: mkdir /buckets/drv-acl-and-4e2e3989-esb1qo: CreateEntry: rpc error: code = PermissionDenied desc = drive access denied`,
+			want:   ErrDriveAccessDenied,
+		},
+		{
+			name:   "grpc permission denied alone",
+			output: "rpc error: code = PermissionDenied desc = something else",
+			want:   ErrDriveAccessDenied,
+		},
+		{
+			name:   "unrelated startup failure",
+			output: "failed to talk to filer 172.16.199.182:49200: context deadline exceeded",
+			want:   nil,
+		},
+		{
+			name:   "no output at all",
+			output: "",
+			want:   nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := classifyBlfsFailure(tt.output); !errors.Is(got, tt.want) {
+				t.Fatalf("classifyBlfsFailure() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestTailWriterForwardsAndRetainsTail checks the writer both keeps the blfs
+// output forwarded to the sandbox logs and retains a bounded tail of it.
+func TestTailWriterForwardsAndRetainsTail(t *testing.T) {
+	var forwarded bytes.Buffer
+	w := &tailWriter{w: &forwarded}
+
+	if _, err := io.WriteString(w, "first line\n"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.WriteString(w, "drive access denied\n"); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := w.String(), "first line\ndrive access denied\n"; got != want {
+		t.Fatalf("tail = %q, want %q", got, want)
+	}
+	if got := forwarded.String(); got != w.String() {
+		t.Fatalf("forwarded = %q, want %q", got, w.String())
+	}
+
+	// A long-lived mount must not accumulate its whole output in memory.
+	if _, err := io.WriteString(w, strings.Repeat("x", blfsOutputTailBytes+512)); err != nil {
+		t.Fatal(err)
+	}
+	if got := len(w.String()); got != blfsOutputTailBytes {
+		t.Fatalf("tail length = %d, want %d", got, blfsOutputTailBytes)
+	}
+}
+
+// TestTailWriterConcurrentWrites guards the buffer shared by the blfs stdout
+// and stderr streams.
+func TestTailWriterConcurrentWrites(t *testing.T) {
+	w := &tailWriter{w: io.Discard}
+	var wg sync.WaitGroup
+	for i := 0; i < 50; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, _ = io.WriteString(w, "line of blfs output\n")
+		}()
+	}
+	wg.Wait()
+	if got := len(w.String()); got == 0 {
+		t.Fatal("tail is empty after concurrent writes")
 	}
 }
 

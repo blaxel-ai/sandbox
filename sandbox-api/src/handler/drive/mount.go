@@ -3,12 +3,14 @@ package drive
 import (
 	"errors"
 	"fmt"
+	"io"
 	"net/netip"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -23,11 +25,65 @@ const (
 	BlfsPath     = "/usr/local/bin/blfs"
 	pollInterval = 100 * time.Millisecond
 	mountTimeout = 30 * time.Second
+	// blfsOutputTailBytes bounds how much of the blfs output is kept to explain
+	// why a mount failed.
+	blfsOutputTailBytes = 8 << 10
 )
 
 // ErrMountPathBusy indicates the mount path is already occupied by a mount that
 // does not match the requested drive, so mounting would conflict.
 var ErrMountPathBusy = errors.New("mount path already in use")
+
+// ErrDriveAccessDenied indicates the filer refused the sandbox's credentials
+// for this drive, so the mount cannot succeed however often it is retried.
+var ErrDriveAccessDenied = errors.New("drive access denied")
+
+// driveAccessDeniedMarkers are the filer refusals blfs prints when the drive is
+// not accessible to this sandbox. They surface as a plain gRPC error on stderr,
+// which is the only signal available: blfs exits with the generic status 2 for
+// every startup failure.
+var driveAccessDeniedMarkers = []string{
+	"drive access denied",
+	"PermissionDenied",
+}
+
+// classifyBlfsFailure maps the output of a blfs process that exited during
+// startup to a sentinel error, or returns nil when the failure has no known
+// cause.
+func classifyBlfsFailure(output string) error {
+	for _, marker := range driveAccessDeniedMarkers {
+		if strings.Contains(output, marker) {
+			return ErrDriveAccessDenied
+		}
+	}
+	return nil
+}
+
+// tailWriter forwards everything it is given to w while retaining the last
+// blfsOutputTailBytes bytes, so a failing process can be diagnosed without
+// buffering the output of a mount that lives for hours.
+type tailWriter struct {
+	w io.Writer
+
+	mu   sync.Mutex
+	tail []byte
+}
+
+func (t *tailWriter) Write(p []byte) (int, error) {
+	t.mu.Lock()
+	t.tail = append(t.tail, p...)
+	if len(t.tail) > blfsOutputTailBytes {
+		t.tail = t.tail[len(t.tail)-blfsOutputTailBytes:]
+	}
+	t.mu.Unlock()
+	return t.w.Write(p)
+}
+
+func (t *tailWriter) String() string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return string(t.tail)
+}
 
 // normalizeDrivePath ensures the drive subpath has a leading slash and no
 // trailing slash (except for the root "/").
@@ -311,8 +367,9 @@ func MountDrive(driveName, mountPath, drivePath string, readOnly bool, uidMap, g
 
 	// Start the blfs mount process in the background
 	cmd := exec.Command(BlfsPath, args...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	output := &tailWriter{w: os.Stderr}
+	cmd.Stdout = io.MultiWriter(os.Stdout, output)
+	cmd.Stderr = output
 
 	if err := cmd.Start(); err != nil {
 		return "", "", fmt.Errorf("failed to start blfs mount: %w", err)
@@ -349,6 +406,11 @@ func MountDrive(driveName, mountPath, drivePath string, readOnly bool, uidMap, g
 				"pid":        pid,
 				"mount_path": mountPath,
 			}).Warn(msg)
+			// A refusal from the filer is the caller's problem, not a server
+			// fault, so it has to stay distinguishable up to the handler.
+			if cause := classifyBlfsFailure(output.String()); cause != nil {
+				return "", "", fmt.Errorf("failed to mount drive %s: %w", driveName, cause)
+			}
 			return "", "", fmt.Errorf("failed to mount drive: %s", msg)
 		default:
 		}
