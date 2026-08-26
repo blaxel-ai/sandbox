@@ -59,30 +59,41 @@ func classifyBlfsFailure(output string) error {
 	return nil
 }
 
-// tailWriter forwards everything it is given to w while retaining the last
-// blfsOutputTailBytes bytes, so a failing process can be diagnosed without
-// buffering the output of a mount that lives for hours.
-type tailWriter struct {
-	w io.Writer
-
+// outputTail retains the last blfsOutputTailBytes bytes of a process' output,
+// so a failing process can be diagnosed without buffering the output of a mount
+// that lives for hours. Both output streams share one tail, so it holds them in
+// the order they were produced.
+type outputTail struct {
 	mu   sync.Mutex
 	tail []byte
 }
 
-func (t *tailWriter) Write(p []byte) (int, error) {
-	t.mu.Lock()
-	t.tail = append(t.tail, p...)
-	if len(t.tail) > blfsOutputTailBytes {
-		t.tail = t.tail[len(t.tail)-blfsOutputTailBytes:]
-	}
-	t.mu.Unlock()
-	return t.w.Write(p)
+// tee returns a writer that forwards to w and records into the tail, keeping
+// each stream on its own destination.
+func (t *outputTail) tee(w io.Writer) io.Writer {
+	return &tailWriter{tail: t, w: w}
 }
 
-func (t *tailWriter) String() string {
+func (t *outputTail) String() string {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return string(t.tail)
+}
+
+type tailWriter struct {
+	tail *outputTail
+	w    io.Writer
+}
+
+func (t *tailWriter) Write(p []byte) (int, error) {
+	tail := t.tail
+	tail.mu.Lock()
+	tail.tail = append(tail.tail, p...)
+	if len(tail.tail) > blfsOutputTailBytes {
+		tail.tail = tail.tail[len(tail.tail)-blfsOutputTailBytes:]
+	}
+	tail.mu.Unlock()
+	return t.w.Write(p)
 }
 
 // normalizeDrivePath ensures the drive subpath has a leading slash and no
@@ -367,9 +378,9 @@ func MountDrive(driveName, mountPath, drivePath string, readOnly bool, uidMap, g
 
 	// Start the blfs mount process in the background
 	cmd := exec.Command(BlfsPath, args...)
-	output := &tailWriter{w: os.Stderr}
-	cmd.Stdout = io.MultiWriter(os.Stdout, output)
-	cmd.Stderr = output
+	output := &outputTail{}
+	cmd.Stdout = output.tee(os.Stdout)
+	cmd.Stderr = output.tee(os.Stderr)
 
 	if err := cmd.Start(); err != nil {
 		return "", "", fmt.Errorf("failed to start blfs mount: %w", err)

@@ -140,11 +140,12 @@ func TestClassifyBlfsFailure(t *testing.T) {
 	}
 }
 
-// TestTailWriterForwardsAndRetainsTail checks the writer both keeps the blfs
-// output forwarded to the sandbox logs and retains a bounded tail of it.
-func TestTailWriterForwardsAndRetainsTail(t *testing.T) {
+// TestOutputTailForwardsAndRetainsTail checks the tail both keeps the blfs
+// output forwarded to the sandbox logs and retains a bounded copy of it.
+func TestOutputTailForwardsAndRetainsTail(t *testing.T) {
 	var forwarded bytes.Buffer
-	w := &tailWriter{w: &forwarded}
+	tail := &outputTail{}
+	w := tail.tee(&forwarded)
 
 	if _, err := io.WriteString(w, "first line\n"); err != nil {
 		t.Fatal(err)
@@ -152,36 +153,60 @@ func TestTailWriterForwardsAndRetainsTail(t *testing.T) {
 	if _, err := io.WriteString(w, "drive access denied\n"); err != nil {
 		t.Fatal(err)
 	}
-	if got, want := w.String(), "first line\ndrive access denied\n"; got != want {
+	if got, want := tail.String(), "first line\ndrive access denied\n"; got != want {
 		t.Fatalf("tail = %q, want %q", got, want)
 	}
-	if got := forwarded.String(); got != w.String() {
-		t.Fatalf("forwarded = %q, want %q", got, w.String())
+	if got := forwarded.String(); got != tail.String() {
+		t.Fatalf("forwarded = %q, want %q", got, tail.String())
 	}
 
 	// A long-lived mount must not accumulate its whole output in memory.
 	if _, err := io.WriteString(w, strings.Repeat("x", blfsOutputTailBytes+512)); err != nil {
 		t.Fatal(err)
 	}
-	if got := len(w.String()); got != blfsOutputTailBytes {
+	if got := len(tail.String()); got != blfsOutputTailBytes {
 		t.Fatalf("tail length = %d, want %d", got, blfsOutputTailBytes)
 	}
 }
 
-// TestTailWriterConcurrentWrites guards the buffer shared by the blfs stdout
+// TestOutputTailKeepsStreamsSeparate: the two streams share the tail, but each
+// must keep going to its own destination so log routing stays intact.
+func TestOutputTailKeepsStreamsSeparate(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	tail := &outputTail{}
+
+	if _, err := io.WriteString(tail.tee(&stdout), "progress\n"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.WriteString(tail.tee(&stderr), "drive access denied\n"); err != nil {
+		t.Fatal(err)
+	}
+
+	if got, want := stdout.String(), "progress\n"; got != want {
+		t.Fatalf("stdout = %q, want %q", got, want)
+	}
+	if got, want := stderr.String(), "drive access denied\n"; got != want {
+		t.Fatalf("stderr = %q, want %q", got, want)
+	}
+	if got, want := tail.String(), "progress\ndrive access denied\n"; got != want {
+		t.Fatalf("tail = %q, want %q", got, want)
+	}
+}
+
+// TestOutputTailConcurrentWrites guards the buffer shared by the blfs stdout
 // and stderr streams.
-func TestTailWriterConcurrentWrites(t *testing.T) {
-	w := &tailWriter{w: io.Discard}
+func TestOutputTailConcurrentWrites(t *testing.T) {
+	tail := &outputTail{}
 	var wg sync.WaitGroup
 	for i := 0; i < 50; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, _ = io.WriteString(w, "line of blfs output\n")
+			_, _ = io.WriteString(tail.tee(io.Discard), "line of blfs output\n")
 		}()
 	}
 	wg.Wait()
-	if got := len(w.String()); got == 0 {
+	if got := len(tail.String()); got == 0 {
 		t.Fatal("tail is empty after concurrent writes")
 	}
 }
