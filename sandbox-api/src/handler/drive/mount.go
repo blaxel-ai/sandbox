@@ -59,19 +59,48 @@ func classifyBlfsFailure(output string) error {
 	return nil
 }
 
-// outputTail retains the last blfsOutputTailBytes bytes of a process' output,
-// so a failing process can be diagnosed without buffering the output of a mount
-// that lives for hours. Both output streams share one tail, so it holds them in
-// the order they were produced.
+// outputTail retains the last blfsOutputTailBytes bytes of a process' output so
+// a startup failure can be explained. Both output streams share one tail, so it
+// holds them in the order they were produced.
+//
+// The capture is only meaningful until the mount outcome is known: stop() ends
+// it and releases the buffer, so a mount alive for hours only forwards its
+// output.
 type outputTail struct {
-	mu   sync.Mutex
-	tail []byte
+	mu      sync.Mutex
+	tail    []byte
+	stopped bool
 }
 
 // tee returns a writer that forwards to w and records into the tail, keeping
 // each stream on its own destination.
 func (t *outputTail) tee(w io.Writer) io.Writer {
 	return &tailWriter{tail: t, w: w}
+}
+
+func (t *outputTail) record(p []byte) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.stopped {
+		return
+	}
+	if len(p) >= blfsOutputTailBytes {
+		t.tail = append(t.tail[:0], p[len(p)-blfsOutputTailBytes:]...)
+		return
+	}
+	// Compact what is kept to the front of the buffer rather than resliceing
+	// past it, so the allocation stays at the bound.
+	if overflow := len(t.tail) + len(p) - blfsOutputTailBytes; overflow > 0 {
+		t.tail = t.tail[:copy(t.tail, t.tail[overflow:])]
+	}
+	t.tail = append(t.tail, p...)
+}
+
+func (t *outputTail) stop() {
+	t.mu.Lock()
+	t.stopped = true
+	t.tail = nil
+	t.mu.Unlock()
 }
 
 func (t *outputTail) String() string {
@@ -86,13 +115,7 @@ type tailWriter struct {
 }
 
 func (t *tailWriter) Write(p []byte) (int, error) {
-	tail := t.tail
-	tail.mu.Lock()
-	tail.tail = append(tail.tail, p...)
-	if len(tail.tail) > blfsOutputTailBytes {
-		tail.tail = tail.tail[len(tail.tail)-blfsOutputTailBytes:]
-	}
-	tail.mu.Unlock()
+	t.tail.record(p)
 	return t.w.Write(p)
 }
 
@@ -385,6 +408,8 @@ func MountDrive(driveName, mountPath, drivePath string, readOnly bool, uidMap, g
 	if err := cmd.Start(); err != nil {
 		return "", "", fmt.Errorf("failed to start blfs mount: %w", err)
 	}
+	// Whatever the outcome, nothing reads the output once this call returns.
+	defer output.stop()
 
 	pid := cmd.Process.Pid
 	logrus.WithFields(logrus.Fields{

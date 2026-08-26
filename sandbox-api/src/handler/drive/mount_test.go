@@ -169,6 +169,53 @@ func TestOutputTailForwardsAndRetainsTail(t *testing.T) {
 	}
 }
 
+// TestOutputTailBoundedAllocation: chatty output must not grow the buffer past
+// its bound, which a plain reslice off the front would do.
+func TestOutputTailBoundedAllocation(t *testing.T) {
+	tail := &outputTail{}
+	w := tail.tee(io.Discard)
+
+	for i := 0; i < 10_000; i++ {
+		if _, err := io.WriteString(w, "a line of blfs mount output\n"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := len(tail.tail); got > blfsOutputTailBytes {
+		t.Fatalf("tail length = %d, want at most %d", got, blfsOutputTailBytes)
+	}
+	if got, limit := cap(tail.tail), 4*blfsOutputTailBytes; got > limit {
+		t.Fatalf("tail capacity = %d, want at most %d", got, limit)
+	}
+	// The kept window must still be the end of the stream.
+	if !strings.HasSuffix(tail.String(), "a line of blfs mount output\n") {
+		t.Fatalf("tail does not end with the last line written: %q", tail.String())
+	}
+}
+
+// TestOutputTailStopReleasesBuffer: past the mount outcome nothing reads the
+// capture, so it must stop holding the output of a mount that runs for hours.
+func TestOutputTailStopReleasesBuffer(t *testing.T) {
+	var forwarded bytes.Buffer
+	tail := &outputTail{}
+	w := tail.tee(&forwarded)
+
+	if _, err := io.WriteString(w, "before\n"); err != nil {
+		t.Fatal(err)
+	}
+	tail.stop()
+	if _, err := io.WriteString(w, "after\n"); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := tail.String(); got != "" {
+		t.Fatalf("tail = %q, want empty after stop()", got)
+	}
+	// Forwarding to the logs must survive the stop.
+	if got, want := forwarded.String(), "before\nafter\n"; got != want {
+		t.Fatalf("forwarded = %q, want %q", got, want)
+	}
+}
+
 // TestOutputTailKeepsStreamsSeparate: the two streams share the tail, but each
 // must keep going to its own destination so log routing stays intact.
 func TestOutputTailKeepsStreamsSeparate(t *testing.T) {
