@@ -229,6 +229,7 @@ func (pm *ProcessManager) leaveStopped(proc *ProcessInfo, callback func(*Process
 	proc.logLock.Lock()
 	proc.logWriters = nil
 	proc.logLock.Unlock()
+	proc.markFinished()
 
 	if callback != nil {
 		callback(proc)
@@ -368,6 +369,18 @@ func (pm *ProcessManager) StartProcess(command string, workingDir string, env ma
 }
 
 func (pm *ProcessManager) StartProcessWithName(command string, workingDir string, name string, env map[string]string, restartOnFailure bool, maxRestarts int, keepAlive bool, timeout int, callback func(process *ProcessInfo)) (string, error) {
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+	for _, process := range pm.processes {
+		if process.Name == name {
+			select {
+			case <-process.Finished:
+			default:
+				return process.PID, nil
+			}
+		}
+	}
+
 	// Always use shell to execute commands
 	// This ensures shell built-ins (cd, export, alias) work properly
 	// Use SHELL and SHELL_ARGS environment variables if set
@@ -501,9 +514,7 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 	}
 
 	// Store process in memory
-	pm.mu.Lock()
 	pm.processes[process.PID] = process
-	pm.mu.Unlock()
 
 	// Start file tailer for real-time log streaming
 	go pm.tailLogFiles(process)
@@ -1423,7 +1434,10 @@ func (pm *ProcessManager) getProcessOutput(identifier string, max int64) (Proces
 	if !exists {
 		return ProcessLogs{}, fmt.Errorf("process with PID %s not found", identifier)
 	}
+	return process.output(max), nil
+}
 
+func (process *ProcessInfo) output(max int64) ProcessLogs {
 	// The log files hold the whole output; the in-memory buffers are the
 	// fallback for when a file is gone or unreadable.
 	stdout, ok := readLogTail(process.StdoutFile, max)
@@ -1444,7 +1458,12 @@ func (pm *ProcessManager) getProcessOutput(identifier string, max int64) (Proces
 		Stdout: stdout,
 		Stderr: stderr,
 		Logs:   stdout + stderr,
-	}, nil
+	}
+}
+
+// Output reads process output without mutating shared process state.
+func (process *ProcessInfo) Output() ProcessLogs {
+	return process.output(maxLogsResponse())
 }
 
 // endsWithNewline reports whether the first size bytes of path end a line.

@@ -12,7 +12,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/sirupsen/logrus"
 
-	"github.com/blaxel-ai/sandbox-api/src/handler/constants"
 	"github.com/blaxel-ai/sandbox-api/src/handler/process"
 	"github.com/blaxel-ai/sandbox-api/src/lib"
 	"github.com/blaxel-ai/sandbox-api/src/lib/audit"
@@ -109,6 +108,11 @@ func (h *ProcessHandler) ExecuteProcess(command string, workingDir string, name 
 	if processInfo.CompletedAt != nil {
 		completedAt = processInfo.CompletedAt.Format("Mon, 02 Jan 2006 15:04:05 GMT")
 	}
+	logs, stdout, stderr := processInfo.Logs, processInfo.Stdout, processInfo.Stderr
+	if waitForCompletion && err == nil {
+		output := processInfo.Output()
+		logs, stdout, stderr = &output.Logs, &output.Stdout, &output.Stderr
+	}
 
 	// Return the process response even if there's an error (e.g., timeout)
 	// This allows callers to access process info for still-running processes
@@ -121,9 +125,9 @@ func (h *ProcessHandler) ExecuteProcess(command string, workingDir string, name 
 		CompletedAt:      &completedAt,
 		ExitCode:         processInfo.ExitCode,
 		WorkingDir:       processInfo.WorkingDir,
-		Logs:             processInfo.Logs,
-		Stdout:           processInfo.Stdout,
-		Stderr:           processInfo.Stderr,
+		Logs:             logs,
+		Stdout:           stdout,
+		Stderr:           stderr,
 		RestartOnFailure: processInfo.RestartOnFailure,
 		MaxRestarts:      processInfo.MaxRestarts,
 		RestartCount:     processInfo.RestartCount,
@@ -300,15 +304,6 @@ func (h *ProcessHandler) HandleExecuteCommand(c *gin.Context) {
 		req.WorkingDir = formattedWorkingDir
 	}
 
-	// If a name is provided, check if a process with that name already exists
-	if req.Name != "" {
-		alreadyExists, err := h.GetProcess(req.Name)
-		if err == nil && alreadyExists.Status == string(constants.ProcessStatusRunning) {
-			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("process with name '%s' already exists and is running", req.Name)})
-			return
-		}
-	}
-
 	audit.LogEvent(c, "process_exec", logrus.Fields{
 		"command":     req.Command,
 		"working-dir": req.WorkingDir,
@@ -355,15 +350,6 @@ func (h *ProcessHandler) handleExecuteCommandStream(c *gin.Context) {
 			return
 		}
 		req.WorkingDir = formattedWorkingDir
-	}
-
-	// If a name is provided, check if a process with that name already exists
-	if req.Name != "" {
-		alreadyExists, err := h.GetProcess(req.Name)
-		if err == nil && alreadyExists.Status == string(constants.ProcessStatusRunning) {
-			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("process with name '%s' already exists and is running", req.Name)})
-			return
-		}
 	}
 
 	audit.LogEvent(c, "process_exec_stream", logrus.Fields{

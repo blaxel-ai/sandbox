@@ -24,6 +24,37 @@ func waitForProcessDone(t *testing.T, done <-chan struct{}, timeout time.Duratio
 	}
 }
 
+func TestConcurrentNamedExecutionsShareProcess(t *testing.T) {
+	originalLogDir := ProcessLogDir
+	ProcessLogDir = t.TempDir()
+	t.Cleanup(func() { ProcessLogDir = originalLogDir })
+
+	pm := NewProcessManager()
+	start := make(chan struct{})
+	pids := make(chan string, 16)
+	for range 16 {
+		go func() {
+			<-start
+			process, err := pm.ExecuteProcess("sleep 1", "", "sandboxd", nil, true, 5, nil, false, 0, false)
+			if err != nil {
+				t.Errorf("execute named process: %v", err)
+				pids <- ""
+				return
+			}
+			pids <- process.PID
+		}()
+	}
+	close(start)
+
+	unique := map[string]struct{}{}
+	for range 16 {
+		unique[<-pids] = struct{}{}
+	}
+	if len(unique) != 1 {
+		t.Fatalf("got %d process IDs, want 1: %v", len(unique), unique)
+	}
+}
+
 // TestProcessManagerIntegration tests the complete functionality of the process manager
 // This is an integration test that verifies that real processes can be started, monitored, and stopped
 func TestProcessManagerIntegrationWithPID(t *testing.T) {

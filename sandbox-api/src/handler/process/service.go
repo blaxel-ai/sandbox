@@ -25,26 +25,17 @@ func (pm *ProcessManager) ExecuteProcess(
 	keepAlive bool,
 ) (*ProcessInfo, error) {
 	portCh := make(chan int)
-	completionCh := make(chan string)
 
-	// Add flags to track if channels have been closed
 	portChClosed := false
-	completionChClosed := false
 
-	// Use a mutex to protect the flags
 	var mu sync.Mutex
 
-	// Defer closing the channels if they're not already closed
 	defer func() {
 		mu.Lock()
 		defer mu.Unlock()
 
 		if !portChClosed {
 			close(portCh)
-		}
-
-		if !completionChClosed {
-			close(completionCh)
 		}
 	}()
 
@@ -58,21 +49,7 @@ func (pm *ProcessManager) ExecuteProcess(
 		ctx = context.Background()
 	}
 
-	// Create a callback function
-	callback := func(p *ProcessInfo) {
-		if waitForCompletion {
-			mu.Lock()
-			closed := completionChClosed
-			mu.Unlock()
-			if !closed {
-				// Use a recover block in case of a race condition
-				defer func() {
-					_ = recover()
-				}()
-				completionCh <- p.PID
-			}
-		}
-	}
+	callback := func(*ProcessInfo) {}
 
 	// Start the process
 	var pid string
@@ -84,6 +61,12 @@ func (pm *ProcessManager) ExecuteProcess(
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to start process: %w", err)
+	}
+	pm.mu.RLock()
+	processInfo, exists := pm.processes[pid]
+	pm.mu.RUnlock()
+	if !exists {
+		return nil, fmt.Errorf("process creation failed because process does not exist")
 	}
 
 	// Set up port monitoring if requested
@@ -176,46 +159,9 @@ func (pm *ProcessManager) ExecuteProcess(
 	// Wait for completion if requested
 	if waitForCompletion {
 		select {
-		case receivedPID := <-completionCh:
-			_, exists := pm.GetProcessByIdentifier(receivedPID)
-			if !exists {
-				return nil, fmt.Errorf("process creation failed because process does not exist")
-			}
-			pid = receivedPID // Update pid to the received PID
-			break
+		case <-processInfo.Finished:
 		case <-ctx.Done():
-			// Process timed out but is still running - return process info along with error
-			// so the caller can still access the running process
-			processInfo, exists := pm.GetProcessByIdentifier(pid)
-			if exists {
-				logs := processInfo.logs.String()
-				processInfo.Logs = &logs
-				return processInfo, fmt.Errorf("process timed out after %d seconds", timeout)
-			}
-			return nil, fmt.Errorf("process timed out after %d seconds", timeout)
-		}
-	}
-
-	// Get the process info
-	processInfo, exists := pm.GetProcessByIdentifier(pid)
-	if !exists {
-		return nil, fmt.Errorf("process creation failed because process does not exist")
-	}
-	if waitForCompletion {
-		// Read logs from file if available (more reliable than in-memory)
-		output, err := pm.GetProcessOutput(pid)
-		if err == nil {
-			processInfo.Logs = &output.Logs
-			processInfo.Stdout = &output.Stdout
-			processInfo.Stderr = &output.Stderr
-		} else {
-			// Fall back to in-memory
-			logs := processInfo.logs.String()
-			processInfo.Logs = &logs
-			stdout := processInfo.stdout.String()
-			processInfo.Stdout = &stdout
-			stderr := processInfo.stderr.String()
-			processInfo.Stderr = &stderr
+			return processInfo, fmt.Errorf("process timed out after %d seconds", timeout)
 		}
 	}
 	return processInfo, nil
