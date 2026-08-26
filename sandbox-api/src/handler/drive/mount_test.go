@@ -1,8 +1,12 @@
 package drive
 
 import (
+	"bytes"
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -94,6 +98,163 @@ func TestChownMountPointRefusesSymlinks(t *testing.T) {
 
 	if err := chownMountPoint(link, os.Getuid(), os.Getgid()); err == nil {
 		t.Fatal("chownMountPoint followed a symlink, want a failure")
+	}
+}
+
+// TestClassifyBlfsFailure covers the classification that decides whether a
+// failed mount is reported as a client error or a server fault.
+func TestClassifyBlfsFailure(t *testing.T) {
+	tests := []struct {
+		name   string
+		output string
+		want   error
+	}{
+		{
+			name:   "filer refusal on mkdir",
+			output: `failed to create dir /buckets/drv-acl-and-4e2e3989-esb1qo on filer [172.16.199.182:49200]: mkdir /buckets/drv-acl-and-4e2e3989-esb1qo: CreateEntry: rpc error: code = PermissionDenied desc = drive access denied`,
+			want:   ErrDriveAccessDenied,
+		},
+		{
+			name:   "grpc permission denied alone",
+			output: "rpc error: code = PermissionDenied desc = something else",
+			want:   ErrDriveAccessDenied,
+		},
+		{
+			name:   "unrelated startup failure",
+			output: "failed to talk to filer 172.16.199.182:49200: context deadline exceeded",
+			want:   nil,
+		},
+		{
+			name:   "no output at all",
+			output: "",
+			want:   nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := classifyBlfsFailure(tt.output); !errors.Is(got, tt.want) {
+				t.Fatalf("classifyBlfsFailure() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestOutputTailForwardsAndRetainsTail checks the tail both keeps the blfs
+// output forwarded to the sandbox logs and retains a bounded copy of it.
+func TestOutputTailForwardsAndRetainsTail(t *testing.T) {
+	var forwarded bytes.Buffer
+	tail := &outputTail{}
+	w := tail.tee(&forwarded)
+
+	if _, err := io.WriteString(w, "first line\n"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.WriteString(w, "drive access denied\n"); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := tail.String(), "first line\ndrive access denied\n"; got != want {
+		t.Fatalf("tail = %q, want %q", got, want)
+	}
+	if got := forwarded.String(); got != tail.String() {
+		t.Fatalf("forwarded = %q, want %q", got, tail.String())
+	}
+
+	// A long-lived mount must not accumulate its whole output in memory.
+	if _, err := io.WriteString(w, strings.Repeat("x", blfsOutputTailBytes+512)); err != nil {
+		t.Fatal(err)
+	}
+	if got := len(tail.String()); got != blfsOutputTailBytes {
+		t.Fatalf("tail length = %d, want %d", got, blfsOutputTailBytes)
+	}
+}
+
+// TestOutputTailBoundedAllocation: chatty output must not grow the buffer past
+// its bound, which a plain reslice off the front would do.
+func TestOutputTailBoundedAllocation(t *testing.T) {
+	tail := &outputTail{}
+	w := tail.tee(io.Discard)
+
+	for i := 0; i < 10_000; i++ {
+		if _, err := io.WriteString(w, "a line of blfs mount output\n"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := len(tail.tail); got > blfsOutputTailBytes {
+		t.Fatalf("tail length = %d, want at most %d", got, blfsOutputTailBytes)
+	}
+	if got, limit := cap(tail.tail), 4*blfsOutputTailBytes; got > limit {
+		t.Fatalf("tail capacity = %d, want at most %d", got, limit)
+	}
+	// The kept window must still be the end of the stream.
+	if !strings.HasSuffix(tail.String(), "a line of blfs mount output\n") {
+		t.Fatalf("tail does not end with the last line written: %q", tail.String())
+	}
+}
+
+// TestOutputTailStopReleasesBuffer: past the mount outcome nothing reads the
+// capture, so it must stop holding the output of a mount that runs for hours.
+func TestOutputTailStopReleasesBuffer(t *testing.T) {
+	var forwarded bytes.Buffer
+	tail := &outputTail{}
+	w := tail.tee(&forwarded)
+
+	if _, err := io.WriteString(w, "before\n"); err != nil {
+		t.Fatal(err)
+	}
+	tail.stop()
+	if _, err := io.WriteString(w, "after\n"); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := tail.String(); got != "" {
+		t.Fatalf("tail = %q, want empty after stop()", got)
+	}
+	// Forwarding to the logs must survive the stop.
+	if got, want := forwarded.String(), "before\nafter\n"; got != want {
+		t.Fatalf("forwarded = %q, want %q", got, want)
+	}
+}
+
+// TestOutputTailKeepsStreamsSeparate: the two streams share the tail, but each
+// must keep going to its own destination so log routing stays intact.
+func TestOutputTailKeepsStreamsSeparate(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	tail := &outputTail{}
+
+	if _, err := io.WriteString(tail.tee(&stdout), "progress\n"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.WriteString(tail.tee(&stderr), "drive access denied\n"); err != nil {
+		t.Fatal(err)
+	}
+
+	if got, want := stdout.String(), "progress\n"; got != want {
+		t.Fatalf("stdout = %q, want %q", got, want)
+	}
+	if got, want := stderr.String(), "drive access denied\n"; got != want {
+		t.Fatalf("stderr = %q, want %q", got, want)
+	}
+	if got, want := tail.String(), "progress\ndrive access denied\n"; got != want {
+		t.Fatalf("tail = %q, want %q", got, want)
+	}
+}
+
+// TestOutputTailConcurrentWrites guards the buffer shared by the blfs stdout
+// and stderr streams.
+func TestOutputTailConcurrentWrites(t *testing.T) {
+	tail := &outputTail{}
+	var wg sync.WaitGroup
+	for i := 0; i < 50; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, _ = io.WriteString(tail.tee(io.Discard), "line of blfs output\n")
+		}()
+	}
+	wg.Wait()
+	if got := len(tail.String()); got == 0 {
+		t.Fatal("tail is empty after concurrent writes")
 	}
 }
 
