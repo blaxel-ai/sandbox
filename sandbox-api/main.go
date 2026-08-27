@@ -50,9 +50,6 @@ func main() {
 	// Load .env file
 	_ = godotenv.Load()
 
-	oom.ProtectSelf()
-	oom.LimitHeap()
-
 	// Re-derive the environment from the two places the host keeps it - the
 	// file naming the part the kernel command line could not carry, then the
 	// metadata document holding the current generation - before anything reads
@@ -75,6 +72,9 @@ func main() {
 			logrus.WithError(err).Error("Failed to load guest metadata environment")
 		}
 	}
+
+	oom.ProtectSelf()
+	oom.LimitHeap()
 
 	// Define command-line flags
 	port := flag.Int("port", 8080, "Port to listen on")

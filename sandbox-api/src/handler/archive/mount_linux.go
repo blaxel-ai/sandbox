@@ -15,11 +15,15 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// DefaultImageDevice is where the pristine EROFS image is attached: the first
-// virtio drive. A generation that exposes the image somewhere else names that
-// device in the export request, which the control plane fills in — the sandbox
-// knows nothing of the platform it boots on.
+// DefaultImageDevice is where the pristine EROFS image is attached on most
+// sandboxes: the first virtio drive. It is only the last resort of
+// detectImageDevice, which reads where the image actually is instead of
+// assuming — the sandbox knows nothing of the platform it boots on.
 const DefaultImageDevice = "/dev/vda"
+
+// devDir is where the block devices are, and the only place an image device is
+// looked for.
+const devDir = "/dev"
 
 // erofsSuperOffset and erofsMagic locate the signature an EROFS filesystem
 // starts with, which is how a device is told to hold an image rather than
@@ -128,6 +132,154 @@ func deviceHoldsImage(device string) bool {
 		return false
 	}
 	return binary.LittleEndian.Uint32(signature) == erofsMagic
+}
+
+// detectImageDevice finds the device the pristine image is attached to, so the
+// export compares the filesystem against the right thing wherever the platform
+// puts the image and whatever it calls it.
+//
+// The image is already mounted, as the lower layer of the root overlay, so the
+// mount table names the device it comes from. Should the root not be an overlay
+// — a sandbox booted some other way, a test — the block devices are read
+// instead, and the one carrying an EROFS filesystem is the image.
+func detectImageDevice() string {
+	if device := imageDeviceFromMounts(); device != "" {
+		return device
+	}
+	if deviceHoldsImage(DefaultImageDevice) {
+		return DefaultImageDevice
+	}
+	if device := imageDeviceFromBlockDevices(); device != "" {
+		return device
+	}
+	// Nothing was found, so the export is about to fail; naming the usual device
+	// makes it fail with "/dev/vda is not available" rather than with a blank.
+	return DefaultImageDevice
+}
+
+// imageDeviceFromMounts answers detectImageDevice from the mount table.
+func imageDeviceFromMounts() string {
+	file, err := os.Open("/proc/self/mountinfo")
+	if err != nil {
+		return ""
+	}
+	defer file.Close()
+	device := imageDeviceFromMountinfo(file)
+	if device == "" || !deviceHoldsImage(device) {
+		return ""
+	}
+	return device
+}
+
+// imageDeviceFromMountinfo reads the image device out of a mount table.
+//
+// The lower layers of the root overlay are what the sandbox booted from, and
+// the image is the one of them that is an EROFS mount: a drive or an image the
+// workload mounted is not a layer of the root, so it cannot be mistaken for the
+// image however it is mounted. When the root is not an overlay the only EROFS
+// mount coming from a device answers, and an ambiguous table answers nothing.
+func imageDeviceFromMountinfo(mountinfo io.Reader) string {
+	type erofsMount struct{ mountpoint, device string }
+	var erofsMounts []erofsMount
+	var lowerDirs []string
+
+	scanner := bufio.NewScanner(mountinfo)
+	for scanner.Scan() {
+		// "36 35 253:0 / /mnt/x rw,relatime - erofs /dev/vda ro": the mount point
+		// is the fifth field of the left half, the filesystem type, its source and
+		// its super options the three of the right half.
+		line := scanner.Text()
+		separator := strings.Index(line, " - ")
+		if separator < 0 {
+			continue
+		}
+		left := strings.Fields(line[:separator])
+		right := strings.Fields(line[separator+len(" - "):])
+		if len(left) < 5 || len(right) < 2 {
+			continue
+		}
+		mountpoint, fstype, source := left[4], right[0], right[1]
+		switch {
+		case fstype == "erofs" && strings.HasPrefix(source, devDir+"/"):
+			erofsMounts = append(erofsMounts, erofsMount{mountpoint, source})
+		case fstype == "overlay" && filepath.Clean(mountpoint) == DefaultRoot && len(right) > 2:
+			// A remount of the root leaves a second line for it, so the layers of
+			// the last one are the ones in force.
+			lowerDirs = overlayLowerDirs(right[2])
+		}
+	}
+
+	if len(lowerDirs) > 0 {
+		for _, mount := range erofsMounts {
+			for _, lower := range lowerDirs {
+				if underMountPoint(lower, mount.mountpoint) {
+					return mount.device
+				}
+			}
+		}
+		return ""
+	}
+	if len(erofsMounts) == 1 {
+		return erofsMounts[0].device
+	}
+	return ""
+}
+
+// overlayLowerDirs reads the lower layers out of the super options of an
+// overlay mount, "lowerdir=/a:/b,upperdir=/c,workdir=/d".
+func overlayLowerDirs(superOptions string) []string {
+	for _, option := range strings.Split(superOptions, ",") {
+		value, found := strings.CutPrefix(option, "lowerdir=")
+		if !found {
+			continue
+		}
+		return strings.Split(value, ":")
+	}
+	return nil
+}
+
+// underMountPoint reports whether path is served by the mount at mountpoint,
+// which is how a lower layer names a directory inside the image mount rather
+// than the mount point itself.
+func underMountPoint(path, mountpoint string) bool {
+	path, mountpoint = filepath.Clean(path), filepath.Clean(mountpoint)
+	if path == mountpoint {
+		return true
+	}
+	if mountpoint == DefaultRoot {
+		return false
+	}
+	return strings.HasPrefix(path, mountpoint+"/")
+}
+
+// imageDeviceFromBlockDevices answers detectImageDevice by reading the devices
+// themselves, for a sandbox whose mount table does not say where the image is.
+// Only one device carries an EROFS filesystem, since a workload attaches its
+// own images through loop devices, which are left out.
+func imageDeviceFromBlockDevices() string {
+	entries, err := os.ReadDir(devDir)
+	if err != nil {
+		return ""
+	}
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), "loop") {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil {
+			continue
+		}
+		// A block device, and nothing else: reading a character device - a tty, a
+		// tape - is a side effect rather than a look.
+		if info.Mode()&os.ModeDevice == 0 || info.Mode()&os.ModeCharDevice != 0 {
+			continue
+		}
+		device := filepath.Join(devDir, entry.Name())
+		if deviceHoldsImage(device) {
+			return device
+		}
+	}
+	return ""
 }
 
 // mountedFromImage reports whether mountpoint holds the image device itself,

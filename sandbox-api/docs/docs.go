@@ -2028,7 +2028,7 @@ const docTemplate = `{
                     }
                 },
                 "imageDevice": {
-                    "description": "ImageDevice is the device the pristine image was read from, for the record:\nit says which generation exported the archive (/dev/vda on mk3.1).",
+                    "description": "ImageDevice is the device the pristine image was read from, for the record:\nit says where the sandbox that exported the archive found its image.",
                     "type": "string",
                     "example": "/dev/vda"
                 },
@@ -2294,7 +2294,7 @@ const docTemplate = `{
                     }
                 },
                 "imageDevice": {
-                    "description": "ImageDevice is the device holding the pristine image, /dev/vda by default.\nA generation that attaches the image elsewhere names its device here.",
+                    "description": "ImageDevice is the device holding the pristine image. It is found on its\nown, wherever the sandbox booted from attached it, and naming one here\nonly overrides that.",
                     "type": "string",
                     "example": "/dev/vda"
                 },
