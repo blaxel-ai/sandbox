@@ -1677,7 +1677,7 @@ components:
           description: >-
             ImageDevice is the device the pristine image was read from, for the record:
 
-            it says which generation exported the archive (/dev/vda on mk3.1).
+            it says where the sandbox that exported the archive found its image.
           example: /dev/vda
           type: string
         modified:
@@ -1889,9 +1889,11 @@ components:
           type: object
         imageDevice:
           description: >-
-            ImageDevice is the device holding the pristine image, /dev/vda by default.
+            ImageDevice is the device holding the pristine image. It is found on its
 
-            A generation that attaches the image elsewhere names its device here.
+            own, wherever the sandbox booted from attached it, and naming one here
+
+            only overrides that.
           example: /dev/vda
           type: string
         imageMountPoint:

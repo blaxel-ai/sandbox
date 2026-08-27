@@ -29,3 +29,5 @@ func mounted(mountpoint string) bool { return false }
 func mountedFromImage(mountpoint, device string) bool { return false }
 
 func deviceHoldsImage(device string) bool { return false }
+
+func detectImageDevice() string { return DefaultImageDevice }

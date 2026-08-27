@@ -34,7 +34,7 @@ type Manifest struct {
 	// APIVersion is the sandbox-api build that produced the archive.
 	APIVersion string `json:"apiVersion,omitempty" example:"v0.1.0"`
 	// ImageDevice is the device the pristine image was read from, for the record:
-	// it says which generation exported the archive (/dev/vda on mk3.1).
+	// it says where the sandbox that exported the archive found its image.
 	ImageDevice string `json:"imageDevice,omitempty" example:"/dev/vda"`
 	// Root is the directory the paths are relative to.
 	Root string `json:"root" binding:"required" example:"/"`
