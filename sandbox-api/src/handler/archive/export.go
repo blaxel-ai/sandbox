@@ -85,8 +85,9 @@ type ExportOptions struct {
 	DryRun bool `json:"dryRun,omitempty" example:"false"`
 	// Excludes are added to the paths excluded by default.
 	Excludes []string `json:"excludes,omitempty"`
-	// ImageDevice is the device holding the pristine image, /dev/vda by default.
-	// A generation that attaches the image elsewhere names its device here.
+	// ImageDevice is the device holding the pristine image. It is found on its
+	// own, wherever the sandbox booted from attached it, and naming one here
+	// only overrides that.
 	ImageDevice string `json:"imageDevice,omitempty" example:"/dev/vda"`
 	// ImageMountPoint is a directory where the pristine image is already mounted.
 	// When set the image device is neither mounted nor unmounted.
@@ -150,7 +151,7 @@ func (o ExportOptions) imageDevice() string {
 	if o.ImageDevice != "" {
 		return o.ImageDevice
 	}
-	return DefaultImageDevice
+	return detectImageDevice()
 }
 
 // validateImageSource checks what the archive is compared against, which decides
