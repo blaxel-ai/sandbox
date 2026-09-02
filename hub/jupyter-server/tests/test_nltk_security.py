@@ -51,6 +51,7 @@ import io
 import multiprocessing
 import os
 import pickle
+import shutil
 import subprocess
 import sys
 
@@ -284,12 +285,24 @@ def test_dot_sites_refuse_a_planted_binary(tmp_path, monkeypatch):
     from nltk.parse.dependencygraph import dot2img
     from nltk.translate.api import AlignedSent
 
-    with pytest.raises(Exception, match="Cannot find the dot binary"):
-        dot2img("digraph G { a -> b }")
-    assert not marker.exists(), "dot2img executed the planted ./dot"
+    # The property under test is "the planted ./dot never runs". What happens instead depends
+    # on the host: without a real Graphviz the lookup must fail with the documented message,
+    # with one installed in /usr/bin or /bin nltk may run it (or fail on the input), and the
+    # test must not care which. Devin Review flagged the original environment-dependent raise.
+    real_dot = shutil.which("dot", path="/usr/bin:/bin")
 
-    with pytest.raises(Exception, match="Cannot find the dot binary"):
-        AlignedSent(["a"], ["b"])._repr_svg_()
+    def assert_planted_stub_not_run(call, label):
+        try:
+            call()
+        except Exception as exc:  # noqa: BLE001 - the error type is nltk's business
+            if real_dot is None:
+                assert "Cannot find the dot binary" in str(exc), f"{label}: unexpected error {exc!r}"
+        else:
+            assert real_dot is not None, f"{label}: no real dot on PATH, yet the lookup did not fail"
+        assert not marker.exists(), f"{label} executed the planted ./dot"
+
+    assert_planted_stub_not_run(lambda: dot2img("digraph G { a -> b }"), "dot2img")
+    assert_planted_stub_not_run(lambda: AlignedSent(["a"], ["b"])._repr_svg_(), "AlignedSent._repr_svg_")
     assert not marker.exists(), "AlignedSent._repr_svg_ executed the planted ./dot"
 
 
