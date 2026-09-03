@@ -1909,8 +1909,20 @@ const docTemplate = `{
                             "$ref": "#/definitions/ErrorResponse"
                         }
                     },
+                    "413": {
+                        "description": "Body over 8 MiB",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
                     "500": {
                         "description": "Write failed",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "Process stopped reading its stdin",
                         "schema": {
                             "$ref": "#/definitions/ErrorResponse"
                         }

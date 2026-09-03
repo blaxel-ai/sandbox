@@ -768,22 +768,28 @@ func (pm *ProcessManager) tailLogFiles(proc *ProcessInfo) {
 	}
 }
 
-// drainStream reads one stream until it sits at a line boundary or has no more
-// data ready. The two streams are read in turns, one buffer at a time, so
-// without this a stderr line landed inside any stdout line longer than the
-// buffer: the text stream carried "stdout:<4KB>stderr:...\n<rest>" and no
-// line-oriented consumer could parse either half. A child that itself pauses
-// mid-line to write stderr can still interleave; that is its own doing.
-// Returns the number of bytes read.
+// maxDrainReads caps how many buffers drainStream takes from one stream in a
+// turn: 16 x 4 KiB. A line longer than that is not line-oriented output, and
+// the other stream must not starve behind it.
+const maxDrainReads = 16
+
+// drainStream reads one stream until it sits at a line boundary, has no more
+// data ready, or has used its turn. The two streams are read in turns, one
+// buffer at a time, so without this a stderr line landed inside any stdout
+// line longer than the buffer: the text stream carried
+// "stdout:<4KB>stderr:...\n<rest>" and no line-oriented consumer could parse
+// either half. A child that itself pauses mid-line to write stderr can still
+// interleave; that is its own doing. Returns the number of bytes read.
 func (pm *ProcessManager) drainStream(file *os.File, buf []byte, proc *ProcessInfo, streamType string, combinedFile *os.File) int {
 	total := 0
-	for {
+	for reads := 0; reads < maxDrainReads; reads++ {
 		n := pm.readAndBroadcast(file, buf, proc, streamType, combinedFile)
 		total += n
 		if n == 0 || !proc.midLine(streamType) {
-			return total
+			break
 		}
 	}
+	return total
 }
 
 // midLine reports whether the stream's last read ended part-way through a line.

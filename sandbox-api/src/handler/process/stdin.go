@@ -4,17 +4,29 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"sync"
+	"time"
 )
 
 var (
 	// ErrStdinNotEnabled is returned when writing to a process started without stdin: true.
 	ErrStdinNotEnabled = errors.New("process was started without stdin; start it with \"stdin\": true")
-	// ErrStdinClosed is returned once stdin has been closed, or after a sandbox-api
-	// restart: the pipe lived in the previous sandbox-api process and died with it.
+	// ErrStdinClosed is returned once stdin has been closed, the process has
+	// exited, or after a sandbox-api restart: the pipe lived in the previous
+	// sandbox-api process and died with it.
 	ErrStdinClosed = errors.New("stdin is closed; restart the process to get a new one")
+	// ErrStdinStalled is returned when the child stops reading and the pipe
+	// buffer stays full for stdinWriteTimeout. Part of the body may have been
+	// written; the caller decides whether the stream is still usable.
+	ErrStdinStalled = errors.New("process is not reading its stdin")
 )
+
+// stdinWriteTimeout bounds one write, and with it the time the pipe lock is
+// held: a child that stops reading must not pin an HTTP goroutine and every
+// later writer for good. A var so tests can shorten it.
+var stdinWriteTimeout = 10 * time.Second
 
 // stdinPipe is the parent's write end of a process's stdin. A plain pipe, not a
 // FIFO on disk, so it does not survive a sandbox-api restart: the child sees EOF,
@@ -54,10 +66,23 @@ func (pm *ProcessManager) WriteStdin(identifier string, data []byte) error {
 	if p.stdin.w == nil {
 		return ErrStdinClosed
 	}
-	if _, err := p.stdin.w.Write(data); err != nil {
+	if f, ok := p.stdin.w.(*os.File); ok {
+		_ = f.SetWriteDeadline(time.Now().Add(stdinWriteTimeout))
+		defer f.SetWriteDeadline(time.Time{})
+	}
+	_, err = p.stdin.w.Write(data)
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, os.ErrClosed):
+		// exec.Cmd.Wait closed the pipe when the child exited.
+		p.stdin.w = nil
+		return ErrStdinClosed
+	case errors.Is(err, os.ErrDeadlineExceeded):
+		return ErrStdinStalled
+	default:
 		return fmt.Errorf("failed to write to stdin: %w", err)
 	}
-	return nil
 }
 
 // CloseStdin sends EOF to the process. Idempotent.
@@ -73,6 +98,10 @@ func (pm *ProcessManager) CloseStdin(identifier string) error {
 	}
 	err = p.stdin.w.Close()
 	p.stdin.w = nil
+	if errors.Is(err, os.ErrClosed) {
+		// Already closed by exec.Cmd.Wait when the child exited: still EOF.
+		return nil
+	}
 	return err
 }
 

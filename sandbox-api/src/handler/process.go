@@ -175,6 +175,7 @@ func (h *ProcessHandler) ListProcesses() []ProcessResponse {
 			MaxRestarts:      p.MaxRestarts,
 			RestartCount:     p.RestartCount,
 			KeepAlive:        p.KeepAlive,
+			Stdin:            p.Stdin,
 		})
 	}
 	return result
@@ -222,6 +223,7 @@ func (h *ProcessHandler) GetProcess(identifier string) (ProcessResponse, error) 
 		MaxRestarts:      processInfo.MaxRestarts,
 		RestartCount:     processInfo.RestartCount,
 		KeepAlive:        processInfo.KeepAlive,
+		Stdin:            processInfo.Stdin,
 	}, nil
 }
 
@@ -316,6 +318,7 @@ func (h *ProcessHandler) HandleExecuteCommand(c *gin.Context) {
 	audit.LogEvent(c, "process_exec", logrus.Fields{
 		"command":     req.Command,
 		"working-dir": req.WorkingDir,
+		"stdin":       req.Stdin,
 	})
 
 	// Timeout of 0 means infinite (no auto-kill)
@@ -373,6 +376,7 @@ func (h *ProcessHandler) handleExecuteCommandStream(c *gin.Context) {
 	audit.LogEvent(c, "process_exec_stream", logrus.Fields{
 		"command":     req.Command,
 		"working-dir": req.WorkingDir,
+		"stdin":       req.Stdin,
 	})
 
 	// Timeout of 0 means infinite (no auto-kill)
@@ -659,11 +663,14 @@ func (h *ProcessHandler) HandleKillProcess(c *gin.Context) {
 const maxStdinBody = 8 << 20
 
 // stdinErrorStatus maps a stdin error to an HTTP status: 404 for an unknown
-// process, 409 when the pipe is absent or gone, 500 for a failed write.
+// process, 409 when the pipe is absent or gone, 503 when the child is not
+// reading, 500 for a failed write.
 func stdinErrorStatus(err error) int {
 	switch {
 	case errors.Is(err, process.ErrStdinNotEnabled), errors.Is(err, process.ErrStdinClosed):
 		return http.StatusConflict
+	case errors.Is(err, process.ErrStdinStalled):
+		return http.StatusServiceUnavailable
 	case strings.Contains(err.Error(), "not found"):
 		return http.StatusNotFound
 	default:
@@ -682,7 +689,9 @@ func stdinErrorStatus(err error) int {
 // @Success 200 {object} SuccessResponse "Bytes written"
 // @Failure 404 {object} ErrorResponse "Process not found"
 // @Failure 409 {object} ErrorResponse "Process has no stdin, or stdin is closed"
+// @Failure 413 {object} ErrorResponse "Body over 8 MiB"
 // @Failure 500 {object} ErrorResponse "Write failed"
+// @Failure 503 {object} ErrorResponse "Process stopped reading its stdin"
 // @Router /process/{identifier}/stdin [post]
 func (h *ProcessHandler) HandleWriteStdin(c *gin.Context) {
 	identifier, err := h.GetPathParam(c, "identifier")
@@ -692,9 +701,16 @@ func (h *ProcessHandler) HandleWriteStdin(c *gin.Context) {
 	}
 	data, err := io.ReadAll(http.MaxBytesReader(c.Writer, c.Request.Body, maxStdinBody))
 	if err != nil {
-		h.SendError(c, http.StatusRequestEntityTooLarge, err)
+		var tooBig *http.MaxBytesError
+		if errors.As(err, &tooBig) {
+			h.SendError(c, http.StatusRequestEntityTooLarge, err)
+		} else {
+			h.SendError(c, http.StatusBadRequest, err)
+		}
 		return
 	}
+	// The body itself may carry secrets, so only its size is audited.
+	audit.LogEvent(c, "process_stdin_write", logrus.Fields{"identifier": identifier, "bytes": len(data)})
 	if err := h.processManager.WriteStdin(identifier, data); err != nil {
 		h.SendError(c, stdinErrorStatus(err), err)
 		return
@@ -718,6 +734,7 @@ func (h *ProcessHandler) HandleCloseStdin(c *gin.Context) {
 		h.SendError(c, http.StatusBadRequest, err)
 		return
 	}
+	audit.LogEvent(c, "process_stdin_close", logrus.Fields{"identifier": identifier})
 	if err := h.processManager.CloseStdin(identifier); err != nil {
 		h.SendError(c, stdinErrorStatus(err), err)
 		return

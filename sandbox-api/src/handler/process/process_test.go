@@ -950,7 +950,7 @@ func TestSuspendedRestartsLeaveAFailedProcessDown(t *testing.T) {
 	defer allow()
 
 	done := make(chan *ProcessInfo, 1)
-	pid, err := pm.StartProcess(`echo failing; exit 1`, "", nil, true, -1, false, 0, func(p *ProcessInfo) {
+	pid, err := pm.StartProcess(`echo failing; exit 1`, "", nil, true, -1, false, 0, false, func(p *ProcessInfo) {
 		done <- p
 	})
 	if err != nil {
@@ -978,7 +978,7 @@ func TestRestartsSuspendedDuringTheDelayLeaveTheProcessDown(t *testing.T) {
 	pm := GetProcessManager()
 
 	done := make(chan *ProcessInfo, 1)
-	pid, err := pm.StartProcess(`echo failing; exit 1`, "", nil, true, -1, false, 0, func(p *ProcessInfo) {
+	pid, err := pm.StartProcess(`echo failing; exit 1`, "", nil, true, -1, false, 0, false, func(p *ProcessInfo) {
 		done <- p
 	})
 	if err != nil {

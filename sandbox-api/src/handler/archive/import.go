@@ -1124,6 +1124,7 @@ func relaunch(root string, state []byte) (relaunched, failed []string) {
 			archived.MaxRestarts,
 			archived.KeepAlive,
 			archived.Timeout,
+			archived.Stdin,
 			// The process manager calls the completion callback unconditionally,
 			// so a relaunched process exiting must find something to call.
 			func(finished *process.ProcessInfo) {

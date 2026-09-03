@@ -111,3 +111,51 @@ func TestStdinFreshPipeAfterRestart(t *testing.T) {
 	}
 	waitFor(t, "second echo", stdoutContains(pm, pid, "got:two"))
 }
+
+// Once the child has exited on its own, exec.Cmd.Wait has closed the pipe:
+// writes must say "closed", not fail as a server error, and close stays a no-op.
+func TestStdinAfterNaturalExit(t *testing.T) {
+	pm := newStdinTestManager(t)
+	pid, err := pm.StartProcess("true", "", nil, false, 0, false, 0, true, noop)
+	if err != nil {
+		t.Fatalf("starting process: %v", err)
+	}
+	waitFor(t, "process to exit", func() bool {
+		p, _ := pm.GetProcessByIdentifier(pid)
+		return p.Status == StatusCompleted
+	})
+	if err := pm.WriteStdin(pid, []byte("late\n")); !errors.Is(err, ErrStdinClosed) {
+		t.Fatalf("write after exit: got %v, want ErrStdinClosed", err)
+	}
+	if err := pm.CloseStdin(pid); err != nil {
+		t.Fatalf("close after exit: %v", err)
+	}
+}
+
+// A child that never reads must not pin the writer forever: the write gives up
+// after stdinWriteTimeout and the lock is free for the close that follows.
+func TestStdinStalledWriteTimesOut(t *testing.T) {
+	pm := newStdinTestManager(t)
+	original := stdinWriteTimeout
+	stdinWriteTimeout = 200 * time.Millisecond
+	t.Cleanup(func() { stdinWriteTimeout = original })
+
+	pid, err := pm.StartProcess("sleep 30", "", nil, false, 0, false, 0, true, noop)
+	if err != nil {
+		t.Fatalf("starting process: %v", err)
+	}
+	t.Cleanup(func() { _ = pm.KillProcess(pid) })
+
+	// Well past the kernel pipe buffer, into a reader that never drains it.
+	start := time.Now()
+	err = pm.WriteStdin(pid, make([]byte, 1<<20))
+	if !errors.Is(err, ErrStdinStalled) {
+		t.Fatalf("got %v, want ErrStdinStalled", err)
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Fatalf("write blocked %s, deadline not applied", elapsed)
+	}
+	if err := pm.CloseStdin(pid); err != nil {
+		t.Fatalf("close after stall: %v", err)
+	}
+}

@@ -50,3 +50,25 @@ func lineStarts(s string) []string {
 	}
 	return starts
 }
+
+// Finishing the current line must not turn into never leaving stdout: a child
+// that streams newline-free output forever still lets stderr through. In
+// practice the tailer outruns the writer and yields at EOF anyway, so this
+// mostly pins the loop's exit conditions; maxDrainReads is what guards a writer
+// that keeps up.
+func TestEndlessStdoutDoesNotStarveStderr(t *testing.T) {
+	pm := newStdinTestManager(t)
+	w := &captureWriter{}
+	cmd := `echo "to stderr" >&2; exec cat /dev/zero | tr "\0" x`
+	pid, err := pm.StartProcess(cmd, "", nil, false, 0, false, 0, false, noop)
+	if err != nil {
+		t.Fatalf("starting process: %v", err)
+	}
+	t.Cleanup(func() { _ = pm.KillProcess(pid) })
+	if err := pm.StreamProcessOutput(pid, w); err != nil {
+		t.Fatalf("attaching writer: %v", err)
+	}
+	waitFor(t, "stderr line while stdout streams", func() bool {
+		return strings.Contains(w.String(), "stderr:to stderr\n")
+	})
+}

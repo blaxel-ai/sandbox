@@ -18,11 +18,24 @@ Errors:
 
 - `404` unknown process.
 - `409` the process was started without `stdin: true`, or its stdin is already
-  closed (see below). The message says which.
-- `413` body over 8 MiB.
+  closed: explicit `DELETE`, process exited, or sandbox-api restarted (see
+  below). The message says which.
+- `413` body over 8 MiB. `400` for a body that could not be read.
+- `503` the process stopped reading its stdin: the pipe buffer stayed full for
+  10 seconds. Part of the body may have gone through, so treat the stream as
+  suspect and restart the process if it does not recover.
 
 Sequential writes keep their order. Each body is written under one lock, so two
-concurrent writers never interleave inside a message.
+concurrent writers never interleave inside a message. A write holds that lock
+for at most the 10 second deadline, so one stuck writer cannot pin the others.
+
+Writes and closes are audited as `process_stdin_write` (byte count only, never
+the body) and `process_stdin_close`; `process_exec` records whether stdin was
+requested.
+
+`DISABLE_TERMINAL` does not affect these routes. It removes the web PTY, while
+`POST /process` already runs arbitrary commands with or without stdin; a pipe
+adds no capability the process API did not have.
 
 ## Restart behaviour
 
@@ -36,6 +49,9 @@ concurrent writers never interleave inside a message.
   and re-run your protocol handshake.
 - **Sandbox scale-to-zero / resume**: the whole VM is snapshotted, pipe
   included. Nothing to do.
+- **Relaunch from an archive**: a process restored at boot from the archived
+  state is started with the same `stdin` flag it had, so it gets a fresh pipe.
+  The protocol handshake has to be redone, as after any restart.
 
 A pipe rather than a FIFO on disk is a deliberate trade: stdin survival across a
 sandbox-api restart would buy little, since the client's log stream drops at the
