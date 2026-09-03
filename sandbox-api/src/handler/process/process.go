@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -160,6 +161,82 @@ func init() {
 	}
 }
 
+// restartsSuspended stops failed processes from being brought back. An archive
+// holds it: a process restarted while the filesystem is read writes into the
+// archive, and a process that failed just before the archive stopped the
+// workload would otherwise come back on its own, after the export had already
+// listed the processes it had to stop.
+var restartsSuspended atomic.Bool
+
+// restartGate serializes the suspension against the restarts themselves. The
+// flag alone leaves a window: a restart that read it just before it was set
+// spawns its process afterwards, and the export, which lists the processes as
+// soon as SuspendRestarts returns, never sees that one - it comes up while the
+// filesystem is being read and writes into an archive that will not carry what
+// it wrote.
+//
+// A restart holds it while it decides and spawns, and the suspension takes it
+// exclusively: SuspendRestarts therefore returns only once no restart is in
+// flight, and every restart that starts after it observes the flag.
+var restartGate sync.RWMutex
+
+// SuspendRestarts stops failed processes from being restarted, and returns the
+// function that allows restarts again. It waits for the restarts already
+// spawning, so its caller can then list every process that is running.
+func SuspendRestarts() func() {
+	restartGate.Lock()
+	defer restartGate.Unlock()
+	restartsSuspended.Store(true)
+	return func() { restartsSuspended.Store(false) }
+}
+
+// beginRestart claims the right to spawn a restart. It reports false when
+// restarts are suspended, and holds the gate until endRestart when it is true,
+// so the process is spawned before any suspension can conclude.
+func beginRestart() bool {
+	restartGate.RLock()
+	if restartsSuspended.Load() {
+		restartGate.RUnlock()
+		return false
+	}
+	return true
+}
+
+func endRestart() {
+	restartGate.RUnlock()
+}
+
+// RestartsSuspended reports whether failed processes are currently left down.
+func RestartsSuspended() bool {
+	return restartsSuspended.Load()
+}
+
+// leaveStopped finishes a process that was about to be restarted and is not,
+// because restarts are suspended: the keep-alive it held is released and the
+// callback fires, as for a process that ended for good. Its Done channel is
+// already closed by the restart path, so it is not touched here.
+func (pm *ProcessManager) leaveStopped(proc *ProcessInfo, callback func(*ProcessInfo)) {
+	log := logrus.WithFields(logrus.Fields{"process_pid": proc.PID, "process_name": proc.Name})
+	log.Info("[Process] Restarts are suspended, the process is left stopped")
+
+	pm.mu.RLock()
+	keepAlive := proc.KeepAlive
+	pm.mu.RUnlock()
+	if keepAlive {
+		if err := blaxel.ScaleEnable(); err != nil {
+			log.WithError(err).Warn("[KeepAlive] Failed to enable scale-to-zero")
+		}
+	}
+
+	proc.logLock.Lock()
+	proc.logWriters = nil
+	proc.logLock.Unlock()
+
+	if callback != nil {
+		callback(proc)
+	}
+}
+
 // shouldRestart reports whether a failed process is eligible for another
 // restart attempt. A negative MaxRestarts means unlimited restarts.
 // markFinished closes Finished exactly once, so every terminal path can call it.
@@ -168,6 +245,9 @@ func (p *ProcessInfo) markFinished() {
 }
 
 func shouldRestart(p *ProcessInfo) bool {
+	if restartsSuspended.Load() {
+		return false
+	}
 	return p.Status == StatusFailed && p.RestartOnFailure &&
 		(p.MaxRestarts < 0 || p.RestartCount < p.MaxRestarts)
 }
@@ -213,8 +293,32 @@ func buildProcessEnv(custom map[string]string) []string {
 	return finalEnv
 }
 
+// logFileName is the name a process's logs are written under. A process name is
+// whoever named it - an API caller, or the process list an archive carried - so
+// it is not a path component: one holding a separator, or "..", would open the
+// log files as root outside the log directory, following any symlink standing
+// where it lands.
+func logFileName(name string) string {
+	escaped := strings.Map(func(r rune) rune {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+			return r
+		case r == '-', r == '_', r == '.':
+			return r
+		default:
+			return '_'
+		}
+	}, name)
+	// A name made only of dots names the log directory itself, or its parent.
+	if strings.Trim(escaped, ".") == "" {
+		return strings.Repeat("_", len(escaped))
+	}
+	return escaped
+}
+
 // getLogFilePaths returns the log file paths for a process (stdout, stderr, combined)
 func getLogFilePaths(name string) (stdout, stderr, combined string) {
+	name = logFileName(name)
 	stdout = fmt.Sprintf("%s/%s.stdout.log", ProcessLogDir, name)
 	stderr = fmt.Sprintf("%s/%s.stderr.log", ProcessLogDir, name)
 	combined = fmt.Sprintf("%s/%s.log", ProcessLogDir, name)
@@ -514,9 +618,18 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 			// Small delay before restart to avoid rapid restart loops
 			time.Sleep(1 * time.Second)
 
+			// Looked at again after the delay: an archive that suspended restarts
+			// meanwhile is reading the filesystem, and this process would come
+			// back as a writer the archive has no way of stopping any more.
+			if !beginRestart() {
+				pm.leaveStopped(process, callback)
+				return
+			}
+
 			// Restart the process with updated restart count
 			// The PID remains the same across restarts for user transparency
 			_, restartErr := pm.restartProcess(process, callback)
+			endRestart()
 			if restartErr != nil {
 				// If restart fails, log the error and call the callback
 				errorMsg := fmt.Sprintf("\n[Failed to restart process: %v]\n", restartErr)
@@ -1005,9 +1118,17 @@ func (pm *ProcessManager) restartProcess(oldProcess *ProcessInfo, callback func(
 			// Small delay before restart to avoid rapid restart loops
 			time.Sleep(1 * time.Second)
 
+			// See the same check in StartProcessWithName: an archive may have
+			// suspended restarts while this one was waiting.
+			if !beginRestart() {
+				pm.leaveStopped(oldProcess, callback)
+				return
+			}
+
 			// Restart the process recursively
 			// The PID remains the same across restarts for user transparency
 			_, restartErr := pm.restartProcess(oldProcess, callback)
+			endRestart()
 			if restartErr != nil {
 				// If restart fails, log the error and call the callback
 				errorMsg := fmt.Sprintf("\n[Failed to restart process: %v]\n", restartErr)

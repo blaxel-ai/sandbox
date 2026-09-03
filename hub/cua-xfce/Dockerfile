@@ -8,7 +8,7 @@ USER root
 # Copy sandbox-api binary from Blaxel
 COPY --from=sandbox-api /sandbox-api /usr/local/bin/sandbox-api
 
-# Create D-Bus directory and fake socket to prevent connection errors (needed for Unikraft)
+# Create D-Bus directory and fake socket to prevent connection errors (needed on the sandbox runtime)
 RUN mkdir -p /var/run/dbus && \
     touch /var/run/dbus/system_bus_socket && \
     chmod 666 /var/run/dbus/system_bus_socket

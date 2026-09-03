@@ -65,6 +65,20 @@ type DriveListResponse struct {
 	Mounts []DriveMountInfo `json:"mounts"`
 } // @name DriveListResponse
 
+// mountFailureStatus maps a mount failure to its HTTP status. Only causes the
+// sandbox itself is responsible for are reported as server faults: a mount the
+// filer refuses, or a target already taken, are the caller's to fix.
+func mountFailureStatus(err error) int {
+	switch {
+	case errors.Is(err, drive.ErrMountPathBusy):
+		return http.StatusConflict
+	case errors.Is(err, drive.ErrDriveAccessDenied):
+		return http.StatusForbidden
+	default:
+		return http.StatusInternalServerError
+	}
+}
+
 // AttachDrive godoc
 // @Summary      Attach a drive to a local path
 // @Description  Mounts an agent drive using the blfs binary to a local path, optionally mounting a subpath within the drive. Supports optional UID/GID mapping to remap file ownership between the local sandbox and the filer (always mapped to filer UID/GID 0). Mapping values can be set per-request via uidMap/gidMap fields, or globally via BLFS_UID_MAP/BLFS_GID_MAP environment variables (request values take precedence).
@@ -74,6 +88,7 @@ type DriveListResponse struct {
 // @Param        request body DriveMountRequest true "Drive attachment parameters"
 // @Success      200 {object} DriveMountResponse
 // @Failure      400 {object} ErrorResponse
+// @Failure      403 {object} ErrorResponse
 // @Failure      409 {object} ErrorResponse
 // @Failure      500 {object} ErrorResponse
 // @Security     BearerAuth
@@ -133,11 +148,7 @@ func (h *DriveHandler) AttachDrive(c *gin.Context) {
 			"mount_path": req.MountPath,
 			"drive_path": req.DrivePath,
 		}).Error("Failed to mount drive")
-		status := http.StatusInternalServerError
-		if errors.Is(err, drive.ErrMountPathBusy) {
-			status = http.StatusConflict
-		}
-		c.JSON(status, ErrorResponse{
+		c.JSON(mountFailureStatus(err), ErrorResponse{
 			Error: fmt.Sprintf("Failed to mount drive: %v", err),
 		})
 		return
@@ -247,4 +258,3 @@ func (h *DriveHandler) ListMounts(c *gin.Context) {
 
 	c.JSON(http.StatusOK, response)
 }
-
