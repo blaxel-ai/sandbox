@@ -1519,6 +1519,94 @@ paths:
       summary: Stream process logs in real time
       tags:
         - process
+  "/process/{identifier}/stdin":
+    delete:
+      description: Send EOF to the process by closing its stdin pipe. Idempotent. For stdio protocols such as MCP this is the clean shutdown path.
+      parameters:
+        - description: Process identifier (PID or name)
+          in: path
+          name: identifier
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Stdin closed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "404":
+          description: Process not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Process has no stdin
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+      summary: Close a process's stdin
+      tags:
+        - process
+    post:
+      description: 'Write the raw request body to the stdin of a process started with "stdin": true. Bytes are forwarded verbatim, so include the trailing newline your protocol expects. Sequential requests keep their order; each body is written atomically with respect to other writers. The pipe does not survive a sandbox-api restart: once it is gone this returns 409 and the process must be restarted.'
+      parameters:
+        - description: Process identifier (PID or name)
+          in: path
+          name: identifier
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+        description: Raw bytes to write
+        required: true
+      responses:
+        "200":
+          description: Bytes written
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "404":
+          description: Process not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Process has no stdin, or stdin is closed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "413":
+          description: Body over 8 MiB
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Write failed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: Process stopped reading its stdin
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+      summary: Write to a process's stdin
+      tags:
+        - process
   /upgrade:
     post:
       description: >-
@@ -2291,6 +2379,10 @@ components:
         restartOnFailure:
           example: true
           type: boolean
+        stdin:
+          description: "Open a writable stdin pipe, fed via POST /process/{identifier}/stdin and closed via DELETE. The pipe does not survive a sandbox-api restart: the process then sees EOF."
+          example: false
+          type: boolean
         timeout:
           description: Timeout in seconds. When keepAlive is true, defaults to 600s (10 minutes). Set to 0 for infinite (no auto-kill).
           example: 30
@@ -2359,6 +2451,10 @@ components:
         stderr:
           example: stderr output
           type: string
+        stdin:
+          description: Whether the process was started with a writable stdin pipe
+          example: false
+          type: boolean
         stdout:
           example: stdout output
           type: string

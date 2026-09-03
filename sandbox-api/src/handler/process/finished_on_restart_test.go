@@ -21,7 +21,7 @@ func TestFinishedStaysOpenAcrossRestart(t *testing.T) {
 	proc, err := pm.ExecuteProcess(
 		"sh -c '"+cmd+"'", "", "restarter",
 		map[string]string{"MARKER": ProcessLogDir + "/once"},
-		false, 0, nil, true, 3, false,
+		false, 0, nil, true, 3, false, false,
 	)
 	if err != nil {
 		t.Fatalf("starting process: %v", err)
@@ -87,7 +87,7 @@ func TestFinishedClosesWithoutRestart(t *testing.T) {
 	t.Cleanup(func() { ProcessLogDir = originalLogDir })
 	pm := NewProcessManager()
 
-	proc, err := pm.ExecuteProcess("sh -c 'echo hi'", "", "oneshot", nil, false, 0, nil, false, 0, false)
+	proc, err := pm.ExecuteProcess("sh -c 'echo hi'", "", "oneshot", nil, false, 0, nil, false, 0, false, false)
 	if err != nil {
 		t.Fatalf("starting process: %v", err)
 	}
