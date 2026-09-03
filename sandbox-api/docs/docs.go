@@ -1743,6 +1743,104 @@ const docTemplate = `{
                 }
             }
         },
+        "/process/{identifier}/stdin": {
+            "post": {
+                "description": "Write the raw request body to the stdin of a process started with \"stdin\": true. Bytes are forwarded verbatim, so include the trailing newline your protocol expects. Sequential requests keep their order; each body is written atomically with respect to other writers. The pipe does not survive a sandbox-api restart: once it is gone this returns 409 and the process must be restarted.",
+                "consumes": [
+                    "application/octet-stream"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "process"
+                ],
+                "summary": "Write to a process's stdin",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Process identifier (PID or name)",
+                        "name": "identifier",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Raw bytes to write",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Bytes written",
+                        "schema": {
+                            "$ref": "#/definitions/SuccessResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Process not found",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "Process has no stdin, or stdin is closed",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Write failed",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "description": "Send EOF to the process by closing its stdin pipe. Idempotent. For stdio protocols such as MCP this is the clean shutdown path.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "process"
+                ],
+                "summary": "Close a process's stdin",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Process identifier (PID or name)",
+                        "name": "identifier",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Stdin closed",
+                        "schema": {
+                            "$ref": "#/definitions/SuccessResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Process not found",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "Process has no stdin",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/upgrade": {
             "post": {
                 "description": "Triggers an upgrade of the sandbox-api process. Returns 200 immediately before upgrading.\nThe upgrade will: download the specified binary from GitHub releases, validate it, and restart.\nAll running processes will be preserved across the upgrade.\nAvailable versions: \"latest\" (default, most recent release), \"develop\", \"main\", or specific tag like \"v1.0.0\"\nYou can also specify a custom baseUrl for forks (defaults to https://github.com/blaxel-ai/sandbox/releases)",
@@ -2479,6 +2577,11 @@ const docTemplate = `{
                     "type": "boolean",
                     "example": true
                 },
+                "stdin": {
+                    "description": "Open a writable stdin pipe, fed via POST /process/{identifier}/stdin and closed via DELETE. The pipe does not survive a sandbox-api restart: the process then sees EOF.",
+                    "type": "boolean",
+                    "example": false
+                },
                 "timeout": {
                     "description": "Timeout in seconds. When keepAlive is true, defaults to 600s (10 minutes). Set to 0 for infinite (no auto-kill).",
                     "type": "integer",
@@ -2579,6 +2682,11 @@ const docTemplate = `{
                 "stderr": {
                     "type": "string",
                     "example": "stderr output"
+                },
+                "stdin": {
+                    "description": "Whether the process was started with a writable stdin pipe",
+                    "type": "boolean",
+                    "example": false
                 },
                 "stdout": {
                     "type": "string",

@@ -110,10 +110,11 @@ type ProcessInfo struct {
 	MaxRestarts      int                     `json:"maxRestarts"`
 	RestartCount     int                     `json:"restartCount"`
 	KeepAlive        bool                    `json:"keepAlive"`
-	Timeout          int                     `json:"-"` // Internal: timeout in seconds for keepAlive processes
-	LogFile          string                  `json:"-"` // Path to combined log file
-	StdoutFile       string                  `json:"-"` // Path to stdout log file
-	StderrFile       string                  `json:"-"` // Path to stderr log file
+	Stdin            bool                    `json:"stdin"` // Whether the process was started with a writable stdin pipe
+	Timeout          int                     `json:"-"`     // Internal: timeout in seconds for keepAlive processes
+	LogFile          string                  `json:"-"`     // Path to combined log file
+	StdoutFile       string                  `json:"-"`     // Path to stdout log file
+	StderrFile       string                  `json:"-"`     // Path to stderr log file
 	Done             chan struct{}
 	TailDone         chan struct{} // Closed when tailLogFiles finishes its final reads
 	// Finished is closed once the process is over for good, with no restart to
@@ -138,6 +139,7 @@ type ProcessInfo struct {
 	logLock         sync.RWMutex
 	stopTimeout     chan struct{} // Channel to signal timeout goroutine to stop
 	stopTimeoutOnce sync.Once     // Protects stopTimeout channel from double-close
+	stdin           stdinPipe     // Write end of stdin when Stdin is true; nil once closed or after a sandbox-api restart
 }
 
 // ProcessLogDir is the directory where process logs are stored
@@ -258,12 +260,12 @@ func (pm *ProcessManager) sweepLogFiles() {
 	}
 }
 
-func (pm *ProcessManager) StartProcess(command string, workingDir string, env map[string]string, restartOnFailure bool, maxRestarts int, keepAlive bool, timeout int, callback func(process *ProcessInfo)) (string, error) {
+func (pm *ProcessManager) StartProcess(command string, workingDir string, env map[string]string, restartOnFailure bool, maxRestarts int, keepAlive bool, timeout int, stdin bool, callback func(process *ProcessInfo)) (string, error) {
 	name := GenerateRandomName(8)
-	return pm.StartProcessWithName(command, workingDir, name, env, restartOnFailure, maxRestarts, keepAlive, timeout, callback)
+	return pm.StartProcessWithName(command, workingDir, name, env, restartOnFailure, maxRestarts, keepAlive, timeout, stdin, callback)
 }
 
-func (pm *ProcessManager) StartProcessWithName(command string, workingDir string, name string, env map[string]string, restartOnFailure bool, maxRestarts int, keepAlive bool, timeout int, callback func(process *ProcessInfo)) (string, error) {
+func (pm *ProcessManager) StartProcessWithName(command string, workingDir string, name string, env map[string]string, restartOnFailure bool, maxRestarts int, keepAlive bool, timeout int, stdin bool, callback func(process *ProcessInfo)) (string, error) {
 	// Always use shell to execute commands
 	// This ensures shell built-ins (cd, export, alias) work properly
 	// Use SHELL and SHELL_ARGS environment variables if set
@@ -342,6 +344,7 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 		MaxRestarts:      maxRestarts,
 		RestartCount:     0,
 		KeepAlive:        keepAlive,
+		Stdin:            stdin,
 		Timeout:          timeout,
 		LogFile:          combinedPath,
 		StdoutFile:       stdoutPath,
@@ -361,6 +364,14 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 	// So child survives sandbox-api restart without blocking
 	cmd.Stdout = stdoutFile
 	cmd.Stderr = stderrFile
+
+	if err := attachStdin(cmd, process); err != nil {
+		stdoutFile.Close()
+		stderrFile.Close()
+		os.Remove(stdoutPath)
+		os.Remove(stderrPath)
+		return "", err
+	}
 
 	// Start the process
 	if err := cmd.Start(); err != nil {
@@ -627,8 +638,8 @@ func (pm *ProcessManager) tailLogFiles(proc *ProcessInfo) {
 			// Drain all remaining data from both files before returning.
 			// Loop until both files return 0 bytes to handle data larger than the buffer.
 			for {
-				n1 := pm.readAndBroadcast(stdoutFile, stdoutBuf, proc, "stdout", combinedFile)
-				n2 := pm.readAndBroadcast(stderrFile, stderrBuf, proc, "stderr", combinedFile)
+				n1 := pm.drainStream(stdoutFile, stdoutBuf, proc, "stdout", combinedFile)
+				n2 := pm.drainStream(stderrFile, stderrBuf, proc, "stderr", combinedFile)
 				if n1 == 0 && n2 == 0 {
 					break
 				}
@@ -637,11 +648,39 @@ func (pm *ProcessManager) tailLogFiles(proc *ProcessInfo) {
 			close(proc.TailDone)
 			return
 		default:
-			pm.readAndBroadcast(stdoutFile, stdoutBuf, proc, "stdout", combinedFile)
-			pm.readAndBroadcast(stderrFile, stderrBuf, proc, "stderr", combinedFile)
+			pm.drainStream(stdoutFile, stdoutBuf, proc, "stdout", combinedFile)
+			pm.drainStream(stderrFile, stderrBuf, proc, "stderr", combinedFile)
 			time.Sleep(50 * time.Millisecond)
 		}
 	}
+}
+
+// drainStream reads one stream until it sits at a line boundary or has no more
+// data ready. The two streams are read in turns, one buffer at a time, so
+// without this a stderr line landed inside any stdout line longer than the
+// buffer: the text stream carried "stdout:<4KB>stderr:...\n<rest>" and no
+// line-oriented consumer could parse either half. A child that itself pauses
+// mid-line to write stderr can still interleave; that is its own doing.
+// Returns the number of bytes read.
+func (pm *ProcessManager) drainStream(file *os.File, buf []byte, proc *ProcessInfo, streamType string, combinedFile *os.File) int {
+	total := 0
+	for {
+		n := pm.readAndBroadcast(file, buf, proc, streamType, combinedFile)
+		total += n
+		if n == 0 || !proc.midLine(streamType) {
+			return total
+		}
+	}
+}
+
+// midLine reports whether the stream's last read ended part-way through a line.
+func (p *ProcessInfo) midLine(streamType string) bool {
+	p.logLock.RLock()
+	defer p.logLock.RUnlock()
+	if streamType == "stderr" {
+		return p.stderrMidLine
+	}
+	return p.stdoutMidLine
 }
 
 // readAndBroadcast reads from a file and broadcasts to log writers.
@@ -833,6 +872,12 @@ func (pm *ProcessManager) restartProcess(oldProcess *ProcessInfo, callback func(
 	oldProcess.stdoutMidLine = false
 	oldProcess.stderrMidLine = false
 	oldProcess.logLock.Unlock()
+
+	if err := attachStdin(cmd, oldProcess); err != nil {
+		stdoutFile.Close()
+		stderrFile.Close()
+		return "", err
+	}
 
 	// Start the process
 	if err := cmd.Start(); err != nil {
