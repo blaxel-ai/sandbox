@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -62,6 +63,7 @@ type ProcessRequest struct {
 	RestartOnFailure  bool              `json:"restartOnFailure" example:"true"`
 	MaxRestarts       int               `json:"maxRestarts" example:"3"`   // Maximum number of restarts on failure. Set to a negative value (e.g. -1) for unlimited restarts.
 	KeepAlive         bool              `json:"keepAlive" example:"false"` // Disable scale-to-zero while process runs. Default timeout is 600s (10 minutes). Set timeout to 0 for infinite.
+	Stdin             bool              `json:"stdin" example:"false"`     // Open a writable stdin pipe, fed via POST /process/{identifier}/stdin and closed via DELETE. The pipe does not survive a sandbox-api restart: the process then sees EOF.
 } // @name ProcessRequest
 
 // ProcessResponse is the response body for a process
@@ -81,6 +83,7 @@ type ProcessResponse struct {
 	MaxRestarts      int     `json:"maxRestarts" example:"3"`
 	RestartCount     int     `json:"restartCount" example:"2"`
 	KeepAlive        bool    `json:"keepAlive" example:"false"` // Whether scale-to-zero is disabled for this process
+	Stdin            bool    `json:"stdin" example:"false"`     // Whether the process was started with a writable stdin pipe
 } // @name ProcessResponse
 
 type ProcessResponseWithLogs struct {
@@ -94,11 +97,11 @@ type ProcessKillRequest struct {
 } // @name ProcessKillRequest
 
 // ExecuteProcess executes a process
-func (h *ProcessHandler) ExecuteProcess(command string, workingDir string, name string, env map[string]string, waitForCompletion bool, timeout int, waitForPorts []int, restartOnFailure bool, maxRestarts int, keepAlive bool) (ProcessResponse, error) {
+func (h *ProcessHandler) ExecuteProcess(command string, workingDir string, name string, env map[string]string, waitForCompletion bool, timeout int, waitForPorts []int, restartOnFailure bool, maxRestarts int, keepAlive bool, stdin bool) (ProcessResponse, error) {
 	if keepAlive && blaxel.KeepAliveDisabled() {
 		return ProcessResponse{}, ErrKeepAliveDisabled
 	}
-	processInfo, err := h.processManager.ExecuteProcess(command, workingDir, name, env, waitForCompletion, timeout, waitForPorts, restartOnFailure, maxRestarts, keepAlive)
+	processInfo, err := h.processManager.ExecuteProcess(command, workingDir, name, env, waitForCompletion, timeout, waitForPorts, restartOnFailure, maxRestarts, keepAlive, stdin)
 
 	// If processInfo is nil (process failed to start), return empty response with error
 	if processInfo == nil {
@@ -128,6 +131,7 @@ func (h *ProcessHandler) ExecuteProcess(command string, workingDir string, name 
 		MaxRestarts:      processInfo.MaxRestarts,
 		RestartCount:     processInfo.RestartCount,
 		KeepAlive:        processInfo.KeepAlive,
+		Stdin:            processInfo.Stdin,
 	}, err
 }
 
@@ -171,6 +175,7 @@ func (h *ProcessHandler) ListProcesses() []ProcessResponse {
 			MaxRestarts:      p.MaxRestarts,
 			RestartCount:     p.RestartCount,
 			KeepAlive:        p.KeepAlive,
+			Stdin:            p.Stdin,
 		})
 	}
 	return result
@@ -218,6 +223,7 @@ func (h *ProcessHandler) GetProcess(identifier string) (ProcessResponse, error) 
 		MaxRestarts:      processInfo.MaxRestarts,
 		RestartCount:     processInfo.RestartCount,
 		KeepAlive:        processInfo.KeepAlive,
+		Stdin:            processInfo.Stdin,
 	}, nil
 }
 
@@ -312,6 +318,7 @@ func (h *ProcessHandler) HandleExecuteCommand(c *gin.Context) {
 	audit.LogEvent(c, "process_exec", logrus.Fields{
 		"command":     req.Command,
 		"working-dir": req.WorkingDir,
+		"stdin":       req.Stdin,
 	})
 
 	// Timeout of 0 means infinite (no auto-kill)
@@ -325,7 +332,7 @@ func (h *ProcessHandler) HandleExecuteCommand(c *gin.Context) {
 	}
 
 	// Execute the process
-	processInfo, err := h.ExecuteProcess(req.Command, req.WorkingDir, req.Name, req.Env, req.WaitForCompletion, timeout, req.WaitForPorts, req.RestartOnFailure, req.MaxRestarts, req.KeepAlive)
+	processInfo, err := h.ExecuteProcess(req.Command, req.WorkingDir, req.Name, req.Env, req.WaitForCompletion, timeout, req.WaitForPorts, req.RestartOnFailure, req.MaxRestarts, req.KeepAlive, req.Stdin)
 	if err != nil {
 		h.SendError(c, http.StatusUnprocessableEntity, err)
 		return
@@ -369,6 +376,7 @@ func (h *ProcessHandler) handleExecuteCommandStream(c *gin.Context) {
 	audit.LogEvent(c, "process_exec_stream", logrus.Fields{
 		"command":     req.Command,
 		"working-dir": req.WorkingDir,
+		"stdin":       req.Stdin,
 	})
 
 	// Timeout of 0 means infinite (no auto-kill)
@@ -392,7 +400,7 @@ func (h *ProcessHandler) handleExecuteCommandStream(c *gin.Context) {
 	jw := &JSONStreamWriter{gin: c}
 
 	// Execute the process without waiting for completion (we'll handle waiting ourselves)
-	processInfo, err := h.ExecuteProcess(req.Command, req.WorkingDir, req.Name, req.Env, false, timeout, req.WaitForPorts, req.RestartOnFailure, req.MaxRestarts, req.KeepAlive)
+	processInfo, err := h.ExecuteProcess(req.Command, req.WorkingDir, req.Name, req.Env, false, timeout, req.WaitForPorts, req.RestartOnFailure, req.MaxRestarts, req.KeepAlive, req.Stdin)
 	if err != nil {
 		jw.WriteEvent("error", err.Error())
 		return
@@ -648,6 +656,90 @@ func (h *ProcessHandler) HandleKillProcess(c *gin.Context) {
 	}
 
 	h.SendJSON(c, http.StatusOK, gin.H{"message": "Process killed successfully"})
+}
+
+// maxStdinBody caps one stdin write. Callers stream stdio protocols one message
+// at a time, so a single body this large is a bug, not a use case.
+const maxStdinBody = 8 << 20
+
+// stdinErrorStatus maps a stdin error to an HTTP status: 404 for an unknown
+// process, 409 when the pipe is absent or gone, 503 when the child is not
+// reading, 500 for a failed write.
+func stdinErrorStatus(err error) int {
+	switch {
+	case errors.Is(err, process.ErrStdinNotEnabled), errors.Is(err, process.ErrStdinClosed):
+		return http.StatusConflict
+	case errors.Is(err, process.ErrStdinStalled):
+		return http.StatusServiceUnavailable
+	case strings.Contains(err.Error(), "not found"):
+		return http.StatusNotFound
+	default:
+		return http.StatusInternalServerError
+	}
+}
+
+// HandleWriteStdin handles POST requests to /process/:identifier/stdin
+// @Summary Write to a process's stdin
+// @Description Write the raw request body to the stdin of a process started with "stdin": true. Bytes are forwarded verbatim, so include the trailing newline your protocol expects. Sequential requests keep their order; each body is written atomically with respect to other writers. The pipe does not survive a sandbox-api restart: once it is gone this returns 409 and the process must be restarted.
+// @Tags process
+// @Accept octet-stream
+// @Produce json
+// @Param identifier path string true "Process identifier (PID or name)"
+// @Param body body string true "Raw bytes to write"
+// @Success 200 {object} SuccessResponse "Bytes written"
+// @Failure 404 {object} ErrorResponse "Process not found"
+// @Failure 409 {object} ErrorResponse "Process has no stdin, or stdin is closed"
+// @Failure 413 {object} ErrorResponse "Body over 8 MiB"
+// @Failure 500 {object} ErrorResponse "Write failed"
+// @Failure 503 {object} ErrorResponse "Process stopped reading its stdin"
+// @Router /process/{identifier}/stdin [post]
+func (h *ProcessHandler) HandleWriteStdin(c *gin.Context) {
+	identifier, err := h.GetPathParam(c, "identifier")
+	if err != nil {
+		h.SendError(c, http.StatusBadRequest, err)
+		return
+	}
+	data, err := io.ReadAll(http.MaxBytesReader(c.Writer, c.Request.Body, maxStdinBody))
+	if err != nil {
+		var tooBig *http.MaxBytesError
+		if errors.As(err, &tooBig) {
+			h.SendError(c, http.StatusRequestEntityTooLarge, err)
+		} else {
+			h.SendError(c, http.StatusBadRequest, err)
+		}
+		return
+	}
+	// The body itself may carry secrets, so only its size is audited.
+	audit.LogEvent(c, "process_stdin_write", logrus.Fields{"identifier": identifier, "bytes": len(data)})
+	if err := h.processManager.WriteStdin(identifier, data); err != nil {
+		h.SendError(c, stdinErrorStatus(err), err)
+		return
+	}
+	h.SendJSON(c, http.StatusOK, gin.H{"message": "Bytes written to stdin"})
+}
+
+// HandleCloseStdin handles DELETE requests to /process/:identifier/stdin
+// @Summary Close a process's stdin
+// @Description Send EOF to the process by closing its stdin pipe. Idempotent. For stdio protocols such as MCP this is the clean shutdown path.
+// @Tags process
+// @Produce json
+// @Param identifier path string true "Process identifier (PID or name)"
+// @Success 200 {object} SuccessResponse "Stdin closed"
+// @Failure 404 {object} ErrorResponse "Process not found"
+// @Failure 409 {object} ErrorResponse "Process has no stdin"
+// @Router /process/{identifier}/stdin [delete]
+func (h *ProcessHandler) HandleCloseStdin(c *gin.Context) {
+	identifier, err := h.GetPathParam(c, "identifier")
+	if err != nil {
+		h.SendError(c, http.StatusBadRequest, err)
+		return
+	}
+	audit.LogEvent(c, "process_stdin_close", logrus.Fields{"identifier": identifier})
+	if err := h.processManager.CloseStdin(identifier); err != nil {
+		h.SendError(c, stdinErrorStatus(err), err)
+		return
+	}
+	h.SendJSON(c, http.StatusOK, gin.H{"message": "Stdin closed"})
 }
 
 // HandleGetProcess handles GET requests to /process/:identifier

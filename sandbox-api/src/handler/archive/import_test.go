@@ -354,7 +354,7 @@ func TestRelaunchDoesNotStartASecondCopyOfAProcessNamedLikeANumber(t *testing.T)
 	// number is a PID for whoever looks a process up by identifier. A resumed
 	// relaunch that misses the running process starts the workload twice.
 	pm := process.GetProcessManager()
-	live, err := pm.StartProcessWithName("sleep 30", "", "42", nil, false, 0, false, 0, func(*process.ProcessInfo) {})
+	live, err := pm.StartProcessWithName("sleep 30", "", "42", nil, false, 0, false, 0, false, func(*process.ProcessInfo) {})
 	if err != nil {
 		t.Fatalf("failed to start the process the archive also carries: %v", err)
 	}

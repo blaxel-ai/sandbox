@@ -49,6 +49,7 @@ type ProcessState struct {
 	StderrBytes      int                     `json:"stderrBytes,omitempty"`
 	LogsBytes        int                     `json:"logsBytes,omitempty"`
 	RestartOnFailure bool                    `json:"restartOnFailure"`
+	Stdin            bool                    `json:"stdin,omitempty"` // Kept so a reattached process reports "stdin closed" rather than "not enabled"
 	MaxRestarts      int                     `json:"maxRestarts"`
 	RestartCount     int                     `json:"restartCount"`
 	Env              map[string]string       `json:"env,omitempty"` // Custom env vars provided at start, reused on restart-on-failure
@@ -123,6 +124,7 @@ func (pm *ProcessManager) SaveState() error {
 			StderrBytes:      stderrBytes,
 			LogsBytes:        logsBytes,
 			RestartOnFailure: proc.RestartOnFailure,
+			Stdin:            proc.Stdin,
 			MaxRestarts:      proc.MaxRestarts,
 			RestartCount:     proc.RestartCount,
 			Env:              proc.Env,
@@ -235,6 +237,7 @@ func (pm *ProcessManager) LoadState() error {
 			StdoutFile:       procState.StdoutFile,
 			StderrFile:       procState.StderrFile,
 			RestartOnFailure: procState.RestartOnFailure,
+			Stdin:            procState.Stdin,
 			MaxRestarts:      procState.MaxRestarts,
 			RestartCount:     procState.RestartCount,
 			Env:              procState.Env,
