@@ -27,9 +27,12 @@ const (
 // http.DefaultClient, which has no timeout of any kind. No ResponseHeaderTimeout
 // here: an upload's response headers only come once the whole archive is in, so
 // it would cut off exactly the transfers it is supposed to protect, and the
-// request context carries transferTimeout for that.
+// request context carries transferTimeout for that. The transport honors the
+// HTTP(S)_PROXY of the environment: a sandbox whose egress is locked down to
+// its proxy reaches the storage through it or not at all.
 var transferClient = &http.Client{
 	Transport: &http.Transport{
+		Proxy: http.ProxyFromEnvironment,
 		DialContext: (&net.Dialer{
 			Timeout: dialTimeout,
 			Control: refuseInstanceOnlyAddress,
