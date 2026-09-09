@@ -910,11 +910,15 @@ func TriggerUpgrade(version, baseURL string) {
 }
 
 // newDownloadHTTPClient creates an HTTP client configured for downloading
-// release assets from GitHub with appropriate timeouts.
+// release assets from GitHub with appropriate timeouts. It goes through the
+// HTTP(S)_PROXY of the environment like every other consumer in the sandbox:
+// a sandbox whose egress is locked down to its proxy cannot reach GitHub any
+// other way.
 func newDownloadHTTPClient() *http.Client {
 	return &http.Client{
 		Timeout: downloadTotalTimeout,
 		Transport: &http.Transport{
+			Proxy: http.ProxyFromEnvironment,
 			DialContext: (&net.Dialer{
 				Timeout: downloadConnTimeout,
 			}).DialContext,

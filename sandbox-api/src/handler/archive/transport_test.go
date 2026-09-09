@@ -1,6 +1,22 @@
 package archive
 
-import "testing"
+import (
+	"net/http"
+	"testing"
+)
+
+// TestArchiveTransfersUseTheProxyOfTheEnvironment: a sandbox whose egress is
+// locked down to its proxy only reaches the storage through it, so the
+// transfer client must pick up HTTP(S)_PROXY like the rest of the sandbox.
+func TestArchiveTransfersUseTheProxyOfTheEnvironment(t *testing.T) {
+	transport, ok := transferClient.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("expected *http.Transport, got %T", transferClient.Transport)
+	}
+	if transport.Proxy == nil {
+		t.Fatal("transfer transport ignores HTTP(S)_PROXY: Proxy is nil")
+	}
+}
 
 // TestArchiveTransfersRefuseTheInstancesOwnAddresses checks the archive URL
 // cannot be pointed at the services that answer only from inside the VM. The
