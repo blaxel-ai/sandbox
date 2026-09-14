@@ -86,10 +86,13 @@ jobs:
         working-directory: hub/onboarder-nextjs/app-template
         run: npm run typecheck
 
-      - name: Run dependency smoke tests
-        working-directory: hub/onboarder-nextjs/app-template
-        run: npm test
-
       - name: Build
         working-directory: hub/onboarder-nextjs/app-template
         run: npm run build
+
+      # After the build on purpose: tests/next-runtime.test.mjs starts the built
+      # app with `next start` and fetches real routes, including the image
+      # optimizer path that goes through sharp.
+      - name: Run dependency smoke tests
+        working-directory: hub/onboarder-nextjs/app-template
+        run: npm test
