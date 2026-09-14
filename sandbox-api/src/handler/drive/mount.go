@@ -22,9 +22,17 @@ const (
 	// BlfsPath is the binary the drive mount runs, as root. It is exported so
 	// the paths this API executes with privileges can be named where they have
 	// to be protected from being replaced.
-	BlfsPath     = "/usr/local/bin/blfs"
-	pollInterval = 100 * time.Millisecond
-	mountTimeout = 30 * time.Second
+	BlfsPath = "/usr/local/bin/blfs"
+	// The readiness wait watches an operation that finishes in a few hundred
+	// milliseconds: blfs's own mount work is ~150ms and the first readdir
+	// against a freshly mounted blfs answers in ~27ms. A fixed 100ms tick
+	// quantised that an order of magnitude too coarsely, so the wait spent more
+	// time sleeping than the work took. Start tight and back off, so a healthy
+	// mount is noticed almost immediately while a wedged one still costs only
+	// one syscall per 100ms.
+	pollIntervalMin = 2 * time.Millisecond
+	pollIntervalMax = 100 * time.Millisecond
+	mountTimeout    = 30 * time.Second
 	// blfsOutputTailBytes bounds how much of the blfs output is kept to explain
 	// why a mount failed.
 	blfsOutputTailBytes = 8 << 10
@@ -424,50 +432,45 @@ func MountDrive(driveName, mountPath, drivePath string, readOnly bool, uidMap, g
 		exitCh <- cmd.Wait()
 	}()
 
-	// Poll until the mount point is ready or timeout.
-	// Two-phase check: first wait for the kernel FUSE mount to appear in
-	// /proc/mounts, then probe with ReadDir to confirm the server gRPC
-	// stream is actually serving before we declare readiness.
+	// Poll until the mount point is ready or timeout. The sequencing lives in
+	// waitForMountReady so it can be tested without a real FUSE mount.
 	startTime := time.Now()
-	mountDetected := false
-	for time.Since(startTime) < mountTimeout {
-		// Check if blfs exited early (e.g. ACL denied, config error)
-		select {
-		case waitErr := <-exitCh:
-			msg := "blfs mount process exited unexpectedly"
-			if waitErr != nil {
-				msg = fmt.Sprintf("%s: %v", msg, waitErr)
+	waitErr := waitForMountReady(mountProbe{
+		isMounted: func() bool { return isMountPoint(mountPath) },
+		readDir: func() error {
+			_, err := os.ReadDir(mountPath)
+			return err
+		},
+		exited: func() error {
+			// Check if blfs exited early (e.g. ACL denied, config error)
+			select {
+			case waitErr := <-exitCh:
+				msg := "blfs mount process exited unexpectedly"
+				if waitErr != nil {
+					msg = fmt.Sprintf("%s: %v", msg, waitErr)
+				}
+				logrus.WithFields(logrus.Fields{
+					"pid":        pid,
+					"mount_path": mountPath,
+				}).Warn(msg)
+				// A refusal from the filer is the caller's problem, not a server
+				// fault, so it has to stay distinguishable up to the handler.
+				if cause := classifyBlfsFailure(output.String()); cause != nil {
+					return fmt.Errorf("failed to mount drive %s: %w", driveName, cause)
+				}
+				return fmt.Errorf("failed to mount drive: %s", msg)
+			default:
+				return nil
 			}
-			logrus.WithFields(logrus.Fields{
-				"pid":        pid,
-				"mount_path": mountPath,
-			}).Warn(msg)
-			// A refusal from the filer is the caller's problem, not a server
-			// fault, so it has to stay distinguishable up to the handler.
-			if cause := classifyBlfsFailure(output.String()); cause != nil {
-				return "", "", fmt.Errorf("failed to mount drive %s: %w", driveName, cause)
-			}
-			return "", "", fmt.Errorf("failed to mount drive: %s", msg)
-		default:
-		}
-
-		if !mountDetected {
-			if isMountPoint(mountPath) {
-				mountDetected = true
-				logrus.WithField("mount_path", mountPath).Debug("Kernel mount registered, waiting for server connection...")
-			}
-			time.Sleep(pollInterval)
-			continue
-		}
-
-		// Phase 2: mount is registered, now probe until server gRPC is actually serving
-		_, err := os.ReadDir(mountPath)
-		if err == nil {
-			logrus.WithField("mount_path", mountPath).Info("Mount point is ready and server connection established")
-			return effectiveUidMap, effectiveGidMap, nil
-		}
-		logrus.WithField("mount_path", mountPath).Debug("Server connection not yet ready, retrying...")
-		time.Sleep(pollInterval)
+		},
+		sleep: time.Sleep,
+		since: func() time.Duration { return time.Since(startTime) },
+	}, mountPath, mountTimeout)
+	if waitErr == nil {
+		return effectiveUidMap, effectiveGidMap, nil
+	}
+	if !errors.Is(waitErr, errMountTimeout) {
+		return "", "", waitErr
 	}
 
 	// Timeout — kill the process and clean up
@@ -477,6 +480,70 @@ func MountDrive(driveName, mountPath, drivePath string, readOnly bool, uidMap, g
 		_ = unmountDriveLocked(mountPath)
 	}
 	return "", "", fmt.Errorf("timeout waiting for mount point to be ready after %s", mountTimeout)
+}
+
+// errMountTimeout marks the readiness wait running out of time, so the caller
+// can tell it apart from blfs failing and run the kill-and-unmount cleanup.
+var errMountTimeout = errors.New("mount readiness timeout")
+
+// mountProbe is everything waitForMountReady observes. It is injected so the
+// two-phase sequencing can be tested without a real FUSE mount.
+type mountProbe struct {
+	isMounted func() bool
+	readDir   func() error
+	exited    func() error // non-nil once blfs has exited
+	sleep     func(time.Duration)
+	since     func() time.Duration
+}
+
+// waitForMountReady blocks until the kernel FUSE mount is registered and its
+// server answers a readdir, or blfs exits, or timeout elapses.
+//
+// Two phases, because a registered mount does not imply a serving one: first
+// wait for the mount to appear in /proc/mounts, then probe with a readdir to
+// confirm the server gRPC stream is actually answering.
+func waitForMountReady(p mountProbe, mountPath string, timeout time.Duration) error {
+	backoff := pollIntervalMin
+	mountDetected := false
+	for p.since() < timeout {
+		if err := p.exited(); err != nil {
+			return err
+		}
+
+		if !mountDetected {
+			if !p.isMounted() {
+				p.sleep(backoff)
+				backoff = nextPollInterval(backoff)
+				continue
+			}
+			mountDetected = true
+			backoff = pollIntervalMin
+			logrus.WithField("mount_path", mountPath).Debug("Kernel mount registered, waiting for server connection...")
+			// Deliberately no sleep. The filesystem is mounted at this point, so
+			// waiting a whole interval before the first readdir is latency paid
+			// on every mount to learn nothing.
+			continue
+		}
+
+		// Phase 2: mount is registered, now probe until server gRPC is actually serving
+		if err := p.readDir(); err == nil {
+			logrus.WithField("mount_path", mountPath).Info("Mount point is ready and server connection established")
+			return nil
+		}
+		logrus.WithField("mount_path", mountPath).Debug("Server connection not yet ready, retrying...")
+		p.sleep(backoff)
+		backoff = nextPollInterval(backoff)
+	}
+	return errMountTimeout
+}
+
+// nextPollInterval doubles the wait, capped. Bounded so a mount that never
+// comes up does not spin.
+func nextPollInterval(d time.Duration) time.Duration {
+	if d *= 2; d > pollIntervalMax {
+		return pollIntervalMax
+	}
+	return d
 }
 
 // getFilerAddress reads the filer address from /etc/resolv.conf

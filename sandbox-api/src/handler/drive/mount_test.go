@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 // TestCreateMountPointReportsCreation checks the flag that decides whether the
@@ -412,5 +413,100 @@ func TestFormatFilerServerAddress(t *testing.T) {
 				t.Fatalf("formatFilerServerAddress(%q) = %q, want %q", tt.address, got, tt.want)
 			}
 		})
+	}
+}
+
+// The mount is already registered when phase 1 succeeds, so the wait must fall
+// straight through to its first readdir. Sleeping there cost a full interval on
+// every single mount with the filesystem already usable.
+func TestWaitForMountReadyDoesNotSleepAfterDetectingTheMount(t *testing.T) {
+	var slept []time.Duration
+	readDirCalls := 0
+	p := mountProbe{
+		isMounted: func() bool { return true },
+		readDir:   func() error { readDirCalls++; return nil },
+		exited:    func() error { return nil },
+		sleep:     func(d time.Duration) { slept = append(slept, d) },
+		since:     func() time.Duration { return 0 },
+	}
+	if err := waitForMountReady(p, "/mnt/drive", mountTimeout); err != nil {
+		t.Fatalf("expected ready, got %v", err)
+	}
+	if len(slept) != 0 {
+		t.Fatalf("expected no sleep before the first readdir, slept %v", slept)
+	}
+	if readDirCalls != 1 {
+		t.Fatalf("expected exactly one readdir, got %d", readDirCalls)
+	}
+}
+
+// A mount that is not registered yet must be waited on, and the waits must
+// start short rather than at the old fixed 100ms.
+func TestWaitForMountReadyBacksOffFromAShortFirstWait(t *testing.T) {
+	var slept []time.Duration
+	mountedAfter := 4
+	calls := 0
+	p := mountProbe{
+		isMounted: func() bool { calls++; return calls > mountedAfter },
+		readDir:   func() error { return nil },
+		exited:    func() error { return nil },
+		sleep:     func(d time.Duration) { slept = append(slept, d) },
+		since:     func() time.Duration { return 0 },
+	}
+	if err := waitForMountReady(p, "/mnt/drive", mountTimeout); err != nil {
+		t.Fatalf("expected ready, got %v", err)
+	}
+	want := []time.Duration{2 * time.Millisecond, 4 * time.Millisecond, 8 * time.Millisecond, 16 * time.Millisecond}
+	if len(slept) != len(want) {
+		t.Fatalf("expected %d waits, got %v", len(want), slept)
+	}
+	for i := range want {
+		if slept[i] != want[i] {
+			t.Fatalf("wait %d: expected %v, got %v", i, want[i], slept[i])
+		}
+	}
+}
+
+func TestNextPollIntervalCaps(t *testing.T) {
+	if got := nextPollInterval(pollIntervalMin); got != 2*pollIntervalMin {
+		t.Fatalf("expected doubling, got %v", got)
+	}
+	if got := nextPollInterval(pollIntervalMax); got != pollIntervalMax {
+		t.Fatalf("expected the cap to hold, got %v", got)
+	}
+	if got := nextPollInterval(pollIntervalMax * 3 / 4); got != pollIntervalMax {
+		t.Fatalf("expected clamping to the cap, got %v", got)
+	}
+}
+
+// blfs exiting early must surface its classified error, not a timeout, so the
+// caller does not run the kill-and-unmount path against a dead process.
+func TestWaitForMountReadyPropagatesEarlyExit(t *testing.T) {
+	sentinel := errors.New("drive access denied")
+	p := mountProbe{
+		isMounted: func() bool { return false },
+		readDir:   func() error { return nil },
+		exited:    func() error { return sentinel },
+		sleep:     func(time.Duration) { t.Fatal("must not sleep once blfs has exited") },
+		since:     func() time.Duration { return 0 },
+	}
+	if err := waitForMountReady(p, "/mnt/drive", mountTimeout); !errors.Is(err, sentinel) {
+		t.Fatalf("expected the early-exit error, got %v", err)
+	}
+}
+
+// A mount that never becomes ready must report the timeout sentinel, because
+// that is what selects the cleanup path in MountDrive.
+func TestWaitForMountReadyTimesOut(t *testing.T) {
+	elapsed := time.Duration(0)
+	p := mountProbe{
+		isMounted: func() bool { return true },
+		readDir:   func() error { return errors.New("not serving") },
+		exited:    func() error { return nil },
+		sleep:     func(d time.Duration) { elapsed += d },
+		since:     func() time.Duration { return elapsed },
+	}
+	if err := waitForMountReady(p, "/mnt/drive", 500*time.Millisecond); !errors.Is(err, errMountTimeout) {
+		t.Fatalf("expected errMountTimeout, got %v", err)
 	}
 }
