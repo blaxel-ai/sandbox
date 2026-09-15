@@ -215,7 +215,9 @@ func main() {
 		// reason under its own errors. Resuming the sandbox is what makes it
 		// startable, and the operator does that knowingly.
 		if commandValue != "" && !archive.Quiesced() {
-			startBackgroundCommand(ctx, commandValue)
+			if err := startBackgroundCommand(ctx, commandValue); err != nil {
+				logrus.Fatalf("Failed to start command: %v", err)
+			}
 		}
 	}
 	if archive.PendingImport() {
@@ -343,8 +345,9 @@ func importArchive(ctx context.Context) bool {
 }
 
 // startBackgroundCommand runs the given command string in a goroutine using the
-// configured SHELL and SHELL_ARGS environment variables.
-func startBackgroundCommand(ctx context.Context, command string) {
+// configured SHELL and SHELL_ARGS environment variables. It returns once the
+// command is running, or the reason it could not be started.
+func startBackgroundCommand(ctx context.Context, command string) error {
 	logrus.Infof("Executing command: %s", command)
 
 	shell := os.Getenv("SHELL")
@@ -377,14 +380,18 @@ func startBackgroundCommand(ctx context.Context, command string) {
 	// the goroutine could still be pending then, leaving the one process most
 	// likely to be writing running while the filesystem is read.
 	if err := cmd.Start(); err != nil {
-		logrus.Fatalf("Failed to start command: %v", err)
-		return
+		return err
 	}
 	pid := cmd.Process.Pid
 	oom.PreferAsVictim(pid)
 	// The process manager never hears about this command, and an archive export
-	// has to stop it like any other process.
-	archive.RegisterStartupWorkload(pid)
+	// has to stop it like any other process - and start it over should the
+	// export fail, since the sandbox goes on living without an archive.
+	archive.RegisterStartupWorkload(pid, func() {
+		if err := startBackgroundCommand(ctx, command); err != nil {
+			logrus.WithError(err).Error("Failed to restart the command")
+		}
+	})
 	logrus.Infof("Command started successfully")
 
 	// Waited on in a goroutine so it doesn't block the server
@@ -402,4 +409,5 @@ func startBackgroundCommand(ctx context.Context, command string) {
 			logrus.Infof("Command completed successfully")
 		}
 	}()
+	return nil
 }

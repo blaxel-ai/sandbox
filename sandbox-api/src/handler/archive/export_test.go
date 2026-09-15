@@ -16,6 +16,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/blaxel-ai/sandbox-api/src/handler/process"
 )
 
 func exportOptions(t *testing.T, root, lower string) ExportOptions {
@@ -267,6 +269,105 @@ func TestExportReportsRejectedUpload(t *testing.T) {
 	}
 	if !bytes.Contains([]byte(err.Error()), []byte("403")) {
 		t.Errorf("expected the storage status in the error, got %v", err)
+	}
+}
+
+func TestFailedExportRelaunchesTheWorkloadItStopped(t *testing.T) {
+	// The export stops the workload to read a consistent filesystem. When the
+	// upload then fails there is no archive, the sandbox goes on living, and it
+	// has to go on with its workload: a sandbox left without its processes is
+	// bricked, not archived.
+	root, lower := fakeSandbox(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer server.Close()
+
+	pm := process.GetProcessManager()
+	before, err := pm.StartProcessWithName("sleep 30", "", "worker", map[string]string{"ROLE": "worker"}, false, 0, false, 0, false, func(*process.ProcessInfo) {})
+	if err != nil {
+		t.Fatalf("failed to start the workload: %v", err)
+	}
+	t.Cleanup(func() {
+		for _, info := range pm.ListProcesses() {
+			if info.Name == "worker" {
+				_ = pm.KillProcess(info.PID)
+			}
+		}
+	})
+
+	startup := exec.Command("sleep", "30")
+	if err := startup.Start(); err != nil {
+		t.Fatalf("failed to start the startup command: %v", err)
+	}
+	t.Cleanup(func() { _ = startup.Process.Kill(); _ = startup.Wait() })
+	restarted := make(chan struct{}, 1)
+	RegisterStartupWorkload(startup.Process.Pid, func() { restarted <- struct{}{} })
+	t.Cleanup(func() { RegisterStartupWorkload(0, nil) })
+	go func() {
+		_ = startup.Wait()
+		UnregisterStartupWorkload(startup.Process.Pid)
+	}()
+
+	options := exportOptions(t, root, lower)
+	options.URL = server.URL
+	if _, err := Export(context.Background(), options); err == nil {
+		t.Fatal("expected the rejected upload to fail the export")
+	}
+
+	if Quiesced() {
+		t.Error("a failed export must not leave the sandbox frozen")
+	}
+	var live *process.ProcessInfo
+	for _, info := range pm.ListProcesses() {
+		if info.Name == "worker" && info.Status == process.StatusRunning {
+			live = info
+		}
+	}
+	if live == nil {
+		t.Fatal("the process stopped for the export must run again once the export failed")
+	}
+	if live.PID == before {
+		t.Error("the process is started over, not reported running under its stopped identifier")
+	}
+	if live.Env["ROLE"] != "worker" {
+		t.Errorf("the process must be relaunched as it was started, got env %v", live.Env)
+	}
+	select {
+	case <-restarted:
+	case <-time.After(5 * time.Second):
+		t.Error("the startup command stopped for the export must be started over")
+	}
+}
+
+func TestSuccessfulExportLeavesTheWorkloadStopped(t *testing.T) {
+	root, lower := fakeSandbox(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	pm := process.GetProcessManager()
+	if _, err := pm.StartProcessWithName("sleep 30", "", "exported-worker", nil, false, 0, false, 0, false, func(*process.ProcessInfo) {}); err != nil {
+		t.Fatalf("failed to start the workload: %v", err)
+	}
+	t.Cleanup(func() {
+		for _, info := range pm.ListProcesses() {
+			if info.Name == "exported-worker" {
+				_ = pm.KillProcess(info.PID)
+			}
+		}
+	})
+
+	options := exportOptions(t, root, lower)
+	options.URL = server.URL
+	if _, err := Export(context.Background(), options); err != nil {
+		t.Fatalf("export failed: %v", err)
+	}
+	for _, info := range pm.ListProcesses() {
+		if info.Name == "exported-worker" && info.Status == process.StatusRunning {
+			t.Fatal("an exported sandbox is destroyed next, its workload must stay stopped")
+		}
 	}
 }
 

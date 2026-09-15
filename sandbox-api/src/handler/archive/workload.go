@@ -1,13 +1,13 @@
 package archive
 
 import (
-	"sync/atomic"
+	"sync"
 	"syscall"
 
 	"github.com/sirupsen/logrus"
 )
 
-// startupWorkloadPID is the process sandbox-api started from its own command
+// startupWorkload is the process sandbox-api started from its own command
 // line, if any.
 //
 // It is not one of the process manager's processes: it is started directly at
@@ -15,19 +15,64 @@ import (
 // export has to stop it all the same - it is usually *the* workload, so leaving
 // it running would let the one process most likely to be writing keep writing
 // into the archive while the filesystem is read.
-var startupWorkloadPID atomic.Int64
+var startupWorkload struct {
+	sync.Mutex
+	pid int
+	// restart starts the command over. It is what a failed export gives the
+	// sandbox back its workload with: the command was stopped for an archive
+	// that never landed, and a sandbox whose main process is gone is bricked.
+	restart func()
+}
 
 // RegisterStartupWorkload records the process started from the -command flag so
-// an export can stop it.
-func RegisterStartupWorkload(pid int) {
-	startupWorkloadPID.Store(int64(pid))
+// an export can stop it, and how to start the command over should the export
+// fail. A nil restart leaves a stopped command stopped.
+func RegisterStartupWorkload(pid int, restart func()) {
+	startupWorkload.Lock()
+	defer startupWorkload.Unlock()
+	startupWorkload.pid = pid
+	startupWorkload.restart = restart
 }
 
 // UnregisterStartupWorkload forgets the process, which has exited. It only
 // forgets the PID it is given: a command that exited after being replaced must
-// not clear its successor.
+// not clear its successor. How to restart the command is kept: it is what a
+// failed export relaunches the command it stopped with.
 func UnregisterStartupWorkload(pid int) {
-	startupWorkloadPID.CompareAndSwap(int64(pid), 0)
+	startupWorkload.Lock()
+	defer startupWorkload.Unlock()
+	if startupWorkload.pid == pid {
+		startupWorkload.pid = 0
+	}
+}
+
+// startupWorkloadPID is the PID of the startup command, or 0 when there is none
+// or it has exited.
+func startupWorkloadPID() int {
+	startupWorkload.Lock()
+	defer startupWorkload.Unlock()
+	return startupWorkload.pid
+}
+
+// restartStartupWorkload starts the startup command over after an export
+// stopped it and failed. Nothing is started when the command already runs
+// again - it was restarted from outside, or its stop never took - since two
+// copies of the workload is worse than none.
+func restartStartupWorkload() bool {
+	startupWorkload.Lock()
+	restart := startupWorkload.restart
+	pid := startupWorkload.pid
+	startupWorkload.Unlock()
+
+	if restart == nil {
+		return false
+	}
+	if pid > 0 && processAlive(pid) {
+		return false
+	}
+	logrus.Info("[Archive] Restarting the startup command the failed export stopped")
+	restart()
+	return true
 }
 
 // stopStartupWorkload asks the startup command to exit and returns it so the
@@ -40,7 +85,7 @@ func UnregisterStartupWorkload(pid int) {
 // itself; a shell that instead forks leaves its children running, and the
 // read-only remount is what stops them from writing.
 func stopStartupWorkload() (stoppedProcess, bool) {
-	pid := int(startupWorkloadPID.Load())
+	pid := startupWorkloadPID()
 	if pid <= 0 || !processAlive(pid) {
 		return stoppedProcess{}, false
 	}

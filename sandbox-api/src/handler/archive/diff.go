@@ -346,6 +346,9 @@ func (s *scanner) scanLive() ([]Change, error) {
 			}
 			return nil
 		}
+		if !archivable(info) {
+			return nil
+		}
 
 		kind, err := s.classify(rel, info)
 		if err != nil {
@@ -366,6 +369,16 @@ func (s *scanner) scanLive() ([]Change, error) {
 		return nil, fmt.Errorf("failed to walk %s: %w", s.root, err)
 	}
 	return changes, nil
+}
+
+// archivable reports whether a live entry has a place in the archive. Unix
+// sockets do not: the tar format has no entry type for them, and a workload
+// leaves them behind wherever it listens - a database in its data directory, a
+// language server under the home - so an export that stumbled on one would
+// fail on every sandbox running such a workload. A socket is nothing without
+// the process behind it anyway, and the relaunched workload creates its own.
+func archivable(info os.FileInfo) bool {
+	return info.Mode()&os.ModeSocket == 0
 }
 
 // classify decides how a live entry differs from the image. An empty kind means
