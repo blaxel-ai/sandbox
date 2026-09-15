@@ -1,6 +1,10 @@
 package archive
 
 import (
+	"archive/tar"
+	"bytes"
+	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -198,6 +202,64 @@ func TestParseMountPointsKeepsOnlyPointsBelowTheRoot(t *testing.T) {
 	}
 	if len(mounts) != 4 {
 		t.Errorf("expected 4 mountpoints, got %v", mounts)
+	}
+}
+
+// listenOn creates a Unix socket at path, standing in for the one a workload
+// leaves wherever it listens.
+func listenOn(t *testing.T, path string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	listener, err := net.Listen("unix", path)
+	if err != nil {
+		t.Skipf("cannot create a unix socket here: %v", err)
+	}
+	t.Cleanup(func() { listener.Close() })
+}
+
+func TestDiffLeavesSocketsOut(t *testing.T) {
+	root, lower := fakeSandbox(t)
+	// A socket the workload added, and one it recreated over the image's - the
+	// tar format has no entry for either.
+	listenOn(t, filepath.Join(root, "var/run/postgres.sock"))
+	write(t, filepath.Join(lower, "srv/app.sock"), "was a file in the image", 0o644)
+	listenOn(t, filepath.Join(root, "srv/app.sock"))
+	// The directory holding a socket is still archived.
+	write(t, filepath.Join(root, "var/run/pid"), "42", 0o644)
+
+	changes, err := Diff(root, lower, nil)
+	if err != nil {
+		t.Fatalf("Diff failed: %v", err)
+	}
+	for _, path := range []string{"var/run/postgres.sock", "srv/app.sock"} {
+		if change := changeFor(changes, path); change != nil {
+			t.Errorf("a socket must not be archived, got %s as %s", path, change.Kind)
+		}
+	}
+	if changeFor(changes, "var/run/pid") == nil {
+		t.Error("the files next to a socket must still be archived")
+	}
+	if changeFor(changes, "var/run") == nil {
+		t.Error("the directory holding a socket must still be archived")
+	}
+}
+
+func TestWriteEntrySkipsASocketItIsHanded(t *testing.T) {
+	root := t.TempDir()
+	listenOn(t, filepath.Join(root, "app.sock"))
+
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	if err := writeEntry(tw, root, Change{Path: "app.sock", Kind: ChangeAdded}, true); err != nil {
+		t.Fatalf("a socket must be skipped rather than fail the archive: %v", err)
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tar.NewReader(&buf).Next(); err != io.EOF {
+		t.Errorf("expected no entry for a socket, got %v", err)
 	}
 }
 

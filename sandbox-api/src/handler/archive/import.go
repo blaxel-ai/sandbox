@@ -1063,6 +1063,17 @@ func relaunch(root string, state []byte) (relaunched, failed []string) {
 
 	candidates := make([]process.ProcessState, 0, len(saved.Processes))
 	for _, archived := range saved.Processes {
+		candidates = append(candidates, archived)
+	}
+	return relaunchProcesses(root, candidates)
+}
+
+// relaunchProcesses starts the processes recorded as running among the given
+// ones, oldest first. It is what an import relaunches an archive's workload
+// with, and what a failed export relaunches the workload it stopped with.
+func relaunchProcesses(root string, recorded []process.ProcessState) (relaunched, failed []string) {
+	candidates := make([]process.ProcessState, 0, len(recorded))
+	for _, archived := range recorded {
 		if archived.Status != process.StatusRunning {
 			continue
 		}

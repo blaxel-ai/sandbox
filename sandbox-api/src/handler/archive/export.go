@@ -298,16 +298,27 @@ func exportClaimed(ctx context.Context, options ExportOptions) (result *ExportRe
 		defer endExport()
 		// The freeze only earns its keep when there is an archive to protect: a
 		// failed export must not leave the sandbox locked out with no archive
-		// and no way back.
+		// and no way back - nor without its workload, which was stopped for an
+		// archive that never landed and is started over once the root is
+		// writable again.
+		var quiesced quiescedWorkload
 		defer func() {
 			if err != nil {
-				forceResume()
+				// A root left read-only cannot run the workload: the sandbox stays
+				// quiesced and says so, rather than starting processes that fail
+				// at the first write.
+				if status := forceResume(); status.State == StateActive {
+					quiesced.relaunch(options.rootDir())
+				} else {
+					logrus.WithField("reason", status.Reason).Error("[Archive] The workload stopped for the export is not restarted: the sandbox could not be resumed")
+				}
 			}
 		}()
 
-		if result.StoppedProcesses, err = quiesceWorkload(options); err != nil {
+		if quiesced, err = quiesceWorkload(options); err != nil {
 			return nil, err
 		}
+		result.StoppedProcesses = quiesced.identifiers
 	}
 
 	mountPoint := options.imageMountPoint()
@@ -440,19 +451,33 @@ func exportClaimed(ctx context.Context, options ExportOptions) (result *ExportRe
 // waits for them to be gone, so nothing writes to the filesystem while it is
 // read. The state is saved before anything is stopped: it has to describe the
 // workload as it was, not as a list of stopped processes.
-func quiesceWorkload(options ExportOptions) ([]string, error) {
+func quiesceWorkload(options ExportOptions) (quiescedWorkload, error) {
 	pm := process.GetProcessManager()
 
 	if options.saveProcesses() {
 		if err := pm.SaveState(); err != nil {
-			return nil, fmt.Errorf("failed to save the process list: %w", err)
+			return quiescedWorkload{}, fmt.Errorf("failed to save the process list: %w", err)
 		}
 	}
 
+	var quiesced quiescedWorkload
 	var stopped []stoppedProcess
 	for _, info := range pm.ListProcesses() {
 		if info.Status != process.StatusRunning {
 			continue
+		}
+		state := process.ProcessState{
+			Name:             info.Name,
+			Command:          info.Command,
+			StartedAt:        info.StartedAt,
+			Status:           info.Status,
+			WorkingDir:       info.WorkingDir,
+			Env:              info.Env,
+			RestartOnFailure: info.RestartOnFailure,
+			MaxRestarts:      info.MaxRestarts,
+			KeepAlive:        info.KeepAlive,
+			Stdin:            info.Stdin,
+			Timeout:          info.Timeout,
 		}
 		identifier := info.PID
 		candidate := stoppedProcess{
@@ -466,13 +491,20 @@ func quiesceWorkload(options ExportOptions) ([]string, error) {
 		// go through the wait-and-kill path below instead of being left to write
 		// into the archive.
 		if err := pm.StopProcess(identifier); err != nil {
+			if info.Status != process.StatusRunning {
+				// It ended on its own between the listing and the stop: the export
+				// did not interrupt it, so a failed export has nothing to restart.
+				continue
+			}
 			logrus.WithError(err).WithField("process", identifier).Warn("[Archive] Failed to stop process gracefully, it will be killed")
 		}
+		quiesced.processes = append(quiesced.processes, state)
 		stopped = append(stopped, candidate)
 	}
 
 	if candidate, running := stopStartupWorkload(); running {
 		stopped = append(stopped, candidate)
+		quiesced.startupCommand = true
 	}
 
 	// A process that ignores SIGTERM would keep writing during the scan, which is
@@ -494,7 +526,41 @@ func quiesceWorkload(options ExportOptions) ([]string, error) {
 	// Flush what the stopped processes wrote: their pages are on tmpfs, but the
 	// log files this API keeps for them are not necessarily written back yet.
 	syncFilesystem()
-	return identifiers(stopped), nil
+	quiesced.identifiers = identifiers(stopped)
+	return quiesced, nil
+}
+
+// quiescedWorkload is what an export stopped, kept as it was before the stop so
+// a failed export can start it over. A successful export leaves it stopped: the
+// sandbox is destroyed once its archive is stored, and the archive carries the
+// same list for the sandbox restored from it.
+type quiescedWorkload struct {
+	identifiers []string
+	// processes are the manager's processes that were running, with what it
+	// takes to start each again.
+	processes []process.ProcessState
+	// startupCommand says the command sandbox-api was started with was running
+	// and got stopped.
+	startupCommand bool
+}
+
+// relaunch starts the stopped workload over. It runs after the sandbox is
+// resumed: the root is writable again and restarts are allowed, so what starts
+// here runs as it did before the export.
+func (q quiescedWorkload) relaunch(root string) {
+	if len(q.processes) == 0 && !q.startupCommand {
+		return
+	}
+	relaunched, failed := relaunchProcesses(root, q.processes)
+	restarted := false
+	if q.startupCommand {
+		restarted = restartStartupWorkload()
+	}
+	logrus.WithFields(logrus.Fields{
+		"relaunched":     relaunched,
+		"failed":         failed,
+		"startupCommand": restarted,
+	}).Warn("[Archive] Export failed, relaunched the workload it had stopped")
 }
 
 // freezeRoot makes the root read-only and reports whether it worked. Stopping
