@@ -120,6 +120,11 @@ func writeEntry(tw *tar.Writer, root string, change Change, readContent bool) er
 		}
 	}
 
+	// The scan leaves sockets out; a change list built elsewhere may not have.
+	if !archivable(info) {
+		return nil
+	}
+
 	link := ""
 	if info.Mode()&os.ModeSymlink != 0 {
 		var err error
