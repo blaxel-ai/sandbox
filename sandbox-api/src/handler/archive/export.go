@@ -304,8 +304,14 @@ func exportClaimed(ctx context.Context, options ExportOptions) (result *ExportRe
 		var quiesced quiescedWorkload
 		defer func() {
 			if err != nil {
-				forceResume()
-				quiesced.relaunch(options.rootDir())
+				// A root left read-only cannot run the workload: the sandbox stays
+				// quiesced and says so, rather than starting processes that fail
+				// at the first write.
+				if status := forceResume(); status.State == StateActive {
+					quiesced.relaunch(options.rootDir())
+				} else {
+					logrus.WithField("reason", status.Reason).Error("[Archive] The workload stopped for the export is not restarted: the sandbox could not be resumed")
+				}
 			}
 		}()
 
@@ -460,7 +466,7 @@ func quiesceWorkload(options ExportOptions) (quiescedWorkload, error) {
 		if info.Status != process.StatusRunning {
 			continue
 		}
-		quiesced.processes = append(quiesced.processes, process.ProcessState{
+		state := process.ProcessState{
 			Name:             info.Name,
 			Command:          info.Command,
 			StartedAt:        info.StartedAt,
@@ -472,7 +478,7 @@ func quiesceWorkload(options ExportOptions) (quiescedWorkload, error) {
 			KeepAlive:        info.KeepAlive,
 			Stdin:            info.Stdin,
 			Timeout:          info.Timeout,
-		})
+		}
 		identifier := info.PID
 		candidate := stoppedProcess{
 			identifier: identifier,
@@ -485,8 +491,14 @@ func quiesceWorkload(options ExportOptions) (quiescedWorkload, error) {
 		// go through the wait-and-kill path below instead of being left to write
 		// into the archive.
 		if err := pm.StopProcess(identifier); err != nil {
+			if info.Status != process.StatusRunning {
+				// It ended on its own between the listing and the stop: the export
+				// did not interrupt it, so a failed export has nothing to restart.
+				continue
+			}
 			logrus.WithError(err).WithField("process", identifier).Warn("[Archive] Failed to stop process gracefully, it will be killed")
 		}
+		quiesced.processes = append(quiesced.processes, state)
 		stopped = append(stopped, candidate)
 	}
 

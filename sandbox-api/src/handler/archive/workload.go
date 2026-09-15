@@ -1,6 +1,7 @@
 package archive
 
 import (
+	"errors"
 	"sync"
 	"syscall"
 
@@ -96,6 +97,10 @@ func stopStartupWorkload() (stoppedProcess, bool) {
 		kill:       func() error { return syscall.Kill(pid, syscall.SIGKILL) },
 	}
 	if err := syscall.Kill(pid, syscall.SIGTERM); err != nil {
+		if errors.Is(err, syscall.ESRCH) {
+			// Exited on its own before the signal: the export did not stop it.
+			return stoppedProcess{}, false
+		}
 		logrus.WithError(err).WithField("pid", pid).Warn("[Archive] Failed to stop the startup command gracefully, it will be killed")
 	}
 	return candidate, true
