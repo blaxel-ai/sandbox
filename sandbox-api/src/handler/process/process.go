@@ -3,6 +3,7 @@ package process
 import (
 	"bufio"
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"math/rand"
@@ -899,11 +900,90 @@ func logProcessLine(entry *logrus.Entry, streamType string, line []byte) {
 	if len(line) > maxLoggedLineBytes {
 		line = line[:maxLoggedLineBytes]
 	}
+	level := logrus.InfoLevel
 	if streamType == "stderr" {
-		entry.Error(string(line))
-	} else {
-		entry.Info(string(line))
+		level = logrus.ErrorLevel
 	}
+	if msg, fields, lineLevel, ok := unwrapStructuredLine(line); ok {
+		if lineLevel != 0 {
+			level = lineLevel
+		}
+		entry.WithFields(fields).Log(level, msg)
+		return
+	}
+	entry.Log(level, string(line))
+}
+
+// processEntryKeys are set by the capture itself and must not be overridden by
+// whatever the process printed.
+var processEntryKeys = map[string]bool{
+	"source": true, "process-name": true, "process-pid": true, "stream": true,
+}
+
+// unwrapStructuredLine recognizes a line that is itself a structured log
+// record (a JSON object with a string "message" or "msg") and lifts its
+// fields onto the telemetry entry instead of nesting the whole record as text.
+// Severity is taken from "severity" or "level" when it names a known level;
+// trace_id, span_id, labels and any other keys are kept as fields so the
+// entry stays correlated to the trace the process was running under.
+func unwrapStructuredLine(line []byte) (string, logrus.Fields, logrus.Level, bool) {
+	if len(line) == 0 || line[0] != '{' {
+		return "", nil, 0, false
+	}
+	var record map[string]any
+	if err := json.Unmarshal(line, &record); err != nil {
+		return "", nil, 0, false
+	}
+	msg, ok := structuredString(record, "message", "msg")
+	if !ok {
+		return "", nil, 0, false
+	}
+	var level logrus.Level
+	if sev, ok := structuredString(record, "severity", "level"); ok {
+		level = severityLevel(sev)
+	}
+	fields := make(logrus.Fields, len(record))
+	for key, value := range record {
+		switch key {
+		case "message", "msg", "severity", "level":
+			continue
+		}
+		if processEntryKeys[key] {
+			continue
+		}
+		fields[key] = value
+	}
+	return msg, fields, level, true
+}
+
+func structuredString(record map[string]any, keys ...string) (string, bool) {
+	for _, key := range keys {
+		if s, ok := record[key].(string); ok {
+			return s, true
+		}
+	}
+	return "", false
+}
+
+// severityLevel maps the severity vocabularies seen in process output (OTLP,
+// GCP, logrus, slog) onto logrus levels. Fatal and panic collapse to error:
+// the entry is Log()ged, and those levels would exit or panic sandbox-api.
+// Zero means unknown, keeping the stream's default.
+func severityLevel(severity string) logrus.Level {
+	s := strings.ToLower(strings.TrimSpace(severity))
+	switch {
+	case strings.HasPrefix(s, "err"), strings.HasPrefix(s, "fatal"),
+		strings.HasPrefix(s, "crit"), strings.HasPrefix(s, "panic"),
+		strings.HasPrefix(s, "alert"), strings.HasPrefix(s, "emerg"):
+		return logrus.ErrorLevel
+	case strings.HasPrefix(s, "warn"):
+		return logrus.WarnLevel
+	case strings.HasPrefix(s, "debug"), strings.HasPrefix(s, "trace"):
+		return logrus.DebugLevel
+	case strings.HasPrefix(s, "info"), strings.HasPrefix(s, "notice"):
+		return logrus.InfoLevel
+	}
+	return 0
 }
 
 // restartProcess restarts a failed process with the same configuration
