@@ -905,8 +905,8 @@ func logProcessLine(entry *logrus.Entry, streamType string, line []byte) {
 		level = logrus.ErrorLevel
 	}
 	if msg, fields, lineLevel, ok := unwrapStructuredLine(line); ok {
-		if lineLevel != 0 {
-			level = lineLevel
+		if lineLevel != nil {
+			level = *lineLevel
 		}
 		entry.WithFields(fields).Log(level, msg)
 		return
@@ -923,22 +923,22 @@ var processEntryKeys = map[string]bool{
 // unwrapStructuredLine recognizes a line that is itself a structured log
 // record (a JSON object with a string "message" or "msg") and lifts its
 // fields onto the telemetry entry instead of nesting the whole record as text.
-// Severity is taken from "severity" or "level" when it names a known level;
+// The level is nil unless "severity" or "level" names a known level;
 // trace_id, span_id, labels and any other keys are kept as fields so the
 // entry stays correlated to the trace the process was running under.
-func unwrapStructuredLine(line []byte) (string, logrus.Fields, logrus.Level, bool) {
+func unwrapStructuredLine(line []byte) (string, logrus.Fields, *logrus.Level, bool) {
 	if len(line) == 0 || line[0] != '{' {
-		return "", nil, 0, false
+		return "", nil, nil, false
 	}
 	var record map[string]any
 	if err := json.Unmarshal(line, &record); err != nil {
-		return "", nil, 0, false
+		return "", nil, nil, false
 	}
 	msg, ok := structuredString(record, "message", "msg")
 	if !ok {
-		return "", nil, 0, false
+		return "", nil, nil, false
 	}
-	var level logrus.Level
+	var level *logrus.Level
 	if sev, ok := structuredString(record, "severity", "level"); ok {
 		level = severityLevel(sev)
 	}
@@ -968,22 +968,25 @@ func structuredString(record map[string]any, keys ...string) (string, bool) {
 // severityLevel maps the severity vocabularies seen in process output (OTLP,
 // GCP, logrus, slog) onto logrus levels. Fatal and panic collapse to error:
 // the entry is Log()ged, and those levels would exit or panic sandbox-api.
-// Zero means unknown, keeping the stream's default.
-func severityLevel(severity string) logrus.Level {
+// Nil means unknown, keeping the stream's default.
+func severityLevel(severity string) *logrus.Level {
 	s := strings.ToLower(strings.TrimSpace(severity))
+	var level logrus.Level
 	switch {
 	case strings.HasPrefix(s, "err"), strings.HasPrefix(s, "fatal"),
 		strings.HasPrefix(s, "crit"), strings.HasPrefix(s, "panic"),
 		strings.HasPrefix(s, "alert"), strings.HasPrefix(s, "emerg"):
-		return logrus.ErrorLevel
+		level = logrus.ErrorLevel
 	case strings.HasPrefix(s, "warn"):
-		return logrus.WarnLevel
+		level = logrus.WarnLevel
 	case strings.HasPrefix(s, "debug"), strings.HasPrefix(s, "trace"):
-		return logrus.DebugLevel
+		level = logrus.DebugLevel
 	case strings.HasPrefix(s, "info"), strings.HasPrefix(s, "notice"):
-		return logrus.InfoLevel
+		level = logrus.InfoLevel
+	default:
+		return nil
 	}
-	return 0
+	return &level
 }
 
 // restartProcess restarts a failed process with the same configuration
