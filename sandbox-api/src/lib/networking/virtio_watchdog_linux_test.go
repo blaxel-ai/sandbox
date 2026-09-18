@@ -4,6 +4,7 @@ package networking
 
 import (
 	"context"
+	"errors"
 	"os"
 	"testing"
 	"time"
@@ -48,5 +49,34 @@ func TestWatchKmsgRecoversOncePerBurst(t *testing.T) {
 	case d := <-recovered:
 		t.Fatalf("burst triggered a second recovery on %q", d)
 	case <-time.After(200 * time.Millisecond):
+	}
+}
+
+func TestRecoverWithRetriesRetriesUntilSuccess(t *testing.T) {
+	virtioRecoverRetryDelay = time.Millisecond
+	defer func() { virtioRecoverRetryDelay = time.Second }()
+	calls := 0
+	recoverWithRetries(context.Background(), "virtio0", func(string) error {
+		calls++
+		if calls < 3 {
+			return errors.New("transient")
+		}
+		return nil
+	})
+	if calls != 3 {
+		t.Fatalf("recover called %d times, want 3", calls)
+	}
+}
+
+func TestRecoverWithRetriesGivesUp(t *testing.T) {
+	virtioRecoverRetryDelay = time.Millisecond
+	defer func() { virtioRecoverRetryDelay = time.Second }()
+	calls := 0
+	recoverWithRetries(context.Background(), "virtio0", func(string) error {
+		calls++
+		return errors.New("permanent")
+	})
+	if calls != virtioRecoverAttempts {
+		t.Fatalf("recover called %d times, want %d", calls, virtioRecoverAttempts)
 	}
 }

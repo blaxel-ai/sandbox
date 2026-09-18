@@ -20,6 +20,7 @@ const (
 	kmsgPath              = "/dev/kmsg"
 	virtioDevicesDir      = "/sys/bus/virtio/devices"
 	virtioRecoverCooldown = 2 * time.Second
+	virtioRecoverAttempts = 5
 
 	resyncModuleName   = "virtio_ring_resync"
 	resyncModulePath   = "kmod/" + resyncModuleName + ".ko"

@@ -82,9 +82,7 @@ func watchKmsg(ctx context.Context, f *os.File, gate *recoveryGate, recover func
 		if device := parseKmsgLine(line); device != "" {
 			if gate.allow(device) {
 				logrus.Warnf("[VirtioWatchdog] Kernel reports a broken virtio_net ring on %s: %s", device, strings.TrimSpace(line))
-				if err := recover(device); err != nil {
-					logrus.WithError(err).Errorf("[VirtioWatchdog] Failed to recover %s, the sandbox network may stay unreachable", device)
-				}
+				go recoverWithRetries(ctx, device, recover)
 			}
 		}
 		if err != nil {
@@ -97,6 +95,32 @@ func watchKmsg(ctx context.Context, f *os.File, gate *recoveryGate, recover func
 			logrus.WithError(err).Warn("[VirtioWatchdog] Kernel log read failed, stopping")
 			return
 		}
+	}
+}
+
+var virtioRecoverRetryDelay = time.Second
+
+// recoverWithRetries runs recover until it succeeds or the attempts are used
+// up. The kernel logs the broken ring once and then stays silent on it, so a
+// failed attempt has no second trigger to fall back on.
+func recoverWithRetries(ctx context.Context, device string, recover func(device string) error) {
+	delay := virtioRecoverRetryDelay
+	for attempt := 1; ; attempt++ {
+		err := recover(device)
+		if err == nil {
+			return
+		}
+		if attempt == virtioRecoverAttempts {
+			logrus.WithError(err).Errorf("[VirtioWatchdog] Failed to recover %s after %d attempts, the sandbox network may stay unreachable", device, attempt)
+			return
+		}
+		logrus.WithError(err).Warnf("[VirtioWatchdog] Recovering %s failed (attempt %d/%d), retrying in %s", device, attempt, virtioRecoverAttempts, delay)
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(delay):
+		}
+		delay *= 2
 	}
 }
 
