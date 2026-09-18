@@ -168,7 +168,10 @@ async function stress(sandbox) {
       const resyncs = (kernel.match(/: resync \(broken=1/g) ?? []).length;
       console.log(`race hit. kernel log:\n${kernel}`);
       console.log(await snapshotNet(sandbox));
+      const egress = await sh(sandbox, "curl -sS -m 10 -o /dev/null https://www.google.com/generate_204; echo $?");
+      console.log(`egress after the hit exit code: ${egress.out}`);
       if (resyncs < Number(hit)) return fail(`${hit} ring errors but only ${resyncs} resyncs: the watchdog missed one`);
+      if (egress.out !== "0") return fail("no egress after the recovery");
       recovered = Number(hit);
       if (!env.CONTINUE) return console.log(`OK: race reproduced and recovered ${recovered} time(s)`);
     }
