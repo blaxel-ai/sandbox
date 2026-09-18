@@ -32,8 +32,8 @@ import (
 //
 // It returns immediately; the watchdog runs until ctx is cancelled.
 func StartVirtioWatchdog(ctx context.Context) {
-	if VirtioWatchdogDisabled(os.Getenv) {
-		logrus.Info("[VirtioWatchdog] Disabled by environment")
+	if !VirtioWatchdogEnabled(os.Getenv) {
+		logrus.Debugf("[VirtioWatchdog] Not enabled (%s), not watching", EnvEnableVirtioWatchdog)
 		return
 	}
 	if _, err := os.Stat(virtioNetDriverDir); err != nil {

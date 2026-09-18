@@ -71,11 +71,11 @@ func TestRecoveryGateCoalescesBurstPerDevice(t *testing.T) {
 	}
 }
 
-func TestVirtioWatchdogDisabled(t *testing.T) {
+func TestVirtioWatchdogEnabled(t *testing.T) {
 	env := func(v string) func(string) string { return func(string) string { return v } }
 	for v, want := range map[string]bool{"": false, "false": false, "0": false, "true": true, "1": true, " TRUE ": true, "yes": false} {
-		if got := VirtioWatchdogDisabled(env(v)); got != want {
-			t.Errorf("VirtioWatchdogDisabled(%q) = %v, want %v", v, got, want)
+		if got := VirtioWatchdogEnabled(env(v)); got != want {
+			t.Errorf("VirtioWatchdogEnabled(%q) = %v, want %v", v, got, want)
 		}
 	}
 }
