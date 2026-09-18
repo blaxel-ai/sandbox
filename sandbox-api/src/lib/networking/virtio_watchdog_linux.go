@@ -124,9 +124,6 @@ func recoverVirtioNet(device string) error {
 	for attempt := 1; ; attempt++ {
 		err := bindAndRestore(device, state)
 		if err == nil {
-			if err := RefreshWireGuardBind(); err != nil {
-				logrus.WithError(err).Warn("[VirtioWatchdog] Failed to refresh the WireGuard bind, egress through the tunnel may stay down")
-			}
 			logrus.Infof("[VirtioWatchdog] %s recovered on %s", state.name, device)
 			return nil
 		}
@@ -165,6 +162,14 @@ func bindAndRestore(device string, state *netState) error {
 			return fmt.Errorf("looking up %s after rename: %w", state.name, err)
 		}
 	}
+	// The interface exists again under a new ifindex; WireGuard's sticky
+	// sockets still point at the old one, whatever happens to the rest of
+	// the restore.
+	defer func() {
+		if err := RefreshWireGuardBind(); err != nil {
+			logrus.WithError(err).Warn("[VirtioWatchdog] Failed to refresh the WireGuard bind, egress through the tunnel may stay down")
+		}
+	}()
 	return restoreNetState(newLink, state)
 }
 
@@ -186,16 +191,33 @@ func captureNetState(link netlink.Link) (*netState, error) {
 	if err != nil {
 		return nil, fmt.Errorf("listing addresses of %s: %w", link.Attrs().Name, err)
 	}
-	routes, err := netlink.RouteList(link, netlink.FAMILY_ALL)
+	all, err := netlink.RouteList(link, netlink.FAMILY_ALL)
 	if err != nil {
 		return nil, fmt.Errorf("listing routes of %s: %w", link.Attrs().Name, err)
 	}
 	return &netState{
 		name:   link.Attrs().Name,
 		addrs:  addrs,
-		routes: routes,
+		routes: restorableRoutes(all),
 		mtu:    link.Attrs().MTU,
 	}, nil
+}
+
+// restorableRoutes drops the routes the kernel manages itself (local and
+// broadcast entries, and the connected routes it adds for each address): they
+// come back with the addresses and cannot be replaced by hand.
+func restorableRoutes(routes []netlink.Route) []netlink.Route {
+	keep := make([]netlink.Route, 0, len(routes))
+	for _, r := range routes {
+		if r.Table != 0 && r.Table != syscall.RT_TABLE_MAIN {
+			continue
+		}
+		if r.Protocol == syscall.RTPROT_KERNEL {
+			continue
+		}
+		keep = append(keep, r)
+	}
+	return keep
 }
 
 func restoreNetState(link netlink.Link, state *netState) error {

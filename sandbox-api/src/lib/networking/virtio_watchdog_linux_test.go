@@ -4,9 +4,13 @@ package networking
 
 import (
 	"context"
+	"net"
 	"os"
+	"syscall"
 	"testing"
 	"time"
+
+	"github.com/vishvananda/netlink"
 )
 
 func TestWatchKmsgRecoversOncePerBurst(t *testing.T) {
@@ -48,5 +52,19 @@ func TestWatchKmsgRecoversOncePerBurst(t *testing.T) {
 	case d := <-recovered:
 		t.Fatalf("burst triggered a second recovery on %q", d)
 	case <-time.After(200 * time.Millisecond):
+	}
+}
+
+func TestRestorableRoutesDropsKernelManagedOnes(t *testing.T) {
+	_, dst, _ := net.ParseCIDR("172.16.0.0/24")
+	routes := []netlink.Route{
+		{Table: syscall.RT_TABLE_LOCAL, Protocol: syscall.RTPROT_KERNEL, Dst: dst},
+		{Table: syscall.RT_TABLE_MAIN, Protocol: syscall.RTPROT_KERNEL, Dst: dst},
+		{Table: syscall.RT_TABLE_MAIN, Protocol: syscall.RTPROT_BOOT, Gw: net.IPv4(172, 16, 0, 1)},
+		{Protocol: syscall.RTPROT_STATIC, Dst: dst},
+	}
+	got := restorableRoutes(routes)
+	if len(got) != 2 || got[0].Gw == nil || got[1].Protocol != syscall.RTPROT_STATIC {
+		t.Fatalf("expected the two user routes, got %v", got)
 	}
 }
