@@ -52,6 +52,9 @@ const run = async (command) => {
 
 let failed = false;
 try {
+  // keepAlive process: the sandbox must not go to standby while its rx queue
+  // is deliberately broken, or a resume would mask the result.
+  await retry(() => sandbox.process.exec({ name: "keepalive", command: "sleep infinity", keepAlive: true, timeout: 0 }));
   await retry(() => sandbox.fs.writeBinary("/tmp/virtio_ring_resync.ko", readFileSync(KO)));
   await retry(() => sandbox.fs.writeBinary("/tmp/kmodload", readFileSync(LOADER)));
   await run("chmod +x /tmp/kmodload; uname -r; zcat /proc/config.gz | grep -v '^#' | grep . | sha256sum");
