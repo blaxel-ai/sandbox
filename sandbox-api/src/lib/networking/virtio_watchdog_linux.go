@@ -52,10 +52,10 @@ func StartVirtioWatchdog(ctx context.Context) {
 		logrus.WithError(err).Warn("[VirtioWatchdog] Cannot read the kernel log, a broken virtio_net ring will not be recovered")
 		return
 	}
-	// Only records logged from now on: the boot log is not something to react to.
-	if _, err := f.Seek(0, io.SeekEnd); err != nil {
-		logrus.WithError(err).Warn("[VirtioWatchdog] Cannot seek the kernel log")
-	}
+	// Read from the start of the ring buffer: the kernel logs a broken queue
+	// exactly once, so a line that predates this process (sandbox-api restarted
+	// after the ring broke) is still worth acting on. Recovering a queue that
+	// is not broken is a no-op.
 	recover := func(device string) error { return errors.New("no resync module in this build") }
 	if module, err := loadableResyncModule(); err != nil {
 		logrus.WithError(err).Warn("[VirtioWatchdog] Resync module unavailable, a broken virtio_net ring will only be reported")
