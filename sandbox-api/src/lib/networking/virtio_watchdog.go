@@ -8,9 +8,9 @@ import (
 )
 
 const (
-	// EnvEnableVirtioWatchdog turns the virtio_net watchdog on when set to a
-	// truthy value at boot. It is off by default.
-	EnvEnableVirtioWatchdog = "BL_ENABLE_VIRTIO_WATCHDOG"
+	// EnvDisableVirtioWatchdog turns the virtio_net watchdog off when set to a
+	// truthy value at boot. It is on by default.
+	EnvDisableVirtioWatchdog = "BL_DISABLE_VIRTIO_WATCHDOG"
 
 	kmsgPath              = "/dev/kmsg"
 	virtioDevicesDir      = "/sys/bus/virtio/devices"
@@ -27,10 +27,10 @@ const (
 //	virtio_net virtio0: input.0:id 171 is not a head!
 var virtioRingBroken = regexp.MustCompile(`virtio_net (virtio\d+): [^:]*:id \d+ is not a head!`)
 
-// VirtioWatchdogEnabled reports whether the watchdog is opted in via the
-// BL_ENABLE_VIRTIO_WATCHDOG environment variable.
-func VirtioWatchdogEnabled(env func(string) string) bool {
-	v, err := strconv.ParseBool(strings.TrimSpace(env(EnvEnableVirtioWatchdog)))
+// VirtioWatchdogDisabled reports whether the watchdog is opted out via the
+// BL_DISABLE_VIRTIO_WATCHDOG environment variable.
+func VirtioWatchdogDisabled(env func(string) string) bool {
+	v, err := strconv.ParseBool(strings.TrimSpace(env(EnvDisableVirtioWatchdog)))
 	return err == nil && v
 }
 

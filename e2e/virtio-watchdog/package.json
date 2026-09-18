@@ -1,0 +1,12 @@
+{
+  "name": "virtio-watchdog-e2e",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node test.mjs",
+    "test:stress": "MODE=stress node test.mjs"
+  },
+  "dependencies": {
+    "@blaxel/core": "^0.2.0"
+  }
+}
