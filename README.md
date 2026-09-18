@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://blaxel.ai/logo.png" alt="Blaxel"/>
+  <img src=".github/assets/blaxel-logo.png" alt="Blaxel" width="400"/>
 </p>
 
 # Sandboxes
