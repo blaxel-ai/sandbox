@@ -57,11 +57,13 @@ deploy-custom-sandbox:
 	cp -r sandbox-api e2e/custom-sandbox
 	cd e2e/custom-sandbox && bl deploy && rm -rf sandbox-api
 
+DOCKER ?= docker
+
 # Build the virtio_ring_resync kernel module (see sandbox-api/kmod/README.md) and
 # drop it where sandbox-api embeds it, so a plain `go build` ships it.
 build-kmod:
-	cd sandbox-api && docker build --platform linux/amd64 --target kmod -t sandbox-api-kmod .
-	cd sandbox-api && docker run --rm --platform linux/amd64 sandbox-api-kmod tar -C /out -c . | tar -x -C src/lib/networking/kmod
+	cd sandbox-api && $(DOCKER) build --platform linux/amd64 --target kmod -t sandbox-api-kmod .
+	cd sandbox-api && $(DOCKER) run --rm --platform linux/amd64 sandbox-api-kmod tar -C /out -c . | tar -x -C src/lib/networking/kmod
 
 deploy-simple-custom-sandbox: build-kmod
 	cd sandbox-api && GOOS=linux GOARCH=amd64 go build -o ../e2e/simple-custom-sandbox/sandbox-api
