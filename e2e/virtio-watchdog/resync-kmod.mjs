@@ -31,18 +31,20 @@ const sandbox = await SandboxInstance.createIfNotExists({
 await sandbox.wait();
 console.log(`sandbox ${NAME} ready`);
 
-const run = async (command) => {
-  let p;
+// The edge gateway occasionally 502s while the sandbox is waking up.
+const retry = async (fn) => {
   for (let attempt = 1; ; attempt++) {
     try {
-      p = await sandbox.process.exec({ command, waitForCompletion: true, timeout: 120 });
-      break;
+      return await fn();
     } catch (e) {
-      // The edge gateway occasionally 502s while the sandbox is waking up.
-      if (attempt === 10 || (e?.status !== 502 && e?.status !== 504)) throw e;
+      if (attempt === 10 || !/\b50[24]\b/.test(`${e?.status ?? ""} ${e?.message ?? ""}`)) throw e;
       await new Promise((r) => setTimeout(r, 3000));
     }
   }
+};
+
+const run = async (command) => {
+  const p = await retry(() => sandbox.process.exec({ command, waitForCompletion: true, timeout: 120 }));
   const out = (p.logs ?? "").trim();
   console.log(`$ ${command}\n${out}`);
   return out;
@@ -50,18 +52,18 @@ const run = async (command) => {
 
 let failed = false;
 try {
-  await sandbox.fs.writeBinary("/tmp/virtio_ring_resync.ko", readFileSync(KO));
-  await sandbox.fs.writeBinary("/tmp/kmodload", readFileSync(LOADER));
+  await retry(() => sandbox.fs.writeBinary("/tmp/virtio_ring_resync.ko", readFileSync(KO)));
+  await retry(() => sandbox.fs.writeBinary("/tmp/kmodload", readFileSync(LOADER)));
   await run("chmod +x /tmp/kmodload; uname -r; zcat /proc/config.gz | grep -v '^#' | grep . | sha256sum");
 
   const config = "ip -4 -o addr show eth0; ip route";
   const before = await run(`${config}; cat /proc/net/dev | grep eth0`);
 
-  // No broken queue: the module must decline (ENOENT) and change nothing.
+  // No broken queue: the module must decline (ENODATA) and change nothing.
   const dryRun = await run("/tmp/kmodload /tmp/virtio_ring_resync.ko netdev=eth0");
-  if (!/no such file or directory/i.test(dryRun)) {
+  if (!/no data available/i.test(dryRun)) {
     failed = true;
-    console.error("FAIL: expected ENOENT when no queue is broken");
+    console.error("FAIL: expected ENODATA when no queue is broken");
   }
 
   // Forced resync of every queue on a healthy device: exercises the whole
@@ -89,6 +91,10 @@ try {
   const recovery = await run(
     [
       "/tmp/kmodload /tmp/virtio_ring_resync.ko netdev=eth0 queue=input.0 break_queues=1",
+      // Fill the used ring while it is broken (every DNS reply lands in an rx
+      // buffer nobody consumes): a resync that skipped those slots would leak
+      // their buffers and leave the device with nothing to receive into.
+      "for i in $(seq 300); do (getent hosts h$i.example.com >/dev/null 2>&1 &); done; sleep 6",
       `echo '--- broken ---'; ${probe}`,
       "echo '--- resync ---'; /tmp/kmodload /tmp/virtio_ring_resync.ko netdev=eth0",
       `echo '--- recovered ---'; ${probe}`,

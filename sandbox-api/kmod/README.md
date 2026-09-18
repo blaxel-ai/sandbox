@@ -49,4 +49,4 @@ printf '<3>virtio_net virtio0: input.0:id 171 is not a head!\n' > /dev/kmsg     
 dmesg | tail; curl -sI https://www.google.com/generate_204                                  # network is back
 ```
 
-`perl kmod.pl load /tmp/vr.ko netdev=eth0` resyncs by hand (ENOENT = nothing broken).
+`perl kmod.pl load /tmp/vr.ko netdev=eth0` resyncs by hand (ENODATA = nothing broken).

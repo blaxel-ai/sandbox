@@ -10,16 +10,17 @@
  * a permanent FAILED status. The device itself keeps running on the very same
  * rings though, so the only thing that needs fixing is the driver's view:
  *
- *   1. last_used_idx := used->idx    (skip the stale slots)
- *   2. used_event    := used->idx    (so the device notifies us again)
+ *   1. last_used_idx += the used slots whose id is not a live head
+ *      (exactly the ones BAD_RING() would trip on; valid slots are kept so
+ *      the driver consumes and recycles their buffers as usual)
+ *   2. used_event    := last_used_idx (so the device notifies us again)
  *   3. broken        := false
  *   4. vring_interrupt()             (drain whatever is pending now)
  *
- * The buffers sitting in the skipped slots are not returned to the driver:
- * they stay allocated until the device is torn down. On the rx queue that is
- * a few sk_buffs the driver simply refills; on the tx queue a few sk_buffs
- * the stack will never get completions for. Both are the price of not
- * restarting the VM.
+ * Skipping every slot up to used->idx instead would leak the buffers the
+ * device filled while the queue was broken; virtio_net stops refilling the
+ * rx queue once num_free drops below half the NAPI budget, so leaking a few
+ * dozen rx buffers kills the network for good.
  *
  * The module works on the virtio device behind a net_device (netdev=eth0). It
  * only touches queues whose layout it can cross-check against exported
@@ -105,19 +106,38 @@ static bool layout_matches(struct virtqueue *_vq, struct vring_virtqueue *vq)
 	return true;
 }
 
+struct vring_desc_state_split {
+	void *data;
+	struct vring_desc *indir_desc;
+};
+
 static void resync_one(struct virtio_device *vdev, struct virtqueue *_vq,
 		       struct vring_virtqueue *vq)
 {
+	const struct vring_desc_state_split *state = vq->split.desc_state;
+	u16 num = vq->split.vring.num;
 	u16 used_idx = virtio16_to_cpu(vdev, vq->split.vring.used->idx);
+	u16 last = vq->last_used_idx;
+	unsigned int skipped = 0;
+
+	virtio_rmb(vq->weak_barriers);
+	while (last != used_idx) {
+		u32 id = virtio32_to_cpu(vdev, vq->split.vring.used->ring[last & (num - 1)].id);
+
+		if (id < num && state[id].data)
+			break;
+		last++;
+		skipped++;
+	}
 
 	dev_warn(&vdev->dev,
-		 "%s: resync (broken=%d last_used_idx=%u used->idx=%u num_free=%u/%u)\n",
-		 _vq->name, vq->broken, vq->last_used_idx, used_idx,
-		 _vq->num_free, vq->split.vring.num);
+		 "%s: resync (broken=%d last_used_idx=%u used->idx=%u skipped=%u num_free=%u/%u)\n",
+		 _vq->name, vq->broken, vq->last_used_idx, used_idx, skipped,
+		 _vq->num_free, num);
 
-	vq->last_used_idx = used_idx;
+	vq->last_used_idx = last;
 	if (vq->event)
-		vring_used_event(&vq->split.vring) = cpu_to_virtio16(vdev, used_idx);
+		vring_used_event(&vq->split.vring) = cpu_to_virtio16(vdev, last);
 	else
 		vq->split.vring.avail->flags = cpu_to_virtio16(vdev, vq->split.avail_flags_shadow);
 	/* publish the index before letting anybody use the queue again */
@@ -177,7 +197,8 @@ static int __init virtio_ring_resync_init(void)
 			list_for_each_entry(_vq, &vdev->vqs, list)
 				vring_interrupt(0, _vq);
 		if (!resynced)
-			ret = -ENOENT;
+			/* not ENOENT: that is what an unresolved symbol yields */
+			ret = -ENODATA;
 	}
 
 	dev_put(ndev);

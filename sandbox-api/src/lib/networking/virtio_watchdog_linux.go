@@ -218,9 +218,10 @@ func (m *resyncKmod) recover(device string) error {
 	}
 	switch {
 	case err == nil:
-	case errors.Is(err, unix.ENOENT):
+	case errors.Is(err, unix.ENODATA):
 		// init found no broken queue: the kernel line was for a queue that
 		// recovered on its own or the resync of a previous line covered it.
+		// (ENOENT would be ambiguous: the loader uses it for unresolved symbols.)
 		logrus.Infof("[VirtioWatchdog] No broken queue left on %s", ifname)
 		return nil
 	case errors.Is(err, unix.EPROTO):
