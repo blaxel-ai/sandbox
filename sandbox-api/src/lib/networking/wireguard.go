@@ -262,6 +262,29 @@ func (w *WireGuardClient) Stop() error {
 	return nil
 }
 
+// RefreshBind reopens the UDP sockets and drops the cached source interface
+// of every peer. Needed after the physical interface is recreated: the
+// sticky-socket source (IP_PKTINFO) pins the old ifindex and sendmsg fails
+// until it is cleared.
+func (w *WireGuardClient) RefreshBind() error {
+	w.mutex.Lock()
+	defer w.mutex.Unlock()
+	if !w.running || w.device == nil {
+		return nil
+	}
+	return w.device.BindUpdate()
+}
+
+// RefreshWireGuardBind refreshes the bind of the global WireGuard client, if
+// one is running.
+func RefreshWireGuardBind() error {
+	client := GetWireGuardClient()
+	if client == nil {
+		return nil
+	}
+	return client.RefreshBind()
+}
+
 // GetPublicKey returns the local public key
 func (w *WireGuardClient) GetPublicKey() string {
 	return w.publicKey

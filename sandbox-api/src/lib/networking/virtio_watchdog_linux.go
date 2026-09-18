@@ -124,6 +124,9 @@ func recoverVirtioNet(device string) error {
 	for attempt := 1; ; attempt++ {
 		err := bindAndRestore(device, state)
 		if err == nil {
+			if err := RefreshWireGuardBind(); err != nil {
+				logrus.WithError(err).Warn("[VirtioWatchdog] Failed to refresh the WireGuard bind, egress through the tunnel may stay down")
+			}
 			logrus.Infof("[VirtioWatchdog] %s recovered on %s", state.name, device)
 			return nil
 		}
