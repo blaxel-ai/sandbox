@@ -33,3 +33,20 @@ make -C sandbox-api/kmod/virtio_ring_resync KDIR=~/linux-6.12.75 KBUILD_MODPOST_
 `KBUILD_MODPOST_WARN=1` is needed because `modules_prepare` produces no
 `Module.symvers`; the watchdog loads the module with
 `MODULE_INIT_IGNORE_MODVERSIONS|MODULE_INIT_IGNORE_VERMAGIC` for the same reason.
+
+Local sandbox-api builds embed the module too after `make build-kmod` (or
+`DOCKER=finch make build-kmod`); `make deploy-simple-custom-sandbox` runs it.
+
+## Testing from a sandbox terminal
+
+`kmod.pl` needs only perl (any Debian-based image has it): it pulls the module
+out of the running sandbox-api binary and loads/unloads it like the watchdog.
+
+```
+perl kmod.pl extract /usr/local/bin/sandbox-api /tmp/vr.ko
+perl kmod.pl load /tmp/vr.ko netdev=eth0 queue=input.0 break_queues=1; perl kmod.pl unload  # rx dies
+printf '<3>virtio_net virtio0: input.0:id 171 is not a head!\n' > /dev/kmsg                 # watchdog resyncs
+dmesg | tail; curl -sI https://www.google.com/generate_204                                  # network is back
+```
+
+`perl kmod.pl load /tmp/vr.ko netdev=eth0` resyncs by hand (ENOENT = nothing broken).
