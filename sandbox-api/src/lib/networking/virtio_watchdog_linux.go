@@ -117,13 +117,37 @@ func recoverVirtioNet(device string) error {
 	if err := os.WriteFile(filepath.Join(virtioNetDriverDir, "unbind"), []byte(device), 0); err != nil {
 		return fmt.Errorf("unbinding %s: %w", device, err)
 	}
-	if err := os.WriteFile(filepath.Join(virtioNetDriverDir, "bind"), []byte(device), 0); err != nil {
-		return fmt.Errorf("rebinding %s: %w", device, err)
+	// Past this point the interface has no configuration left. Whatever fails
+	// on the way back, keep trying to put it back rather than leaving the
+	// sandbox with a bare interface: the ring stopped logging, so nothing
+	// else will.
+	for attempt := 1; ; attempt++ {
+		err := bindAndRestore(device, state)
+		if err == nil {
+			logrus.Infof("[VirtioWatchdog] %s recovered on %s", state.name, device)
+			return nil
+		}
+		if attempt == virtioRebindAttempts {
+			return fmt.Errorf("after %d attempts: %w", attempt, err)
+		}
+		logrus.WithError(err).Warnf("[VirtioWatchdog] Restoring %s failed (attempt %d/%d), retrying", device, attempt, virtioRebindAttempts)
+		time.Sleep(virtioRebindSettle * time.Duration(attempt))
 	}
+}
+
+// bindAndRestore binds the virtio_net driver to device and puts state back on
+// the interface it creates. It is safe to call again after a failure: a bind
+// that already happened is reported by the kernel but leaves the interface
+// in place, so the restore proceeds.
+func bindAndRestore(device string, state *netState) error {
+	bindErr := os.WriteFile(filepath.Join(virtioNetDriverDir, "bind"), []byte(device), 0)
 	time.Sleep(virtioRebindSettle)
 
 	newName, err := virtioNetIface(device)
 	if err != nil {
+		if bindErr != nil {
+			return fmt.Errorf("rebinding %s: %w", device, bindErr)
+		}
 		return fmt.Errorf("after rebind: %w", err)
 	}
 	newLink, err := netlink.LinkByName(newName)
@@ -138,11 +162,7 @@ func recoverVirtioNet(device string) error {
 			return fmt.Errorf("looking up %s after rename: %w", state.name, err)
 		}
 	}
-	if err := restoreNetState(newLink, state); err != nil {
-		return err
-	}
-	logrus.Infof("[VirtioWatchdog] %s recovered on %s", state.name, device)
-	return nil
+	return restoreNetState(newLink, state)
 }
 
 // virtioNetIface returns the name of the network interface backed by a virtio

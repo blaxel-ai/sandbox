@@ -17,6 +17,7 @@ const (
 	virtioNetDriverDir    = "/sys/bus/virtio/drivers/virtio_net"
 	virtioRecoverCooldown = 30 * time.Second
 	virtioRebindSettle    = 500 * time.Millisecond
+	virtioRebindAttempts  = 5
 )
 
 // virtioRingBroken matches the kernel message a virtio_net driver emits when
