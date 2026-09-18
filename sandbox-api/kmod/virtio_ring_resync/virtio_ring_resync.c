@@ -12,7 +12,8 @@
  *
  *   1. last_used_idx += the used slots whose id is not a live head
  *      (exactly the ones BAD_RING() would trip on; valid slots are kept so
- *      the driver consumes and recycles their buffers as usual)
+ *      the driver consumes and recycles their buffers as usual), or
+ *      last_used_idx := used->idx if the device index went backwards
  *   2. used_event    := last_used_idx (so the device notifies us again)
  *   3. broken        := false
  *   4. vring_interrupt()             (drain whatever is pending now)
@@ -121,6 +122,15 @@ static void resync_one(struct virtio_device *vdev, struct virtqueue *_vq,
 	unsigned int skipped = 0;
 
 	virtio_rmb(vq->weak_barriers);
+	/*
+	 * At most num buffers can be outstanding, so a larger distance means
+	 * the device index went backwards (rewound after a restore): nothing
+	 * between the two is a completion, jump straight to the device.
+	 */
+	if ((u16)(used_idx - last) > num) {
+		skipped = (u16)(used_idx - last);
+		last = used_idx;
+	}
 	while (last != used_idx) {
 		u32 id = virtio32_to_cpu(vdev, vq->split.vring.used->ring[last & (num - 1)].id);
 
