@@ -1,6 +1,11 @@
 package networking
 
 import (
+	"bufio"
+	"crypto/sha256"
+	"embed"
+	"encoding/hex"
+	"io"
 	"regexp"
 	"strconv"
 	"strings"
@@ -14,11 +19,20 @@ const (
 
 	kmsgPath              = "/dev/kmsg"
 	virtioDevicesDir      = "/sys/bus/virtio/devices"
-	virtioNetDriverDir    = "/sys/bus/virtio/drivers/virtio_net"
-	virtioRecoverCooldown = 30 * time.Second
-	virtioRebindSettle    = 500 * time.Millisecond
-	virtioRebindAttempts  = 5
+	virtioRecoverCooldown = 2 * time.Second
+
+	resyncModuleName   = "virtio_ring_resync"
+	resyncModulePath   = "kmod/" + resyncModuleName + ".ko"
+	resyncModuleKernel = "kmod/" + resyncModuleName + ".kernel"
 )
+
+// resyncModule holds the kernel module that resyncs a broken virtqueue with
+// its device, built by the Dockerfile against the guest kernel the sandboxes
+// run (see kmod/). A build without it (go build on a workstation) only detects
+// the problem.
+//
+//go:embed kmod
+var resyncModule embed.FS
 
 // virtioRingBroken matches the kernel message a virtio_net driver emits when
 // the device hands it a descriptor it never posted: the guest and the host
@@ -73,4 +87,51 @@ func (g *recoveryGate) allow(device string) bool {
 	}
 	g.last[device] = t
 	return true
+}
+
+// kernelTarget is the kernel a resync module was built for: the release it
+// was built from and a digest of the configuration it was built with. The
+// module pokes at private driver structures, so it must only be loaded into a
+// kernel with the same layout.
+type kernelTarget struct {
+	release    string
+	configHash string
+}
+
+// parseKernelTarget reads the "<release>\n<sha256 of config>" file written next
+// to the module at build time.
+func parseKernelTarget(s string) (kernelTarget, bool) {
+	fields := strings.Fields(s)
+	if len(fields) != 2 || len(fields[1]) != sha256.Size*2 {
+		return kernelTarget{}, false
+	}
+	return kernelTarget{release: fields[0], configHash: fields[1]}, true
+}
+
+// matches reports whether a running kernel (its uname release and the
+// contents of its /proc/config.gz) is the one the module was built for. The
+// release is compared without the "+" localversion, which only tells the
+// kernel was built from a tree with uncommitted changes.
+func (k kernelTarget) matches(release string, config io.Reader) bool {
+	if strings.TrimSuffix(strings.TrimSpace(release), "+") != k.release {
+		return false
+	}
+	return hashKernelConfig(config) == k.configHash
+}
+
+// hashKernelConfig digests a kernel .config the way
+// `grep -v '^#' | grep . | sha256sum` does: comments and blank lines dropped,
+// every remaining line followed by "\n".
+func hashKernelConfig(r io.Reader) string {
+	h := sha256.New()
+	sc := bufio.NewScanner(r)
+	for sc.Scan() {
+		line := sc.Text()
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		h.Write([]byte(line))
+		h.Write([]byte{'\n'})
+	}
+	return hex.EncodeToString(h.Sum(nil))
 }

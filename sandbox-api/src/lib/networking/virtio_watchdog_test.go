@@ -1,6 +1,7 @@
 package networking
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -77,5 +78,31 @@ func TestVirtioWatchdogDisabled(t *testing.T) {
 		if got := VirtioWatchdogDisabled(env(v)); got != want {
 			t.Errorf("VirtioWatchdogDisabled(%q) = %v, want %v", v, got, want)
 		}
+	}
+}
+
+func TestKernelTargetMatchesReleaseAndConfig(t *testing.T) {
+	config := "#\n# Automatically generated file\n#\nCONFIG_MODULES=y\n# CONFIG_FOO is not set\n\nCONFIG_LOCALVERSION=\"\"\n"
+	// sha256 of "CONFIG_MODULES=y\nCONFIG_LOCALVERSION=\"\"\n"
+	hash := hashKernelConfig(strings.NewReader(config))
+	if hash != hashKernelConfig(strings.NewReader("CONFIG_MODULES=y\nCONFIG_LOCALVERSION=\"\"\n")) {
+		t.Fatal("comments and blank lines must not take part in the digest")
+	}
+
+	target, ok := parseKernelTarget("6.12.75\n" + hash + "\n")
+	if !ok {
+		t.Fatal("expected a valid target")
+	}
+	if !target.matches("6.12.75+\n", strings.NewReader(config)) {
+		t.Fatal("the + localversion must be ignored")
+	}
+	if target.matches("6.12.74", strings.NewReader(config)) {
+		t.Fatal("another release must not match")
+	}
+	if target.matches("6.12.75", strings.NewReader(config+"CONFIG_BAR=y\n")) {
+		t.Fatal("another config must not match")
+	}
+	if _, ok := parseKernelTarget("6.12.75\n"); ok {
+		t.Fatal("a target without a digest is malformed")
 	}
 }

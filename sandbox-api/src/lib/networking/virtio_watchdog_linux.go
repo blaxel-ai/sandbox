@@ -4,6 +4,7 @@ package networking
 
 import (
 	"bufio"
+	"compress/gzip"
 	"context"
 	"errors"
 	"fmt"
@@ -11,24 +12,30 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
 	"github.com/sirupsen/logrus"
-	"github.com/vishvananda/netlink"
+	"golang.org/x/sys/unix"
 )
 
-// StartVirtioWatchdog watches the kernel log for a virtio_net rx ring that the
-// device and the driver no longer agree on, and re-initialises the device by
-// unbinding and rebinding the virtio_net driver.
+// StartVirtioWatchdog watches the kernel log for a virtio_net ring that the
+// device and the driver no longer agree on, and resyncs the driver with the
+// device.
 //
-// The desync shows up after a snapshot/restore cycle: the guest is alive and
-// its workload keeps running, but every packet the host queues on the broken
-// ring is dropped, so the sandbox is unreachable until the VM is restarted.
-// Rebinding the driver renegotiates the virtqueues with the device, which is
-// the part of a restart the network actually needs, without losing the guest's
-// memory or processes. The addresses and routes the interface carried are
-// captured before the unbind and put back after it.
+// The desync shows up after a snapshot/restore cycle: the device's used index
+// lags behind what the driver already consumed, the driver reads a stale
+// used-ring slot ("id N is not a head!") and marks the queue broken for good,
+// so every packet the host queues on it is dropped and the sandbox is
+// unreachable although the guest keeps running. Nothing in userspace clears
+// that flag, and the usual way out - resetting the device by rebinding the
+// driver - is not available on Firecracker, which turns a reset of an
+// activated net device into a permanent FAILED status. The device itself is
+// fine and keeps running on the same rings though, so the watchdog loads a
+// small kernel module (kmod/virtio_ring_resync) that fixes the driver's view:
+// it drops the stale slots, re-arms the notification and clears the broken
+// flag. The interface, its addresses and routes are untouched.
 //
 // It returns immediately; the watchdog runs until ctx is cancelled.
 func StartVirtioWatchdog(ctx context.Context) {
@@ -36,8 +43,8 @@ func StartVirtioWatchdog(ctx context.Context) {
 		logrus.Infof("[VirtioWatchdog] Disabled by %s, not watching", EnvDisableVirtioWatchdog)
 		return
 	}
-	if _, err := os.Stat(virtioNetDriverDir); err != nil {
-		logrus.Debugf("[VirtioWatchdog] No virtio_net driver on this kernel, not watching (%v)", err)
+	if _, err := os.Stat(virtioDevicesDir); err != nil {
+		logrus.Debugf("[VirtioWatchdog] No virtio bus on this kernel, not watching (%v)", err)
 		return
 	}
 	f, err := os.Open(kmsgPath)
@@ -49,7 +56,13 @@ func StartVirtioWatchdog(ctx context.Context) {
 	if _, err := f.Seek(0, io.SeekEnd); err != nil {
 		logrus.WithError(err).Warn("[VirtioWatchdog] Cannot seek the kernel log")
 	}
-	go watchKmsg(ctx, f, newRecoveryGate(virtioRecoverCooldown, time.Now), recoverVirtioNet)
+	recover := func(device string) error { return errors.New("no resync module in this build") }
+	if module, err := loadableResyncModule(); err != nil {
+		logrus.WithError(err).Warn("[VirtioWatchdog] Resync module unavailable, a broken virtio_net ring will only be reported")
+	} else {
+		recover = module.recover
+	}
+	go watchKmsg(ctx, f, newRecoveryGate(virtioRecoverCooldown, time.Now), recover)
 	logrus.Info("[VirtioWatchdog] Watching the kernel log for a broken virtio_net ring")
 }
 
@@ -87,90 +100,119 @@ func watchKmsg(ctx context.Context, f *os.File, gate *recoveryGate, recover func
 	}
 }
 
-// netState is what an interface carries that a driver rebind wipes.
-type netState struct {
-	name   string
-	addrs  []netlink.Addr
-	routes []netlink.Route
-	mtu    int
+// resyncKmod is the embedded virtio_ring_resync kernel module, checked against
+// the running kernel.
+type resyncKmod struct {
+	image []byte
+	mu    sync.Mutex
 }
 
-// recoverVirtioNet rebinds the virtio_net driver to device (e.g. "virtio0")
-// and restores the network configuration of the interface it backs.
-func recoverVirtioNet(device string) error {
+// loadableResyncModule returns the embedded module if this build ships one and
+// the running kernel is the one it was built for.
+func loadableResyncModule() (*resyncKmod, error) {
+	image, err := resyncModule.ReadFile(resyncModulePath)
+	if err != nil {
+		return nil, errors.New("this build does not ship the kernel module")
+	}
+	targetFile, err := resyncModule.ReadFile(resyncModuleKernel)
+	if err != nil {
+		return nil, fmt.Errorf("reading %s: %w", resyncModuleKernel, err)
+	}
+	target, ok := parseKernelTarget(string(targetFile))
+	if !ok {
+		return nil, fmt.Errorf("malformed %s", resyncModuleKernel)
+	}
+
+	var uts unix.Utsname
+	if err := unix.Uname(&uts); err != nil {
+		return nil, fmt.Errorf("uname: %w", err)
+	}
+	release := unix.ByteSliceToString(uts.Release[:])
+	config, err := openKernelConfig()
+	if err != nil {
+		return nil, err
+	}
+	defer config.Close()
+	if !target.matches(release, config) {
+		return nil, fmt.Errorf("module built for kernel %s (config %.12s), running %s with another config", target.release, target.configHash, release)
+	}
+	return &resyncKmod{image: image}, nil
+}
+
+// openKernelConfig returns the running kernel's configuration (/proc/config.gz).
+func openKernelConfig() (io.ReadCloser, error) {
+	f, err := os.Open("/proc/config.gz")
+	if err != nil {
+		return nil, fmt.Errorf("the kernel does not expose its config: %w", err)
+	}
+	gz, err := gzip.NewReader(f)
+	if err != nil {
+		_ = f.Close()
+		return nil, fmt.Errorf("reading /proc/config.gz: %w", err)
+	}
+	return struct {
+		io.Reader
+		io.Closer
+	}{gz, f}, nil
+}
+
+// recover resyncs the queues of the interface backed by device (e.g.
+// "virtio0") by loading the module, which does its work in init, and
+// unloading it right after.
+func (m *resyncKmod) recover(device string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	ifname, err := virtioNetIface(device)
 	if err != nil {
 		return err
 	}
-	link, err := netlink.LinkByName(ifname)
-	if err != nil {
-		return fmt.Errorf("looking up %s backed by %s: %w", ifname, device, err)
-	}
-	state, err := captureNetState(link)
-	if err != nil {
-		return err
-	}
-	logrus.WithFields(logrus.Fields{
-		"device": device, "iface": ifname, "addrs": len(state.addrs), "routes": len(state.routes),
-	}).Info("[VirtioWatchdog] Rebinding virtio_net")
+	logrus.WithFields(logrus.Fields{"device": device, "iface": ifname}).Info("[VirtioWatchdog] Resyncing the virtio rings")
 
-	if err := os.WriteFile(filepath.Join(virtioNetDriverDir, "unbind"), []byte(device), 0); err != nil {
-		return fmt.Errorf("unbinding %s: %w", device, err)
-	}
-	// Past this point the interface has no configuration left. Whatever fails
-	// on the way back, keep trying to put it back rather than leaving the
-	// sandbox with a bare interface: the ring stopped logging, so nothing
-	// else will.
-	for attempt := 1; ; attempt++ {
-		err := bindAndRestore(device, state)
-		if err == nil {
-			logrus.Infof("[VirtioWatchdog] %s recovered on %s", state.name, device)
-			return nil
-		}
-		if attempt == virtioRebindAttempts {
-			return fmt.Errorf("after %d attempts: %w", attempt, err)
-		}
-		logrus.WithError(err).Warnf("[VirtioWatchdog] Restoring %s failed (attempt %d/%d), retrying", device, attempt, virtioRebindAttempts)
-		time.Sleep(virtioRebindSettle * time.Duration(attempt))
-	}
-}
-
-// bindAndRestore binds the virtio_net driver to device and puts state back on
-// the interface it creates. It is safe to call again after a failure: a bind
-// that already happened is reported by the kernel but leaves the interface
-// in place, so the restore proceeds.
-func bindAndRestore(device string, state *netState) error {
-	bindErr := os.WriteFile(filepath.Join(virtioNetDriverDir, "bind"), []byte(device), 0)
-	time.Sleep(virtioRebindSettle)
-
-	newName, err := virtioNetIface(device)
+	fd, err := unix.MemfdCreate(resyncModuleName, unix.MFD_CLOEXEC)
 	if err != nil {
-		if bindErr != nil {
-			return fmt.Errorf("rebinding %s: %w", device, bindErr)
-		}
-		return fmt.Errorf("after rebind: %w", err)
+		return fmt.Errorf("memfd for the module: %w", err)
 	}
-	newLink, err := netlink.LinkByName(newName)
-	if err != nil {
-		return fmt.Errorf("looking up %s after rebind: %w", newName, err)
+	defer unix.Close(fd)
+	if _, err := unix.Write(fd, m.image); err != nil {
+		return fmt.Errorf("writing the module: %w", err)
 	}
-	if newName != state.name {
-		if err := netlink.LinkSetName(newLink, state.name); err != nil {
-			return fmt.Errorf("renaming %s back to %s: %w", newName, state.name, err)
+
+	// Vermagic and symbol CRCs are ignored: the module is built from the same
+	// source with the same config as the running kernel (checked at startup)
+	// but not from the same tree, so its vermagic lacks the "+" and its CRCs
+	// are those of a tree that never had a Module.symvers.
+	const flags = unix.MODULE_INIT_IGNORE_MODVERSIONS | unix.MODULE_INIT_IGNORE_VERMAGIC
+	params := "netdev=" + ifname
+	err = unix.FinitModule(fd, params, flags)
+	if errors.Is(err, unix.EEXIST) {
+		// Left over from a previous run that could not unload it.
+		if err := unix.DeleteModule(resyncModuleName, 0); err != nil {
+			return fmt.Errorf("unloading the stale module: %w", err)
 		}
-		if newLink, err = netlink.LinkByName(state.name); err != nil {
-			return fmt.Errorf("looking up %s after rename: %w", state.name, err)
-		}
+		err = unix.FinitModule(fd, params, flags)
 	}
-	// The interface exists again under a new ifindex; WireGuard's sticky
-	// sockets still point at the old one, whatever happens to the rest of
-	// the restore.
-	defer func() {
-		if err := RefreshWireGuardBind(); err != nil {
-			logrus.WithError(err).Warn("[VirtioWatchdog] Failed to refresh the WireGuard bind, egress through the tunnel may stay down")
-		}
-	}()
-	return restoreNetState(newLink, state)
+	switch {
+	case err == nil:
+	case errors.Is(err, unix.ENOENT):
+		// init found no broken queue: the kernel line was for a queue that
+		// recovered on its own or the resync of a previous line covered it.
+		logrus.Infof("[VirtioWatchdog] No broken queue left on %s", ifname)
+		return nil
+	case errors.Is(err, unix.EPROTO):
+		return fmt.Errorf("the kernel's virtqueue layout is not the one the module expects, refusing to touch it")
+	case errors.Is(err, unix.ENODEV):
+		return fmt.Errorf("%s not found by the kernel", ifname)
+	default:
+		return fmt.Errorf("loading %s: %w", resyncModuleName, err)
+	}
+
+	resynced, _ := os.ReadFile(filepath.Join("/sys/module", resyncModuleName, "parameters", "resynced"))
+	if err := unix.DeleteModule(resyncModuleName, 0); err != nil {
+		logrus.WithError(err).Warnf("[VirtioWatchdog] Cannot unload %s, will retry on the next run", resyncModuleName)
+	}
+	logrus.Infof("[VirtioWatchdog] %s recovered on %s (%s queue(s) resynced)", ifname, device, strings.TrimSpace(string(resynced)))
+	return nil
 }
 
 // virtioNetIface returns the name of the network interface backed by a virtio
@@ -184,77 +226,6 @@ func virtioNetIface(device string) (string, error) {
 		return "", fmt.Errorf("%s backs %d interfaces, expected 1", device, len(entries))
 	}
 	return entries[0].Name(), nil
-}
-
-func captureNetState(link netlink.Link) (*netState, error) {
-	addrs, err := netlink.AddrList(link, netlink.FAMILY_ALL)
-	if err != nil {
-		return nil, fmt.Errorf("listing addresses of %s: %w", link.Attrs().Name, err)
-	}
-	all, err := netlink.RouteList(link, netlink.FAMILY_ALL)
-	if err != nil {
-		return nil, fmt.Errorf("listing routes of %s: %w", link.Attrs().Name, err)
-	}
-	return &netState{
-		name:   link.Attrs().Name,
-		addrs:  addrs,
-		routes: restorableRoutes(all),
-		mtu:    link.Attrs().MTU,
-	}, nil
-}
-
-// restorableRoutes drops the routes the kernel manages itself (local and
-// broadcast entries, and the connected routes it adds for each address): they
-// come back with the addresses and cannot be replaced by hand.
-func restorableRoutes(routes []netlink.Route) []netlink.Route {
-	keep := make([]netlink.Route, 0, len(routes))
-	for _, r := range routes {
-		if r.Table != 0 && r.Table != syscall.RT_TABLE_MAIN {
-			continue
-		}
-		if r.Protocol == syscall.RTPROT_KERNEL {
-			continue
-		}
-		keep = append(keep, r)
-	}
-	return keep
-}
-
-func restoreNetState(link netlink.Link, state *netState) error {
-	if state.mtu > 0 && link.Attrs().MTU != state.mtu {
-		if err := netlink.LinkSetMTU(link, state.mtu); err != nil {
-			logrus.WithError(err).Warnf("[VirtioWatchdog] Failed to restore MTU %d on %s", state.mtu, state.name)
-		}
-	}
-	if err := netlink.LinkSetUp(link); err != nil {
-		return fmt.Errorf("bringing %s up: %w", state.name, err)
-	}
-	var errs []error
-	for i := range state.addrs {
-		addr := state.addrs[i]
-		if addr.Scope == int(netlink.SCOPE_LINK) && addr.IP.To4() == nil {
-			continue // IPv6 link-local is regenerated by the kernel
-		}
-		if err := netlink.AddrReplace(link, &addr); err != nil {
-			errs = append(errs, fmt.Errorf("restoring address %s on %s: %w", addr.IPNet, state.name, err))
-		}
-	}
-	// Interface routes (the kernel adds them for each address) come first so
-	// gateway routes have something to resolve their next hop through.
-	index := link.Attrs().Index
-	for pass := 0; pass < 2; pass++ {
-		for i := range state.routes {
-			route := state.routes[i]
-			if (route.Gw == nil) != (pass == 0) {
-				continue
-			}
-			route.LinkIndex = index
-			if err := netlink.RouteReplace(&route); err != nil {
-				errs = append(errs, fmt.Errorf("restoring route %s on %s: %w", route.String(), state.name, err))
-			}
-		}
-	}
-	return errors.Join(errs...)
 }
 
 // isKmsgOverrun reports whether a /dev/kmsg read failed because records were

@@ -4,7 +4,10 @@
   "type": "module",
   "scripts": {
     "test": "node test.mjs",
-    "test:stress": "MODE=stress node test.mjs"
+    "test:stress": "MODE=stress node test.mjs",
+    "test:break": "MODE=break node test.mjs",
+    "test:kmod": "node resync-kmod.mjs",
+    "probe-kernel": "node probe-kernel.mjs"
   },
   "dependencies": {
     "@blaxel/core": "^0.3.21"

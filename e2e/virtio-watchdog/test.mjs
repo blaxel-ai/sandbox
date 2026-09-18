@@ -1,13 +1,18 @@
 // Exercises the sandbox-api virtio_net watchdog against a live sandbox.
 //
-//   npm i && node test.mjs                # inject the kernel line, check the rebind kept the network
+//   npm i && node test.mjs                # inject the kernel line, check the watchdog reacts and the network is intact
+//   MODE=break KO=... LOADER=... node test.mjs
+//                                         # really break the rx queue, inject the line, check the watchdog recovers it
 //   MODE=stress CYCLES=200 node test.mjs  # standby/resume loop trying to hit the real UKP 0.6 race
 //
-// Env: BL_API_KEY / BL_WORKSPACE / BL_ENV (SDK auth), IMAGE, REGION, MEMORY,
-// NAME, WATCHDOG_DISABLED=1 (set BL_DISABLE_VIRTIO_WATCHDOG in the sandbox to
-// check the opt-out), IDLE_MS (stress: idle time between requests), KEEP=1.
+// Env: BL_API_KEY / BL_WORKSPACE / BL_ENV (SDK auth), IMAGE (built from this
+// branch), REGION, MEMORY, NAME, WATCHDOG_DISABLED=1 (set
+// BL_DISABLE_VIRTIO_WATCHDOG in the sandbox to check the opt-out), IDLE_MS
+// (stress: idle time between requests), KO + LOADER (break: the
+// virtio_ring_resync.ko and finit_module helper, see resync-kmod.mjs), KEEP=1.
 
 import { SandboxInstance } from "@blaxel/core";
+import { readFileSync } from "node:fs";
 
 const env = process.env;
 const MODE = env.MODE ?? "inject";
@@ -31,20 +36,30 @@ async function snapshotNet(sandbox) {
   const mtu = (await sh(sandbox, `cat /sys/class/net/${iface}/mtu`)).out;
   const up = (await sh(sandbox, `cat /sys/class/net/${iface}/operstate`)).out;
   const ifindex = (await sh(sandbox, `cat /sys/class/net/${iface}/ifindex`)).out;
-  return { iface, addrs, routes, mtu, up, ifindex };
+  const tainted = (await sh(sandbox, "cat /proc/sys/kernel/tainted")).out;
+  return { iface, addrs, routes, mtu, up, ifindex, tainted };
 }
 
-async function inject(sandbox) {
+async function inject(sandbox, breakQueue) {
   const before = await snapshotNet(sandbox);
   console.log("before:", before);
   if (!before.iface) return fail("virtio0 has no net interface: not a virtio-net guest?");
 
   const dmesgBefore = (await sh(sandbox, "dmesg | wc -l")).out;
-  const w = await sh(sandbox, `printf '<3>${KMSG_LINE}\\n' > /dev/kmsg`);
-  if (w.code !== 0) return fail(`cannot write /dev/kmsg: ${w.out}`);
+  let trigger = `printf '<3>${KMSG_LINE}\\n' > /dev/kmsg`;
+  if (breakQueue) {
+    // Mark the rx queue broken the way BAD_RING() does, so the injected line
+    // is followed by the real symptom: no packet gets in until the watchdog
+    // resyncs the queue.
+    await sandbox.fs.writeBinary("/tmp/virtio_ring_resync.ko", readFileSync(env.KO));
+    await sandbox.fs.writeBinary("/tmp/kmodload", readFileSync(env.LOADER));
+    trigger = `chmod +x /tmp/kmodload && /tmp/kmodload /tmp/virtio_ring_resync.ko netdev=${before.iface} queue=input.0 break_queues=1 && ${trigger}`;
+  }
+  const w = await sh(sandbox, trigger);
+  if (w.code !== 0) return fail(`trigger failed: ${w.out}`);
 
-  // The watchdog unbinds/rebinds the driver; the sandbox is unreachable for
-  // ~1s while it does. A fresh exec afterwards proves the network came back.
+  // Give the watchdog time to load the module and, in break mode, the network
+  // time to come back.
   await new Promise((r) => setTimeout(r, 4000));
   let after;
   for (let i = 0; i < 5; i++) {
@@ -56,27 +71,34 @@ async function inject(sandbox) {
       await new Promise((r) => setTimeout(r, 2000));
     }
   }
-  if (!after) return fail("sandbox unreachable after the rebind");
+  if (!after) return fail("sandbox unreachable after the injected line (break mode: the watchdog did not recover the rx queue)");
   console.log("after: ", after);
 
   const kernel = (await sh(sandbox, `dmesg | tail -n +$((${dmesgBefore} + 1))`)).out;
   console.log("kernel log since injection:\n" + kernel);
 
-  // A rebind creates a new netdev: the ifindex changes even if the name is put back.
-  const rebound = before.ifindex !== after.ifindex;
+  // The watchdog loads the (unsigned, out-of-tree) resync module, which
+  // taints the kernel the first time; its resync line in dmesg is the proof it
+  // ran and found a broken queue.
+  // In break mode the trigger itself loads the module, so only the resync
+  // line can be attributed to the watchdog.
+  const resynced = /: resync \(broken=1/.test(kernel);
+  const reacted = breakQueue ? resynced : /virtio_ring_resync/.test(kernel) || before.tainted !== after.tainted;
   if (env.WATCHDOG_DISABLED) {
-    if (rebound) fail("BL_DISABLE_VIRTIO_WATCHDOG set but the driver was rebound");
-    else console.log("OK: opt-out respected, no rebind");
+    if (reacted) fail("BL_DISABLE_VIRTIO_WATCHDOG set but the watchdog loaded the resync module");
+    else console.log("OK: opt-out respected, watchdog did not react");
     return;
   }
-  if (!rebound) fail("ifindex unchanged after the injected line: watchdog did not react (is sandbox-api from this PR running, and is /dev/kmsg readable?)");
-  for (const k of ["iface", "addrs", "routes", "mtu"]) {
-    if (before[k] !== after[k]) fail(`${k} changed across rebind:\n  before: ${before[k]}\n  after:  ${after[k]}`);
+  if (!reacted) fail("no resync module activity after the injected line: watchdog did not react (is sandbox-api from this PR running, with the module built in, and is /dev/kmsg readable?)");
+  if (breakQueue && !resynced) fail("the rx queue was broken but the watchdog did not resync it");
+  for (const k of ["iface", "addrs", "routes", "mtu", "ifindex"]) {
+    if (before[k] !== after[k]) fail(`${k} changed across the recovery:\n  before: ${before[k]}\n  after:  ${after[k]}`);
   }
-  if (after.up !== "up" && after.up !== "unknown") fail(`interface not up after rebind: ${after.up}`);
-  const egress = await sh(sandbox, "wget -qO- --timeout=5 https://api.blaxel.ai/health >/dev/null 2>&1 || curl -sf --max-time 5 https://api.blaxel.ai/health >/dev/null; echo $?");
-  console.log("egress after rebind exit code:", egress.out);
-  if (!process.exitCode) console.log("OK: watchdog rebound virtio0 and the network configuration survived");
+  if (after.up !== "up" && after.up !== "unknown") fail(`interface not up after the recovery: ${after.up}`);
+  const egress = await sh(sandbox, "wget -S -O /dev/null -T 5 https://www.google.com/generate_204 2>&1 | grep -q 'HTTP/'; echo $?");
+  console.log("egress after the recovery exit code:", egress.out);
+  if (egress.out !== "0") fail("no egress after the recovery");
+  if (!process.exitCode) console.log(`OK: watchdog reacted${breakQueue ? ", resynced the broken rx queue" : ""} and the network configuration survived`);
 }
 
 async function stress(sandbox) {
@@ -120,7 +142,8 @@ const sandbox = await SandboxInstance.createIfNotExists({
 await sandbox.wait();
 try {
   if (MODE === "stress") await stress(sandbox);
-  else await inject(sandbox);
+  else if (MODE === "break") await inject(sandbox, true);
+  else await inject(sandbox, false);
   if (sandbox.errors?.length) console.log("infrastructure errors:", sandbox.errors);
 } finally {
   if (env.KEEP) console.log(`KEEP set, leaving ${NAME}`);
