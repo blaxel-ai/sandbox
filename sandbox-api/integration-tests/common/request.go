@@ -284,3 +284,16 @@ func EncodeFilesystemFindPath(path string) string {
 	// For relative paths, just append to /filesystem-find/
 	return "/filesystem-find/" + path
 }
+
+// MakeRawRequest sends body as-is with the given Content-Type, for endpoints
+// that take bytes rather than JSON (process stdin).
+func MakeRawRequest(method, path string, body io.Reader, contentType string) (*http.Response, error) {
+	req, err := http.NewRequest(method, BaseURL+path, body)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", contentType)
+	}
+	return Client.Do(req)
+}

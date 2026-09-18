@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -34,7 +35,8 @@ type JSONStreamWriter interface {
 	IsJSONStreamWriter() bool
 }
 
-// writeToLogWriter sends data to a log writer, using JSON format if supported
+// writeToLogWriter sends data that begins a line, tagging it for text writers.
+// Callers with a partial line must use writeChunkToLogWriter instead.
 func writeToLogWriter(w io.Writer, eventType string, data []byte) {
 	if jw, ok := w.(JSONStreamWriter); ok {
 		// JSON writer - send structured event
@@ -42,6 +44,26 @@ func writeToLogWriter(w io.Writer, eventType string, data []byte) {
 	} else {
 		// Regular writer - send prefixed text (stdout: or stderr:)
 		prefixed := append([]byte(eventType+":"), data...)
+		_, _ = w.Write(prefixed)
+	}
+	if f, ok := w.(interface{ Flush() }); ok {
+		f.Flush()
+	}
+}
+
+// writeChunkToLogWriter sends one read of process output. raw is the untagged
+// bytes, which JSON writers carry with the stream in the event type; prefixed
+// is the same bytes already tagged at their line starts, for text writers.
+//
+// A read is a fixed-size window, not a line, so the tag cannot be applied here:
+// doing so put it in the middle of any line longer than the buffer.
+func writeChunkToLogWriter(w io.Writer, eventType string, raw, prefixed []byte) {
+	// IsJSONStreamWriter, not just the type assertion: a pendingWriter accepts
+	// WriteEvent whatever its target is, and queueing raw bytes as an event
+	// would have it re-tag them per chunk on release, undoing the work above.
+	if jw, ok := w.(JSONStreamWriter); ok && jw.IsJSONStreamWriter() {
+		jw.WriteEvent(eventType, string(raw))
+	} else {
 		_, _ = w.Write(prefixed)
 	}
 	if f, ok := w.(interface{ Flush() }); ok {
@@ -89,19 +111,36 @@ type ProcessInfo struct {
 	MaxRestarts      int                     `json:"maxRestarts"`
 	RestartCount     int                     `json:"restartCount"`
 	KeepAlive        bool                    `json:"keepAlive"`
-	Timeout          int                     `json:"-"` // Internal: timeout in seconds for keepAlive processes
-	LogFile          string                  `json:"-"` // Path to combined log file
-	StdoutFile       string                  `json:"-"` // Path to stdout log file
-	StderrFile       string                  `json:"-"` // Path to stderr log file
+	Stdin            bool                    `json:"stdin"` // Whether the process was started with a writable stdin pipe
+	Timeout          int                     `json:"-"`     // Internal: timeout in seconds for keepAlive processes
+	LogFile          string                  `json:"-"`     // Path to combined log file
+	StdoutFile       string                  `json:"-"`     // Path to stdout log file
+	StderrFile       string                  `json:"-"`     // Path to stderr log file
 	Done             chan struct{}
 	TailDone         chan struct{} // Closed when tailLogFiles finishes its final reads
-	stdout           *logBuffer
-	stderr           *logBuffer
-	logs             *logBuffer
-	logWriters       []io.Writer
-	logLock          sync.RWMutex
-	stopTimeout      chan struct{} // Channel to signal timeout goroutine to stop
-	stopTimeoutOnce  sync.Once     // Protects stopTimeout channel from double-close
+	// Finished is closed once the process is over for good, with no restart to
+	// come. Done is per-run: a restart closes it and installs a fresh one, so a
+	// consumer waiting on Done sees "finished" every time the process merely
+	// bounces. Anything user-facing that means "this process is over" waits on
+	// Finished instead.
+	Finished   chan struct{}
+	finishOnce sync.Once
+	stdout     *logBuffer
+	stderr     *logBuffer
+	logs       *logBuffer
+	logWriters []io.Writer
+	// Whether each stream is part-way through a line. A read is a fixed-size
+	// window, not a line, so a long line spans several reads and must be tagged
+	// only at its start. Phrased as "mid-line" so the zero value means "at a
+	// line start", which is what a fresh process is.
+	stdoutMidLine bool
+	stderrMidLine bool
+	// Reused across reads so tagging a chunk costs no allocation.
+	prefixBuf       []byte
+	logLock         sync.RWMutex
+	stopTimeout     chan struct{} // Channel to signal timeout goroutine to stop
+	stopTimeoutOnce sync.Once     // Protects stopTimeout channel from double-close
+	stdin           stdinPipe     // Write end of stdin when Stdin is true; nil once closed or after a sandbox-api restart
 }
 
 // ProcessLogDir is the directory where process logs are stored
@@ -122,9 +161,93 @@ func init() {
 	}
 }
 
+// restartsSuspended stops failed processes from being brought back. An archive
+// holds it: a process restarted while the filesystem is read writes into the
+// archive, and a process that failed just before the archive stopped the
+// workload would otherwise come back on its own, after the export had already
+// listed the processes it had to stop.
+var restartsSuspended atomic.Bool
+
+// restartGate serializes the suspension against the restarts themselves. The
+// flag alone leaves a window: a restart that read it just before it was set
+// spawns its process afterwards, and the export, which lists the processes as
+// soon as SuspendRestarts returns, never sees that one - it comes up while the
+// filesystem is being read and writes into an archive that will not carry what
+// it wrote.
+//
+// A restart holds it while it decides and spawns, and the suspension takes it
+// exclusively: SuspendRestarts therefore returns only once no restart is in
+// flight, and every restart that starts after it observes the flag.
+var restartGate sync.RWMutex
+
+// SuspendRestarts stops failed processes from being restarted, and returns the
+// function that allows restarts again. It waits for the restarts already
+// spawning, so its caller can then list every process that is running.
+func SuspendRestarts() func() {
+	restartGate.Lock()
+	defer restartGate.Unlock()
+	restartsSuspended.Store(true)
+	return func() { restartsSuspended.Store(false) }
+}
+
+// beginRestart claims the right to spawn a restart. It reports false when
+// restarts are suspended, and holds the gate until endRestart when it is true,
+// so the process is spawned before any suspension can conclude.
+func beginRestart() bool {
+	restartGate.RLock()
+	if restartsSuspended.Load() {
+		restartGate.RUnlock()
+		return false
+	}
+	return true
+}
+
+func endRestart() {
+	restartGate.RUnlock()
+}
+
+// RestartsSuspended reports whether failed processes are currently left down.
+func RestartsSuspended() bool {
+	return restartsSuspended.Load()
+}
+
+// leaveStopped finishes a process that was about to be restarted and is not,
+// because restarts are suspended: the keep-alive it held is released and the
+// callback fires, as for a process that ended for good. Its Done channel is
+// already closed by the restart path, so it is not touched here.
+func (pm *ProcessManager) leaveStopped(proc *ProcessInfo, callback func(*ProcessInfo)) {
+	log := logrus.WithFields(logrus.Fields{"process_pid": proc.PID, "process_name": proc.Name})
+	log.Info("[Process] Restarts are suspended, the process is left stopped")
+
+	pm.mu.RLock()
+	keepAlive := proc.KeepAlive
+	pm.mu.RUnlock()
+	if keepAlive {
+		if err := blaxel.ScaleEnable(); err != nil {
+			log.WithError(err).Warn("[KeepAlive] Failed to enable scale-to-zero")
+		}
+	}
+
+	proc.logLock.Lock()
+	proc.logWriters = nil
+	proc.logLock.Unlock()
+
+	if callback != nil {
+		callback(proc)
+	}
+}
+
 // shouldRestart reports whether a failed process is eligible for another
 // restart attempt. A negative MaxRestarts means unlimited restarts.
+// markFinished closes Finished exactly once, so every terminal path can call it.
+func (p *ProcessInfo) markFinished() {
+	p.finishOnce.Do(func() { close(p.Finished) })
+}
+
 func shouldRestart(p *ProcessInfo) bool {
+	if restartsSuspended.Load() {
+		return false
+	}
 	return p.Status == StatusFailed && p.RestartOnFailure &&
 		(p.MaxRestarts < 0 || p.RestartCount < p.MaxRestarts)
 }
@@ -170,8 +293,32 @@ func buildProcessEnv(custom map[string]string) []string {
 	return finalEnv
 }
 
+// logFileName is the name a process's logs are written under. A process name is
+// whoever named it - an API caller, or the process list an archive carried - so
+// it is not a path component: one holding a separator, or "..", would open the
+// log files as root outside the log directory, following any symlink standing
+// where it lands.
+func logFileName(name string) string {
+	escaped := strings.Map(func(r rune) rune {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+			return r
+		case r == '-', r == '_', r == '.':
+			return r
+		default:
+			return '_'
+		}
+	}, name)
+	// A name made only of dots names the log directory itself, or its parent.
+	if strings.Trim(escaped, ".") == "" {
+		return strings.Repeat("_", len(escaped))
+	}
+	return escaped
+}
+
 // getLogFilePaths returns the log file paths for a process (stdout, stderr, combined)
 func getLogFilePaths(name string) (stdout, stderr, combined string) {
+	name = logFileName(name)
 	stdout = fmt.Sprintf("%s/%s.stdout.log", ProcessLogDir, name)
 	stderr = fmt.Sprintf("%s/%s.stderr.log", ProcessLogDir, name)
 	combined = fmt.Sprintf("%s/%s.log", ProcessLogDir, name)
@@ -217,12 +364,12 @@ func (pm *ProcessManager) sweepLogFiles() {
 	}
 }
 
-func (pm *ProcessManager) StartProcess(command string, workingDir string, env map[string]string, restartOnFailure bool, maxRestarts int, keepAlive bool, timeout int, callback func(process *ProcessInfo)) (string, error) {
+func (pm *ProcessManager) StartProcess(command string, workingDir string, env map[string]string, restartOnFailure bool, maxRestarts int, keepAlive bool, timeout int, stdin bool, callback func(process *ProcessInfo)) (string, error) {
 	name := GenerateRandomName(8)
-	return pm.StartProcessWithName(command, workingDir, name, env, restartOnFailure, maxRestarts, keepAlive, timeout, callback)
+	return pm.StartProcessWithName(command, workingDir, name, env, restartOnFailure, maxRestarts, keepAlive, timeout, stdin, callback)
 }
 
-func (pm *ProcessManager) StartProcessWithName(command string, workingDir string, name string, env map[string]string, restartOnFailure bool, maxRestarts int, keepAlive bool, timeout int, callback func(process *ProcessInfo)) (string, error) {
+func (pm *ProcessManager) StartProcessWithName(command string, workingDir string, name string, env map[string]string, restartOnFailure bool, maxRestarts int, keepAlive bool, timeout int, stdin bool, callback func(process *ProcessInfo)) (string, error) {
 	// Always use shell to execute commands
 	// This ensures shell built-ins (cd, export, alias) work properly
 	// Use SHELL and SHELL_ARGS environment variables if set
@@ -301,11 +448,13 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 		MaxRestarts:      maxRestarts,
 		RestartCount:     0,
 		KeepAlive:        keepAlive,
+		Stdin:            stdin,
 		Timeout:          timeout,
 		LogFile:          combinedPath,
 		StdoutFile:       stdoutPath,
 		StderrFile:       stderrPath,
 		Done:             make(chan struct{}),
+		Finished:         make(chan struct{}),
 		TailDone:         make(chan struct{}),
 		stdout:           stdout,
 		stderr:           stderr,
@@ -319,6 +468,14 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 	// So child survives sandbox-api restart without blocking
 	cmd.Stdout = stdoutFile
 	cmd.Stderr = stderrFile
+
+	if err := attachStdin(cmd, process); err != nil {
+		stdoutFile.Close()
+		stderrFile.Close()
+		os.Remove(stdoutPath)
+		os.Remove(stderrPath)
+		return "", err
+	}
 
 	// Start the process
 	if err := cmd.Start(); err != nil {
@@ -461,9 +618,18 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 			// Small delay before restart to avoid rapid restart loops
 			time.Sleep(1 * time.Second)
 
+			// Looked at again after the delay: an archive that suspended restarts
+			// meanwhile is reading the filesystem, and this process would come
+			// back as a writer the archive has no way of stopping any more.
+			if !beginRestart() {
+				pm.leaveStopped(process, callback)
+				return
+			}
+
 			// Restart the process with updated restart count
 			// The PID remains the same across restarts for user transparency
 			_, restartErr := pm.restartProcess(process, callback)
+			endRestart()
 			if restartErr != nil {
 				// If restart fails, log the error and call the callback
 				errorMsg := fmt.Sprintf("\n[Failed to restart process: %v]\n", restartErr)
@@ -496,6 +662,7 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 				process.logWriters = nil
 				process.logLock.Unlock()
 
+				process.markFinished()
 				callback(process)
 			}
 			// If restart succeeds, the callback will be called when that process completes
@@ -526,6 +693,7 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 			process.logWriters = nil
 			process.logLock.Unlock()
 
+			process.markFinished()
 			callback(process)
 		}
 	}()
@@ -583,8 +751,8 @@ func (pm *ProcessManager) tailLogFiles(proc *ProcessInfo) {
 			// Drain all remaining data from both files before returning.
 			// Loop until both files return 0 bytes to handle data larger than the buffer.
 			for {
-				n1 := pm.readAndBroadcast(stdoutFile, stdoutBuf, proc, "stdout", combinedFile)
-				n2 := pm.readAndBroadcast(stderrFile, stderrBuf, proc, "stderr", combinedFile)
+				n1 := pm.drainStream(stdoutFile, stdoutBuf, proc, "stdout", combinedFile)
+				n2 := pm.drainStream(stderrFile, stderrBuf, proc, "stderr", combinedFile)
 				if n1 == 0 && n2 == 0 {
 					break
 				}
@@ -593,11 +761,45 @@ func (pm *ProcessManager) tailLogFiles(proc *ProcessInfo) {
 			close(proc.TailDone)
 			return
 		default:
-			pm.readAndBroadcast(stdoutFile, stdoutBuf, proc, "stdout", combinedFile)
-			pm.readAndBroadcast(stderrFile, stderrBuf, proc, "stderr", combinedFile)
+			pm.drainStream(stdoutFile, stdoutBuf, proc, "stdout", combinedFile)
+			pm.drainStream(stderrFile, stderrBuf, proc, "stderr", combinedFile)
 			time.Sleep(50 * time.Millisecond)
 		}
 	}
+}
+
+// maxDrainReads caps how many buffers drainStream takes from one stream in a
+// turn: 16 x 4 KiB. A line longer than that is not line-oriented output, and
+// the other stream must not starve behind it.
+const maxDrainReads = 16
+
+// drainStream reads one stream until it sits at a line boundary, has no more
+// data ready, or has used its turn. The two streams are read in turns, one
+// buffer at a time, so without this a stderr line landed inside any stdout
+// line longer than the buffer: the text stream carried
+// "stdout:<4KB>stderr:...\n<rest>" and no line-oriented consumer could parse
+// either half. A child that itself pauses mid-line to write stderr can still
+// interleave; that is its own doing. Returns the number of bytes read.
+func (pm *ProcessManager) drainStream(file *os.File, buf []byte, proc *ProcessInfo, streamType string, combinedFile *os.File) int {
+	total := 0
+	for reads := 0; reads < maxDrainReads; reads++ {
+		n := pm.readAndBroadcast(file, buf, proc, streamType, combinedFile)
+		total += n
+		if n == 0 || !proc.midLine(streamType) {
+			break
+		}
+	}
+	return total
+}
+
+// midLine reports whether the stream's last read ended part-way through a line.
+func (p *ProcessInfo) midLine(streamType string) bool {
+	p.logLock.RLock()
+	defer p.logLock.RUnlock()
+	if streamType == "stderr" {
+		return p.stderrMidLine
+	}
+	return p.stdoutMidLine
 }
 
 // readAndBroadcast reads from a file and broadcasts to log writers.
@@ -629,32 +831,50 @@ func (pm *ProcessManager) readAndBroadcast(file *os.File, buf []byte, proc *Proc
 				"stream":       streamType,
 			})
 		}
-		if combinedFile != nil || logEntry != nil {
-			prefix := []byte(streamType + ":")
-			for rest := data; len(rest) > 0; {
-				line := rest
-				if end := bytes.IndexByte(rest, '\n'); end >= 0 {
-					line, rest = rest[:end+1], rest[end+1:]
-				} else {
-					rest = nil
-				}
-
-				// Preserves the interleaved order of the two streams.
-				if combinedFile != nil {
-					_, _ = combinedFile.Write(prefix)
-					_, _ = combinedFile.Write(line)
-				}
-
-				// Structured attributes let the telemetry collector tell process
-				// logs from access logs.
-				if logEntry != nil {
-					logProcessLine(logEntry, streamType, line)
-				}
+		// Tag only real line starts. Tagging the chunk instead put the tag in
+		// the middle of any line longer than the read buffer, which corrupted
+		// it for every consumer: a >4KB JSON line came out with "stdout:"
+		// spliced in at byte 4096 and no longer parsed. atLineStart carries
+		// that across reads so a continuation resumes untagged.
+		atLineStart := !proc.stdoutMidLine
+		if streamType == "stderr" {
+			atLineStart = !proc.stderrMidLine
+		}
+		prefix := []byte(streamType + ":")
+		proc.prefixBuf = proc.prefixBuf[:0]
+		for rest := data; len(rest) > 0; {
+			line := rest
+			if end := bytes.IndexByte(rest, '\n'); end >= 0 {
+				line, rest = rest[:end+1], rest[end+1:]
+			} else {
+				rest = nil
 			}
+
+			if atLineStart {
+				proc.prefixBuf = append(proc.prefixBuf, prefix...)
+			}
+			proc.prefixBuf = append(proc.prefixBuf, line...)
+			atLineStart = line[len(line)-1] == '\n'
+
+			// Structured attributes let the telemetry collector tell process
+			// logs from access logs.
+			if logEntry != nil {
+				logProcessLine(logEntry, streamType, line)
+			}
+		}
+		if streamType == "stderr" {
+			proc.stderrMidLine = !atLineStart
+		} else {
+			proc.stdoutMidLine = !atLineStart
+		}
+
+		// Preserves the interleaved order of the two streams.
+		if combinedFile != nil {
+			_, _ = combinedFile.Write(proc.prefixBuf)
 		}
 		// Send to log writers for streaming
 		for _, w := range proc.logWriters {
-			writeToLogWriter(w, streamType, data)
+			writeChunkToLogWriter(w, streamType, data, proc.prefixBuf)
 		}
 		proc.logLock.Unlock()
 	}
@@ -710,6 +930,14 @@ func (pm *ProcessManager) restartProcess(oldProcess *ProcessInfo, callback func(
 	}
 	cmdArgs = append(cmdArgs, command)
 
+	// Swap in the new run's channels before anything that can fail. The caller
+	// closed the previous Done before calling us, and closes Done again if we
+	// return an error; leaving the old channel in place until after the
+	// working-dir and log-file checks made that second close panic on an
+	// already-closed channel.
+	oldProcess.Done = make(chan struct{})
+	oldProcess.TailDone = make(chan struct{})
+
 	cmd := exec.Command(shell, cmdArgs...)
 
 	if workingDir != "" {
@@ -756,8 +984,19 @@ func (pm *ProcessManager) restartProcess(oldProcess *ProcessInfo, callback func(
 	oldProcess.ExitCode = 0
 	oldProcess.stopTimeout = make(chan struct{})
 	oldProcess.stopTimeoutOnce = sync.Once{}
-	oldProcess.Done = make(chan struct{})
-	oldProcess.TailDone = make(chan struct{})
+	// Fresh run, fresh line state: a run that died mid-line must not leave the
+	// next one's first line untagged. The Done/TailDone swap happens earlier,
+	// before anything that can fail.
+	oldProcess.logLock.Lock()
+	oldProcess.stdoutMidLine = false
+	oldProcess.stderrMidLine = false
+	oldProcess.logLock.Unlock()
+
+	if err := attachStdin(cmd, oldProcess); err != nil {
+		stdoutFile.Close()
+		stderrFile.Close()
+		return "", err
+	}
 
 	// Start the process
 	if err := cmd.Start(); err != nil {
@@ -885,9 +1124,17 @@ func (pm *ProcessManager) restartProcess(oldProcess *ProcessInfo, callback func(
 			// Small delay before restart to avoid rapid restart loops
 			time.Sleep(1 * time.Second)
 
+			// See the same check in StartProcessWithName: an archive may have
+			// suspended restarts while this one was waiting.
+			if !beginRestart() {
+				pm.leaveStopped(oldProcess, callback)
+				return
+			}
+
 			// Restart the process recursively
 			// The PID remains the same across restarts for user transparency
 			_, restartErr := pm.restartProcess(oldProcess, callback)
+			endRestart()
 			if restartErr != nil {
 				// If restart fails, log the error and call the callback
 				errorMsg := fmt.Sprintf("\n[Failed to restart process: %v]\n", restartErr)
@@ -920,6 +1167,7 @@ func (pm *ProcessManager) restartProcess(oldProcess *ProcessInfo, callback func(
 				oldProcess.logWriters = nil
 				oldProcess.logLock.Unlock()
 
+				oldProcess.markFinished()
 				callback(oldProcess)
 			}
 			// If restart succeeds, the callback will be called when that process completes
@@ -950,6 +1198,7 @@ func (pm *ProcessManager) restartProcess(oldProcess *ProcessInfo, callback func(
 			oldProcess.logWriters = nil
 			oldProcess.logLock.Unlock()
 
+			oldProcess.markFinished()
 			callback(oldProcess)
 		}
 	}()
@@ -1249,6 +1498,24 @@ func (pm *ProcessManager) getProcessOutput(identifier string, max int64) (Proces
 	}, nil
 }
 
+// endsWithNewline reports whether the first size bytes of path end a line.
+// A backlog cut mid-line must not be given a terminator of its own.
+func endsWithNewline(path string, size int64) bool {
+	if size <= 0 {
+		return true
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return true
+	}
+	defer file.Close()
+	var last [1]byte
+	if _, err := file.ReadAt(last[:], size-1); err != nil {
+		return true
+	}
+	return last[0] == '\n'
+}
+
 func (pm *ProcessManager) StreamProcessOutput(identifier string, w io.Writer) error {
 	process, exists := pm.GetProcessByIdentifier(identifier)
 	if !exists {
@@ -1279,18 +1546,38 @@ func (pm *ProcessManager) StreamProcessOutput(identifier string, w io.Writer) er
 			if truncated {
 				writeToLogWriter(w, "stdout", []byte(truncationMarker))
 			}
+			// backlogEnd is wherever the file happened to be when this writer
+			// attached, which can be mid-line. Ending that fragment with a
+			// newline would split one line in two, and the queued live output
+			// carrying its remainder would look like a second line.
+			backlogEndsMidLine := !endsWithNewline(process.LogFile, backlogEnd)
 			scanner := bufio.NewScanner(backlogReader(file, backlogEnd))
 			scanner.Buffer(make([]byte, 0, 64*1024), maxLogLineBytes)
-			for scanner.Scan() {
-				line := strings.TrimLeft(scanner.Text(), "\x00")
+			pendingLine := ""
+			havePending := false
+			emit := func(line string, last bool) {
+				terminator := "\n"
+				if last && backlogEndsMidLine {
+					terminator = ""
+				}
 				if strings.HasPrefix(line, "stdout:") {
-					writeToLogWriter(w, "stdout", []byte(strings.TrimPrefix(line, "stdout:")+"\n"))
+					writeToLogWriter(w, "stdout", []byte(strings.TrimPrefix(line, "stdout:")+terminator))
 				} else if strings.HasPrefix(line, "stderr:") {
-					writeToLogWriter(w, "stderr", []byte(strings.TrimPrefix(line, "stderr:")+"\n"))
+					writeToLogWriter(w, "stderr", []byte(strings.TrimPrefix(line, "stderr:")+terminator))
 				} else if line != "" {
 					// Fallback for unprefixed lines (shouldn't happen, but handle gracefully)
-					writeToLogWriter(w, "stdout", []byte(line+"\n"))
+					writeToLogWriter(w, "stdout", []byte(line+terminator))
 				}
+			}
+			for scanner.Scan() {
+				if havePending {
+					emit(pendingLine, false)
+				}
+				pendingLine = strings.TrimLeft(scanner.Text(), "\x00")
+				havePending = true
+			}
+			if havePending {
+				emit(pendingLine, true)
 			}
 			file.Close()
 		}
@@ -1298,22 +1585,32 @@ func (pm *ProcessManager) StreamProcessOutput(identifier string, w io.Writer) er
 
 	pending.release()
 
-	// Start keepalive goroutine to prevent connection timeout
+	// Keep the connection warm for as long as this writer is attached.
+	//
+	// Tied to Finished rather than to a "status is running" check: during a
+	// restart the status is briefly Failed, and stopping on that left the
+	// stream with no traffic for the rest of its life. Idle connections are
+	// reaped upstream after five minutes, so a quiet process would then lose
+	// its stream for no reason. A failing write means the client is gone.
 	go func() {
 		ticker := time.NewTicker(30 * time.Second)
 		defer ticker.Stop()
 
-		for range ticker.C {
-			process, exists = pm.GetProcessByIdentifier(identifier)
-			// Check if process is still running
-			if !exists || process.Status != StatusRunning {
+		keepaliveMsg := []byte("[keepalive]\n")
+		for {
+			select {
+			case <-process.Finished:
 				return
-			}
-			// Send keepalive message only to this specific writer
-			keepaliveMsg := []byte("[keepalive]\n")
-			_, _ = w.Write(keepaliveMsg)
-			if f, ok := w.(interface{ Flush() }); ok {
-				f.Flush()
+			case <-ticker.C:
+				if _, stillTracked := pm.GetProcessByIdentifier(identifier); !stillTracked {
+					return
+				}
+				if _, err := w.Write(keepaliveMsg); err != nil {
+					return
+				}
+				if f, ok := w.(interface{ Flush() }); ok {
+					f.Flush()
+				}
 			}
 		}
 	}()

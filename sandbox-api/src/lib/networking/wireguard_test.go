@@ -6,6 +6,8 @@ import (
 	"encoding/base64"
 	"net"
 	"testing"
+
+	"github.com/vishvananda/netlink"
 )
 
 func TestHexEncode_Valid(t *testing.T) {
@@ -167,6 +169,80 @@ persistent_keepalive_interval=25`
 	}
 	if _, ok := stats["public_key"]; ok {
 		t.Error("stats should not include public_key")
+	}
+}
+
+// ==================== findPeerRoute Tests ====================
+
+func hostRoute(ip string, gw string, linkIndex int) netlink.Route {
+	return netlink.Route{
+		Dst: &net.IPNet{
+			IP:   net.ParseIP(ip),
+			Mask: net.CIDRMask(32, 32),
+		},
+		Gw:        net.ParseIP(gw),
+		LinkIndex: linkIndex,
+	}
+}
+
+func TestFindPeerRoute_RecoversGateway(t *testing.T) {
+	peerIP := net.ParseIP("1.2.3.4")
+	routes := []netlink.Route{
+		hostRoute("5.6.7.8", "10.0.0.1", 2),
+		hostRoute("1.2.3.4", "10.0.0.1", 2),
+	}
+
+	route, ok := findPeerRoute(routes, peerIP, 3)
+	if !ok {
+		t.Fatal("expected to find peer route")
+	}
+	if !route.Gw.Equal(net.ParseIP("10.0.0.1")) {
+		t.Errorf("expected gateway 10.0.0.1, got %v", route.Gw)
+	}
+	if route.LinkIndex != 2 {
+		t.Errorf("expected link index 2, got %d", route.LinkIndex)
+	}
+}
+
+func TestFindPeerRoute_IgnoresWireGuardLink(t *testing.T) {
+	peerIP := net.ParseIP("1.2.3.4")
+	routes := []netlink.Route{
+		hostRoute("1.2.3.4", "10.0.0.1", 3),
+	}
+
+	if _, ok := findPeerRoute(routes, peerIP, 3); ok {
+		t.Fatal("expected no match for a route through the WireGuard link itself")
+	}
+}
+
+func TestFindPeerRoute_IgnoresGatewaylessRoute(t *testing.T) {
+	peerIP := net.ParseIP("1.2.3.4")
+	route := hostRoute("1.2.3.4", "10.0.0.1", 2)
+	route.Gw = nil
+
+	if _, ok := findPeerRoute([]netlink.Route{route}, peerIP, 3); ok {
+		t.Fatal("expected no match for a route without a gateway")
+	}
+}
+
+func TestFindPeerRoute_IgnoresNonHostRoute(t *testing.T) {
+	peerIP := net.ParseIP("1.2.3.4")
+	route := hostRoute("1.2.3.4", "10.0.0.1", 2)
+	route.Dst.Mask = net.CIDRMask(24, 32)
+
+	if _, ok := findPeerRoute([]netlink.Route{route}, peerIP, 3); ok {
+		t.Fatal("expected no match for a non-host route")
+	}
+}
+
+func TestFindPeerRoute_NoRoutes(t *testing.T) {
+	peerIP := net.ParseIP("1.2.3.4")
+	routes := []netlink.Route{
+		{Dst: nil, Gw: net.ParseIP("10.0.0.1"), LinkIndex: 2}, // default route
+	}
+
+	if _, ok := findPeerRoute(routes, peerIP, 3); ok {
+		t.Fatal("expected no match when no route to the peer exists")
 	}
 }
 

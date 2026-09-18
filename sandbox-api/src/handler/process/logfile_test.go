@@ -160,7 +160,7 @@ func TestProcessOutputComesFromDiskAndTheTailIsBounded(t *testing.T) {
 	// ~200 KiB of output: more than the in-memory buffer holds, so it can only
 	// be returned in full if it is read from the log file.
 	command := `for i in $(seq 1 200); do for j in $(seq 1 1024); do printf 'Z'; done; done`
-	pid, err := pm.StartProcess(command, "", nil, false, 0, false, 0, func(p *ProcessInfo) { done <- p })
+	pid, err := pm.StartProcess(command, "", nil, false, 0, false, 0, false, func(p *ProcessInfo) { done <- p })
 	if err != nil {
 		t.Fatalf("Error starting process: %v", err)
 	}

@@ -1,0 +1,150 @@
+package handler
+
+import (
+	"context"
+	"errors"
+	"net/http"
+
+	"github.com/gin-gonic/gin"
+
+	"github.com/blaxel-ai/sandbox-api/src/handler/archive"
+)
+
+// ArchiveHandler exports the sandbox's filesystem changes so the sandbox can be
+// destroyed and restored later from the same base image.
+type ArchiveHandler struct {
+	*BaseHandler
+}
+
+// NewArchiveHandler creates a new archive handler.
+func NewArchiveHandler() *ArchiveHandler {
+	archive.APIVersion = Version
+	return &ArchiveHandler{BaseHandler: NewBaseHandler()}
+}
+
+// HandleExport handles POST requests to /archive/export
+// @Summary Export the filesystem changes to a presigned URL
+// @Description Archives everything the sandbox changed on top of its base image and streams it, uncompressed, to a presigned S3 PUT URL. The memory of the sandbox is not archived.
+// @Description The sandbox is quiesced first: the process list is saved (unless saveProcesses is false), every process is stopped, and the API then refuses the calls that would write to the filesystem. The freeze is not lifted afterwards, since an exported sandbox is meant to be restored elsewhere; call POST /archive/resume to lift it.
+// @Description Use dryRun to get the archive's content and exact size without stopping anything and without uploading.
+// @Description Set async to start the export and answer immediately, which is what archiving a large filesystem needs: the export then reports itself through GET /archive/status.
+// @Tags archive
+// @Accept json
+// @Produce json
+// @Param request body ExportOptions true "Export options"
+// @Success 200 {object} ExportResult "Export result"
+// @Success 202 {object} ExportProgress "The export was started and runs in the background"
+// @Failure 400 {object} ErrorResponse "Invalid request"
+// @Failure 409 {object} ErrorResponse "An export is already in progress"
+// @Failure 500 {object} ErrorResponse "Export failed"
+// @Router /archive/export [post]
+func (h *ArchiveHandler) HandleExport(c *gin.Context) {
+	var options archive.ExportOptions
+	if err := h.BindJSON(c, &options); err != nil {
+		h.SendError(c, http.StatusBadRequest, err)
+		return
+	}
+
+	if archive.Quiesced() {
+		// An error, not the bare status: a client reads the reason of a failure
+		// from the error field, and /archive/status is where the state itself is
+		// asked for.
+		h.SendError(c, http.StatusConflict, archive.ErrAlreadyQuiesced)
+		return
+	}
+
+	if options.Async {
+		h.startExport(c, options)
+		return
+	}
+
+	// Uploading a large archive outlives many clients' patience, and a client
+	// that gives up must not leave the sandbox stopped with a partial object in
+	// the bucket: the export runs to its end and the caller polls /archive/status.
+	result, err := archive.Export(context.WithoutCancel(c.Request.Context()), options)
+	var invalid *archive.InvalidOptionsError
+	if errors.As(err, &invalid) {
+		// A missing url, or an image the archive cannot be compared against: the
+		// request is wrong, so the sandbox did not fail.
+		h.SendError(c, http.StatusBadRequest, err)
+		return
+	}
+	if errors.Is(err, archive.ErrExportInProgress) || errors.Is(err, archive.ErrAlreadyQuiesced) {
+		// ErrExportInProgress: another export, or a dry run, is reading the
+		// filesystem through the mountpoint this one would replace.
+		// ErrAlreadyQuiesced: the check above is not the authority - two exports
+		// arriving together both pass it, and only the export itself claims the
+		// sandbox atomically. The loser is a conflict, not a server error.
+		h.SendError(c, http.StatusConflict, err)
+		return
+	}
+	if err != nil {
+		h.SendError(c, http.StatusInternalServerError, err)
+		return
+	}
+	h.SendJSON(c, http.StatusOK, result)
+}
+
+// startExport launches the export and answers that it is running. Everything
+// the caller could have got wrong is answered here; everything that takes time,
+// stopping the workload included, happens after the answer.
+func (h *ArchiveHandler) startExport(c *gin.Context, options archive.ExportOptions) {
+	// The request's context dies with the response, and the export outlives it
+	// by design.
+	progress, err := archive.StartExport(context.WithoutCancel(c.Request.Context()), options)
+	var invalid *archive.InvalidOptionsError
+	if errors.As(err, &invalid) {
+		h.SendError(c, http.StatusBadRequest, err)
+		return
+	}
+	if errors.Is(err, archive.ErrExportInProgress) || errors.Is(err, archive.ErrAlreadyQuiesced) {
+		h.SendError(c, http.StatusConflict, err)
+		return
+	}
+	if err != nil {
+		h.SendError(c, http.StatusInternalServerError, err)
+		return
+	}
+	h.SendJSON(c, http.StatusAccepted, progress)
+}
+
+// HandleStatus handles GET requests to /archive/status
+// @Summary Get the archive status
+// @Description Reports whether the sandbox is frozen for an archive export, and which processes were stopped for it.
+// @Tags archive
+// @Produce json
+// @Success 200 {object} QuiesceStatus "Archive status"
+// @Router /archive/status [get]
+func (h *ArchiveHandler) HandleStatus(c *gin.Context) {
+	h.SendJSON(c, http.StatusOK, archive.Status())
+}
+
+// HandleResume handles POST requests to /archive/resume
+// @Summary Lift the archive freeze
+// @Description Makes the API serve every route again after an export. The processes stopped for the export are not relaunched: this exists so a failed or aborted export does not leave the sandbox unusable.
+// @Tags archive
+// @Produce json
+// @Success 200 {object} QuiesceStatus "Archive status"
+// @Failure 409 {object} ErrorResponse "An export or a restore is in progress"
+// @Failure 500 {object} ErrorResponse "The root filesystem could not be made writable again"
+// @Router /archive/resume [post]
+func (h *ArchiveHandler) HandleResume(c *gin.Context) {
+	status, err := archive.Resume()
+	if errors.Is(err, archive.ErrExportInProgress) || errors.Is(err, archive.ErrRestoreInProgress) {
+		// ErrExportInProgress: the export is reading the filesystem, unfreezing
+		// now would corrupt the archive it is producing, and it lifts the freeze
+		// itself if it fails.
+		// ErrRestoreInProgress: the archive is being written over the filesystem,
+		// which the freeze is what keeps anything else out of. Neither is a
+		// failure of the sandbox: it is busy, and the caller may ask again.
+		h.SendError(c, http.StatusConflict, err)
+		return
+	}
+	if err != nil {
+		// The freeze was lifted on the API but the filesystem stayed read-only,
+		// so the sandbox is not usable and must not be reported as resumed.
+		h.SendError(c, http.StatusInternalServerError, err)
+		return
+	}
+	h.SendJSON(c, http.StatusOK, status)
+}

@@ -4,6 +4,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 
 	"github.com/sirupsen/logrus"
@@ -124,6 +125,44 @@ func ScaleEnable() error {
 		logrus.Infof("[Scale] Decremented scale-to-zero (wrote '-', counter now: %d) - still AWAKE", counter)
 	}
 	return nil
+}
+
+// HoldAwake keeps the sandbox from being hibernated for as long as the returned
+// release function has not been called.
+//
+// Unlike ScaleDisable it ignores BL_DISABLE_KEEPALIVE: it exists for the
+// operations this API cannot survive being suspended in the middle of - an
+// archive export streaming the filesystem out, an import restoring it at boot -
+// where a sandbox that opted out of keeping itself alive for its workload would
+// otherwise lose the operation, silently and halfway through.
+//
+// The release runs at most once, and only decrements a counter this call
+// actually incremented: releasing a hold that was never taken would hibernate a
+// sandbox another hold is keeping awake.
+func HoldAwake(reason string) func() {
+	held := true
+	if err := writeWithLock("+"); err != nil {
+		held = false
+		logrus.WithError(err).Warnf("[Scale] Failed to keep the sandbox awake for %s: it may be hibernated before it completes", reason)
+	} else {
+		counter, _ := GetCounter()
+		logrus.Infof("[Scale] Keeping the sandbox awake for %s (counter now: %d)", reason, counter)
+	}
+
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			if !held {
+				return
+			}
+			if err := writeWithLock("-"); err != nil {
+				logrus.WithError(err).Warnf("[Scale] Failed to release the keep-alive taken for %s", reason)
+				return
+			}
+			counter, _ := GetCounter()
+			logrus.Infof("[Scale] Released the keep-alive taken for %s (counter now: %d)", reason, counter)
+		})
+	}
 }
 
 // ScaleReset resets the scale-to-zero counter to 0

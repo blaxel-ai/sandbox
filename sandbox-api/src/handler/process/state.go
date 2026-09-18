@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/blaxel-ai/sandbox-api/src/handler/constants"
+	"github.com/blaxel-ai/sandbox-api/src/lib/blaxel"
 	"github.com/sirupsen/logrus"
 )
 
@@ -48,9 +49,12 @@ type ProcessState struct {
 	StderrBytes      int                     `json:"stderrBytes,omitempty"`
 	LogsBytes        int                     `json:"logsBytes,omitempty"`
 	RestartOnFailure bool                    `json:"restartOnFailure"`
+	Stdin            bool                    `json:"stdin,omitempty"` // Kept so a reattached process reports "stdin closed" rather than "not enabled"
 	MaxRestarts      int                     `json:"maxRestarts"`
 	RestartCount     int                     `json:"restartCount"`
 	Env              map[string]string       `json:"env,omitempty"` // Custom env vars provided at start, reused on restart-on-failure
+	KeepAlive        bool                    `json:"keepAlive,omitempty"`
+	Timeout          int                     `json:"timeout,omitempty"`
 }
 
 // ManagerState represents the full state of the process manager
@@ -120,9 +124,12 @@ func (pm *ProcessManager) SaveState() error {
 			StderrBytes:      stderrBytes,
 			LogsBytes:        logsBytes,
 			RestartOnFailure: proc.RestartOnFailure,
+			Stdin:            proc.Stdin,
 			MaxRestarts:      proc.MaxRestarts,
 			RestartCount:     proc.RestartCount,
 			Env:              proc.Env,
+			KeepAlive:        proc.KeepAlive,
+			Timeout:          proc.Timeout,
 		}
 
 		logrus.WithFields(logrus.Fields{
@@ -230,11 +237,15 @@ func (pm *ProcessManager) LoadState() error {
 			StdoutFile:       procState.StdoutFile,
 			StderrFile:       procState.StderrFile,
 			RestartOnFailure: procState.RestartOnFailure,
+			Stdin:            procState.Stdin,
 			MaxRestarts:      procState.MaxRestarts,
 			RestartCount:     procState.RestartCount,
 			Env:              procState.Env,
+			KeepAlive:        procState.KeepAlive,
+			Timeout:          procState.Timeout,
 			Done:             make(chan struct{}),
 			TailDone:         make(chan struct{}),
+			Finished:         make(chan struct{}),
 			stdout:           newLogBuffer(),
 			stderr:           newLogBuffer(),
 			logs:             newLogBuffer(),
@@ -291,6 +302,7 @@ func (pm *ProcessManager) LoadState() error {
 				proc.ExitCode = -1
 				close(proc.Done)
 				close(proc.TailDone)
+				proc.markFinished()
 				deadCount++
 				pm.processes[pid] = proc
 				continue
@@ -314,6 +326,26 @@ func (pm *ProcessManager) LoadState() error {
 			// We don't need to keep a file handle open for tailing since
 			// the child process writes directly to the log file
 
+			// Re-take the scale-to-zero hold the previous run held for this
+			// process: startup resets the counter to 0, so without this the
+			// sandbox could hibernate under a still-running keepAlive workload.
+			if proc.KeepAlive {
+				if err := blaxel.ScaleDisable(); err != nil {
+					logrus.WithError(err).WithFields(logrus.Fields{
+						"pid":  proc.PID,
+						"name": proc.Name,
+					}).Warn("[KeepAlive] Failed to disable scale-to-zero for adopted process")
+				}
+				// Re-arm the timeout the previous run was enforcing, for
+				// whatever of it is left, so the hold cannot outlive the
+				// bound the process was started with.
+				if proc.Timeout > 0 {
+					proc.stopTimeout = make(chan struct{})
+					remaining := time.Until(proc.StartedAt.Add(time.Duration(proc.Timeout) * time.Second))
+					go pm.enforceKeepAliveTimeout(proc, remaining)
+				}
+			}
+
 			// Start a goroutine to monitor the adopted process
 			go pm.monitorAdoptedProcess(proc)
 
@@ -334,6 +366,7 @@ func (pm *ProcessManager) LoadState() error {
 			// Close the Done and TailDone channels since process is no longer running
 			close(proc.Done)
 			close(proc.TailDone)
+			proc.markFinished()
 
 			logrus.WithFields(logrus.Fields{
 				"pid":     proc.PID,
@@ -345,6 +378,7 @@ func (pm *ProcessManager) LoadState() error {
 			if proc.CompletedAt != nil {
 				close(proc.Done)
 				close(proc.TailDone)
+				proc.markFinished()
 			}
 		}
 
@@ -569,6 +603,29 @@ func verifyProcessHealth(pid int) bool {
 	return true
 }
 
+// enforceKeepAliveTimeout kills a keepAlive process when what remains of its
+// timeout elapses, unless stopTimeout is closed first. It backs the same
+// contract as the timer StartProcessWithName arms, for processes adopted
+// after a restart with part of their timeout already spent.
+func (pm *ProcessManager) enforceKeepAliveTimeout(proc *ProcessInfo, remaining time.Duration) {
+	if remaining < 0 {
+		remaining = 0
+	}
+	timer := time.NewTimer(remaining)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		logrus.WithFields(logrus.Fields{
+			"process_pid":  proc.PID,
+			"process_name": proc.Name,
+			"timeout":      proc.Timeout,
+		}).Info("[KeepAlive] Timeout expired, killing adopted process")
+		_ = pm.KillProcess(proc.PID)
+	case <-proc.stopTimeout:
+		// Process completed before timeout
+	}
+}
+
 // monitorAdoptedProcess monitors an adopted process for completion
 func (pm *ProcessManager) monitorAdoptedProcess(proc *ProcessInfo) {
 	logrus.WithFields(logrus.Fields{
@@ -625,6 +682,27 @@ func (pm *ProcessManager) monitorAdoptedProcess(proc *ProcessInfo) {
 				// Signal that the process is done
 				close(proc.Done)
 				close(proc.TailDone)
+				proc.markFinished()
+
+				// Release the scale-to-zero hold taken when the process was
+				// adopted. Stop/Kill clear KeepAlive under the lock before
+				// signalling, so this only fires when the process exited on
+				// its own and no other path released the hold.
+				pm.mu.Lock()
+				wasKeepAlive := proc.KeepAlive
+				proc.KeepAlive = false
+				pm.mu.Unlock()
+				if wasKeepAlive {
+					if proc.stopTimeout != nil {
+						proc.stopTimeoutOnce.Do(func() { close(proc.stopTimeout) })
+					}
+					if err := blaxel.ScaleEnable(); err != nil {
+						logrus.WithError(err).WithFields(logrus.Fields{
+							"pid":  proc.PID,
+							"name": proc.Name,
+						}).Warn("[KeepAlive] Failed to enable scale-to-zero after adopted process exited")
+					}
+				}
 
 				logrus.WithFields(logrus.Fields{
 					"pid":         proc.PID,
@@ -832,11 +910,15 @@ func TriggerUpgrade(version, baseURL string) {
 }
 
 // newDownloadHTTPClient creates an HTTP client configured for downloading
-// release assets from GitHub with appropriate timeouts.
+// release assets from GitHub with appropriate timeouts. It goes through the
+// HTTP(S)_PROXY of the environment like every other consumer in the sandbox:
+// a sandbox whose egress is locked down to its proxy cannot reach GitHub any
+// other way.
 func newDownloadHTTPClient() *http.Client {
 	return &http.Client{
 		Timeout: downloadTotalTimeout,
 		Transport: &http.Transport{
+			Proxy: http.ProxyFromEnvironment,
 			DialContext: (&net.Dialer{
 				Timeout: downloadConnTimeout,
 			}).DialContext,
@@ -1261,6 +1343,11 @@ func validateBinaryFormat(binaryPath string) error {
 	return nil
 }
 
+// UpgradedBinaryName is the file a hot upgrade installs next to the running
+// binary and execs into. It is exported because the paths this API may be
+// exec'd from have to be named where they are protected from being replaced.
+const UpgradedBinaryName = "sandbox-api-upgraded"
+
 // upgradeWithNewBinary moves the new binary to a permanent location and execs into it
 // We can't overwrite the running binary ("text file busy"), so we exec into a new file
 func upgradeWithNewBinary(newBinaryPath string) {
@@ -1289,7 +1376,7 @@ func upgradeWithNewBinary(newBinaryPath string) {
 	// Determine the permanent path for the new binary
 	// We place it in the same directory as the current binary
 	currentDir := filepath.Dir(currentExe)
-	permanentPath := filepath.Join(currentDir, "sandbox-api-upgraded")
+	permanentPath := filepath.Join(currentDir, UpgradedBinaryName)
 
 	logger.WithFields(logrus.Fields{
 		"current":       currentExe,

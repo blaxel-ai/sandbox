@@ -9,7 +9,7 @@ chmod 700 /run/user/0
 mkdir -p /var/log/supervisor
 
 # Fix hostname resolution (required by TigerVNC's vncserver script).
-# In Unikraft/Blaxel the hostname is often "(none)" or empty and /etc/hosts
+# In a Blaxel sandbox the hostname is often "(none)" or empty and /etc/hosts
 # may be missing entries, causing "Could not acquire fully qualified host name".
 CURRENT_HOSTNAME=$(hostname 2>/dev/null || echo "localhost")
 if [ "$CURRENT_HOSTNAME" = "(none)" ] || [ -z "$CURRENT_HOSTNAME" ]; then

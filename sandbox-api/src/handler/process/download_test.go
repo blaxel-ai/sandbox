@@ -365,3 +365,17 @@ func TestNewDownloadHTTPClient(t *testing.T) {
 		t.Error("expected custom transport, got nil")
 	}
 }
+
+// TestNewDownloadHTTPClientUsesTheProxyOfTheEnvironment: a sandbox whose
+// egress is locked down to its proxy only reaches GitHub through it, so the
+// downloader must pick up HTTP(S)_PROXY like the rest of the sandbox does.
+func TestNewDownloadHTTPClientUsesTheProxyOfTheEnvironment(t *testing.T) {
+	client := newDownloadHTTPClient()
+	transport, ok := client.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("expected *http.Transport, got %T", client.Transport)
+	}
+	if transport.Proxy == nil {
+		t.Fatal("download transport ignores HTTP(S)_PROXY: Proxy is nil")
+	}
+}

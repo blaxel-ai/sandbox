@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -30,7 +32,7 @@ func TestProcessManagerIntegrationWithPID(t *testing.T) {
 
 	// Test starting a long-running process
 	t.Run("StartLongRunningProcess", func(t *testing.T) {
-		sleepPID, err := pm.StartProcess("sleep 5", "", nil, false, 0, false, 0, func(process *ProcessInfo) {
+		sleepPID, err := pm.StartProcess("sleep 5", "", nil, false, 0, false, 0, false, func(process *ProcessInfo) {
 			t.Logf("Process: %+v", process.stderr)
 		})
 		if err != nil {
@@ -79,7 +81,7 @@ func TestProcessManagerIntegrationWithPID(t *testing.T) {
 	t.Run("ProcessWithOutput", func(t *testing.T) {
 		expectedOutput := "Hello, Process Manager!"
 		done := make(chan struct{})
-		echoPID, err := pm.StartProcess("echo '"+expectedOutput+"'", "", nil, false, 0, false, 0, func(process *ProcessInfo) {
+		echoPID, err := pm.StartProcess("echo '"+expectedOutput+"'", "", nil, false, 0, false, 0, false, func(process *ProcessInfo) {
 			close(done)
 		})
 		if err != nil {
@@ -120,7 +122,7 @@ func TestProcessManagerIntegrationWithPID(t *testing.T) {
 	// Test process with working directory
 	t.Run("ProcessWithWorkingDirectory", func(t *testing.T) {
 		done := make(chan struct{})
-		lsPID, err := pm.StartProcess("ls -la", "/tmp", nil, false, 0, false, 0, func(process *ProcessInfo) {
+		lsPID, err := pm.StartProcess("ls -la", "/tmp", nil, false, 0, false, 0, false, func(process *ProcessInfo) {
 			close(done)
 		})
 		if err != nil {
@@ -167,7 +169,7 @@ func TestProcessManagerIntegrationWithPID(t *testing.T) {
 	// Test list processes functionality
 	t.Run("ListProcesses", func(t *testing.T) {
 		// Start a new process for this test
-		testPID, err := pm.StartProcess("sleep 1", "", nil, false, 0, false, 0, func(process *ProcessInfo) {
+		testPID, err := pm.StartProcess("sleep 1", "", nil, false, 0, false, 0, false, func(process *ProcessInfo) {
 			t.Logf("Process: %+v", process.stderr)
 		})
 		if err != nil {
@@ -204,7 +206,7 @@ func TestProcessManagerIntegrationWithName(t *testing.T) {
 	// Test starting a long-running process
 	t.Run("StartLongRunningProcess", func(t *testing.T) {
 		name := "sleep-process"
-		_, err := pm.StartProcessWithName("sleep 5", "", name, nil, false, 0, false, 0, func(process *ProcessInfo) {
+		_, err := pm.StartProcessWithName("sleep 5", "", name, nil, false, 0, false, 0, false, func(process *ProcessInfo) {
 			t.Logf("Process: %+v", process.stderr)
 		})
 		if err != nil {
@@ -253,7 +255,7 @@ func TestProcessManagerIntegrationWithName(t *testing.T) {
 	t.Run("ProcessWithOutput", func(t *testing.T) {
 		expectedOutput := "Hello, Process Manager!"
 		name := "echo-process"
-		_, err := pm.StartProcessWithName("echo '"+expectedOutput+"'", "", name, nil, false, 0, false, 0, func(process *ProcessInfo) {
+		_, err := pm.StartProcessWithName("echo '"+expectedOutput+"'", "", name, nil, false, 0, false, 0, false, func(process *ProcessInfo) {
 			t.Logf("Process: %+v", process.stderr)
 		})
 		if err != nil {
@@ -294,7 +296,7 @@ func TestProcessManagerIntegrationWithName(t *testing.T) {
 	// Test process with working directory
 	t.Run("ProcessWithWorkingDirectory", func(t *testing.T) {
 		name := "ls-process"
-		_, err := pm.StartProcessWithName("ls -la", "", name, nil, false, 0, false, 0, func(process *ProcessInfo) {
+		_, err := pm.StartProcessWithName("ls -la", "", name, nil, false, 0, false, 0, false, func(process *ProcessInfo) {
 			t.Logf("Process: %+v", process.stderr)
 		})
 		if err != nil {
@@ -342,7 +344,7 @@ func TestProcessManagerIntegrationWithName(t *testing.T) {
 	t.Run("ListProcesses", func(t *testing.T) {
 		// Start a new process for this test
 		name := "test-process"
-		_, err := pm.StartProcessWithName("sleep 1", "", name, nil, false, 0, false, 0, func(process *ProcessInfo) {
+		_, err := pm.StartProcessWithName("sleep 1", "", name, nil, false, 0, false, 0, false, func(process *ProcessInfo) {
 			t.Logf("Process: %+v", process.stderr)
 		})
 		if err != nil {
@@ -391,7 +393,7 @@ func TestEnvironmentVariableHandling(t *testing.T) {
 			t.Logf("Test iteration %d", i+1)
 
 			// Use printenv to check all environment variables
-			pid, err := pm.StartProcess("printenv", "", env, false, 0, false, 0, func(process *ProcessInfo) {
+			pid, err := pm.StartProcess("printenv", "", env, false, 0, false, 0, false, func(process *ProcessInfo) {
 				t.Logf("Process completed: %s", process.PID)
 			})
 			if err != nil {
@@ -462,7 +464,7 @@ func TestEnvironmentVariableHandling(t *testing.T) {
 		// Test with empty environment map - should inherit system environment
 		env := map[string]string{}
 
-		pid, err := pm.StartProcess("printenv PATH", "", env, false, 0, false, 0, func(process *ProcessInfo) {
+		pid, err := pm.StartProcess("printenv PATH", "", env, false, 0, false, 0, false, func(process *ProcessInfo) {
 			t.Logf("Process completed: %s", process.PID)
 		})
 		if err != nil {
@@ -488,7 +490,7 @@ func TestEnvironmentVariableHandling(t *testing.T) {
 		// Test with nil environment map - should inherit system environment
 		var env map[string]string = nil
 
-		pid, err := pm.StartProcess("printenv PATH", "", env, false, 0, false, 0, func(process *ProcessInfo) {
+		pid, err := pm.StartProcess("printenv PATH", "", env, false, 0, false, 0, false, func(process *ProcessInfo) {
 			t.Logf("Process completed: %s", process.PID)
 		})
 		if err != nil {
@@ -522,7 +524,7 @@ func TestProcessRestartOnFailure(t *testing.T) {
 
 		completionChan := make(chan *ProcessInfo, 1)
 
-		pid, err := pm.StartProcess(command, "", nil, true, 3, false, 0, func(process *ProcessInfo) {
+		pid, err := pm.StartProcess(command, "", nil, true, 3, false, 0, false, func(process *ProcessInfo) {
 			completionChan <- process
 		})
 		if err != nil {
@@ -576,7 +578,7 @@ func TestProcessRestartOnFailure(t *testing.T) {
 
 		completionChan := make(chan *ProcessInfo, 1)
 
-		pid, err := pm.StartProcess(command, "", nil, true, 2, false, 0, func(process *ProcessInfo) {
+		pid, err := pm.StartProcess(command, "", nil, true, 2, false, 0, false, func(process *ProcessInfo) {
 			completionChan <- process
 		})
 		if err != nil {
@@ -633,7 +635,7 @@ func TestProcessRestartOnFailure(t *testing.T) {
 
 		completionChan := make(chan *ProcessInfo, 1)
 
-		pid, err := pm.StartProcess(command, "", env, true, 3, false, 0, func(process *ProcessInfo) {
+		pid, err := pm.StartProcess(command, "", env, true, 3, false, 0, false, func(process *ProcessInfo) {
 			completionChan <- process
 		})
 		if err != nil {
@@ -680,7 +682,7 @@ func TestProcessRestartOnFailure(t *testing.T) {
 
 		completionChan := make(chan *ProcessInfo, 1)
 
-		pid, err := pm.StartProcess(command, "", nil, true, -1, false, 0, func(process *ProcessInfo) {
+		pid, err := pm.StartProcess(command, "", nil, true, -1, false, 0, false, func(process *ProcessInfo) {
 			completionChan <- process
 		})
 		if err != nil {
@@ -719,7 +721,7 @@ func TestProcessRestartOnFailure(t *testing.T) {
 
 		completionChan := make(chan *ProcessInfo, 1)
 
-		pid, err := pm.StartProcess(command, "", nil, true, 3, false, 0, func(process *ProcessInfo) {
+		pid, err := pm.StartProcess(command, "", nil, true, 3, false, 0, false, func(process *ProcessInfo) {
 			completionChan <- process
 		})
 		if err != nil {
@@ -792,7 +794,7 @@ func TestLargeOutputStreaming(t *testing.T) {
 
 		completionChan := make(chan *ProcessInfo, 1)
 
-		pid, err := pm.StartProcess(command, "", nil, false, 0, false, 0, func(process *ProcessInfo) {
+		pid, err := pm.StartProcess(command, "", nil, false, 0, false, 0, false, func(process *ProcessInfo) {
 			completionChan <- process
 		})
 		if err != nil {
@@ -846,7 +848,7 @@ func TestLargeOutputStreaming(t *testing.T) {
 
 		completionChan := make(chan *ProcessInfo, 1)
 
-		pid, err := pm.StartProcess(command, "", nil, false, 0, false, 0, func(process *ProcessInfo) {
+		pid, err := pm.StartProcess(command, "", nil, false, 0, false, 0, false, func(process *ProcessInfo) {
 			completionChan <- process
 		})
 		if err != nil {
@@ -892,7 +894,7 @@ func TestLargeOutputStreaming(t *testing.T) {
 
 		completionChan := make(chan *ProcessInfo, 1)
 
-		pid, err := pm.StartProcess(command, "", nil, false, 0, false, 0, func(process *ProcessInfo) {
+		pid, err := pm.StartProcess(command, "", nil, false, 0, false, 0, false, func(process *ProcessInfo) {
 			completionChan <- process
 		})
 		if err != nil {
@@ -937,4 +939,133 @@ func TestLargeOutputStreaming(t *testing.T) {
 			t.Errorf("Expected 10000 E characters, got %d", eCount)
 		}
 	})
+}
+
+// TestSuspendedRestartsLeaveAFailedProcessDown covers what an archive relies on:
+// while it reads the filesystem, a failed process may not come back as a writer,
+// even one with unlimited restarts that would otherwise never stop.
+func TestSuspendedRestartsLeaveAFailedProcessDown(t *testing.T) {
+	pm := GetProcessManager()
+	allow := SuspendRestarts()
+	defer allow()
+
+	done := make(chan *ProcessInfo, 1)
+	pid, err := pm.StartProcess(`echo failing; exit 1`, "", nil, true, -1, false, 0, false, func(p *ProcessInfo) {
+		done <- p
+	})
+	if err != nil {
+		t.Fatalf("Error starting process: %v", err)
+	}
+
+	select {
+	case p := <-done:
+		if p.Status != StatusFailed {
+			t.Errorf("Expected the process to stay failed, got %s", p.Status)
+		}
+		if p.RestartCount != 0 {
+			t.Errorf("Expected no restart, got %d", p.RestartCount)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatalf("Process %s was restarted while restarts are suspended", pid)
+	}
+}
+
+// TestRestartsSuspendedDuringTheDelayLeaveTheProcessDown covers the same thing
+// for a process that had already been scheduled for a restart: the suspension
+// lands during the delay before the restart, which is where an export that
+// stopped the workload a moment earlier finds it.
+func TestRestartsSuspendedDuringTheDelayLeaveTheProcessDown(t *testing.T) {
+	pm := GetProcessManager()
+
+	done := make(chan *ProcessInfo, 1)
+	pid, err := pm.StartProcess(`echo failing; exit 1`, "", nil, true, -1, false, 0, false, func(p *ProcessInfo) {
+		done <- p
+	})
+	if err != nil {
+		t.Fatalf("Error starting process: %v", err)
+	}
+
+	// The process fails immediately and the restart waits a second, so this
+	// lands the suspension in the middle of that delay.
+	time.Sleep(300 * time.Millisecond)
+	allow := SuspendRestarts()
+	defer allow()
+
+	select {
+	case p := <-done:
+		if p.Status != StatusFailed {
+			t.Errorf("Expected the process to stay failed, got %s", p.Status)
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatalf("Process %s kept restarting while restarts are suspended", pid)
+	}
+}
+
+func TestLogFilePathsStayInTheLogDirectory(t *testing.T) {
+	// A process name comes from whoever started it - an API caller, or the
+	// process list an archive carried - and the log files are opened as root, so
+	// a name that is a path would write outside the log directory.
+	for _, name := range []string{
+		"../../etc/passwd",
+		"../..",
+		"..",
+		".",
+		"/bl/credentials",
+		"worker/../../run/secrets/token",
+	} {
+		t.Run(name, func(t *testing.T) {
+			stdout, stderr, combined := getLogFilePaths(name)
+			for _, path := range []string{stdout, stderr, combined} {
+				if filepath.Dir(path) != ProcessLogDir {
+					t.Errorf("%s should have been written under %s", path, ProcessLogDir)
+				}
+			}
+		})
+	}
+
+	// Ordinary names are untouched, so the logs of a process keep the name they
+	// have always had.
+	stdout, _, _ := getLogFilePaths("my-worker.1")
+	if stdout != ProcessLogDir+"/my-worker.1.stdout.log" {
+		t.Errorf("an ordinary name should be used as it is, got %s", stdout)
+	}
+}
+
+// TestSuspendRestartsWaitsForARestartAlreadySpawning covers the window the flag
+// alone leaves: a restart that read it just before it was set would spawn its
+// process afterwards, and the export - which lists the processes as soon as the
+// suspension returns - would never see it, leaving a writer on a filesystem
+// being archived.
+func TestSuspendRestartsWaitsForARestartAlreadySpawning(t *testing.T) {
+	defer restartsSuspended.Store(false)
+
+	var spawning atomic.Int32
+	var wg sync.WaitGroup
+	for range 64 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if !beginRestart() {
+				return
+			}
+			defer endRestart()
+			spawning.Add(1)
+			// Stands for the spawn itself, which is not instantaneous.
+			time.Sleep(time.Millisecond)
+			spawning.Add(-1)
+		}()
+	}
+
+	allow := SuspendRestarts()
+	defer allow()
+
+	if count := spawning.Load(); count != 0 {
+		t.Errorf("%d restarts were still spawning when the suspension returned", count)
+	}
+	// And none starts afterwards, however late the goroutine gets there.
+	time.Sleep(50 * time.Millisecond)
+	if count := spawning.Load(); count != 0 {
+		t.Errorf("%d restarts spawned after the suspension", count)
+	}
+	wg.Wait()
 }
