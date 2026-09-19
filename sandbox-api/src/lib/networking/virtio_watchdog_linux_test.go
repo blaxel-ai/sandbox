@@ -20,7 +20,8 @@ func TestWatchKmsgRecoversOncePerBurst(t *testing.T) {
 	recovered := make(chan string, 10)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go watchKmsg(ctx, r, newRecoveryGate(time.Hour, time.Now), func(device string) error {
+	noReopen := func() (*os.File, error) { return nil, errors.New("closed") }
+	go watchKmsg(ctx, r, noReopen, newRecoveryGate(time.Hour, time.Now), func(device string) error {
 		recovered <- device
 		return nil
 	})
@@ -49,6 +50,44 @@ func TestWatchKmsgRecoversOncePerBurst(t *testing.T) {
 	case d := <-recovered:
 		t.Fatalf("burst triggered a second recovery on %q", d)
 	case <-time.After(200 * time.Millisecond):
+	}
+}
+
+func TestWatchKmsgReopensAfterReadError(t *testing.T) {
+	virtioRecoverRetryDelay = time.Millisecond
+	defer func() { virtioRecoverRetryDelay = time.Second }()
+
+	r1, w1, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	r2, w2, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = w2.Close() }()
+
+	recovered := make(chan string, 10)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	reopen := func() (*os.File, error) { return r2, nil }
+	go watchKmsg(ctx, r1, reopen, newRecoveryGate(0, time.Now), func(device string) error {
+		recovered <- device
+		return nil
+	})
+
+	// EOF on the first log stands in for a read error that is not an overrun
+	_ = w1.Close()
+	if _, err := w2.WriteString("3,2,2,-;virtio_net virtio1: input.0:id 171 is not a head!\n"); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case d := <-recovered:
+		if d != "virtio1" {
+			t.Fatalf("recovered %q, want virtio1", d)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the tailer did not survive the read error")
 	}
 }
 

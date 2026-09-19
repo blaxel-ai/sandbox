@@ -47,7 +47,8 @@ func StartVirtioWatchdog(ctx context.Context) {
 		logrus.Debugf("[VirtioWatchdog] No virtio bus on this kernel, not watching (%v)", err)
 		return
 	}
-	f, err := os.Open(kmsgPath)
+	open := func() (*os.File, error) { return os.Open(kmsgPath) }
+	f, err := open()
 	if err != nil {
 		logrus.WithError(err).Warn("[VirtioWatchdog] Cannot read the kernel log, a broken virtio_net ring will not be recovered")
 		return
@@ -62,15 +63,30 @@ func StartVirtioWatchdog(ctx context.Context) {
 	} else {
 		recover = module.recover
 	}
-	go watchKmsg(ctx, f, newRecoveryGate(virtioRecoverCooldown, time.Now), recover)
+	go watchKmsg(ctx, f, open, newRecoveryGate(virtioRecoverCooldown, time.Now), recover)
 	logrus.Info("[VirtioWatchdog] Watching the kernel log for a broken virtio_net ring")
 }
 
-func watchKmsg(ctx context.Context, f *os.File, gate *recoveryGate, recover func(device string) error) {
-	defer func() { _ = f.Close() }()
+// watchKmsg tails f for the broken-ring line. The kernel logs it once per
+// incident, so the tailer must outlive any read error: on one that is not the
+// usual overrun it reopens the log with open (replaying the buffer, which the
+// gate and the no-op resync of a healthy queue make harmless) and only gives
+// up when that fails too.
+func watchKmsg(ctx context.Context, f *os.File, open func() (*os.File, error), gate *recoveryGate, recover func(device string) error) {
+	var mu sync.Mutex
+	cur := f
+	closeCur := func() {
+		mu.Lock()
+		defer mu.Unlock()
+		if cur != nil {
+			_ = cur.Close()
+			cur = nil
+		}
+	}
+	defer closeCur()
 	go func() {
 		<-ctx.Done()
-		_ = f.Close()
+		closeCur()
 	}()
 
 	// /dev/kmsg hands out one record per read; a Reader with a large buffer
@@ -85,16 +101,35 @@ func watchKmsg(ctx context.Context, f *os.File, gate *recoveryGate, recover func
 				go recoverWithRetries(ctx, device, recover)
 			}
 		}
-		if err != nil {
-			if ctx.Err() != nil {
-				return
-			}
-			if isKmsgOverrun(err) {
-				continue
-			}
-			logrus.WithError(err).Warn("[VirtioWatchdog] Kernel log read failed, stopping")
+		if err == nil {
+			continue
+		}
+		if ctx.Err() != nil {
 			return
 		}
+		if isKmsgOverrun(err) {
+			continue
+		}
+		logrus.WithError(err).Warn("[VirtioWatchdog] Kernel log read failed, reopening it")
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(virtioRecoverRetryDelay):
+		}
+		nf, oerr := open()
+		if oerr != nil {
+			logrus.WithError(oerr).Warn("[VirtioWatchdog] Cannot reopen the kernel log, a broken virtio_net ring will not be recovered")
+			return
+		}
+		closeCur()
+		mu.Lock()
+		cur = nf
+		mu.Unlock()
+		if ctx.Err() != nil {
+			closeCur()
+			return
+		}
+		r.Reset(nf)
 	}
 }
 
