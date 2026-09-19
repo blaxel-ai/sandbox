@@ -8,8 +8,9 @@
 // Env: BL_API_KEY / BL_WORKSPACE / BL_ENV (SDK auth), IMAGE (built from this
 // branch), REGION, MEMORY, NAME, WATCHDOG_DISABLED=1 (set
 // BL_DISABLE_VIRTIO_WATCHDOG in the sandbox to check the opt-out), stress:
-// BURST (queries per cycle), KEEPALIVE_S, IDLE_MS (time left for standby
-// after the keepAlive ends), CONTINUE=1 (keep cycling after a hit), KO + LOADER (break: the
+// BURST (queries per cycle), KEEPALIVE_S, IDLE_MS + JITTER_MS (time left for
+// standby after the keepAlive ends), TRAFFIC (background curl loops, 0 to
+// disable), CONTINUE=1 (keep cycling after a hit), KO + LOADER (break: the
 // virtio_ring_resync.ko and finit_module helper, see resync-kmod.mjs), KEEP=1.
 
 import { SandboxInstance } from "@blaxel/core";
@@ -135,21 +136,38 @@ async function inject(sandbox, breakQueue) {
 }
 
 // The pattern seen in front of the real ring desync: a burst of requests, a
-// short keepAlive process, then no traffic until the sandbox goes to standby,
-// so the next burst lands on a resume.
+// short keepAlive process, then no API traffic until the sandbox goes to
+// standby, so the next burst lands on a resume - with egress kept busy
+// throughout so the rings are never idle.
 async function stress(sandbox) {
   const cycles = Number(env.CYCLES ?? 100);
   const keepAliveSec = Number(env.KEEPALIVE_S ?? 5);
   const idle = Number(env.IDLE_MS ?? 20000);
+  const jitter = Number(env.JITTER_MS ?? 10000);
   const burst = Number(env.BURST ?? 5);
+  const traffic = Number(env.TRAFFIC ?? 4);
   console.log(
-    `${cycles} cycles of: ${burst} queries -> ${keepAliveSec}s keepAlive -> ${idle}ms idle (standby) ; watching dmesg for "is not a head"`,
+    `${cycles} cycles of: ${burst} queries -> ${keepAliveSec}s keepAlive -> ${idle}+rand(${jitter})ms idle (standby), ${traffic} background curl loops; watching dmesg for "is not a head"`,
   );
+  // Egress traffic that keeps running through the standby: the rx ring has
+  // completions in flight when the snapshot is taken and again the moment the
+  // VM resumes, which is where a used-index desync can show. Not keepAlive,
+  // so it does not stop the scale-to-zero.
+  for (let n = 0; n < traffic; n++) {
+    await retryGateway(() =>
+      sandbox.process.exec({
+        name: `traffic-${n}`,
+        command: `sh -c 'while :; do curl -s -m 5 -o /dev/null https://www.google.com/generate_204 https://www.cloudflare.com/cdn-cgi/trace; done'`,
+        timeout: 0,
+      }),
+    );
+  }
   let recovered = 0;
   for (let i = 1; i <= cycles; i++) {
     const t0 = Date.now();
+    // several connections opened at once so the resume sees a burst on rx
     const results = await Promise.allSettled(
-      Array.from({ length: burst }, (_, n) => sh(sandbox, `echo ${n}; cat /proc/net/dev | grep eth0`)),
+      Array.from({ length: burst }, (_, n) => sh(sandbox, `echo ${n}; grep eth0 /proc/net/dev; curl -s -m 5 -o /dev/null -w '%{http_code}' https://www.google.com/generate_204`)),
     );
     const failed = results.filter((r) => r.status === "rejected").length;
     let hit = "";
@@ -175,7 +193,7 @@ async function stress(sandbox) {
       recovered = Number(hit);
       if (!env.CONTINUE) return console.log(`OK: race reproduced and recovered ${recovered} time(s)`);
     }
-    await new Promise((r) => setTimeout(r, idle));
+    await new Promise((r) => setTimeout(r, idle + Math.floor(Math.random() * jitter)));
   }
   console.log(recovered ? `OK: ${recovered} ring error(s) over ${cycles} cycles, all recovered` : `no ring error after ${cycles} cycles`);
 }
