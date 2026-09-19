@@ -148,7 +148,24 @@ async function stress(sandbox) {
   console.log(
     `${cycles} cycles of: ${burst} parallel keepAlive processes doing ${workSec}s of egress -> ${idle}+rand(${jitter})ms idle (standby); watching dmesg for "is not a head"`,
   );
-  const work = `end=$(($(date +%s)+${workSec})); while [ $(date +%s) -lt $end ]; do curl -s -m 5 -o /dev/null https://www.google.com/generate_204 https://www.cloudflare.com/cdn-cgi/trace || echo curl-failed; done; dmesg | grep -c 'is not a head' || true`;
+  // as a file: sandbox-api runs the command line through a shell of its own,
+  // which would expand $variables before our sh sees them
+  await retryGateway(() =>
+    sandbox.fs.write(
+      "/tmp/work.sh",
+      [
+        "command -v curl >/dev/null || { echo 'curl-missing'; exit 1; }",
+        `n=0; end=$(($(date +%s)+${workSec}))`,
+        "while [ $(date +%s) -lt $end ]; do",
+        "  curl -s -m 5 -o /dev/null https://www.google.com/generate_204 https://www.cloudflare.com/cdn-cgi/trace || { echo curl-failed; sleep 0.5; }",
+        "  n=$((n+1))",
+        "done",
+        'echo "curls=$n"',
+        "dmesg | grep -c 'is not a head' || true",
+        "",
+      ].join("\n"),
+    ),
+  );
   let recovered = 0;
   for (let i = 1; i <= cycles; i++) {
     const t0 = Date.now();
@@ -157,7 +174,7 @@ async function stress(sandbox) {
         retryGateway(() =>
           sandbox.process.exec({
             name: `work-${i}-${n}`,
-            command: `sh -c ${JSON.stringify(work)}`,
+            command: "sh /tmp/work.sh",
             keepAlive: true,
             waitForCompletion: true,
             timeout: workSec + 30,
@@ -171,7 +188,12 @@ async function stress(sandbox) {
       continue;
     }
     const logs = results.filter((r) => r.status === "fulfilled").map((r) => (r.value.logs ?? "").trim());
-    const curlFailed = logs.join("\n").split("\n").filter((l) => l === "curl-failed").length;
+    const lines = logs.join("\n").split("\n");
+    const curlFailed = lines.filter((l) => l === "curl-failed").length;
+    const curls = lines.filter((l) => l.startsWith("curls=")).reduce((s, l) => s + Number(l.slice(6)), 0);
+    if (i === 1) console.log(`cycle 1: ${curls} curls over ${burst} processes`);
+    if (lines.includes("curl-missing")) return fail("the image has no curl, the work processes cannot generate traffic");
+    if (!curls) fail(`cycle ${i}: the work processes made no request, traffic generator broken`);
     // last line of each process is its dmesg count
     const hit = String(Math.max(0, ...logs.map((l) => Number(l.split("\n").pop()) || 0)));
     if (failed || curlFailed || hit !== "0")
