@@ -3,6 +3,8 @@ import ipaddress
 import json
 from pathlib import Path
 import tempfile
+import subprocess
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -74,7 +76,7 @@ class AndroidTests(unittest.TestCase):
 
     def test_cleanup_removes_partial_startup_and_stale_readiness(self):
         with tempfile.TemporaryDirectory() as d, patch.object(android, 'STATE', Path(d)), \
-             patch.object(android, 'run') as execute:
+             patch.object(android, 'run', return_value=SimpleNamespace(returncode=1, stderr='Bad rule (does a matching rule exist in that chain?)')) as execute:
             (Path(d) / 'network.json').write_text('{"subnet":"192.168.240.0/30"}')
             (Path(d) / 'ready').touch()
             (Path(d) / 'adb-address').write_text('192.168.240.2:5555')
@@ -86,6 +88,54 @@ class AndroidTests(unittest.TestCase):
             self.assertFalse((Path(d) / 'network.json').exists())
             self.assertFalse((Path(d) / 'ready').exists())
             self.assertFalse((Path(d) / 'adb-address').exists())
+
+    def test_remove_rule_deletes_all_duplicates_then_accepts_absence(self):
+        with patch.object(android, 'run', side_effect=[
+            SimpleNamespace(returncode=0, stderr=''),
+            SimpleNamespace(returncode=0, stderr=''),
+            SimpleNamespace(returncode=1, stderr='iptables: Bad rule (does a matching rule exist in that chain?).'),
+        ]) as execute:
+            android.remove_rule([], 'FORWARD', ['-i', android.LINK, '-j', 'ACCEPT'])
+            self.assertEqual(execute.call_count, 3)
+            self.assertEqual(execute.call_args_list[0], execute.call_args_list[2])
+
+    def test_cleanup_retains_state_for_operational_firewall_failures(self):
+        for code, error in [(4, 'Another app is currently holding the xtables lock'),
+                            (3, 'Permission denied'), (1, 'Unexpected backend failure')]:
+            with self.subTest(error=error), tempfile.TemporaryDirectory() as d, \
+                 patch.object(android, 'STATE', Path(d)), \
+                 patch.object(android, 'run', return_value=SimpleNamespace(returncode=code, stderr=error)) as execute:
+                saved = Path(d) / 'network.json'
+                saved.write_text('{"subnet":"192.168.240.0/30"}')
+                (Path(d) / 'ready').touch()
+                with self.assertRaisesRegex(RuntimeError, 'Failed to remove'):
+                    android.cleanup()
+                self.assertTrue(saved.exists())
+                self.assertFalse((Path(d) / 'ready').exists())
+                self.assertIn(('ip', 'link', 'del', android.LINK), [call.args for call in execute.call_args_list])
+
+    def test_cleanup_retains_state_after_firewall_timeout(self):
+        def execute(*args, **kwargs):
+            if args[0] == 'iptables':
+                raise subprocess.TimeoutExpired(args, 15)
+            return SimpleNamespace(returncode=0, stderr='')
+        with tempfile.TemporaryDirectory() as d, patch.object(android, 'STATE', Path(d)), \
+             patch.object(android, 'run', side_effect=execute):
+            saved = Path(d) / 'network.json'
+            saved.write_text('{"subnet":"192.168.240.0/30"}')
+            with self.assertRaises(subprocess.TimeoutExpired):
+                android.cleanup()
+            self.assertTrue(saved.exists())
+
+    def test_failed_cleanup_prevents_boot_overwriting_saved_network(self):
+        with tempfile.TemporaryDirectory() as d, patch.object(android, 'STATE', Path(d)), \
+             patch.object(android, 'LOG', Path(d)), patch.object(android.signal, 'signal'), \
+             patch.object(android, 'cleanup', side_effect=RuntimeError('firewall busy')), \
+             patch.object(android, 'boot') as boot:
+            with self.assertRaisesRegex(RuntimeError, 'firewall busy'):
+                android.main()
+            boot.assert_not_called()
+            self.assertEqual(json.loads((Path(d) / 'status.json').read_text())['state'], 'failed')
 
     def test_xattr_failure_explains_required_volume(self):
         with tempfile.TemporaryDirectory() as d, patch.object(android, 'DATA', Path(d)), \

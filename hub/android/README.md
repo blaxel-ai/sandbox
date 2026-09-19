@@ -39,7 +39,7 @@ ADB is on a private veth subnet reachable only inside the sandbox. It is not pub
 - Android data: `/var/lib/android/data`
 - Android logs while running: `adb logcat -d`
 
-Startup removes stale runtime state, interfaces and NAT rules from a previous launch. A lock prevents concurrent supervisors. SIGTERM stops Android and removes its network rules; after an uncatchable termination the next startup performs the same cleanup. A failed boot does not trigger an endless restart loop. After fixing the cause, rerun `python3 /opt/android/android.py` through the process API. If the supervisor is still running, terminate it first.
+Startup removes stale runtime state, interfaces and NAT rules from a previous launch. The image explicitly uses iptables-legacy. Cleanup removes every duplicate rule and preserves its subnet metadata on firewall errors so the next launch can retry; startup fails rather than adding more rules over incomplete cleanup. A lock prevents concurrent supervisors. SIGTERM stops Android and removes its network rules; after an uncatchable termination the next startup performs the same cleanup. A failed boot does not trigger an endless restart loop. After fixing the cause, rerun `python3 /opt/android/android.py` through the process API. If the supervisor is still running, terminate it first.
 
 ## Validation
 

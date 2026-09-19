@@ -5,6 +5,8 @@ FROM redroid/redroid@sha256:a6c464bbedcf1dcb67dbf91f329fbb19bee5b50631f0ca6bda6e
 FROM debian:trixie-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
     runc adb python3 iproute2 iptables util-linux ca-certificates \
+    && update-alternatives --set iptables /usr/sbin/iptables-legacy \
+    && update-alternatives --set ip6tables /usr/sbin/ip6tables-legacy \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 COPY --from=sandbox-api /sandbox-api /usr/local/bin/sandbox-api
 # Bake the filesystem into the image: no registry access or extraction at boot.

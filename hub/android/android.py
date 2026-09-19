@@ -54,18 +54,38 @@ def rules(net):
             ([], 'FORWARD', ['-o', LINK, '-m', 'conntrack', '--ctstate', 'RELATED,ESTABLISHED', '-j', 'ACCEPT'])]
 
 
+def remove_rule(table, chain, rule):
+    # Delete every matching copy. Only legacy's explicit missing-rule result
+    # confirms absence; lock, permission, backend and syntax errors must retry
+    # on the next launch with the saved subnet still available.
+    command = ['iptables', '-w', '5', *table, '-D', chain, *rule]
+    for _ in range(256):
+        result = run(*command, check=False)
+        if result.returncode == 0:
+            continue
+        if (result.returncode == 1 and
+                'Bad rule (does a matching rule exist in that chain?)' in result.stderr):
+            return
+        raise RuntimeError(f'Failed to remove Android firewall rule: {result.stderr.strip()}')
+    raise RuntimeError('Android firewall cleanup exceeded 256 duplicate rules')
+
+
 def cleanup():
-    run(*RUNC, 'delete', '--force', 'android', check=False)
-    saved = STATE / 'network.json'
-    if saved.exists():
-        net = ipaddress.ip_network(json.loads(saved.read_text())['subnet'])
-        for table, chain, rule in reversed(rules(net)):
-            run('iptables', '-w', '5', *table, '-D', chain, *rule, check=False)
-        run('adb', 'disconnect', f'{net.network_address + 2}:5555', check=False)
-        saved.unlink()
-    run('ip', 'link', 'del', LINK, check=False)
+    # Readiness must disappear even when a later cleanup operation fails.
     (STATE / 'ready').unlink(missing_ok=True)
     (STATE / 'adb-address').unlink(missing_ok=True)
+    try:
+        run(*RUNC, 'delete', '--force', 'android', check=False)
+        saved = STATE / 'network.json'
+        if saved.exists():
+            net = ipaddress.ip_network(json.loads(saved.read_text())['subnet'])
+            for table, chain, rule in reversed(rules(net)):
+                remove_rule(table, chain, rule)
+            run('adb', 'disconnect', f'{net.network_address + 2}:5555', check=False)
+            # Retain state if any preceding deletion failed or timed out.
+            saved.unlink()
+    finally:
+        run('ip', 'link', 'del', LINK, check=False)
 
 
 def configure_network(pid, net):
