@@ -1,0 +1,38 @@
+{
+  "name": "android",
+  "displayName": "Android",
+  "categories": [
+    "automation"
+  ],
+  "description": "Android 12 with ADB for agent-driven app testing and automation.",
+  "longDescription": "Run Android apps in a sandbox using ReDroid and runc, without Docker. Includes ADB for installing apps, interacting with the screen, and collecting screenshots. Requires the Android kernel and an ephemeral root volume, configured automatically when creating from this Hub template.",
+  "url": "https://github.com/remote-android/redroid-doc",
+  "icon": "https://avatars.githubusercontent.com/u/65832643?s=200&v=4",
+  "memory": 1024,
+  "ports": [
+    {
+      "name": "sandbox-api",
+      "target": 8080,
+      "protocol": "HTTP"
+    }
+  ],
+  "creationOptions": {
+    "extraArgs": {
+      "android": "enabled"
+    },
+    "volumes": [
+      {
+        "name": "android-storage",
+        "type": "ephemeral",
+        "sizeMb": 8192,
+        "mountPath": "/"
+      }
+    ]
+  },
+  "build": {
+    "slim": false
+  },
+  "enterprise": false,
+  "coming_soon": false,
+  "hidden": true
+}
