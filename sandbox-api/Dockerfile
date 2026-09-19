@@ -1,3 +1,35 @@
+# The virtio_ring_resync kernel module the virtio watchdog loads into the guest
+# (see kmod/). It is built against the exact kernel the mk3 sandboxes run:
+# same upstream release, same .config. Only x86_64 guests exist; other
+# architectures ship a binary that detects a broken ring but cannot fix it.
+FROM debian:bookworm as kmod
+
+ARG TARGETARCH
+ARG GUEST_KERNEL=6.12.75
+
+RUN set -xe; \
+  if [ "$TARGETARCH" = "amd64" ]; then \
+    apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      build-essential bc bison flex libelf-dev libssl-dev xz-utils curl ca-certificates kmod && \
+    rm -rf /var/lib/apt/lists/*; \
+  fi
+
+WORKDIR /usr/src
+COPY kmod /usr/src/kmod
+
+RUN set -xe; mkdir -p /out; \
+  if [ "$TARGETARCH" = "amd64" ]; then \
+    curl -fsSL https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-${GUEST_KERNEL}.tar.xz | tar xJ && \
+    cp kmod/guest-kernel.config linux-${GUEST_KERNEL}/.config && \
+    make -C linux-${GUEST_KERNEL} -j"$(nproc)" olddefconfig modules_prepare && \
+    make -C kmod/virtio_ring_resync KDIR=/usr/src/linux-${GUEST_KERNEL} KBUILD_MODPOST_WARN=1 && \
+    cp kmod/virtio_ring_resync/virtio_ring_resync.ko /out/ && \
+    { make -s -C linux-${GUEST_KERNEL} kernelrelease; grep -v '^#' kmod/guest-kernel.config | grep . | sha256sum | cut -d' ' -f1; } \
+      > /out/virtio_ring_resync.kernel && \
+    cat /out/virtio_ring_resync.kernel && modinfo /out/virtio_ring_resync.ko; \
+  fi
+
 FROM golang:1.25.0-bookworm as build
 
 ARG VERSION=dev
@@ -8,6 +40,7 @@ ARG SENTRY_ENVIRONMENT=""
 WORKDIR /blaxel/sandbox-api
 
 COPY . /blaxel/sandbox-api
+COPY --from=kmod /out/ /blaxel/sandbox-api/src/lib/networking/kmod/
 
 RUN set -xe; \
   BUILD_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ") && \
