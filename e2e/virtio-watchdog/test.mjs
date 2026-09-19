@@ -21,13 +21,15 @@ const MODE = env.MODE ?? "inject";
 const NAME = env.NAME ?? `virtio-watchdog-${Date.now().toString(36)}`;
 const KMSG_LINE = "virtio_net virtio0: input.0:id 171 is not a head!";
 
-// the edge gateway answers 502/504 while a sandbox is still coming up or resuming
+// the edge gateway answers 502/504 (or 404 WORKLOAD_UNAVAILABLE, not_dispatched)
+// while a sandbox is still coming up or resuming
 async function retryGateway(fn, attempts = 10) {
   for (let i = 1; ; i++) {
     try {
       return await fn();
     } catch (e) {
-      if (i === attempts || !/\b50[24]\b/.test(`${e.status ?? ""} ${e.message}`)) throw e;
+      const msg = `${e.status ?? ""} ${e.message}`;
+      if (i === attempts || !(/\b50[24]\b/.test(msg) || msg.includes("WORKLOAD_UNAVAILABLE"))) throw e;
       await new Promise((r) => setTimeout(r, 2000));
     }
   }
@@ -167,6 +169,7 @@ async function stress(sandbox) {
     ),
   );
   let recovered = 0;
+  let unreachable = 0;
   for (let i = 1; i <= cycles; i++) {
     const t0 = Date.now();
     const results = await Promise.allSettled(
@@ -185,8 +188,15 @@ async function stress(sandbox) {
     const failed = results.filter((r) => r.status === "rejected").length;
     if (failed === burst) {
       console.log(`cycle ${i}: sandbox unreachable (${results[0].reason?.message})`);
-      continue;
+      if (++unreachable < 3) continue;
+      // three cycles in a row with the platform refusing to dispatch: the
+      // sandbox is gone or stuck, cycling further tells nothing. Dump what
+      // the control plane knows and stop.
+      const status = await SandboxInstance.get(NAME).catch((e) => ({ error: e.message }));
+      console.log("sandbox status:", JSON.stringify({ status: status.status, errors: status.errors, events: status.metadata?.events ?? status.events }, null, 2));
+      return fail(`sandbox unreachable for ${unreachable} cycles in a row at cycle ${i}`);
     }
+    unreachable = 0;
     const logs = results.filter((r) => r.status === "fulfilled").map((r) => (r.value.logs ?? "").trim());
     const lines = logs.join("\n").split("\n");
     const curlFailed = lines.filter((l) => l === "curl-failed").length;
@@ -224,7 +234,8 @@ const sandbox = await SandboxInstance.createIfNotExists({
   image: env.IMAGE ?? "blaxel/base-image:latest",
   memory: Number(env.MEMORY ?? 2048),
   region: env.REGION,
-  ttl: env.TTL ?? "1h",
+  // stress cycles take ~30-40s each; leave headroom so the TTL never ends the run
+  ttl: env.TTL ?? (MODE === "stress" ? `${Math.ceil((Number(env.CYCLES ?? 100) * 45) / 3600) + 1}h` : "1h"),
   envs,
 });
 await sandbox.wait();
