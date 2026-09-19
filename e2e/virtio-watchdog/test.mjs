@@ -3,14 +3,14 @@
 //   npm i && node test.mjs                # inject the kernel line, check the watchdog reacts and the network is intact
 //   MODE=break KO=... LOADER=... node test.mjs
 //                                         # really break the rx queue, inject the line, check the watchdog recovers it
-//   MODE=stress CYCLES=200 node test.mjs  # queries -> keepAlive -> standby loop trying to hit the real UKP 0.6 race
+//   MODE=stress CYCLES=200 node test.mjs  # keepAlive work -> standby -> resume loop trying to hit the real UKP 0.6 race
 //
 // Env: BL_API_KEY / BL_WORKSPACE / BL_ENV (SDK auth), IMAGE (built from this
 // branch), REGION, MEMORY, NAME, WATCHDOG_DISABLED=1 (set
 // BL_DISABLE_VIRTIO_WATCHDOG in the sandbox to check the opt-out), stress:
-// BURST (queries per cycle), KEEPALIVE_S, IDLE_MS + JITTER_MS (time left for
-// standby after the keepAlive ends), TRAFFIC (background curl loops, 0 to
-// disable), CONTINUE=1 (keep cycling after a hit), KO + LOADER (break: the
+// BURST (parallel keepAlive processes per cycle), WORK_S (how long each one
+// generates egress), IDLE_MS + JITTER_MS (time left for standby after they
+// exit), CONTINUE=1 (keep cycling after a hit), KO + LOADER (break: the
 // virtio_ring_resync.ko and finit_module helper, see resync-kmod.mjs), KEEP=1.
 
 import { SandboxInstance } from "@blaxel/core";
@@ -135,52 +135,47 @@ async function inject(sandbox, breakQueue) {
   if (!process.exitCode) console.log(`OK: watchdog reacted${breakQueue ? ", resynced the broken rx queue" : ""} and the network configuration survived`);
 }
 
-// The pattern seen in front of the real ring desync: a burst of requests, a
-// short keepAlive process, then no API traffic until the sandbox goes to
-// standby, so the next burst lands on a resume - with egress kept busy
-// throughout so the rings are never idle.
+// The customer pattern seen in front of the real ring desync: the work is run
+// as keepAlive processes (several at once, each doing egress traffic), the
+// sandbox is left alone as soon as the last one exits, goes to standby, and
+// the next batch lands on a resume with rx traffic right away.
 async function stress(sandbox) {
   const cycles = Number(env.CYCLES ?? 100);
-  const keepAliveSec = Number(env.KEEPALIVE_S ?? 5);
+  const workSec = Number(env.WORK_S ?? 5);
   const idle = Number(env.IDLE_MS ?? 20000);
   const jitter = Number(env.JITTER_MS ?? 10000);
   const burst = Number(env.BURST ?? 5);
-  const traffic = Number(env.TRAFFIC ?? 4);
   console.log(
-    `${cycles} cycles of: ${burst} queries -> ${keepAliveSec}s keepAlive -> ${idle}+rand(${jitter})ms idle (standby), ${traffic} background curl loops; watching dmesg for "is not a head"`,
+    `${cycles} cycles of: ${burst} parallel keepAlive processes doing ${workSec}s of egress -> ${idle}+rand(${jitter})ms idle (standby); watching dmesg for "is not a head"`,
   );
-  // Egress traffic that keeps running through the standby: the rx ring has
-  // completions in flight when the snapshot is taken and again the moment the
-  // VM resumes, which is where a used-index desync can show. Not keepAlive,
-  // so it does not stop the scale-to-zero.
-  for (let n = 0; n < traffic; n++) {
-    await retryGateway(() =>
-      sandbox.process.exec({
-        name: `traffic-${n}`,
-        command: `sh -c 'while :; do curl -s -m 5 -o /dev/null https://www.google.com/generate_204 https://www.cloudflare.com/cdn-cgi/trace; done'`,
-        timeout: 0,
-      }),
-    );
-  }
+  const work = `end=$(($(date +%s)+${workSec})); while [ $(date +%s) -lt $end ]; do curl -s -m 5 -o /dev/null https://www.google.com/generate_204 https://www.cloudflare.com/cdn-cgi/trace || echo curl-failed; done; dmesg | grep -c 'is not a head' || true`;
   let recovered = 0;
   for (let i = 1; i <= cycles; i++) {
     const t0 = Date.now();
-    // several connections opened at once so the resume sees a burst on rx
     const results = await Promise.allSettled(
-      Array.from({ length: burst }, (_, n) => sh(sandbox, `echo ${n}; grep eth0 /proc/net/dev; curl -s -m 5 -o /dev/null -w '%{http_code}' https://www.google.com/generate_204`)),
+      Array.from({ length: burst }, (_, n) =>
+        retryGateway(() =>
+          sandbox.process.exec({
+            name: `work-${i}-${n}`,
+            command: `sh -c ${JSON.stringify(work)}`,
+            keepAlive: true,
+            waitForCompletion: true,
+            timeout: workSec + 30,
+          }),
+        ),
+      ),
     );
     const failed = results.filter((r) => r.status === "rejected").length;
-    let hit = "";
-    try {
-      await retryGateway(() =>
-        sandbox.process.exec({ command: `sleep ${keepAliveSec}`, keepAlive: true, timeout: keepAliveSec + 5, waitForCompletion: true }),
-      );
-      hit = (await sh(sandbox, "dmesg | grep -c 'is not a head' || true")).out;
-    } catch (e) {
-      console.log(`cycle ${i}: sandbox unreachable (${e.message})`);
+    if (failed === burst) {
+      console.log(`cycle ${i}: sandbox unreachable (${results[0].reason?.message})`);
       continue;
     }
-    if (failed || hit !== "0") console.log(`cycle ${i}: ${failed} failed requests, ${hit} ring errors in dmesg (${Date.now() - t0}ms)`);
+    const logs = results.filter((r) => r.status === "fulfilled").map((r) => (r.value.logs ?? "").trim());
+    const curlFailed = logs.join("\n").split("\n").filter((l) => l === "curl-failed").length;
+    // last line of each process is its dmesg count
+    const hit = String(Math.max(0, ...logs.map((l) => Number(l.split("\n").pop()) || 0)));
+    if (failed || curlFailed || hit !== "0")
+      console.log(`cycle ${i}: ${failed} failed requests, ${curlFailed} failed curls, ${hit} ring errors in dmesg (${Date.now() - t0}ms)`);
     if (hit !== "0") {
       const kernel = (await sh(sandbox, "dmesg | grep -E -A3 'is not a head'")).out;
       const resyncs = (kernel.match(/: resync \(broken=1/g) ?? []).length;
