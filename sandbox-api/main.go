@@ -47,6 +47,7 @@ func main() {
 	logrus.SetFormatter(&logrus.JSONFormatter{})
 	logrus.SetLevel(logrus.DebugLevel)
 
+
 	// Load .env file
 	_ = godotenv.Load()
 
