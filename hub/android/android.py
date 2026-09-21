@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import signal
+import shlex
 import socket
 import struct
 import stat
@@ -68,9 +69,8 @@ def rules(net, ipv6=False):
 
 
 def remove_rule(table, chain, rule, binary='iptables'):
-    # Delete every matching copy. Only legacy's explicit missing-rule result
-    # confirms absence; lock, permission, backend and syntax errors must retry
-    # on the next launch with the saved subnet still available.
+    # Delete every matching copy. Operational errors must retain the saved
+    # subnet so cleanup can retry on the next launch.
     command = [binary, '-w', '5', *table, '-D', chain, *rule]
     for _ in range(256):
         result = run(*command, check=False)
@@ -79,6 +79,15 @@ def remove_rule(table, chain, rule, binary='iptables'):
         if (result.returncode == 1 and
                 'Bad rule (does a matching rule exist in that chain?)' in result.stderr):
             return
+        if (result.returncode == 1 and result.stderr.strip() ==
+                f'{binary}: No chain/target/match by that name.'):
+            # Legacy can report generic ENOENT for an absent MASQUERADE rule.
+            # Confirm the chain is readable and has no Android interface rules;
+            # do not mistake a missing backend or target for successful cleanup.
+            listing = run(binary, '-w', '5', *table, '-S', chain, check=False)
+            if (listing.returncode == 0 and not any(
+                    LINK in shlex.split(line) for line in listing.stdout.splitlines())):
+                return
         raise RuntimeError(f'Failed to remove Android firewall rule: {result.stderr.strip()}')
     raise RuntimeError('Android firewall cleanup exceeded 256 duplicate rules')
 

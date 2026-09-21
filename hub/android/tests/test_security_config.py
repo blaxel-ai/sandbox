@@ -4,6 +4,10 @@ import unittest
 
 
 class DevicePolicyTests(unittest.TestCase):
+    def test_android_cgroup_mount_is_confined_to_filtered_subtree(self):
+        config = json.loads((Path(__file__).resolve().parents[1] / 'config.json').read_text())
+        self.assertIn({'type': 'cgroup'}, config['linux']['namespaces'])
+
     def test_device_policy_denies_block_access_without_fixed_binder_numbers(self):
         config = json.loads((Path(__file__).resolve().parents[1] / 'config.json').read_text())
         rules = config['linux']['resources']['devices']

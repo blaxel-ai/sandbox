@@ -201,6 +201,51 @@ class AndroidTests(unittest.TestCase):
                 self.assertFalse((Path(d) / 'ready').exists())
                 self.assertIn(('ip', 'link', 'del', android.LINK), [call.args for call in execute.call_args_list])
 
+    def test_remove_absent_nat_rule_confirms_no_android_rules_remain(self):
+        rule = ['-s', '192.168.240.0/30', '!', '-o', android.LINK, '-j', 'MASQUERADE']
+        with patch.object(android, 'run', side_effect=[
+            SimpleNamespace(returncode=0, stderr=''),
+            SimpleNamespace(returncode=1, stderr='iptables: No chain/target/match by that name.\n'),
+            SimpleNamespace(returncode=0, stdout='-P POSTROUTING ACCEPT\n'
+                            '-A POSTROUTING -s 10.0.0.0/24 -j MASQUERADE\n'),
+        ]) as execute:
+            android.remove_rule(['-t', 'nat'], 'POSTROUTING', rule)
+            self.assertEqual(execute.call_count, 3)
+            self.assertEqual(execute.call_args.args,
+                             ('iptables', '-w', '5', '-t', 'nat', '-S', 'POSTROUTING'))
+
+    def test_ambiguous_missing_rule_retains_state_unless_absence_is_confirmed(self):
+        for code, output, error in [
+            (0, '-A FORWARD -i android-host -j ACCEPT\n', ''),
+            (4, '', 'Another app is currently holding the xtables lock'),
+            (3, '', 'Permission denied'),
+            (1, '', 'Table does not exist (do you need to insmod?)'),
+        ]:
+            with self.subTest(code=code, output=output, error=error), \
+                 tempfile.TemporaryDirectory() as d, patch.object(android, 'STATE', Path(d)):
+                saved = Path(d) / 'network.json'
+                saved.write_text('{"subnet":"192.168.240.0/30"}')
+
+                def execute(*args, **kwargs):
+                    if '-D' in args:
+                        return SimpleNamespace(returncode=1, stderr='iptables: No chain/target/match by that name.')
+                    if '-S' in args:
+                        return SimpleNamespace(returncode=code, stdout=output, stderr=error)
+                    return SimpleNamespace(returncode=0, stdout='', stderr='')
+
+                with patch.object(android, 'run', side_effect=execute):
+                    with self.assertRaisesRegex(RuntimeError, 'Failed to remove'):
+                        android.cleanup()
+                self.assertTrue(saved.exists())
+
+    def test_ambiguous_ipv6_absence_checks_ipv6_chain(self):
+        with patch.object(android, 'run', side_effect=[
+            SimpleNamespace(returncode=1, stderr='ip6tables: No chain/target/match by that name.\n'),
+            SimpleNamespace(returncode=0, stdout='-P INPUT ACCEPT\n'),
+        ]) as execute:
+            android.remove_rule([], 'INPUT', ['-i', android.LINK, '-j', 'DROP'], 'ip6tables')
+            self.assertEqual(execute.call_args.args, ('ip6tables', '-w', '5', '-S', 'INPUT'))
+
     def test_cleanup_retains_state_after_firewall_timeout(self):
         def execute(*args, **kwargs):
             if args[0] == 'iptables':
