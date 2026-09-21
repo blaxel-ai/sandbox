@@ -11,6 +11,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=sandbox-api /sandbox-api /usr/local/bin/sandbox-api
 # Bake the filesystem into the image: no registry access or extraction at boot.
 COPY --from=android / /opt/android/bundle/rootfs/
+# Require a per-sandbox host key; the upstream GSI disables ADB authentication.
+RUN prop=/opt/android/bundle/rootfs/system/system_ext/etc/build.prop \
+    && grep -qx 'ro.adb.secure=0' "$prop" \
+    && sed -i 's/^ro.adb.secure=0$/ro.adb.secure=1/' "$prop"
 COPY hub/android/config.json /opt/android/config.json
 COPY hub/android/android.py /opt/android/android.py
 RUN mkdir -p /var/lib/android/data /var/log/android /run/android /blaxel \
