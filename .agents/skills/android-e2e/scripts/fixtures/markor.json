@@ -1,0 +1,7 @@
+{
+  "name": "android-e2e-markor",
+  "waitForCompletion": false,
+  "keepAlive": true,
+  "timeout": 600,
+  "commandFile": "markor.sh"
+}

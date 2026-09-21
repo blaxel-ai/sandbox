@@ -1,0 +1,7 @@
+{
+  "name": "android-e2e-restart-start",
+  "waitForCompletion": false,
+  "keepAlive": true,
+  "timeout": 0,
+  "commandFile": "restart-start.sh"
+}
