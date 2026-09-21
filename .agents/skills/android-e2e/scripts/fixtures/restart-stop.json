@@ -1,0 +1,6 @@
+{
+  "name": "android-e2e-restart-stop",
+  "waitForCompletion": true,
+  "timeout": 60,
+  "commandFile": "restart-stop.py"
+}
