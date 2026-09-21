@@ -31,6 +31,14 @@ adb exec-out screencap -p > /blaxel/screen.png
 
 ADB is on a private veth subnet reachable only inside the sandbox. It is not published as a preview port. The launcher selects a free subnet and configures Android networking before starting `/init`.
 
+## Security boundary
+
+Use one sandbox per trust domain. ReDroid is a privileged guest workload, not an isolation boundary for hostile Android root processes. Android root must be treated as able to compromise the entire microVM, including its management API and files. Do not put secrets in the sandbox that must remain inaccessible to Android root. The separate mount namespace does not share `/run/android` with Android; mounting FUSE there inside Android does not replace the supervisor's state files.
+
+The device cgroup denies block devices while allowing character devices, including dynamically allocated Binder devices. This prevents direct raw access to the root volume through a block device node, but does not make Android root safe. A fixed allowlist of only FUSE, TUN and DMA heap devices would omit Binder. The pinned Android image also starts `bpfloader` with `reboot_on_failure`, requests `SYS_MODULE` for its Wi-Fi HAL and `SYS_PTRACE` for diagnostic services, and mounts BinderFS with `stats=global`. A blanket BPF denial or an unprivileged user namespace is not a compatible substitute. Capability, seccomp and kernel-path restrictions require Android boot and app validation before adoption.
+
+The launcher drops forwarded IPv4 link-local traffic (`169.254.0.0/16`) before its outbound ACCEPT rule to reduce access to cloud metadata endpoints. This is defense in depth, not a boundary against Android root. It does not block arbitrary private networks or establish which platform endpoints are reachable. Platform egress policy must be enforced outside the microVM; guest NAT does not bypass an external policy applied to the microVM's traffic.
+
 ## Diagnostics and restart
 
 - Status: `/run/android/status.json`

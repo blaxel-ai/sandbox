@@ -23,6 +23,14 @@ class AndroidTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'No unused'):
             android.choose_network([{'dst': '192.168.0.0/16'}, {'dst': '172.16.0.0/12'}, {'dst': '10.0.0.0/8'}])
 
+    def test_forwarded_link_local_traffic_is_dropped_before_egress_accept(self):
+        rules = android.rules(ipaddress.ip_network('192.168.240.0/30'))
+        forward = [rule for table, chain, rule in rules if chain == 'FORWARD']
+        drop = ['-i', android.LINK, '-d', '169.254.0.0/16', '-j', 'DROP']
+        accept = ['-i', android.LINK, '-j', 'ACCEPT']
+        self.assertIn(drop, forward)
+        self.assertLess(forward.index(drop), forward.index(accept))
+
     def test_config_uses_runtime_devices_and_private_namespaces(self):
         source = json.loads((MODULE.parent / 'config.json').read_text())
         devices = [{'path': '/dev/dma_heap/system', 'major': 254, 'minor': 7}]
@@ -83,7 +91,9 @@ class AndroidTests(unittest.TestCase):
             android.cleanup()
             commands = [call.args for call in execute.call_args_list]
             self.assertTrue(any('delete' in args and '--force' in args for args in commands))
-            self.assertEqual(sum('-D' in args for args in commands), 3)
+            self.assertEqual(sum('-D' in args for args in commands), 4)
+            self.assertIn(('iptables', '-w', '5', '-D', 'FORWARD', '-i', android.LINK,
+                           '-d', '169.254.0.0/16', '-j', 'DROP'), commands)
             self.assertIn(('ip', 'link', 'del', android.LINK), commands)
             self.assertFalse((Path(d) / 'network.json').exists())
             self.assertFalse((Path(d) / 'ready').exists())
