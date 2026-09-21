@@ -5,6 +5,8 @@ import json
 import os
 from pathlib import Path
 import signal
+import socket
+import struct
 import stat
 import subprocess
 import time
@@ -13,6 +15,7 @@ BASE = Path('/opt/android')
 STATE = Path('/run/android')
 LOG = Path('/var/log/android')
 DATA = Path('/var/lib/android/data')
+ADB_KEYS = Path(os.environ.get('ANDROID_USER_HOME', str(Path.home() / '.android')))
 LINK = 'android-host'
 RUNC = ['runc', '--root', str(STATE / 'runc'), '--log', str(LOG / 'runc.log')]
 
@@ -48,8 +51,15 @@ def make_config(template, devices):
     return config
 
 
-def rules(net):
-    return [(['-t', 'nat'], 'POSTROUTING', ['-s', str(net), '!', '-o', LINK, '-j', 'MASQUERADE']),
+def rules(net, ipv6=False):
+    # Host-originated ADB needs replies, but apps must not initiate connections
+    # to the supervisor, including through automatically assigned IPv6 addresses.
+    host_input = [([], 'INPUT', ['-i', LINK, '-m', 'conntrack', '--ctstate',
+                                'RELATED,ESTABLISHED', '-j', 'ACCEPT']),
+                  ([], 'INPUT', ['-i', LINK, '-j', 'DROP'])]
+    if ipv6:
+        return host_input
+    return host_input + [(['-t', 'nat'], 'POSTROUTING', ['-s', str(net), '!', '-o', LINK, '-j', 'MASQUERADE']),
             # Defense in depth for cloud metadata. Tenant network isolation is
             # enforced outside this guest; Android root can change guest rules.
             ([], 'FORWARD', ['-i', LINK, '-d', '169.254.0.0/16', '-j', 'DROP']),
@@ -57,11 +67,11 @@ def rules(net):
             ([], 'FORWARD', ['-o', LINK, '-m', 'conntrack', '--ctstate', 'RELATED,ESTABLISHED', '-j', 'ACCEPT'])]
 
 
-def remove_rule(table, chain, rule):
+def remove_rule(table, chain, rule, binary='iptables'):
     # Delete every matching copy. Only legacy's explicit missing-rule result
     # confirms absence; lock, permission, backend and syntax errors must retry
     # on the next launch with the saved subnet still available.
-    command = ['iptables', '-w', '5', *table, '-D', chain, *rule]
+    command = [binary, '-w', '5', *table, '-D', chain, *rule]
     for _ in range(256):
         result = run(*command, check=False)
         if result.returncode == 0:
@@ -82,8 +92,9 @@ def cleanup():
         saved = STATE / 'network.json'
         if saved.exists():
             net = ipaddress.ip_network(json.loads(saved.read_text())['subnet'])
-            for table, chain, rule in reversed(rules(net)):
-                remove_rule(table, chain, rule)
+            for binary in ['iptables', 'ip6tables']:
+                for table, chain, rule in reversed(rules(net, ipv6=binary == 'ip6tables')):
+                    remove_rule(table, chain, rule, binary)
             run('adb', 'disconnect', f'{net.network_address + 2}:5555', check=False)
             # Retain state if any preceding deletion failed or timed out.
             saved.unlink()
@@ -107,9 +118,48 @@ def configure_network(pid, net):
                  ('route', 'add', 'default', 'via', gateway)]:
         run(*ns, *args)
     Path('/proc/sys/net/ipv4/ip_forward').write_text('1\n')
-    for table, chain, rule in rules(net):
-        run('iptables', '-w', '5', *table, '-A', chain, *rule)
+    for binary in ['iptables', 'ip6tables']:
+        for table, chain, rule in rules(net, ipv6=binary == 'ip6tables'):
+            run(binary, '-w', '5', *table, '-A', chain, *rule)
     return guest + ':5555'
+
+
+def prepare_adb_key():
+    # Keep the private key outside Android's mount namespace. The default host
+    # ADB location also makes ordinary agent adb commands work without flags.
+    ADB_KEYS.mkdir(parents=True, exist_ok=True, mode=0o700)
+    ADB_KEYS.chmod(0o700)
+    private_key = ADB_KEYS / 'adbkey'
+    if not private_key.exists():
+        run('adb', 'keygen', str(private_key))
+    private_key.chmod(0o600)
+    public_key = run('adb', 'pubkey', str(private_key)).stdout.strip()
+    if not public_key:
+        raise RuntimeError('ADB host public key is empty')
+    trusted_keys = BASE / 'bundle/rootfs/adb_keys'
+    trusted_keys.write_text(public_key + '\n')
+    trusted_keys.chmod(0o644)
+
+
+def verify_adb_auth(endpoint):
+    """Reject keyless ADB before publishing readiness, without trusting a property."""
+    host, port = endpoint.rsplit(':', 1)
+    command = int.from_bytes(b'CNXN', 'little')
+    payload = b'host::\0'
+    packet = struct.pack('<6I', command, 0x01000001, 1024 * 1024,
+                         len(payload), sum(payload), command ^ 0xffffffff) + payload
+    with socket.create_connection((host, int(port)), timeout=5) as connection:
+        connection.sendall(packet)
+        header = b''
+        while len(header) < 24:
+            chunk = connection.recv(24 - len(header))
+            if not chunk:
+                raise RuntimeError('ADB closed before authentication challenge')
+            header += chunk
+    response, auth_type, _, length, _, magic = struct.unpack('<6I', header)
+    auth = int.from_bytes(b'AUTH', 'little')
+    if response != auth or auth_type != 1 or length != 20 or magic != (auth ^ 0xffffffff):
+        raise RuntimeError('ADB must require host key authentication')
 
 
 def prepare():
@@ -122,6 +172,7 @@ def prepare():
         raise RuntimeError('Android /data requires user xattrs; attach an ephemeral root volume') from exc
     finally:
         probe.unlink(missing_ok=True)
+    prepare_adb_key()
     devices = []
     for path in ['/dev/fuse', '/dev/net/tun', '/dev/dma_heap/system']:
         try:
@@ -153,6 +204,7 @@ def boot(timeout=180):
             raise RuntimeError('Android exited during startup; see console.log')
         result = run(*RUNC, 'exec', 'android', '/system/bin/getprop', 'sys.boot_completed', check=False)
         if result.stdout.strip() == '1':
+            verify_adb_auth(endpoint)
             run('adb', 'connect', endpoint)
             run('adb', '-s', endpoint, 'shell', 'true')
             (STATE / 'adb-address').write_text(endpoint + '\n')
