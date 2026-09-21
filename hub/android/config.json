@@ -340,7 +340,12 @@
     "resources": {
       "devices": [
         {
+          "allow": false,
+          "access": "rwm"
+        },
+        {
           "allow": true,
+          "type": "c",
           "access": "rwm"
         }
       ]

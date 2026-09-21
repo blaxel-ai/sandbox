@@ -50,6 +50,9 @@ def make_config(template, devices):
 
 def rules(net):
     return [(['-t', 'nat'], 'POSTROUTING', ['-s', str(net), '!', '-o', LINK, '-j', 'MASQUERADE']),
+            # Defense in depth for cloud metadata. Tenant network isolation is
+            # enforced outside this guest; Android root can change guest rules.
+            ([], 'FORWARD', ['-i', LINK, '-d', '169.254.0.0/16', '-j', 'DROP']),
             ([], 'FORWARD', ['-i', LINK, '-j', 'ACCEPT']),
             ([], 'FORWARD', ['-o', LINK, '-m', 'conntrack', '--ctstate', 'RELATED,ESTABLISHED', '-j', 'ACCEPT'])]
 
