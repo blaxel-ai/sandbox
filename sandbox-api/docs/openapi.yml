@@ -1344,7 +1344,7 @@ paths:
         - process
   "/process/{identifier}":
     delete:
-      description: Gracefully stop a running process
+      description: Request graceful termination. Poll GET /process/{identifier} until terminal status confirms the managed process has exited.
       parameters:
         - description: Process identifier (PID or name)
           in: path
@@ -1354,7 +1354,7 @@ paths:
             type: string
       responses:
         "200":
-          description: Process stopped
+          description: Process stop requested
           content:
             application/json:
               schema:
@@ -1407,7 +1407,7 @@ paths:
         - process
   "/process/{identifier}/kill":
     delete:
-      description: Forcefully kill a running process
+      description: Request forceful termination. Poll GET /process/{identifier} until terminal status confirms the managed process has exited.
       parameters:
         - description: Process identifier (PID or name)
           in: path
@@ -1417,7 +1417,7 @@ paths:
             type: string
       responses:
         "200":
-          description: Process killed
+          description: Process kill requested
           content:
             application/json:
               schema:

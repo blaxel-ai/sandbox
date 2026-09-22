@@ -40,18 +40,33 @@ type stdinPipe struct {
 // attachStdin gives cmd a stdin pipe when the process asked for one. Called on
 // every run, so a restart-on-failure gets a fresh pipe; exec.Cmd.Wait closes the
 // previous one when the old run exits.
-func attachStdin(cmd *exec.Cmd, p *ProcessInfo) error {
+func attachStdin(cmd *exec.Cmd, p *ProcessInfo) (func(), error) {
 	if !p.Stdin {
-		return nil
+		return func() {}, nil
 	}
 	w, err := cmd.StdinPipe()
 	if err != nil {
-		return fmt.Errorf("failed to create stdin pipe: %w", err)
+		return nil, fmt.Errorf("failed to create stdin pipe: %w", err)
 	}
 	p.stdin.mu.Lock()
 	p.stdin.w = w
 	p.stdin.mu.Unlock()
-	return nil
+	// Cmd.Start/Wait own the pipe after a successful start. Before that,
+	// cancellation must close both ends, including the reader held by Cmd.
+	return func() {
+		if cmd.Process != nil {
+			return
+		}
+		_ = w.Close()
+		if r, ok := cmd.Stdin.(io.Closer); ok {
+			_ = r.Close()
+		}
+		p.stdin.mu.Lock()
+		if p.stdin.w == w {
+			p.stdin.w = nil
+		}
+		p.stdin.mu.Unlock()
+	}, nil
 }
 
 // WriteStdin writes data verbatim to the process's stdin. The whole body goes
