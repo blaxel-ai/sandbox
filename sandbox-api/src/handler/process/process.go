@@ -463,13 +463,16 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 	cmd.Stdout = stdoutFile
 	cmd.Stderr = stderrFile
 
-	if err := attachStdin(cmd, process); err != nil {
+	cleanupStdin, err := attachStdin(cmd, process)
+	if err != nil {
 		stdoutFile.Close()
 		stderrFile.Close()
 		os.Remove(stdoutPath)
 		os.Remove(stderrPath)
 		return "", err
 	}
+
+	defer cleanupStdin()
 
 	// Start the process
 	if err := cmd.Start(); err != nil {
@@ -911,11 +914,14 @@ func (pm *ProcessManager) restartProcess(oldProcess *ProcessInfo, callback func(
 	oldProcess.stderrMidLine = false
 	oldProcess.logLock.Unlock()
 
-	if err := attachStdin(cmd, oldProcess); err != nil {
+	cleanupStdin, err := attachStdin(cmd, oldProcess)
+	if err != nil {
 		stdoutFile.Close()
 		stderrFile.Close()
 		return "", err
 	}
+
+	defer cleanupStdin()
 
 	// Serialize the actual spawn with explicit stop/kill requests. Setup above
 	// does not hold the manager lock or allow a stop to miss the new OS PID.

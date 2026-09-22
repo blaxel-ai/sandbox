@@ -301,8 +301,11 @@ func (pm *ProcessManager) LoadState() error {
 					"name":        proc.Name,
 					"command":     proc.Command,
 					"process-pid": proc.ProcessPid,
-				}).Warn("Process command mismatch, marking as failed (PID may have been reused)")
+				}).Warn("Saved process command mismatch (PID may have been reused)")
 				proc.Status = StatusFailed
+				if proc.terminationRequested != "" {
+					proc.Status = proc.terminationRequested
+				}
 				now := time.Now()
 				proc.CompletedAt = &now
 				proc.ExitCode = -1
@@ -364,6 +367,9 @@ func (pm *ProcessManager) LoadState() error {
 		} else if procState.Status == StatusRunning {
 			// Process was running but is now dead
 			proc.Status = StatusFailed
+			if proc.terminationRequested != "" {
+				proc.Status = proc.terminationRequested
+			}
 			now := time.Now()
 			proc.CompletedAt = &now
 			proc.ExitCode = -1 // Unknown exit code
