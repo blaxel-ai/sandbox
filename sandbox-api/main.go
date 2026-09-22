@@ -119,6 +119,7 @@ func main() {
 			logrus.WithError(err).Error("Failed to merge CA bundle – TLS connections through the proxy may fail")
 		}
 	}()
+	networking.StartVirtioWatchdog(ctx)
 	go func() {
 		defer wg.Done()
 		span := txn.StartChild("startup.wireguard")
