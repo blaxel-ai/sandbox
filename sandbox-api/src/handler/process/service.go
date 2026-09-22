@@ -189,8 +189,6 @@ func (pm *ProcessManager) ExecuteProcess(
 			// so the caller can still access the running process
 			processInfo, exists := pm.GetProcessByIdentifier(pid)
 			if exists {
-				logs := processInfo.logs.String()
-				processInfo.Logs = &logs
 				return processInfo, fmt.Errorf("process timed out after %d seconds", timeout)
 			}
 			return nil, fmt.Errorf("process timed out after %d seconds", timeout)
@@ -205,6 +203,7 @@ func (pm *ProcessManager) ExecuteProcess(
 	if waitForCompletion {
 		// Read logs from file if available (more reliable than in-memory)
 		output, err := pm.GetProcessOutput(pid)
+		processInfo.logLock.Lock()
 		if err == nil {
 			processInfo.Logs = &output.Logs
 			processInfo.Stdout = &output.Stdout
@@ -218,6 +217,7 @@ func (pm *ProcessManager) ExecuteProcess(
 			stderr := processInfo.stderr.String()
 			processInfo.Stderr = &stderr
 		}
+		processInfo.logLock.Unlock()
 	}
 	return processInfo, nil
 }

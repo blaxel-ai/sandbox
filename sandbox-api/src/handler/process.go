@@ -108,123 +108,55 @@ func (h *ProcessHandler) ExecuteProcess(command string, workingDir string, name 
 		return ProcessResponse{}, err
 	}
 
-	completedAt := ""
-	if processInfo.CompletedAt != nil {
-		completedAt = processInfo.CompletedAt.Format("Mon, 02 Jan 2006 15:04:05 GMT")
+	// Take one detached snapshot before serializing the lifecycle fields.
+	snapshot, exists := h.processManager.GetProcessSnapshot(processInfo.PID)
+	if !exists {
+		return ProcessResponse{}, fmt.Errorf("process not found")
 	}
-
-	// Return the process response even if there's an error (e.g., timeout)
-	// This allows callers to access process info for still-running processes
-	return ProcessResponse{
-		PID:              processInfo.PID,
-		Name:             processInfo.Name,
-		Command:          processInfo.Command,
-		Status:           string(processInfo.Status),
-		StartedAt:        processInfo.StartedAt.Format("Mon, 02 Jan 2006 15:04:05 GMT"),
-		CompletedAt:      &completedAt,
-		ExitCode:         processInfo.ExitCode,
-		WorkingDir:       processInfo.WorkingDir,
-		Logs:             processInfo.Logs,
-		Stdout:           processInfo.Stdout,
-		Stderr:           processInfo.Stderr,
-		RestartOnFailure: processInfo.RestartOnFailure,
-		MaxRestarts:      processInfo.MaxRestarts,
-		RestartCount:     processInfo.RestartCount,
-		KeepAlive:        processInfo.KeepAlive,
-		Stdin:            processInfo.Stdin,
-	}, err
+	return processResponse(snapshot, false), err
 }
 
-// ListProcesses lists all running processes
+// processResponse serializes only detached data, never the live ProcessInfo.
+func processResponse(p process.ProcessSnapshot, nullableCompletion bool) ProcessResponse {
+	var completedAt *string
+	if p.CompletedAt != nil {
+		value := p.CompletedAt.Format("Mon, 02 Jan 2006 15:04:05 GMT")
+		completedAt = &value
+	} else if !nullableCompletion {
+		value := ""
+		completedAt = &value
+	}
+	return ProcessResponse{
+		PID: p.PID, Name: p.Name, Command: p.Command, Status: string(p.Status),
+		StartedAt:   p.StartedAt.Format("Mon, 02 Jan 2006 15:04:05 GMT"),
+		CompletedAt: completedAt, ExitCode: p.ExitCode, WorkingDir: p.WorkingDir,
+		Logs: p.Logs, Stdout: p.Stdout, Stderr: p.Stderr,
+		RestartOnFailure: p.RestartOnFailure, MaxRestarts: p.MaxRestarts,
+		RestartCount: p.RestartCount, KeepAlive: p.KeepAlive, Stdin: p.Stdin,
+	}
+}
+
+// ListProcesses lists process snapshots with bounded log tails.
 func (h *ProcessHandler) ListProcesses() []ProcessResponse {
-	processes := h.processManager.ListProcesses()
+	processes := h.processManager.ListProcessSnapshots()
 	result := make([]ProcessResponse, 0, len(processes))
 	for _, p := range processes {
-		var completedAtPtr *string
-		if p.CompletedAt != nil {
-			completedAt := p.CompletedAt.Format("Mon, 02 Jan 2006 15:04:05 GMT")
-			completedAtPtr = &completedAt
-		}
-
-		// Get logs from file if available. A list inlines every process' output
-		// in a single response, so only the tail of each is read.
-		var logs, stdout, stderr *string
-		if output, err := h.processManager.GetProcessOutputTail(p.PID, process.MaxInlinedLogBytes); err == nil {
-			logs = &output.Logs
-			stdout = &output.Stdout
-			stderr = &output.Stderr
-		} else {
-			logs = p.Logs
-			stdout = p.Stdout
-			stderr = p.Stderr
-		}
-
-		result = append(result, ProcessResponse{
-			PID:              p.PID,
-			Name:             p.Name,
-			Command:          p.Command,
-			Status:           string(p.Status),
-			StartedAt:        p.StartedAt.Format("Mon, 02 Jan 2006 15:04:05 GMT"),
-			CompletedAt:      completedAtPtr,
-			ExitCode:         p.ExitCode,
-			WorkingDir:       p.WorkingDir,
-			Logs:             logs,
-			Stdout:           stdout,
-			Stderr:           stderr,
-			RestartOnFailure: p.RestartOnFailure,
-			MaxRestarts:      p.MaxRestarts,
-			RestartCount:     p.RestartCount,
-			KeepAlive:        p.KeepAlive,
-			Stdin:            p.Stdin,
-		})
+		output := p.OutputTail(process.MaxInlinedLogBytes)
+		p.Logs, p.Stdout, p.Stderr = &output.Logs, &output.Stdout, &output.Stderr
+		result = append(result, processResponse(p, true))
 	}
 	return result
 }
 
-// GetProcess gets a process by identifier (PID or name)
+// GetProcess gets a coherent process snapshot by identifier (PID or name).
 func (h *ProcessHandler) GetProcess(identifier string) (ProcessResponse, error) {
-	processInfo, exists := h.processManager.GetProcessByIdentifier(identifier)
+	p, exists := h.processManager.GetProcessSnapshot(identifier)
 	if !exists {
 		return ProcessResponse{}, fmt.Errorf("process not found")
 	}
-
-	completedAt := ""
-	if processInfo.CompletedAt != nil {
-		completedAt = processInfo.CompletedAt.Format("Mon, 02 Jan 2006 15:04:05 GMT")
-	}
-
-	// Get logs from file if available. Like a list, this inlines the output in a
-	// response describing the process, so it reads a tail: the whole output is
-	// what GET /process/{identifier}/logs is for.
-	var logs, stdout, stderr *string
-	if output, err := h.processManager.GetProcessOutputTail(identifier, process.MaxInlinedLogBytes); err == nil {
-		logs = &output.Logs
-		stdout = &output.Stdout
-		stderr = &output.Stderr
-	} else {
-		logs = processInfo.Logs
-		stdout = processInfo.Stdout
-		stderr = processInfo.Stderr
-	}
-
-	return ProcessResponse{
-		PID:              processInfo.PID,
-		Name:             processInfo.Name,
-		Command:          processInfo.Command,
-		Status:           string(processInfo.Status),
-		StartedAt:        processInfo.StartedAt.Format("Mon, 02 Jan 2006 15:04:05 GMT"),
-		CompletedAt:      &completedAt,
-		ExitCode:         processInfo.ExitCode,
-		WorkingDir:       processInfo.WorkingDir,
-		Logs:             logs,
-		Stdout:           stdout,
-		Stderr:           stderr,
-		RestartOnFailure: processInfo.RestartOnFailure,
-		MaxRestarts:      processInfo.MaxRestarts,
-		RestartCount:     processInfo.RestartCount,
-		KeepAlive:        processInfo.KeepAlive,
-		Stdin:            processInfo.Stdin,
-	}, nil
+	output := p.OutputTail(process.MaxInlinedLogBytes)
+	p.Logs, p.Stdout, p.Stderr = &output.Logs, &output.Stdout, &output.Stderr
+	return processResponse(p, false), nil
 }
 
 // GetProcessOutput gets the output of a process
@@ -428,8 +360,8 @@ func (h *ProcessHandler) handleExecuteCommandStream(c *gin.Context) {
 		case <-c.Request.Context().Done():
 			h.RemoveLogWriter(processInfo.PID, jw)
 			return
-		case <-proc.Done:
-			// Process completed
+		case <-proc.Finished:
+			// The final run exited and its terminal state has been published.
 			goto done
 		case <-keepaliveTicker.C:
 			// Send keepalive message to prevent connection timeout
@@ -437,9 +369,6 @@ func (h *ProcessHandler) handleExecuteCommandStream(c *gin.Context) {
 		}
 	}
 done:
-
-	// Wait for tailLogFiles to complete its final reads
-	<-proc.TailDone
 
 	// Detach the writer before reading final content
 	h.RemoveLogWriter(processInfo.PID, jw)
@@ -568,9 +497,6 @@ func (h *ProcessHandler) HandleGetProcessLogsStream(c *gin.Context) {
 		return
 	}
 
-	// Wait for tailLogFiles to complete its final reads
-	<-proc.TailDone
-
 	// Detach the writer
 	h.RemoveLogWriter(identifier, rw)
 
@@ -600,12 +526,12 @@ func logStreamEnd(identifier, reason string, start time.Time, rw *ResponseWriter
 
 // HandleStopProcess handles DELETE requests to /process/{identifier}
 // @Summary Stop a process
-// @Description Gracefully stop a running process
+// @Description Request graceful termination. Poll GET /process/{identifier} until terminal status confirms the managed process has exited.
 // @Tags process
 // @Accept json
 // @Produce json
 // @Param identifier path string true "Process identifier (PID or name)"
-// @Success 200 {object} SuccessResponse "Process stopped"
+// @Success 200 {object} SuccessResponse "Process stop requested"
 // @Failure 404 {object} ErrorResponse "Process not found"
 // @Failure 422 {object} ErrorResponse "Unprocessable entity"
 // @Failure 500 {object} ErrorResponse "Internal server error"
@@ -625,17 +551,17 @@ func (h *ProcessHandler) HandleStopProcess(c *gin.Context) {
 		return
 	}
 
-	h.SendJSON(c, http.StatusOK, gin.H{"message": "Process stopped successfully"})
+	h.SendJSON(c, http.StatusOK, gin.H{"message": "Process stop requested"})
 }
 
 // HandleKillProcess handles DELETE requests to /process/{identifier}/kill
 // @Summary Kill a process
-// @Description Forcefully kill a running process
+// @Description Request forceful termination. Poll GET /process/{identifier} until terminal status confirms the managed process has exited.
 // @Tags process
 // @Accept json
 // @Produce json
 // @Param identifier path string true "Process identifier (PID or name)"
-// @Success 200 {object} SuccessResponse "Process killed"
+// @Success 200 {object} SuccessResponse "Process kill requested"
 // @Failure 404 {object} ErrorResponse "Process not found"
 // @Failure 422 {object} ErrorResponse "Unprocessable entity"
 // @Failure 500 {object} ErrorResponse "Internal server error"
@@ -655,7 +581,7 @@ func (h *ProcessHandler) HandleKillProcess(c *gin.Context) {
 		return
 	}
 
-	h.SendJSON(c, http.StatusOK, gin.H{"message": "Process killed successfully"})
+	h.SendJSON(c, http.StatusOK, gin.H{"message": "Process kill requested"})
 }
 
 // maxStdinBody caps one stdin write. Callers stream stdio protocols one message

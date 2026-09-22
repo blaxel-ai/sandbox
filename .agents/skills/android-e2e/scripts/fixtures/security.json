@@ -1,0 +1,6 @@
+{
+  "name": "android-e2e-security",
+  "waitForCompletion": true,
+  "timeout": 100,
+  "commandFile": "security.py"
+}

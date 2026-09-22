@@ -1,0 +1,6 @@
+{
+  "name": "android-e2e-restart-ready",
+  "waitForCompletion": true,
+  "timeout": 60,
+  "commandFile": "restart-ready.py"
+}

@@ -217,23 +217,31 @@ func (s *Server) registerProcessTools() error {
 	// Stop process
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "processStop",
-		Description: "Stop a specific process",
+		Description: "Request a graceful stop and return the observed status. Poll processGet until terminal to confirm exit.",
 	}, LogToolCall("processStop", func(ctx context.Context, req *mcp.CallToolRequest, input ProcessIdentifierInput) (*mcp.CallToolResult, ProcessStatusOutput, error) {
 		if err := s.handlers.Process.StopProcess(input.Identifier); err != nil {
 			return nil, ProcessStatusOutput{}, fmt.Errorf("failed to stop process: %w", err)
 		}
-		return nil, ProcessStatusOutput{Status: "stopped"}, nil
+		process, err := s.handlers.Process.GetProcess(input.Identifier)
+		if err != nil {
+			return nil, ProcessStatusOutput{}, fmt.Errorf("failed to get process after stop request: %w", err)
+		}
+		return nil, ProcessStatusOutput{Status: process.Status}, nil
 	}))
 
 	// Kill process
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "processKill",
-		Description: "Kill a specific process",
+		Description: "Request a kill and return the observed status. Poll processGet until terminal to confirm exit.",
 	}, LogToolCall("processKill", func(ctx context.Context, req *mcp.CallToolRequest, input ProcessIdentifierInput) (*mcp.CallToolResult, ProcessStatusOutput, error) {
 		if err := s.handlers.Process.KillProcess(input.Identifier); err != nil {
 			return nil, ProcessStatusOutput{}, fmt.Errorf("failed to kill process: %w", err)
 		}
-		return nil, ProcessStatusOutput{Status: "killed"}, nil
+		process, err := s.handlers.Process.GetProcess(input.Identifier)
+		if err != nil {
+			return nil, ProcessStatusOutput{}, fmt.Errorf("failed to get process after kill request: %w", err)
+		}
+		return nil, ProcessStatusOutput{Status: process.Status}, nil
 	}))
 
 	return nil

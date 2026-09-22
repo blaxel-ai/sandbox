@@ -1,0 +1,7 @@
+{
+  "name": "android-e2e-app-prep",
+  "waitForCompletion": false,
+  "keepAlive": true,
+  "timeout": 180,
+  "commandFile": "app-prep.sh"
+}
