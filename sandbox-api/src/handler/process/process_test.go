@@ -64,8 +64,10 @@ func TestProcessManagerIntegrationWithPID(t *testing.T) {
 			t.Log("Sleep process stopped successfully")
 		}
 
-		// Wait for process to terminate
-		time.Sleep(10 * time.Millisecond)
+		waitFor(t, "process termination", func() bool {
+			p, exists := pm.GetProcessSnapshot(sleepPID)
+			return exists && (p.Status == StatusStopped || p.Status == StatusKilled)
+		})
 
 		// Verify process is terminated
 		process, exists = pm.GetProcessByIdentifier(sleepPID)
@@ -238,8 +240,11 @@ func TestProcessManagerIntegrationWithName(t *testing.T) {
 			t.Log("Sleep process stopped successfully")
 		}
 
-		// Wait for process to terminate
-		time.Sleep(10 * time.Millisecond)
+		// Wait for the actual exit and final log drain.
+		waitFor(t, "process termination", func() bool {
+			p, exists := pm.GetProcessSnapshot(name)
+			return exists && (p.Status == StatusStopped || p.Status == StatusKilled)
+		})
 
 		// Verify process is terminated
 		process, exists = pm.GetProcessByIdentifier(name)
@@ -263,8 +268,10 @@ func TestProcessManagerIntegrationWithName(t *testing.T) {
 		}
 		t.Logf("Started echo process with name: %s", name)
 
-		// Wait for process to complete (shell wrapper needs more time)
-		time.Sleep(20 * time.Millisecond)
+		waitFor(t, "process completion", func() bool {
+			p, exists := pm.GetProcessSnapshot(name)
+			return exists && p.Status == StatusCompleted
+		})
 
 		// Get and verify output
 		logs, err := pm.GetProcessOutput(name)
@@ -304,8 +311,10 @@ func TestProcessManagerIntegrationWithName(t *testing.T) {
 		}
 		t.Logf("Started ls process with name: %s in /tmp directory", name)
 
-		// Wait for process to complete (shell wrapper needs more time)
-		time.Sleep(20 * time.Millisecond)
+		waitFor(t, "process completion", func() bool {
+			p, exists := pm.GetProcessSnapshot(name)
+			return exists && p.Status == StatusCompleted
+		})
 
 		// Get and verify output
 		logs, err := pm.GetProcessOutput(name)

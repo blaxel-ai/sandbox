@@ -1664,7 +1664,7 @@ const docTemplate = `{
                 }
             },
             "delete": {
-                "description": "Gracefully stop a running process",
+                "description": "Request graceful termination. Poll GET /process/{identifier} until terminal status confirms the managed process has exited.",
                 "consumes": [
                     "application/json"
                 ],
@@ -1686,7 +1686,7 @@ const docTemplate = `{
                 ],
                 "responses": {
                     "200": {
-                        "description": "Process stopped",
+                        "description": "Process stop requested",
                         "schema": {
                             "$ref": "#/definitions/SuccessResponse"
                         }
@@ -1714,7 +1714,7 @@ const docTemplate = `{
         },
         "/process/{identifier}/kill": {
             "delete": {
-                "description": "Forcefully kill a running process",
+                "description": "Request forceful termination. Poll GET /process/{identifier} until terminal status confirms the managed process has exited.",
                 "consumes": [
                     "application/json"
                 ],
@@ -1736,7 +1736,7 @@ const docTemplate = `{
                 ],
                 "responses": {
                     "200": {
-                        "description": "Process killed",
+                        "description": "Process kill requested",
                         "schema": {
                             "$ref": "#/definitions/SuccessResponse"
                         }

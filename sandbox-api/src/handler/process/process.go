@@ -95,28 +95,32 @@ type ProcessLogs struct {
 
 // ProcessInfo stores information about a running process
 type ProcessInfo struct {
-	PID              string                  `json:"pid"`
-	Name             string                  `json:"name"`
-	Command          string                  `json:"command"`
-	ProcessPid       int                     `json:"-"` // Store the OS process PID for kill/stop operations
-	StartedAt        time.Time               `json:"startedAt"`
-	CompletedAt      *time.Time              `json:"completedAt"`
-	ExitCode         int                     `json:"exitCode"`
-	Status           constants.ProcessStatus `json:"status"`
-	WorkingDir       string                  `json:"workingDir"`
-	Env              map[string]string       `json:"-"` // Custom env vars provided at start, reused (re-merged with os.Environ()) on restart
-	Logs             *string                 `json:"logs"`
-	Stdout           *string                 `json:"stdout"`
-	Stderr           *string                 `json:"stderr"`
-	RestartOnFailure bool                    `json:"restartOnFailure"`
-	MaxRestarts      int                     `json:"maxRestarts"`
-	RestartCount     int                     `json:"restartCount"`
-	KeepAlive        bool                    `json:"keepAlive"`
-	Stdin            bool                    `json:"stdin"` // Whether the process was started with a writable stdin pipe
-	Timeout          int                     `json:"-"`     // Internal: timeout in seconds for keepAlive processes
-	LogFile          string                  `json:"-"`     // Path to combined log file
-	StdoutFile       string                  `json:"-"`     // Path to stdout log file
-	StderrFile       string                  `json:"-"`     // Path to stderr log file
+	PID         string                  `json:"pid"`
+	Name        string                  `json:"name"`
+	Command     string                  `json:"command"`
+	ProcessPid  int                     `json:"-"` // Store the OS process PID for kill/stop operations
+	StartedAt   time.Time               `json:"startedAt"`
+	CompletedAt *time.Time              `json:"completedAt"`
+	ExitCode    int                     `json:"exitCode"`
+	Status      constants.ProcessStatus `json:"status"`
+
+	terminationRequested constants.ProcessStatus // Protected by ProcessManager.mu.
+	runExited            bool                    // Wait has returned; no live OS process may be signalled.
+
+	WorkingDir       string            `json:"workingDir"`
+	Env              map[string]string `json:"-"` // Custom env vars provided at start, reused (re-merged with os.Environ()) on restart
+	Logs             *string           `json:"logs"`
+	Stdout           *string           `json:"stdout"`
+	Stderr           *string           `json:"stderr"`
+	RestartOnFailure bool              `json:"restartOnFailure"`
+	MaxRestarts      int               `json:"maxRestarts"`
+	RestartCount     int               `json:"restartCount"`
+	KeepAlive        bool              `json:"keepAlive"`
+	Stdin            bool              `json:"stdin"` // Whether the process was started with a writable stdin pipe
+	Timeout          int               `json:"-"`     // Internal: timeout in seconds for keepAlive processes
+	LogFile          string            `json:"-"`     // Path to combined log file
+	StdoutFile       string            `json:"-"`     // Path to stdout log file
+	StderrFile       string            `json:"-"`     // Path to stderr log file
 	Done             chan struct{}
 	TailDone         chan struct{} // Closed when tailLogFiles finishes its final reads
 	// Finished is closed once the process is over for good, with no restart to
@@ -217,25 +221,14 @@ func RestartsSuspended() bool {
 // callback fires, as for a process that ended for good. Its Done channel is
 // already closed by the restart path, so it is not touched here.
 func (pm *ProcessManager) leaveStopped(proc *ProcessInfo, callback func(*ProcessInfo)) {
-	log := logrus.WithFields(logrus.Fields{"process_pid": proc.PID, "process_name": proc.Name})
-	log.Info("[Process] Restarts are suspended, the process is left stopped")
-
-	pm.mu.RLock()
-	keepAlive := proc.KeepAlive
-	pm.mu.RUnlock()
-	if keepAlive {
-		if err := blaxel.ScaleEnable(); err != nil {
-			log.WithError(err).Warn("[KeepAlive] Failed to enable scale-to-zero")
-		}
+	pm.mu.Lock()
+	if proc.terminationRequested != "" {
+		proc.Status = proc.terminationRequested
+	} else {
+		proc.Status = StatusFailed
 	}
-
-	proc.logLock.Lock()
-	proc.logWriters = nil
-	proc.logLock.Unlock()
-
-	if callback != nil {
-		callback(proc)
-	}
+	pm.mu.Unlock()
+	pm.finishProcess(proc, callback)
 }
 
 // shouldRestart reports whether a failed process is eligible for another
@@ -249,7 +242,7 @@ func shouldRestart(p *ProcessInfo) bool {
 	if restartsSuspended.Load() {
 		return false
 	}
-	return p.Status == StatusFailed && p.RestartOnFailure &&
+	return p.terminationRequested == "" && p.Status == StatusFailed && p.RestartOnFailure &&
 		(p.MaxRestarts < 0 || p.RestartCount < p.MaxRestarts)
 }
 
@@ -539,171 +532,14 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 		}()
 	}
 
-	// Monitor process completion
-	go func() {
-		err := cmd.Wait()
-
-		// IMPORTANT: Release process resources immediately after Wait() to close pidfd
-		// This must be done right after Wait() completes to prevent FD leaks
-		if cmd.Process != nil {
-			_ = cmd.Process.Release()
-		}
-
-		// Small delay to allow filesystem to sync writes from the child process
-		// This is necessary on macOS where file writes may not be immediately visible
-		// to readers in other goroutines due to filesystem caching
-		time.Sleep(1 * time.Millisecond)
-
-		now := time.Now()
-		process.CompletedAt = &now
-
-		// Determine exit status and create appropriate message
-		if err != nil {
-			if process.Status != StatusStopped && process.Status != StatusKilled {
-				process.Status = StatusFailed
-			}
-			if exitErr, ok := err.(*exec.ExitError); ok {
-				process.ExitCode = exitErr.ExitCode()
-			} else {
-				process.ExitCode = 1
-			}
-		} else {
-			process.Status = StatusCompleted
-			process.ExitCode = 0
-		}
-
-		// Update process in memory
-		pm.mu.Lock()
-		pm.processes[process.PID] = process
-		pm.mu.Unlock()
-
-		// Signal the timeout goroutine to stop (if any)
-		if process.stopTimeout != nil {
-			process.stopTimeoutOnce.Do(func() { close(process.stopTimeout) })
-		}
-
-		// Check if we should restart on failure
-		if shouldRestart(process) {
-			// Log the failure and restart attempt
-			restartMsg := fmt.Sprintf("\n[Process failed with exit code %d. Attempting restart %d/%s...]\n",
-				process.ExitCode, process.RestartCount+1, restartLimitLabel(process.MaxRestarts))
-
-			process.logLock.Lock()
-			process.stdout.WriteString(restartMsg)
-			process.logs.WriteString(restartMsg)
-
-			// Append restart message to log files
-			if process.StdoutFile != "" {
-				if f, err := os.OpenFile(process.StdoutFile, os.O_APPEND|os.O_WRONLY, 0644); err == nil {
-					f.WriteString(restartMsg)
-					f.Close()
-				}
-			}
-
-			// Notify log writers about the restart
-			for _, w := range process.logWriters {
-				_, _ = w.Write([]byte(restartMsg))
-				if f, ok := w.(interface{ Flush() }); ok {
-					f.Flush()
-				}
-			}
-			process.logLock.Unlock()
-
-			// Increment restart count
-			process.RestartCount++
-
-			// Let the current tailLogFiles goroutine finish before restarting
-			close(process.Done)
-			<-process.TailDone
-
-			// Small delay before restart to avoid rapid restart loops
-			time.Sleep(1 * time.Second)
-
-			// Looked at again after the delay: an archive that suspended restarts
-			// meanwhile is reading the filesystem, and this process would come
-			// back as a writer the archive has no way of stopping any more.
-			if !beginRestart() {
-				pm.leaveStopped(process, callback)
-				return
-			}
-
-			// Restart the process with updated restart count
-			// The PID remains the same across restarts for user transparency
-			_, restartErr := pm.restartProcess(process, callback)
-			endRestart()
-			if restartErr != nil {
-				// If restart fails, log the error and call the callback
-				errorMsg := fmt.Sprintf("\n[Failed to restart process: %v]\n", restartErr)
-				process.stdout.WriteString(errorMsg)
-				process.logs.WriteString(errorMsg)
-
-				// If keepAlive was enabled, re-enable scale-to-zero now that process truly ended
-				pm.mu.RLock()
-				stillKeepAlive := process.KeepAlive
-				pm.mu.RUnlock()
-				if stillKeepAlive {
-					keepAliveLog := logrus.WithFields(logrus.Fields{
-						"process_pid":  process.PID,
-						"process_name": process.Name,
-						"status":       process.Status,
-						"exit_code":    process.ExitCode,
-					})
-					keepAliveLog.Info("[KeepAlive] Stopped process - restart failed")
-					if err := blaxel.ScaleEnable(); err != nil {
-						keepAliveLog.WithError(err).Warn("[KeepAlive] Failed to enable scale-to-zero")
-					}
-				}
-
-				// Clean up resources
-				// Signal tailLogFiles to do final reads, then wait for it to finish
-				close(process.Done)
-				<-process.TailDone
-
-				process.logLock.Lock()
-				process.logWriters = nil
-				process.logLock.Unlock()
-
-				process.markFinished()
-				callback(process)
-			}
-			// If restart succeeds, the callback will be called when that process completes
-		} else {
-			// If keepAlive was enabled, re-enable scale-to-zero now that process ended
-			pm.mu.RLock()
-			stillKeepAlive := process.KeepAlive
-			pm.mu.RUnlock()
-			if stillKeepAlive {
-				keepAliveLog := logrus.WithFields(logrus.Fields{
-					"process_pid":  process.PID,
-					"process_name": process.Name,
-					"status":       process.Status,
-					"exit_code":    process.ExitCode,
-				})
-				keepAliveLog.Info("[KeepAlive] Stopped process")
-				if err := blaxel.ScaleEnable(); err != nil {
-					keepAliveLog.WithError(err).Warn("[KeepAlive] Failed to enable scale-to-zero")
-				}
-			}
-
-			// Clean up resources
-			// Signal tailLogFiles to do final reads, then wait for it to finish
-			close(process.Done)
-			<-process.TailDone
-
-			process.logLock.Lock()
-			process.logWriters = nil
-			process.logLock.Unlock()
-
-			process.markFinished()
-			callback(process)
-		}
-	}()
+	go pm.waitForRun(process, cmd, callback)
 
 	return process.PID, nil
 }
 
 // tailLogFiles tails the stdout and stderr log files for real-time streaming
 func (pm *ProcessManager) tailLogFiles(proc *ProcessInfo) {
+	defer close(proc.TailDone)
 	// Open files for reading
 	stdoutFile, err := os.Open(proc.StdoutFile)
 	if err != nil {
@@ -759,7 +595,6 @@ func (pm *ProcessManager) tailLogFiles(proc *ProcessInfo) {
 				}
 			}
 			capFiles()
-			close(proc.TailDone)
 			return
 		default:
 			pm.drainStream(stdoutFile, stdoutBuf, proc, "stdout", combinedFile)
@@ -1018,8 +853,16 @@ func (pm *ProcessManager) restartProcess(oldProcess *ProcessInfo, callback func(
 	// return an error; leaving the old channel in place until after the
 	// working-dir and log-file checks made that second close panic on an
 	// already-closed channel.
+	pm.mu.Lock()
 	oldProcess.Done = make(chan struct{})
 	oldProcess.TailDone = make(chan struct{})
+	pm.mu.Unlock()
+	started := false
+	defer func() {
+		if !started {
+			close(oldProcess.TailDone)
+		}
+	}()
 
 	cmd := exec.Command(shell, cmdArgs...)
 
@@ -1060,13 +903,6 @@ func (pm *ProcessManager) restartProcess(oldProcess *ProcessInfo, callback func(
 	cmd.Stdout = stdoutFile
 	cmd.Stderr = stderrFile
 
-	// Keep the existing process info but reset status
-	oldProcess.Status = StatusRunning
-	oldProcess.StartedAt = time.Now()
-	oldProcess.CompletedAt = nil
-	oldProcess.ExitCode = 0
-	oldProcess.stopTimeout = make(chan struct{})
-	oldProcess.stopTimeoutOnce = sync.Once{}
 	// Fresh run, fresh line state: a run that died mid-line must not leave the
 	// next one's first line untagged. The Done/TailDone swap happens earlier,
 	// before anything that can fail.
@@ -1081,26 +917,35 @@ func (pm *ProcessManager) restartProcess(oldProcess *ProcessInfo, callback func(
 		return "", err
 	}
 
-	// Start the process
+	// Serialize the actual spawn with explicit stop/kill requests. Setup above
+	// does not hold the manager lock or allow a stop to miss the new OS PID.
+	pm.mu.Lock()
+	if oldProcess.terminationRequested != "" {
+		pm.mu.Unlock()
+		stdoutFile.Close()
+		stderrFile.Close()
+		return "", fmt.Errorf("restart canceled by explicit termination")
+	}
 	if err := cmd.Start(); err != nil {
+		pm.mu.Unlock()
 		stdoutFile.Close()
 		stderrFile.Close()
 		return "", err
 	}
-
-	// Update only the OS process PID for kill/stop operations
-	// Keep the user-facing PID (oldProcess.PID) unchanged for transparency
+	started = true
 	oldProcess.ProcessPid = cmd.Process.Pid
-	oom.PreferAsVictim(oldProcess.ProcessPid)
-
-	// Close write handles in parent - child has its own FDs
+	oldProcess.runExited = false
+	oldProcess.RestartCount++
+	oldProcess.Status = StatusRunning
+	oldProcess.StartedAt = time.Now()
+	oldProcess.CompletedAt = nil
+	oldProcess.ExitCode = 0
+	oldProcess.stopTimeout = make(chan struct{})
+	oldProcess.stopTimeoutOnce = sync.Once{}
+	pm.mu.Unlock()
+	oom.PreferAsVictim(cmd.Process.Pid)
 	stdoutFile.Close()
 	stderrFile.Close()
-
-	// Update the process in memory (same map key, just updating the entry)
-	pm.mu.Lock()
-	pm.processes[oldProcess.PID] = oldProcess
-	pm.mu.Unlock()
 
 	// Start file tailer for real-time log streaming
 	go pm.tailLogFiles(oldProcess)
@@ -1127,164 +972,7 @@ func (pm *ProcessManager) restartProcess(oldProcess *ProcessInfo, callback func(
 		}()
 	}
 
-	// Monitor the restarted process
-	go func() {
-		err := cmd.Wait()
-
-		// IMPORTANT: Release process resources immediately after Wait() to close pidfd
-		// This must be done right after Wait() completes to prevent FD leaks
-		if cmd.Process != nil {
-			_ = cmd.Process.Release()
-		}
-
-		// Small delay to allow filesystem to sync writes from the child process
-		// This is necessary on macOS where file writes may not be immediately visible
-		// to readers in other goroutines due to filesystem caching
-		time.Sleep(1 * time.Millisecond)
-
-		now := time.Now()
-		oldProcess.CompletedAt = &now
-
-		// Determine exit status
-		if err != nil {
-			if oldProcess.Status != StatusStopped && oldProcess.Status != StatusKilled {
-				oldProcess.Status = StatusFailed
-			}
-			if exitErr, ok := err.(*exec.ExitError); ok {
-				oldProcess.ExitCode = exitErr.ExitCode()
-			} else {
-				oldProcess.ExitCode = 1
-			}
-		} else {
-			oldProcess.Status = StatusCompleted
-			oldProcess.ExitCode = 0
-		}
-
-		// Update process in memory (PID stays the same, just updating the entry)
-		pm.mu.Lock()
-		pm.processes[oldProcess.PID] = oldProcess
-		pm.mu.Unlock()
-
-		// Signal the timeout goroutine to stop (if any)
-		if oldProcess.stopTimeout != nil {
-			oldProcess.stopTimeoutOnce.Do(func() { close(oldProcess.stopTimeout) })
-		}
-
-		// Check if we should restart again on failure
-		if shouldRestart(oldProcess) {
-			// Log the failure and restart attempt
-			restartMsg := fmt.Sprintf("\n[Process failed with exit code %d. Attempting restart %d/%s...]\n",
-				oldProcess.ExitCode, oldProcess.RestartCount+1, restartLimitLabel(oldProcess.MaxRestarts))
-
-			oldProcess.logLock.Lock()
-			oldProcess.stdout.WriteString(restartMsg)
-			oldProcess.logs.WriteString(restartMsg)
-
-			// Append restart message to log file
-			if oldProcess.StdoutFile != "" {
-				if f, err := os.OpenFile(oldProcess.StdoutFile, os.O_APPEND|os.O_WRONLY, 0644); err == nil {
-					f.WriteString(restartMsg)
-					f.Close()
-				}
-			}
-
-			// Notify log writers about the restart
-			for _, w := range oldProcess.logWriters {
-				_, _ = w.Write([]byte(restartMsg))
-				if f, ok := w.(interface{ Flush() }); ok {
-					f.Flush()
-				}
-			}
-			oldProcess.logLock.Unlock()
-
-			// Increment restart count
-			oldProcess.RestartCount++
-
-			// Let the current tailLogFiles goroutine finish before restarting
-			close(oldProcess.Done)
-			<-oldProcess.TailDone
-
-			// Small delay before restart to avoid rapid restart loops
-			time.Sleep(1 * time.Second)
-
-			// See the same check in StartProcessWithName: an archive may have
-			// suspended restarts while this one was waiting.
-			if !beginRestart() {
-				pm.leaveStopped(oldProcess, callback)
-				return
-			}
-
-			// Restart the process recursively
-			// The PID remains the same across restarts for user transparency
-			_, restartErr := pm.restartProcess(oldProcess, callback)
-			endRestart()
-			if restartErr != nil {
-				// If restart fails, log the error and call the callback
-				errorMsg := fmt.Sprintf("\n[Failed to restart process: %v]\n", restartErr)
-				oldProcess.stdout.WriteString(errorMsg)
-				oldProcess.logs.WriteString(errorMsg)
-
-				// If keepAlive was enabled, re-enable scale-to-zero now that process truly ended
-				pm.mu.RLock()
-				stillKeepAlive := oldProcess.KeepAlive
-				pm.mu.RUnlock()
-				if stillKeepAlive {
-					keepAliveLog := logrus.WithFields(logrus.Fields{
-						"process_pid":  oldProcess.PID,
-						"process_name": oldProcess.Name,
-						"status":       oldProcess.Status,
-						"exit_code":    oldProcess.ExitCode,
-					})
-					keepAliveLog.Info("[KeepAlive] Stopped process - restart failed")
-					if err := blaxel.ScaleEnable(); err != nil {
-						keepAliveLog.WithError(err).Warn("[KeepAlive] Failed to enable scale-to-zero")
-					}
-				}
-
-				// Clean up resources
-				// Signal tailLogFiles to do final reads, then wait for it to finish
-				close(oldProcess.Done)
-				<-oldProcess.TailDone
-
-				oldProcess.logLock.Lock()
-				oldProcess.logWriters = nil
-				oldProcess.logLock.Unlock()
-
-				oldProcess.markFinished()
-				callback(oldProcess)
-			}
-			// If restart succeeds, the callback will be called when that process completes
-		} else {
-			// If keepAlive was enabled, re-enable scale-to-zero now that process ended
-			pm.mu.RLock()
-			stillKeepAlive := oldProcess.KeepAlive
-			pm.mu.RUnlock()
-			if stillKeepAlive {
-				keepAliveLog := logrus.WithFields(logrus.Fields{
-					"process_pid":  oldProcess.PID,
-					"process_name": oldProcess.Name,
-					"status":       oldProcess.Status,
-					"exit_code":    oldProcess.ExitCode,
-				})
-				keepAliveLog.Info("[KeepAlive] Stopped process")
-				if err := blaxel.ScaleEnable(); err != nil {
-					keepAliveLog.WithError(err).Warn("[KeepAlive] Failed to enable scale-to-zero")
-				}
-			}
-
-			// Clean up resources
-			// Signal tailLogFiles to do final reads, then wait for it to finish
-			close(oldProcess.Done)
-			<-oldProcess.TailDone
-
-			oldProcess.logLock.Lock()
-			oldProcess.logWriters = nil
-			oldProcess.logLock.Unlock()
-
-			oldProcess.markFinished()
-			callback(oldProcess)
-		}
-	}()
+	go pm.waitForRun(oldProcess, cmd, callback)
 
 	return oldProcess.PID, nil
 }
@@ -1302,16 +990,8 @@ func (pm *ProcessManager) GetProcessByIdentifier(identifier string) (*ProcessInf
 			return nil, false
 		}
 
-		// If the process is running, try to get additional information from the OS
-		if process.Status == StatusRunning {
-			pidInt, err := strconv.Atoi(process.PID)
-			if err == nil {
-				// Store the OS process PID for kill/stop operations
-				process.ProcessPid = pidInt
-			}
-		}
 		// Acquire logLock to safely read logs (they're written under this lock)
-		process.logLock.RLock()
+		process.logLock.Lock()
 		if process.logs != nil && process.logs.Len() > 0 {
 			logs := process.logs.String()
 			process.Logs = &logs
@@ -1324,7 +1004,7 @@ func (pm *ProcessManager) GetProcessByIdentifier(identifier string) (*ProcessInf
 			stderr := process.stderr.String()
 			process.Stderr = &stderr
 		}
-		process.logLock.RUnlock()
+		process.logLock.Unlock()
 		return process, true
 	}
 	// Search by name - find the most recent process with this name
@@ -1339,7 +1019,7 @@ func (pm *ProcessManager) GetProcessByIdentifier(identifier string) (*ProcessInf
 
 	if latestProcess != nil {
 		// Acquire logLock to safely read logs (they're written under this lock)
-		latestProcess.logLock.RLock()
+		latestProcess.logLock.Lock()
 		if latestProcess.logs != nil {
 			logs := latestProcess.logs.String()
 			latestProcess.Logs = &logs
@@ -1352,7 +1032,7 @@ func (pm *ProcessManager) GetProcessByIdentifier(identifier string) (*ProcessInf
 			stderr := latestProcess.stderr.String()
 			latestProcess.Stderr = &stderr
 		}
-		latestProcess.logLock.RUnlock()
+		latestProcess.logLock.Unlock()
 		return latestProcess, true
 	}
 
@@ -1392,150 +1072,14 @@ func (pm *ProcessManager) CapLogFiles() {
 	}
 }
 
-// StopProcess attempts to gracefully stop a process
+// StopProcess requests graceful termination. Status stays running until exit is observed.
 func (pm *ProcessManager) StopProcess(identifier string) error {
-	process, exists := pm.GetProcessByIdentifier(identifier)
-	if !exists {
-		return fmt.Errorf("process with Identifier %s not found", identifier)
-	}
-
-	if process.Status != StatusRunning {
-		return fmt.Errorf("process with Identifier %s is not running", identifier)
-	}
-
-	if process.ProcessPid == 0 {
-		return fmt.Errorf("process with Identifier %s has no OS process", identifier)
-	}
-
-	// Notify log writers about termination
-	process.logLock.RLock()
-	terminationMsg := []byte("\n[Process is being gracefully terminated]\n")
-	for _, w := range process.logWriters {
-		_, _ = w.Write(terminationMsg)
-	}
-	process.logLock.RUnlock()
-
-	// Add termination message to output buffers
-	process.stdout.Write(terminationMsg)
-
-	// Clear KeepAlive BEFORE the signal under lock: the completion goroutine
-	// reads KeepAlive after cmd.Wait() returns, so we must ensure it sees false
-	// to prevent a double ScaleEnable() call.
-	pm.mu.Lock()
-	wasKeepAlive := process.KeepAlive
-	process.KeepAlive = false
-	pm.mu.Unlock()
-
-	// Try to gracefully terminate the entire process group first
-	pid := process.ProcessPid
-
-	// Send SIGTERM to the process group (negative PID targets the process group)
-	err := syscall.Kill(-pid, syscall.SIGTERM)
-	if err != nil {
-		// If process group termination fails, fall back to terminating just the process
-		err = syscall.Kill(pid, syscall.SIGTERM)
-		if err != nil {
-			if err.Error() != "os: process already finished" {
-				pm.mu.Lock()
-				process.KeepAlive = wasKeepAlive
-				pm.mu.Unlock()
-				return fmt.Errorf("failed to send SIGTERM to process with Identifier %s: %w", identifier, err)
-			}
-		}
-	}
-
-	process.Status = StatusStopped
-
-	if wasKeepAlive {
-		if process.stopTimeout != nil {
-			process.stopTimeoutOnce.Do(func() { close(process.stopTimeout) })
-		}
-
-		keepAliveLog := logrus.WithFields(logrus.Fields{
-			"process_pid":  process.PID,
-			"process_name": process.Name,
-			"status":       "stopped",
-		})
-		if err := blaxel.ScaleEnable(); err != nil {
-			keepAliveLog.WithError(err).Warn("[KeepAlive] Failed to enable scale-to-zero after stopping process")
-		}
-		keepAliveLog.Info("[KeepAlive] Stopped process")
-	}
-
-	return nil
+	return pm.signalProcess(identifier, syscall.SIGTERM, StatusStopped)
 }
 
-// KillProcess forcefully kills a process
+// KillProcess requests forceful termination. Status stays running until exit is observed.
 func (pm *ProcessManager) KillProcess(identifier string) error {
-	process, exists := pm.GetProcessByIdentifier(identifier)
-	if !exists {
-		return fmt.Errorf("process with Identifier %s not found", identifier)
-	}
-
-	if process.ProcessPid == 0 {
-		return fmt.Errorf("process with Identifier %s has no OS process", identifier)
-	}
-
-	// Notify log writers about forceful termination
-	process.logLock.RLock()
-	terminationMsg := []byte("\n[Process is being forcefully killed]\n")
-	for _, w := range process.logWriters {
-		_, _ = w.Write(terminationMsg)
-	}
-	process.logLock.RUnlock()
-
-	// Add termination message to output buffers
-	process.stdout.Write(terminationMsg)
-
-	// Clear KeepAlive BEFORE the kill under lock: the completion goroutine
-	// reads KeepAlive under the same lock after cmd.Wait() returns, so it will
-	// observe KeepAlive==false. This prevents a double ScaleEnable() call that
-	// would make the counter go negative and permanently disable auto-hibernation.
-	pm.mu.Lock()
-	wasKeepAlive := process.KeepAlive
-	process.KeepAlive = false
-	pm.mu.Unlock()
-
-	// Kill the entire process group to ensure all child processes are terminated
-	// This is crucial for processes like Next.js dev servers that spawn child processes
-	pid := process.ProcessPid
-
-	// First try to kill the process group (negative PID kills the process group)
-	err := syscall.Kill(-pid, syscall.SIGKILL)
-	if err != nil {
-		// If process group kill fails, fall back to killing just the process
-		// This might happen if the process didn't create a process group
-		err = syscall.Kill(pid, syscall.SIGKILL)
-		if err != nil {
-			if err.Error() != "os: process already finished" {
-				pm.mu.Lock()
-				process.KeepAlive = wasKeepAlive
-				pm.mu.Unlock()
-				return fmt.Errorf("failed to kill process with Identifier %s: %w", identifier, err)
-			}
-		}
-	}
-
-	process.Status = StatusKilled
-
-	if wasKeepAlive {
-		if process.stopTimeout != nil {
-			process.stopTimeoutOnce.Do(func() { close(process.stopTimeout) })
-		}
-
-		keepAliveLog := logrus.WithFields(logrus.Fields{
-			"process_pid":  process.PID,
-			"process_name": process.Name,
-			"status":       "killed",
-			"exit_code":    -1,
-		})
-		if err := blaxel.ScaleEnable(); err != nil {
-			keepAliveLog.WithError(err).Warn("[KeepAlive] Failed to enable scale-to-zero after killing process")
-		}
-		keepAliveLog.Info("[KeepAlive] Stopped process")
-	}
-
-	return nil
+	return pm.signalProcess(identifier, syscall.SIGKILL, StatusKilled)
 }
 
 // GetProcessOutput returns the stdout and stderr output of a process, read from

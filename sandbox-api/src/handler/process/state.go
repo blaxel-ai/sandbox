@@ -55,6 +55,8 @@ type ProcessState struct {
 	Env              map[string]string       `json:"env,omitempty"` // Custom env vars provided at start, reused on restart-on-failure
 	KeepAlive        bool                    `json:"keepAlive,omitempty"`
 	Timeout          int                     `json:"timeout,omitempty"`
+
+	TerminationRequested constants.ProcessStatus `json:"terminationRequested,omitempty"`
 }
 
 // ManagerState represents the full state of the process manager
@@ -105,6 +107,8 @@ func (pm *ProcessManager) SaveState() error {
 		proc.logLock.RUnlock()
 
 		state.Processes[pid] = ProcessState{
+			TerminationRequested: proc.terminationRequested,
+
 			PID:              proc.PID,
 			Name:             proc.Name,
 			Command:          proc.Command,
@@ -224,6 +228,8 @@ func (pm *ProcessManager) LoadState() error {
 
 		// Create ProcessInfo from saved state
 		proc := &ProcessInfo{
+			terminationRequested: procState.TerminationRequested,
+
 			PID:              procState.PID,
 			Name:             procState.Name,
 			Command:          procState.Command,
@@ -656,53 +662,24 @@ func (pm *ProcessManager) monitorAdoptedProcess(proc *ProcessInfo) {
 			}
 
 			if !isRunning {
-				// Process has exited (or is a zombie)
-				now := time.Now()
-				proc.CompletedAt = &now
-
-				// Try to reap the zombie process to clean it up
+				// Reap before publishing the terminal tuple, just as for a new child.
 				exitCode := reapZombieProcess(proc.ProcessPid)
-
-				// Update status
-				if proc.Status == StatusRunning {
-					proc.Status = StatusCompleted
-					proc.ExitCode = exitCode
-				}
-
-				// Update process in memory
+				now := time.Now()
 				pm.mu.Lock()
-				pm.processes[proc.PID] = proc
+				proc.runExited = true
+				proc.CompletedAt = &now
+				proc.ExitCode = exitCode
+				proc.Status = StatusCompleted
+				if exitCode != 0 {
+					proc.Status = StatusFailed
+				}
+				if proc.terminationRequested != "" {
+					proc.Status = proc.terminationRequested
+				}
 				pm.mu.Unlock()
-
-				// Clean up resources
-				proc.logLock.Lock()
-				proc.logWriters = nil
-				proc.logLock.Unlock()
-
-				// Signal that the process is done
 				close(proc.Done)
 				close(proc.TailDone)
-				proc.markFinished()
-
-				// Release the scale-to-zero hold taken when the process was
-				// adopted. Stop/Kill clear KeepAlive under the lock before
-				// signalling, so this only fires when the process exited on
-				// its own and no other path released the hold.
-				pm.mu.Lock()
-				wasKeepAlive := proc.KeepAlive
-				proc.KeepAlive = false
-				pm.mu.Unlock()
-				if wasKeepAlive {
-					if proc.stopTimeout != nil {
-						proc.stopTimeoutOnce.Do(func() { close(proc.stopTimeout) })
-					}
-					if err := blaxel.ScaleEnable(); err != nil {
-						logrus.WithError(err).WithFields(logrus.Fields{
-							"pid":  proc.PID,
-							"name": proc.Name,
-						}).Warn("[KeepAlive] Failed to enable scale-to-zero after adopted process exited")
-					}
-				}
+				pm.finishProcess(proc, nil)
 
 				logrus.WithFields(logrus.Fields{
 					"pid":         proc.PID,

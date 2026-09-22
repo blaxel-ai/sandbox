@@ -201,20 +201,11 @@ func TestLongRunningProcess(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-	// Check that the process is stopped
-	resp, err = common.MakeRequest(http.MethodGet, "/process/"+processID, nil)
-	require.NoError(t, err)
-	defer resp.Body.Close()
+	// DELETE acknowledges the signal; poll for the observed exit.
+	require.Eventually(t, func() bool {
+		return readTerminationState(t, processID).Status == "stopped"
+	}, 5*time.Second, 20*time.Millisecond)
 
-	var stoppedProcessDetails map[string]interface{}
-	err = json.NewDecoder(resp.Body).Decode(&stoppedProcessDetails)
-	require.NoError(t, err)
-
-	// The status should indicate the process is no longer running
-	// This might be "exited", "stopped", or something similar depending on your API
-	status, ok := stoppedProcessDetails["status"].(string)
-	require.True(t, ok, "Status should be a string")
-	assert.NotEqual(t, "running", status)
 }
 
 func TestProcessKillByName(t *testing.T) {
