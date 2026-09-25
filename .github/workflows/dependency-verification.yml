@@ -25,6 +25,7 @@ jobs:
     if: >-
       contains(github.event.pull_request.title, 'Dependabot') ||
       startsWith(github.event.pull_request.title, 'chore(deps)') ||
+      startsWith(github.head_ref, 'cploujoux/dependabot') ||
       startsWith(github.head_ref, 'cploujoux/devin/dependabot-') ||
       startsWith(github.head_ref, 'dependabot/') ||
       contains(github.event.pull_request.labels.*.name, 'dependencies') ||
@@ -62,6 +63,7 @@ jobs:
     if: >-
       contains(github.event.pull_request.title, 'Dependabot') ||
       startsWith(github.event.pull_request.title, 'chore(deps)') ||
+      startsWith(github.head_ref, 'cploujoux/dependabot') ||
       startsWith(github.head_ref, 'cploujoux/devin/dependabot-') ||
       startsWith(github.head_ref, 'dependabot/') ||
       contains(github.event.pull_request.labels.*.name, 'dependencies') ||
@@ -84,10 +86,13 @@ jobs:
         working-directory: hub/onboarder-nextjs/app-template
         run: npm run typecheck
 
-      - name: Run dependency smoke tests
-        working-directory: hub/onboarder-nextjs/app-template
-        run: npm test
-
       - name: Build
         working-directory: hub/onboarder-nextjs/app-template
         run: npm run build
+
+      # After the build on purpose: tests/next-runtime.test.mjs starts the built
+      # app with `next start` and fetches real routes, including the image
+      # optimizer path that goes through sharp.
+      - name: Run dependency smoke tests
+        working-directory: hub/onboarder-nextjs/app-template
+        run: npm test

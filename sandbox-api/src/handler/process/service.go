@@ -23,6 +23,7 @@ func (pm *ProcessManager) ExecuteProcess(
 	restartOnFailure bool,
 	maxRestarts int,
 	keepAlive bool,
+	stdin bool,
 ) (*ProcessInfo, error) {
 	portCh := make(chan int)
 	completionCh := make(chan string)
@@ -78,9 +79,9 @@ func (pm *ProcessManager) ExecuteProcess(
 	var pid string
 	var err error
 	if name != "" {
-		pid, err = pm.StartProcessWithName(command, workingDir, name, env, restartOnFailure, maxRestarts, keepAlive, timeout, callback)
+		pid, err = pm.StartProcessWithName(command, workingDir, name, env, restartOnFailure, maxRestarts, keepAlive, timeout, stdin, callback)
 	} else {
-		pid, err = pm.StartProcess(command, workingDir, env, restartOnFailure, maxRestarts, keepAlive, timeout, callback)
+		pid, err = pm.StartProcess(command, workingDir, env, restartOnFailure, maxRestarts, keepAlive, timeout, stdin, callback)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to start process: %w", err)
@@ -188,8 +189,6 @@ func (pm *ProcessManager) ExecuteProcess(
 			// so the caller can still access the running process
 			processInfo, exists := pm.GetProcessByIdentifier(pid)
 			if exists {
-				logs := processInfo.logs.String()
-				processInfo.Logs = &logs
 				return processInfo, fmt.Errorf("process timed out after %d seconds", timeout)
 			}
 			return nil, fmt.Errorf("process timed out after %d seconds", timeout)
@@ -204,6 +203,7 @@ func (pm *ProcessManager) ExecuteProcess(
 	if waitForCompletion {
 		// Read logs from file if available (more reliable than in-memory)
 		output, err := pm.GetProcessOutput(pid)
+		processInfo.logLock.Lock()
 		if err == nil {
 			processInfo.Logs = &output.Logs
 			processInfo.Stdout = &output.Stdout
@@ -217,6 +217,7 @@ func (pm *ProcessManager) ExecuteProcess(
 			stderr := processInfo.stderr.String()
 			processInfo.Stderr = &stderr
 		}
+		processInfo.logLock.Unlock()
 	}
 	return processInfo, nil
 }

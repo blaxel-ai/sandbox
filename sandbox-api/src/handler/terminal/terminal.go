@@ -10,6 +10,7 @@ import (
 	"syscall"
 
 	"github.com/blaxel-ai/sandbox-api/src/lib/identity"
+	"github.com/blaxel-ai/sandbox-api/src/lib/oom"
 	"github.com/creack/pty"
 )
 
@@ -136,6 +137,7 @@ func NewTerminalSession(shell string, workingDir string, env map[string]string, 
 
 	// Store only the PID to avoid FD leak (workspace rule: never store *exec.Cmd in struct)
 	pid := cmd.Process.Pid
+	oom.PreferAsVictim(pid)
 	shellDoneCh := make(chan struct{})
 
 	// Start a goroutine to wait for the process and release resources.

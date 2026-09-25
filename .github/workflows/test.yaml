@@ -89,7 +89,7 @@ jobs:
           API_BASE_URL: http://localhost:8080
         # tests/network is excluded: it drives port monitoring against a real
         # sandbox network stack, which a bare runner does not have.
-        run: go test -v . ./tests/codegen/... ./tests/filesystem/... ./tests/identity/... ./tests/mcp/... ./tests/process/...
+        run: go test -v . ./tests/codegen/... ./tests/filesystem/... ./tests/identity/... ./tests/mcp/... ./tests/process/... ./tests/welcome/...
 
       - name: sandbox-api logs
         if: failure()

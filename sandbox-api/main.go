@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"net/http"
@@ -18,11 +19,13 @@ import (
 	"github.com/getsentry/sentry-go"
 
 	"github.com/blaxel-ai/sandbox-api/src/handler"
+	"github.com/blaxel-ai/sandbox-api/src/handler/archive"
 	"github.com/blaxel-ai/sandbox-api/src/handler/process"
 	"github.com/blaxel-ai/sandbox-api/src/lib/blaxel"
 	"github.com/blaxel-ai/sandbox-api/src/lib/envfile"
 	"github.com/blaxel-ai/sandbox-api/src/lib/identity"
 	"github.com/blaxel-ai/sandbox-api/src/lib/networking"
+	"github.com/blaxel-ai/sandbox-api/src/lib/oom"
 	"github.com/blaxel-ai/sandbox-api/src/lib/proxy"
 	"github.com/blaxel-ai/sandbox-api/src/lib/sentrylib"
 	"github.com/blaxel-ai/sandbox-api/src/mcp"
@@ -47,16 +50,31 @@ func main() {
 	// Load .env file
 	_ = godotenv.Load()
 
-	// Adopt the environment the guest received as a file rather than on its
-	// kernel command line, before anything reads the environment or spawns a
-	// process. The image's init has normally done it already; doing it here as
-	// well means an init that did not is no longer an environment the user
-	// silently lost.
-	if loaded, err := envfile.Load(); err != nil {
-		logrus.WithError(err).WithField("loaded", loaded).Errorf("Failed to load part of the environment from %s - those user environment variables are missing", envfile.PathVar)
-	} else if loaded > 0 {
-		logrus.WithField("count", loaded).Infof("Loaded environment variables from %s that were missing from the process environment", envfile.PathVar)
+	// Re-derive the environment from the two places the host keeps it - the
+	// file naming the part the kernel command line could not carry, then the
+	// metadata document holding the current generation - before anything reads
+	// the environment or spawns a process. The image's init did it at boot, but
+	// a process it restarts after an OOM kill or an in-guest reboot inherits the
+	// environment of that boot, not the one the host has now.
+	loaded, err := envfile.Load()
+	if err != nil {
+		logrus.WithError(err).WithField("loaded", len(loaded)).Errorf("Failed to load part of the environment from %s - those user environment variables are missing", envfile.PathVar)
+	} else if len(loaded) > 0 {
+		logrus.WithField("count", len(loaded)).Infof("Applied environment variables from %s", envfile.PathVar)
 	}
+
+	environmentHandler := handler.GetEnvironmentHandler()
+	environmentHandler.TrackHostManaged(loaded)
+	if _, err := environmentHandler.Reload(); err != nil {
+		if os.IsNotExist(err) {
+			logrus.WithError(err).Debug("Guest metadata document is absent; skipping startup environment reload")
+		} else {
+			logrus.WithError(err).Error("Failed to load guest metadata environment")
+		}
+	}
+
+	oom.ProtectSelf()
+	oom.LimitHeap()
 
 	// Define command-line flags
 	port := flag.Int("port", 8080, "Port to listen on")
@@ -87,11 +105,11 @@ func main() {
 	// every process, including ones started before the rotation.
 	proxy.Start(ctx)
 
-	// Parallel: all four tasks are independent of each other
+	// Parallel: the tasks are independent of each other
 	pm := process.GetProcessManager()
 	txn := sentry.StartSpan(ctx, "startup")
 	var wg sync.WaitGroup
-	wg.Add(4)
+	wg.Add(3)
 
 	go func() {
 		defer wg.Done()
@@ -111,15 +129,15 @@ func main() {
 	}()
 	go func() {
 		defer wg.Done()
+		// Reset the counter before loading state: LoadState re-takes the
+		// scale-to-zero hold of every adopted keepAlive process, and a
+		// concurrent reset would wipe those holds.
 		span := txn.StartChild("startup.scale_reset")
-		defer span.Finish()
 		if err := blaxel.ScaleReset(); err != nil {
 			logrus.Warnf("Failed to reset scale-to-zero counter on startup: %v", err)
 		}
-	}()
-	go func() {
-		defer wg.Done()
-		span := txn.StartChild("startup.load_state")
+		span.Finish()
+		span = txn.StartChild("startup.load_state")
 		defer span.Finish()
 		if err := pm.LoadState(); err != nil {
 			logrus.WithError(err).Warn("Failed to load process state from disk")
@@ -174,9 +192,47 @@ func main() {
 		logrus.Infof("Shell args: %s", os.Getenv("SHELL_ARGS"))
 	}
 
-	// Start background command if specified
-	if commandValue != "" {
-		startBackgroundCommand(ctx, commandValue)
+	// An archive interrupted by a crash or an upgrade leaves the root read-only,
+	// and nothing else of its state survives the restart. Adopt the filesystem's
+	// own state first, so the sandbox says it is frozen instead of failing every
+	// write while reporting itself healthy.
+	archive.AdoptRootState()
+
+	// Restore an archived filesystem before anything of the workload runs, so
+	// the command below and the relaunched processes see the restored files
+	// rather than race the extraction. It happens once per filesystem: see
+	// archive.DefaultImportMarker.
+	//
+	// Restoring a large archive takes minutes, and a sandbox that answers
+	// nothing for that long is a sandbox nobody can tell apart from a broken
+	// one. So the import runs behind the API rather than before it: the routes
+	// that would write to the half-restored filesystem are refused while it
+	// runs (archive.StateRestoring), and /archive/status says how far it has
+	// got. Only the workload waits for it.
+	startWorkload := func() {
+		// Not started when the sandbox is frozen: on a read-only root every
+		// write of the workload fails, and starting it there only buries the
+		// reason under its own errors. Resuming the sandbox is what makes it
+		// startable, and the operator does that knowingly.
+		if commandValue != "" && !archive.Quiesced() {
+			if err := startBackgroundCommand(ctx, commandValue); err != nil {
+				logrus.Fatalf("Failed to start command: %v", err)
+			}
+		}
+	}
+	if archive.PendingImport() {
+		// Frozen here rather than by the import itself: the import starts
+		// below and the server starts right after, so a freeze taken once the
+		// import is running would leave the routes that write served on a
+		// filesystem the import is about to overwrite.
+		archive.MarkRestorePending()
+		go func() {
+			if importArchive(ctx) {
+				startWorkload()
+			}
+		}()
+	} else {
+		startWorkload()
 	}
 
 	// Set up the router with all our API routes
@@ -191,15 +247,7 @@ func main() {
 	serverAddr := fmt.Sprintf(":%d", portValue)
 	logrus.Infof("Starting Sandbox API server on %s", serverAddr)
 
-	server := &http.Server{
-		Addr:              serverAddr,
-		Handler:           router,
-		ReadTimeout:       10 * time.Minute, // Allow up to 10 minutes for reading large uploads
-		WriteTimeout:      10 * time.Minute, // Allow up to 10 minutes for writing large downloads
-		ReadHeaderTimeout: 30 * time.Second, // Headers should be quick
-		IdleTimeout:       2 * time.Minute,  // Keep-alive connections timeout
-		MaxHeaderBytes:    1 << 20,          // 1 MB max header size
-	}
+	server := newHTTPServer(serverAddr, router)
 
 	// Set up signal handling for graceful shutdown
 	sigCh := make(chan os.Signal, 1)
@@ -232,9 +280,74 @@ func main() {
 	logrus.Info("Server stopped")
 }
 
+// newHTTPServer builds the API server.
+//
+// ReadTimeout and WriteTimeout are deliberately left at 0 (no deadline). They
+// are NOT idle timeouts: net/http arms them once, when the request starts, and
+// fires them regardless of traffic on the connection. Any non-zero value is
+// therefore a hard cap on the lifetime of every long-lived endpoint we serve:
+//   - GET  /process/:identifier/logs/stream
+//   - POST /process with Accept: text/event-stream
+//   - GET  /watch/filesystem/*path
+//   - GET  /terminal/ws (the deadline outlives the WebSocket hijack)
+//
+// A 10 minute WriteTimeout used to be set here for large file transfers; it cut
+// every one of those streams at exactly 600s while the underlying process kept
+// running, and the 30s "[keepalive]" lines could not prevent it. Slow-client
+// protection is kept where it does not conflict with streaming: ReadHeaderTimeout
+// bounds header slowloris, IdleTimeout bounds idle keep-alive connections.
+func newHTTPServer(addr string, handler http.Handler) *http.Server {
+	return &http.Server{
+		Addr:              addr,
+		Handler:           handler,
+		ReadHeaderTimeout: 30 * time.Second, // Headers should be quick
+		IdleTimeout:       2 * time.Minute,  // Keep-alive connections timeout
+		MaxHeaderBytes:    1 << 20,          // 1 MB max header size
+	}
+}
+
+// importArchive restores the filesystem of an archived sandbox, if this one was
+// given one to restore and has not restored it yet.
+//
+// A failure before anything was written is not fatal: the sandbox boots without
+// the archived data instead of not booting at all, which leaves an operator
+// something to look at and retry from. It is synchronous — the whole point is
+// that the workload starts on top of the restored filesystem.
+//
+// It returns false when the workload must not be started: a failure that already
+// wrote part of the archive leaves a filesystem that is neither the image's nor
+// the archived sandbox's, and running the workload on it would write more state
+// on top of a state that never existed. The sandbox stays up, frozen, so the
+// failure is visible through /archive/status rather than silently absorbed.
+func importArchive(ctx context.Context) bool {
+	result, err := archive.ImportOnBoot(ctx)
+	if errors.Is(err, archive.ErrNoImport) {
+		return true
+	}
+	if errors.Is(err, archive.ErrPartialImport) {
+		logrus.WithError(err).Error("The archive this sandbox was started from was only partially restored - the workload is not started and the filesystem is frozen")
+		if err := archive.Quarantine("failed archive import"); err != nil {
+			logrus.WithError(err).Error("Failed to freeze the sandbox after a partial import")
+		}
+		return false
+	}
+	if err != nil {
+		logrus.WithError(err).Error("Failed to restore the archive this sandbox was started from - it boots with the filesystem of its image instead")
+		return true
+	}
+	logrus.WithFields(logrus.Fields{
+		"restored":   result.Restored,
+		"deleted":    result.Deleted,
+		"relaunched": len(result.Relaunched),
+		"duration":   result.Duration,
+	}).Info("Restored the sandbox filesystem from an archive")
+	return true
+}
+
 // startBackgroundCommand runs the given command string in a goroutine using the
-// configured SHELL and SHELL_ARGS environment variables.
-func startBackgroundCommand(ctx context.Context, command string) {
+// configured SHELL and SHELL_ARGS environment variables. It returns once the
+// command is running, or the reason it could not be started.
+func startBackgroundCommand(ctx context.Context, command string) error {
 	logrus.Infof("Executing command: %s", command)
 
 	shell := os.Getenv("SHELL")
@@ -261,13 +374,29 @@ func startBackgroundCommand(ctx context.Context, command string) {
 	cmd.Env = identity.Get().DecorateEnv(os.Environ())
 	cmd.SysProcAttr = &syscall.SysProcAttr{Credential: identity.Get().Credential()}
 
-	// Start the command in a goroutine so it doesn't block the server
-	go func() {
-		if err := cmd.Start(); err != nil {
-			logrus.Fatalf("Failed to start command: %v", err)
-			return
+	// Started before the goroutine, so the workload is known to be running by
+	// the time this returns and the server starts accepting calls: an export
+	// arriving right after boot has to stop it, and a registration done inside
+	// the goroutine could still be pending then, leaving the one process most
+	// likely to be writing running while the filesystem is read.
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	pid := cmd.Process.Pid
+	oom.PreferAsVictim(pid)
+	// The process manager never hears about this command, and an archive export
+	// has to stop it like any other process - and start it over should the
+	// export fail, since the sandbox goes on living without an archive.
+	archive.RegisterStartupWorkload(pid, func() {
+		if err := startBackgroundCommand(ctx, command); err != nil {
+			logrus.WithError(err).Error("Failed to restart the command")
 		}
-		logrus.Infof("Command started successfully")
+	})
+	logrus.Infof("Command started successfully")
+
+	// Waited on in a goroutine so it doesn't block the server
+	go func() {
+		defer archive.UnregisterStartupWorkload(pid)
 
 		if err := cmd.Wait(); err != nil {
 			select {
@@ -280,4 +409,5 @@ func startBackgroundCommand(ctx context.Context, command string) {
 			logrus.Infof("Command completed successfully")
 		}
 	}()
+	return nil
 }

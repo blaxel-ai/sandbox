@@ -381,7 +381,7 @@ func (w *WireGuardClient) setupRoutes(wgLink netlink.Link) error {
 
 	// Pin the peer endpoint to the physical interface first, so the tunnel's
 	// own UDP keeps flowing once its family's default route moves to wg0.
-	peerPinned := w.pinPeerEndpoint(peerIP)
+	peerPinned := w.pinPeerEndpoint(peerIP, wgLink.Attrs().Index)
 
 	for _, dst := range dsts {
 		if isDefaultPrefix(dst) {
@@ -413,12 +413,26 @@ func (w *WireGuardClient) setupRoutes(wgLink netlink.Link) error {
 // pinPeerEndpoint installs a host route to the peer endpoint via the default
 // gateway of the endpoint's own address family. It reports whether the peer is
 // pinned to the physical interface afterwards.
-func (w *WireGuardClient) pinPeerEndpoint(peerIP net.IP) bool {
+func (w *WireGuardClient) pinPeerEndpoint(peerIP net.IP, wgLinkIndex int) bool {
+	recovered := false
 	gw, iface, err := getDefaultGateway(ipFamily(peerIP))
 	if err != nil {
-		logrus.WithError(err).WithField("peer_ip", peerIP.String()).
-			Warn("No default gateway for the peer endpoint family, not pinning the peer route")
-		return false
+		// A previous run replaced the default route with one through its own
+		// TUN device and died without restoring it (e.g. reboot -f): the wg
+		// route vanished with the device and left no default route at all.
+		// The host route to the peer endpoint it installed on the physical
+		// interface survives, so the original gateway can be recovered from it.
+		gw, iface, err = getGatewayFromPeerRoute(peerIP, wgLinkIndex)
+		if err != nil {
+			logrus.WithError(err).WithField("peer_ip", peerIP.String()).
+				Warn("No default gateway for the peer endpoint family, not pinning the peer route")
+			return false
+		}
+		recovered = true
+		logrus.WithFields(logrus.Fields{
+			"gateway":   gw.String(),
+			"interface": iface,
+		}).Info("No default route found, recovered original gateway from existing peer endpoint route")
 	}
 
 	primaryLink, err := netlink.LinkByName(iface)
@@ -441,6 +455,17 @@ func (w *WireGuardClient) pinPeerEndpoint(peerIP net.IP) bool {
 	// is reachable off-tunnel.
 	w.defaultGW = gw
 	w.defaultIface = iface
+
+	// The default route the crashed run took away is not there to detach, so
+	// remember it here for removeRoutes to put back.
+	if recovered {
+		bits := 8 * len(peerHostMask(peerIP))
+		w.replacedDefaults = append(w.replacedDefaults, &netlink.Route{
+			Dst:       &net.IPNet{IP: make(net.IP, bits/8), Mask: net.CIDRMask(0, bits)},
+			Gw:        gw,
+			LinkIndex: primaryLink.Attrs().Index,
+		})
+	}
 
 	logrus.WithFields(logrus.Fields{
 		"peer_ip": peerIP.String(),
@@ -641,6 +666,46 @@ func parseTunnelRoutes(allowedIPs []string) ([]*net.IPNet, error) {
 		dsts = append(dsts, prefix)
 	}
 	return dsts, nil
+}
+
+// getGatewayFromPeerRoute recovers the original default gateway from the host
+// route to the WireGuard peer endpoint. setupRoutes installs that route on the
+// physical interface, and it survives a crash of the process that owned the
+// TUN device, unlike the default route it replaced.
+func getGatewayFromPeerRoute(peerIP net.IP, wgLinkIndex int) (net.IP, string, error) {
+	routes, err := netlink.RouteList(nil, ipFamily(peerIP))
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to list routes: %w", err)
+	}
+
+	route, ok := findPeerRoute(routes, peerIP, wgLinkIndex)
+	if !ok {
+		return nil, "", fmt.Errorf("no route to peer endpoint %s found", peerIP)
+	}
+
+	link, err := netlink.LinkByIndex(route.LinkIndex)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to get link for peer route: %w", err)
+	}
+	return route.Gw, link.Attrs().Name, nil
+}
+
+// findPeerRoute returns the host route to peerIP that goes through a gateway
+// on an interface other than the WireGuard link itself.
+func findPeerRoute(routes []netlink.Route, peerIP net.IP, wgLinkIndex int) (netlink.Route, bool) {
+	for _, route := range routes {
+		if route.Dst == nil || !route.Dst.IP.Equal(peerIP) {
+			continue
+		}
+		if ones, bits := route.Dst.Mask.Size(); ones != bits {
+			continue
+		}
+		if route.Gw == nil || route.LinkIndex == wgLinkIndex {
+			continue
+		}
+		return route, true
+	}
+	return netlink.Route{}, false
 }
 
 // getDefaultGateway returns the default gateway IP and interface name of the

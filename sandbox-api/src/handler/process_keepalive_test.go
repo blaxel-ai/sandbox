@@ -20,13 +20,13 @@ func TestExecuteProcessKeepAliveDisabled(t *testing.T) {
 	t.Setenv(blaxel.EnvDisableKeepAlive, "true")
 	h := NewProcessHandler()
 
-	_, err := h.ExecuteProcess("echo keepalive", "", "", nil, true, 5, nil, false, 0, true)
+	_, err := h.ExecuteProcess("echo keepalive", "", "", nil, true, 5, nil, false, 0, true, false)
 	if !errors.Is(err, ErrKeepAliveDisabled) {
 		t.Fatalf("ExecuteProcess with keepAlive=true should return ErrKeepAliveDisabled, got %v", err)
 	}
 
 	// keepAlive=false still works
-	resp, err := h.ExecuteProcess("echo keepalive", "", "", nil, true, 5, nil, false, 0, false)
+	resp, err := h.ExecuteProcess("echo keepalive", "", "", nil, true, 5, nil, false, 0, false, false)
 	if err != nil {
 		t.Fatalf("ExecuteProcess with keepAlive=false should succeed, got %v", err)
 	}
@@ -40,7 +40,7 @@ func TestExecuteProcessKeepAliveEnabledByDefault(t *testing.T) {
 	t.Setenv(blaxel.EnvDisableKeepAlive, "")
 	h := NewProcessHandler()
 
-	resp, err := h.ExecuteProcess("echo keepalive", "", "", nil, true, 5, nil, false, 0, true)
+	resp, err := h.ExecuteProcess("echo keepalive", "", "", nil, true, 5, nil, false, 0, true, false)
 	if err != nil {
 		t.Fatalf("ExecuteProcess with keepAlive=true should succeed when the flag is unset, got %v", err)
 	}

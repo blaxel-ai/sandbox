@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/blaxel-ai/sandbox-api/src/handler/constants"
+	"github.com/blaxel-ai/sandbox-api/src/lib/blaxel"
 	"github.com/sirupsen/logrus"
 )
 
@@ -44,10 +45,18 @@ type ProcessState struct {
 	Logs             string                  `json:"logs,omitempty"`
 	Stdout           string                  `json:"stdout,omitempty"`
 	Stderr           string                  `json:"stderr,omitempty"`
+	StdoutBytes      int                     `json:"stdoutBytes,omitempty"` // Bytes ever written; the strings above only hold the tail, so these are the offsets the log files resume at
+	StderrBytes      int                     `json:"stderrBytes,omitempty"`
+	LogsBytes        int                     `json:"logsBytes,omitempty"`
 	RestartOnFailure bool                    `json:"restartOnFailure"`
+	Stdin            bool                    `json:"stdin,omitempty"` // Kept so a reattached process reports "stdin closed" rather than "not enabled"
 	MaxRestarts      int                     `json:"maxRestarts"`
 	RestartCount     int                     `json:"restartCount"`
 	Env              map[string]string       `json:"env,omitempty"` // Custom env vars provided at start, reused on restart-on-failure
+	KeepAlive        bool                    `json:"keepAlive,omitempty"`
+	Timeout          int                     `json:"timeout,omitempty"`
+
+	TerminationRequested constants.ProcessStatus `json:"terminationRequested,omitempty"`
 }
 
 // ManagerState represents the full state of the process manager
@@ -82,18 +91,24 @@ func (pm *ProcessManager) SaveState() error {
 		// Safely read logs under lock
 		proc.logLock.RLock()
 		var logs, stdout, stderr string
+		var logsBytes, stdoutBytes, stderrBytes int
 		if proc.logs != nil {
-			logs = proc.logs.String()
+			logs = proc.logs.tail()
+			logsBytes = proc.logs.Len()
 		}
 		if proc.stdout != nil {
-			stdout = proc.stdout.String()
+			stdout = proc.stdout.tail()
+			stdoutBytes = proc.stdout.Len()
 		}
 		if proc.stderr != nil {
-			stderr = proc.stderr.String()
+			stderr = proc.stderr.tail()
+			stderrBytes = proc.stderr.Len()
 		}
 		proc.logLock.RUnlock()
 
 		state.Processes[pid] = ProcessState{
+			TerminationRequested: proc.terminationRequested,
+
 			PID:              proc.PID,
 			Name:             proc.Name,
 			Command:          proc.Command,
@@ -109,18 +124,24 @@ func (pm *ProcessManager) SaveState() error {
 			Logs:             logs,
 			Stdout:           stdout,
 			Stderr:           stderr,
+			StdoutBytes:      stdoutBytes,
+			StderrBytes:      stderrBytes,
+			LogsBytes:        logsBytes,
 			RestartOnFailure: proc.RestartOnFailure,
+			Stdin:            proc.Stdin,
 			MaxRestarts:      proc.MaxRestarts,
 			RestartCount:     proc.RestartCount,
 			Env:              proc.Env,
+			KeepAlive:        proc.KeepAlive,
+			Timeout:          proc.Timeout,
 		}
 
 		logrus.WithFields(logrus.Fields{
-			"pid":        proc.PID,
-			"name":       proc.Name,
-			"command":    proc.Command,
+			"pid":         proc.PID,
+			"name":        proc.Name,
+			"command":     proc.Command,
 			"process-pid": proc.ProcessPid,
-			"status":     proc.Status,
+			"status":      proc.Status,
 		}).Info("SaveState: saving process")
 	}
 
@@ -197,16 +218,18 @@ func (pm *ProcessManager) LoadState() error {
 		isRunning := isProcessRunning(procState.ProcessPid)
 
 		logrus.WithFields(logrus.Fields{
-			"pid":        procState.PID,
-			"name":       procState.Name,
-			"command":    procState.Command,
+			"pid":         procState.PID,
+			"name":        procState.Name,
+			"command":     procState.Command,
 			"process-pid": procState.ProcessPid,
-			"status":     procState.Status,
-			"isRunning":  isRunning,
+			"status":      procState.Status,
+			"isRunning":   isRunning,
 		}).Info("LoadState: processing saved process")
 
 		// Create ProcessInfo from saved state
 		proc := &ProcessInfo{
+			terminationRequested: procState.TerminationRequested,
+
 			PID:              procState.PID,
 			Name:             procState.Name,
 			Command:          procState.Command,
@@ -220,48 +243,52 @@ func (pm *ProcessManager) LoadState() error {
 			StdoutFile:       procState.StdoutFile,
 			StderrFile:       procState.StderrFile,
 			RestartOnFailure: procState.RestartOnFailure,
+			Stdin:            procState.Stdin,
 			MaxRestarts:      procState.MaxRestarts,
 			RestartCount:     procState.RestartCount,
 			Env:              procState.Env,
+			KeepAlive:        procState.KeepAlive,
+			Timeout:          procState.Timeout,
 			Done:             make(chan struct{}),
 			TailDone:         make(chan struct{}),
-			stdout:           &strings.Builder{},
-			stderr:           &strings.Builder{},
-			logs:             &strings.Builder{},
+			Finished:         make(chan struct{}),
+			stdout:           newLogBuffer(),
+			stderr:           newLogBuffer(),
+			logs:             newLogBuffer(),
 			logWriters:       make([]io.Writer, 0),
 		}
 
 		// Restore accumulated logs from saved state
-		if procState.Logs != "" {
-			proc.logs.WriteString(procState.Logs)
-		}
-		if procState.Stdout != "" {
-			proc.stdout.WriteString(procState.Stdout)
-		}
-		if procState.Stderr != "" {
-			proc.stderr.WriteString(procState.Stderr)
-		}
+		proc.logs.restore(procState.Logs, procState.LogsBytes)
+		proc.stdout.restore(procState.Stdout, procState.StdoutBytes)
+		proc.stderr.restore(procState.Stderr, procState.StderrBytes)
 
 		// Also read any new logs from the separate log files since state was saved
 		// Use atomic read with bounds checking to avoid TOCTOU issues
 		if procState.StdoutFile != "" {
-			if newContent := readLogsSince(procState.StdoutFile, len(procState.Stdout)); len(newContent) > 0 {
+			newContent, end := readLogsSince(procState.StdoutFile, streamOffset(procState.StdoutBytes, procState.Stdout))
+			if len(newContent) > 0 {
 				proc.stdout.Write(newContent)
 				proc.logs.Write(newContent)
+				proc.stdout.resume(end)
 			}
 		}
 		if procState.StderrFile != "" {
-			if newContent := readLogsSince(procState.StderrFile, len(procState.Stderr)); len(newContent) > 0 {
+			newContent, end := readLogsSince(procState.StderrFile, streamOffset(procState.StderrBytes, procState.Stderr))
+			if len(newContent) > 0 {
 				proc.stderr.Write(newContent)
 				proc.logs.Write(newContent)
+				proc.stderr.resume(end)
 			}
 		}
 
 		// Legacy: Also read from combined log file if separate files don't exist
 		if procState.StdoutFile == "" && procState.LogFile != "" {
-			if newContent := readLogsSince(procState.LogFile, len(procState.Logs)); len(newContent) > 0 {
+			newContent, end := readLogsSince(procState.LogFile, streamOffset(procState.LogsBytes, procState.Logs))
+			if len(newContent) > 0 {
 				proc.logs.Write(newContent)
 				proc.stdout.Write(newContent)
+				proc.logs.resume(end)
 			}
 		}
 
@@ -270,17 +297,21 @@ func (pm *ProcessManager) LoadState() error {
 			// This prevents adopting arbitrary processes that happen to have the same PID
 			if !verifyProcessCommand(proc.ProcessPid, proc.Command) {
 				logrus.WithFields(logrus.Fields{
-					"pid":        proc.PID,
-					"name":       proc.Name,
-					"command":    proc.Command,
+					"pid":         proc.PID,
+					"name":        proc.Name,
+					"command":     proc.Command,
 					"process-pid": proc.ProcessPid,
-				}).Warn("Process command mismatch, marking as failed (PID may have been reused)")
+				}).Warn("Saved process command mismatch (PID may have been reused)")
 				proc.Status = StatusFailed
+				if proc.terminationRequested != "" {
+					proc.Status = proc.terminationRequested
+				}
 				now := time.Now()
 				proc.CompletedAt = &now
 				proc.ExitCode = -1
 				close(proc.Done)
 				close(proc.TailDone)
+				proc.markFinished()
 				deadCount++
 				pm.processes[pid] = proc
 				continue
@@ -304,6 +335,26 @@ func (pm *ProcessManager) LoadState() error {
 			// We don't need to keep a file handle open for tailing since
 			// the child process writes directly to the log file
 
+			// Re-take the scale-to-zero hold the previous run held for this
+			// process: startup resets the counter to 0, so without this the
+			// sandbox could hibernate under a still-running keepAlive workload.
+			if proc.KeepAlive {
+				if err := blaxel.ScaleDisable(); err != nil {
+					logrus.WithError(err).WithFields(logrus.Fields{
+						"pid":  proc.PID,
+						"name": proc.Name,
+					}).Warn("[KeepAlive] Failed to disable scale-to-zero for adopted process")
+				}
+				// Re-arm the timeout the previous run was enforcing, for
+				// whatever of it is left, so the hold cannot outlive the
+				// bound the process was started with.
+				if proc.Timeout > 0 {
+					proc.stopTimeout = make(chan struct{})
+					remaining := time.Until(proc.StartedAt.Add(time.Duration(proc.Timeout) * time.Second))
+					go pm.enforceKeepAliveTimeout(proc, remaining)
+				}
+			}
+
 			// Start a goroutine to monitor the adopted process
 			go pm.monitorAdoptedProcess(proc)
 
@@ -316,6 +367,9 @@ func (pm *ProcessManager) LoadState() error {
 		} else if procState.Status == StatusRunning {
 			// Process was running but is now dead
 			proc.Status = StatusFailed
+			if proc.terminationRequested != "" {
+				proc.Status = proc.terminationRequested
+			}
 			now := time.Now()
 			proc.CompletedAt = &now
 			proc.ExitCode = -1 // Unknown exit code
@@ -324,6 +378,7 @@ func (pm *ProcessManager) LoadState() error {
 			// Close the Done and TailDone channels since process is no longer running
 			close(proc.Done)
 			close(proc.TailDone)
+			proc.markFinished()
 
 			logrus.WithFields(logrus.Fields{
 				"pid":     proc.PID,
@@ -335,6 +390,7 @@ func (pm *ProcessManager) LoadState() error {
 			if proc.CompletedAt != nil {
 				close(proc.Done)
 				close(proc.TailDone)
+				proc.markFinished()
 			}
 		}
 
@@ -434,23 +490,27 @@ func reapZombieProcess(pid int) int {
 
 // readLogsSince safely reads log content from a file starting at a given offset.
 // It handles TOCTOU issues by reading the file atomically and validating bounds.
+// The read is bounded: the content only feeds the in-memory tail buffers, so a
+// process that wrote gigabytes while the API was down must not be loaded whole.
+// It returns the content and the file offset it read up to, which is where the
+// stream resumes even when the read skipped ahead.
 // Returns nil if the file cannot be read or if offset is invalid.
-func readLogsSince(filePath string, offset int) []byte {
+func readLogsSince(filePath string, offset int) ([]byte, int) {
 	if filePath == "" || offset < 0 {
-		return nil
+		return nil, offset
 	}
 
 	// Open file for reading
 	file, err := os.Open(filePath)
 	if err != nil {
-		return nil
+		return nil, offset
 	}
 	defer file.Close()
 
 	// Get file size atomically with the file handle
 	stat, err := file.Stat()
 	if err != nil {
-		return nil
+		return nil, offset
 	}
 
 	fileSize := stat.Size()
@@ -468,21 +528,27 @@ func readLogsSince(filePath string, offset int) []byte {
 
 	// Nothing new to read
 	if int64(offset) >= fileSize {
-		return nil
+		return nil, offset
+	}
+
+	// Only the tail is kept in memory anyway, and anything older may sit in a
+	// head that capLogFile has already released.
+	if tail := fileSize - int64(maxInMemoryLogBytes); tail > int64(offset) {
+		offset = int(tail)
 	}
 
 	// Seek to offset
 	if _, err := file.Seek(int64(offset), 0); err != nil {
-		return nil
+		return nil, offset
 	}
 
 	// Read remaining content
 	content, err := io.ReadAll(file)
 	if err != nil {
-		return nil
+		return nil, offset
 	}
 
-	return content
+	return content, offset + len(content)
 }
 
 // verifyProcessCommand checks if the running process matches the expected command.
@@ -549,12 +615,35 @@ func verifyProcessHealth(pid int) bool {
 	return true
 }
 
+// enforceKeepAliveTimeout kills a keepAlive process when what remains of its
+// timeout elapses, unless stopTimeout is closed first. It backs the same
+// contract as the timer StartProcessWithName arms, for processes adopted
+// after a restart with part of their timeout already spent.
+func (pm *ProcessManager) enforceKeepAliveTimeout(proc *ProcessInfo, remaining time.Duration) {
+	if remaining < 0 {
+		remaining = 0
+	}
+	timer := time.NewTimer(remaining)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		logrus.WithFields(logrus.Fields{
+			"process_pid":  proc.PID,
+			"process_name": proc.Name,
+			"timeout":      proc.Timeout,
+		}).Info("[KeepAlive] Timeout expired, killing adopted process")
+		_ = pm.KillProcess(proc.PID)
+	case <-proc.stopTimeout:
+		// Process completed before timeout
+	}
+}
+
 // monitorAdoptedProcess monitors an adopted process for completion
 func (pm *ProcessManager) monitorAdoptedProcess(proc *ProcessInfo) {
 	logrus.WithFields(logrus.Fields{
-		"pid":        proc.PID,
-		"name":       proc.Name,
-		"command":    proc.Command,
+		"pid":         proc.PID,
+		"name":        proc.Name,
+		"command":     proc.Command,
 		"process-pid": proc.ProcessPid,
 	}).Info("Starting monitoring for adopted process")
 
@@ -570,48 +659,40 @@ func (pm *ProcessManager) monitorAdoptedProcess(proc *ProcessInfo) {
 
 			if checkCount <= 3 || checkCount%10 == 0 {
 				logrus.WithFields(logrus.Fields{
-					"pid":        proc.PID,
-					"name":       proc.Name,
+					"pid":         proc.PID,
+					"name":        proc.Name,
 					"process-pid": proc.ProcessPid,
-					"isRunning":  isRunning,
-					"checkCount": checkCount,
+					"isRunning":   isRunning,
+					"checkCount":  checkCount,
 				}).Debug("Monitoring adopted process")
 			}
 
 			if !isRunning {
-				// Process has exited (or is a zombie)
-				now := time.Now()
-				proc.CompletedAt = &now
-
-				// Try to reap the zombie process to clean it up
+				// Reap before publishing the terminal tuple, just as for a new child.
 				exitCode := reapZombieProcess(proc.ProcessPid)
-
-				// Update status
-				if proc.Status == StatusRunning {
-					proc.Status = StatusCompleted
-					proc.ExitCode = exitCode
-				}
-
-				// Update process in memory
+				now := time.Now()
 				pm.mu.Lock()
-				pm.processes[proc.PID] = proc
+				proc.runExited = true
+				proc.CompletedAt = &now
+				proc.ExitCode = exitCode
+				proc.Status = StatusCompleted
+				if exitCode != 0 {
+					proc.Status = StatusFailed
+				}
+				if proc.terminationRequested != "" {
+					proc.Status = proc.terminationRequested
+				}
 				pm.mu.Unlock()
-
-				// Clean up resources
-				proc.logLock.Lock()
-				proc.logWriters = nil
-				proc.logLock.Unlock()
-
-				// Signal that the process is done
 				close(proc.Done)
 				close(proc.TailDone)
+				pm.finishProcess(proc, nil)
 
 				logrus.WithFields(logrus.Fields{
-					"pid":        proc.PID,
-					"name":       proc.Name,
-					"command":    proc.Command,
+					"pid":         proc.PID,
+					"name":        proc.Name,
+					"command":     proc.Command,
 					"process-pid": proc.ProcessPid,
-					"checkCount": checkCount,
+					"checkCount":  checkCount,
 				}).Info("Adopted process completed")
 
 				return
@@ -812,11 +893,15 @@ func TriggerUpgrade(version, baseURL string) {
 }
 
 // newDownloadHTTPClient creates an HTTP client configured for downloading
-// release assets from GitHub with appropriate timeouts.
+// release assets from GitHub with appropriate timeouts. It goes through the
+// HTTP(S)_PROXY of the environment like every other consumer in the sandbox:
+// a sandbox whose egress is locked down to its proxy cannot reach GitHub any
+// other way.
 func newDownloadHTTPClient() *http.Client {
 	return &http.Client{
 		Timeout: downloadTotalTimeout,
 		Transport: &http.Transport{
+			Proxy: http.ProxyFromEnvironment,
 			DialContext: (&net.Dialer{
 				Timeout: downloadConnTimeout,
 			}).DialContext,
@@ -1241,6 +1326,11 @@ func validateBinaryFormat(binaryPath string) error {
 	return nil
 }
 
+// UpgradedBinaryName is the file a hot upgrade installs next to the running
+// binary and execs into. It is exported because the paths this API may be
+// exec'd from have to be named where they are protected from being replaced.
+const UpgradedBinaryName = "sandbox-api-upgraded"
+
 // upgradeWithNewBinary moves the new binary to a permanent location and execs into it
 // We can't overwrite the running binary ("text file busy"), so we exec into a new file
 func upgradeWithNewBinary(newBinaryPath string) {
@@ -1269,7 +1359,7 @@ func upgradeWithNewBinary(newBinaryPath string) {
 	// Determine the permanent path for the new binary
 	// We place it in the same directory as the current binary
 	currentDir := filepath.Dir(currentExe)
-	permanentPath := filepath.Join(currentDir, "sandbox-api-upgraded")
+	permanentPath := filepath.Join(currentDir, UpgradedBinaryName)
 
 	logger.WithFields(logrus.Fields{
 		"current":       currentExe,
