@@ -42,10 +42,14 @@ mkdir -p tmp/$SANDBOX_NAME
 # Read and update the JSON file
 if [ -f "hub/$SANDBOX_NAME/template.json" ]; then
     echo "Updating hub/$SANDBOX_NAME/template.json with image information"
-    jq --arg img "blaxel/$SANDBOX_NAME:$TAG" '
+    jq -e --arg img "blaxel/$SANDBOX_NAME:$TAG" '
+        def usable_icon: select(type == "string") | gsub("^\\s+|\\s+$"; "") | select(length > 0);
         .image = $img
-        | .iconLight = ((.iconLight | select(. != "")) // .icon)
-        | .iconDark = ((.iconDark | select(. != "")) // .iconLight)
+        | .iconLight = ((.iconLight | usable_icon) // (.icon | usable_icon) // (.iconDark | usable_icon))
+        | .iconDark = ((.iconDark | usable_icon) // .iconLight)
+        | if (.iconLight | type) != "string" or (.iconDark | type) != "string" then
+            error("A non-empty icon, iconLight or iconDark is required")
+          else . end
     ' "hub/$SANDBOX_NAME/template.json" > "tmp/$SANDBOX_NAME/template.json.tmp"
 else
     echo "Warning: hub/$SANDBOX_NAME/template.json not found"

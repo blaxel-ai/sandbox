@@ -41,7 +41,7 @@ class PublishSandboxTest(unittest.TestCase):
         cls.server.server_close()
         cls.thread.join()
 
-    def publish(self, template, name="test-template"):
+    def publish(self, template, name="test-template", expect_error=False):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "hub" / name / "template.json"
             path.parent.mkdir(parents=True)
@@ -62,11 +62,19 @@ class PublishSandboxTest(unittest.TestCase):
                 ["bash", str(ROOT / "scripts/publish-sandbox.sh")],
                 cwd=directory, env=env, capture_output=True, text=True, timeout=15,
             )
+            if expect_error:
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("non-empty icon", result.stderr)
+                self.assertTrue(self.requests.empty(), "Invalid icons must not reach the API")
+                return None
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             request_path, content_type, payload = self.requests.get(timeout=2)
             self.assertEqual(request_path, f"/admin/store/sandboxes/{name}")
             self.assertEqual(content_type, "application/json")
             self.assertEqual(payload["image"], f"blaxel/{name}:test-tag")
+            for field in ("iconLight", "iconDark"):
+                self.assertIsInstance(payload[field], str)
+                self.assertTrue(payload[field].strip())
             self.assertEqual(path.read_text(), original)
             for key, value in template.items():
                 if key not in ("iconLight", "iconDark", "image"):
@@ -98,6 +106,24 @@ class PublishSandboxTest(unittest.TestCase):
                 result = self.publish({"icon": "legacy.svg", "iconLight": light, "iconDark": "dark.svg"})
                 self.assertEqual(result["iconLight"], "legacy.svg")
                 self.assertEqual(result["iconDark"], "dark.svg")
+
+    def test_whitespace_variants_fall_back_to_trimmed_legacy(self):
+        result = self.publish({"icon": " legacy.svg ", "iconLight": " \t", "iconDark": "\n"})
+        self.assertEqual(result["iconLight"], "legacy.svg")
+        self.assertEqual(result["iconDark"], "legacy.svg")
+
+    def test_single_variant_supplies_both_themes(self):
+        for field in ("iconLight", "iconDark"):
+            with self.subTest(field=field):
+                result = self.publish({field: "variant.svg"})
+                self.assertEqual(result["iconLight"], "variant.svg")
+                self.assertEqual(result["iconDark"], "variant.svg")
+
+    def test_missing_or_invalid_icons_prevent_publication(self):
+        for value in (None, "", " \t\n", False, 123, [], {}):
+            with self.subTest(value=value):
+                self.publish({"icon": value, "iconLight": value, "iconDark": value}, expect_error=True)
+        self.publish({}, expect_error=True)
 
     def test_all_hub_templates_publish_with_both_themes(self):
         templates = sorted((ROOT / "hub").glob("*/template.json"))
