@@ -1134,7 +1134,7 @@ const docTemplate = `{
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "File or directory path",
+                        "description": "File or directory path. Relative paths are resolved against the filesystem working directory. For example, with a working directory of /app, GET /filesystem/workspace resolves to /app/workspace. To access the absolute path /workspace over HTTP, encode its leading slash as %2F: GET /filesystem/%2Fworkspace. The double-slash form GET /filesystem//workspace also addresses /workspace.",
                         "name": "path",
                         "in": "path",
                         "required": true

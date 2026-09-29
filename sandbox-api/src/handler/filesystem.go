@@ -254,7 +254,7 @@ func (h *FileSystemHandler) DeleteFile(path string) error {
 // @Tags filesystem
 // @Accept json
 // @Produce json,octet-stream
-// @Param path path string true "File or directory path"
+// @Param path path string true "File or directory path. Relative paths are resolved against the filesystem working directory. For example, with a working directory of /app, GET /filesystem/workspace resolves to /app/workspace. To access the absolute path /workspace over HTTP, encode its leading slash as %2F: GET /filesystem/%2Fworkspace. The double-slash form GET /filesystem//workspace also addresses /workspace."
 // @Param download query boolean false "Force download mode for files"
 // @Success 200 {file} file "File content (download mode)"
 // @Success 200 {object} filesystem.FileWithContent "File content (JSON mode)"
