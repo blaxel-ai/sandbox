@@ -135,9 +135,12 @@ Template configurations are defined in `template.json` files within each templat
 - Enterprise features and availability status
 
 Templates can provide `iconLight` and `iconDark` URLs for each theme. Keep `icon`
-for clients that use the original field. During publication, the CI defaults a
-missing or empty `iconLight` to `icon`, then a missing or empty `iconDark` to
-`iconLight`, so templates without a dark variant use the same image in both themes.
+for clients that use the original field. During publication, the CI trims the
+URLs and defaults a missing or blank `iconLight` to `icon`, then `iconDark` if
+necessary. A missing or blank `iconDark` defaults to the resolved `iconLight`.
+Templates without a dark variant use the same image in both themes. Publication
+fails before calling the API if none of the three fields contains a nonempty
+string, so both theme fields are always populated in published metadata.
 
 ## Contributing
 
