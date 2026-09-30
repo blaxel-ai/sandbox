@@ -2411,6 +2411,7 @@ components:
         completedAt:
           example: Wed, 01 Jan 2023 12:01:00 GMT
           type: string
+          nullable: true
         exitCode:
           example: 0
           type: integer
@@ -2421,6 +2422,7 @@ components:
         logs:
           example: logs output
           type: string
+          nullable: true
         maxRestarts:
           example: 3
           type: integer
@@ -2451,6 +2453,7 @@ components:
         stderr:
           example: stderr output
           type: string
+          nullable: true
         stdin:
           description: Whether the process was started with a writable stdin pipe
           example: false
@@ -2458,6 +2461,7 @@ components:
         stdout:
           example: stdout output
           type: string
+          nullable: true
         workingDir:
           example: /home/user
           type: string

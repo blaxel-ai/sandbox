@@ -73,12 +73,12 @@ type ProcessResponse struct {
 	Command          string  `json:"command" example:"ls -la" binding:"required"`
 	Status           string  `json:"status" example:"running" enums:"failed,killed,stopped,running,completed" binding:"required"`
 	StartedAt        string  `json:"startedAt" example:"Wed, 01 Jan 2023 12:00:00 GMT" binding:"required"`
-	CompletedAt      *string `json:"completedAt" example:"Wed, 01 Jan 2023 12:01:00 GMT" binding:"required"`
+	CompletedAt      *string `json:"completedAt" example:"Wed, 01 Jan 2023 12:01:00 GMT" binding:"required" extensions:"x-nullable"`
 	ExitCode         int     `json:"exitCode" example:"0" binding:"required"`
 	WorkingDir       string  `json:"workingDir" example:"/home/user" binding:"required"`
-	Logs             *string `json:"logs" example:"logs output" binding:"required"`
-	Stdout           *string `json:"stdout" example:"stdout output" binding:"required"`
-	Stderr           *string `json:"stderr" example:"stderr output" binding:"required"`
+	Logs             *string `json:"logs" example:"logs output" binding:"required" extensions:"x-nullable"`
+	Stdout           *string `json:"stdout" example:"stdout output" binding:"required" extensions:"x-nullable"`
+	Stderr           *string `json:"stderr" example:"stderr output" binding:"required" extensions:"x-nullable"`
 	RestartOnFailure bool    `json:"restartOnFailure" example:"true"`
 	MaxRestarts      int     `json:"maxRestarts" example:"3"`
 	RestartCount     int     `json:"restartCount" example:"2"`
