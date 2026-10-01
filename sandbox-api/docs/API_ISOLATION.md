@@ -57,7 +57,8 @@ table inet blaxel_sandbox_api {
 - The uplink is the interface of the default route, IPv6 first (the family the
   gateway dials), skipping tunnel devices such as the egress WireGuard.
 - Only the API port is filtered. Previews and other ports are untouched.
-- The table is replaced, not stacked, when the API restarts or upgrades.
+- The table is replaced, not stacked, when the API restarts or upgrades, and
+  removed when it starts with the option off.
 
 ## Best effort without a `USER`
 
@@ -74,4 +75,7 @@ remains the security boundary.
 
 If the rules cannot be installed (no nftables in the kernel, no default route
 to identify the uplink), the API refuses to start: the option was asked for,
-and a sandbox silently left open is worse than one that does not start.
+and a sandbox silently left open is worse than one that does not start. The one
+exception is a restart that finds no default route, which a crashed egress
+tunnel can leave behind: the rules of the previous run are still in the kernel
+and are kept.

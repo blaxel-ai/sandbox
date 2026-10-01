@@ -34,9 +34,8 @@ func TestIfname(t *testing.T) {
 	}
 }
 
-// TestInstall runs Install twice in a throwaway network namespace, with a
-// tunnel-free uplink carrying the default route, and checks the table ends up
-// with exactly one rule per chain.
+// TestInstall drives Install and Remove in a throwaway network namespace, with
+// a tunnel-free uplink carrying the default route.
 func TestInstall(t *testing.T) {
 	if os.Geteuid() != 0 {
 		t.Skip("requires root")
@@ -82,6 +81,35 @@ func TestInstall(t *testing.T) {
 	if err != nil {
 		t.Fatalf("nftables.New: %v", err)
 	}
+	requireOneRulePerChain(t, conn)
+
+	// A restart that finds no default route (crashed route-all tunnel) keeps
+	// the rules already installed.
+	if err := netlink.RouteDel(&netlink.Route{LinkIndex: uplink.Attrs().Index, Dst: anywhere}); err != nil {
+		t.Fatalf("RouteDel: %v", err)
+	}
+	if err := Install(8080); err != nil {
+		t.Fatalf("Install without a default route: %v", err)
+	}
+	requireOneRulePerChain(t, conn)
+
+	for i := 0; i < 2; i++ {
+		if err := Remove(); err != nil {
+			t.Fatalf("Remove #%d: %v", i+1, err)
+		}
+	}
+	if installed, err := tableExists(conn); err != nil || installed {
+		t.Fatalf("tableExists after Remove = %v, %v, want false", installed, err)
+	}
+
+	// Without the rules of a previous run, a missing uplink is an error.
+	if err := Install(8080); err == nil {
+		t.Fatal("Install without a default route nor previous rules succeeded")
+	}
+}
+
+func requireOneRulePerChain(t *testing.T, conn *nftables.Conn) {
+	t.Helper()
 	table := &nftables.Table{Family: nftables.TableFamilyINet, Name: TableName}
 	for _, chain := range []string{"input", "output"} {
 		rules, err := conn.GetRules(table, &nftables.Chain{Name: chain, Table: table})

@@ -102,6 +102,12 @@ jobs:
         working-directory: sandbox-api/integration-tests
         run: sudo env "PATH=$PATH" API_BASE_URL=http://localhost:8080 ISOLATION=true WORKLOAD_USER=sbxtest go test -v ./tests/isolation/...
 
+      - name: Run isolation unit tests as root
+        if: matrix.mode == 'isolation'
+        working-directory: sandbox-api
+        # The nftables tests need root, which the unit job does not have.
+        run: sudo env "PATH=$PATH" go test -v ./src/lib/isolation/...
+
       - name: sandbox-api logs
         if: failure()
         run: cat /tmp/sandbox-api.log

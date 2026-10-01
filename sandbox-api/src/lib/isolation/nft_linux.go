@@ -20,14 +20,21 @@ const loopback = "lo"
 // idempotent, so a re-exec after an upgrade replaces the rules of the previous
 // process rather than stacking a second copy.
 func Install(port int) error {
-	uplink, err := uplinkInterface()
-	if err != nil {
-		return fmt.Errorf("detect the uplink interface: %w", err)
-	}
-
 	conn, err := nftables.New()
 	if err != nil {
 		return fmt.Errorf("open nftables: %w", err)
+	}
+
+	uplink, err := uplinkInterface()
+	if err != nil {
+		// A crashed route-all tunnel takes the IPv4 default route with it, so
+		// a restart may find none. The rules of the run that did find the
+		// uplink are still in the kernel; keep them rather than fail.
+		if installed, listErr := tableExists(conn); listErr == nil && installed {
+			logrus.WithError(err).Warn("Uplink interface not found, keeping the sandbox API isolation rules already installed")
+			return nil
+		}
+		return fmt.Errorf("detect the uplink interface: %w", err)
 	}
 
 	table := conn.AddTable(&nftables.Table{Family: nftables.TableFamilyINet, Name: TableName})
@@ -63,6 +70,38 @@ func Install(port int) error {
 		"table":  "inet " + TableName,
 	}).Info("Sandbox API isolated: local non-root callers and foreign interfaces are rejected")
 	return nil
+}
+
+// Remove deletes the isolation rules, if a previous run installed them, so
+// turning the option off takes effect on the next start.
+func Remove() error {
+	conn, err := nftables.New()
+	if err != nil {
+		return fmt.Errorf("open nftables: %w", err)
+	}
+	installed, err := tableExists(conn)
+	if err != nil || !installed {
+		return err
+	}
+	conn.DelTable(&nftables.Table{Family: nftables.TableFamilyINet, Name: TableName})
+	if err := conn.Flush(); err != nil {
+		return fmt.Errorf("delete nftables table: %w", err)
+	}
+	logrus.WithField("table", "inet "+TableName).Info("Sandbox API isolation disabled: removed the rules of a previous run")
+	return nil
+}
+
+func tableExists(conn *nftables.Conn) (bool, error) {
+	tables, err := conn.ListTablesOfFamily(nftables.TableFamilyINet)
+	if err != nil {
+		return false, fmt.Errorf("list nftables tables: %w", err)
+	}
+	for _, t := range tables {
+		if t.Name == TableName {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // localRule: oifname "lo" tcp dport <port> meta skuid != 0 reject with tcp reset

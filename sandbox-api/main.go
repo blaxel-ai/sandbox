@@ -108,6 +108,8 @@ func main() {
 		if identity.Get() == nil {
 			logrus.Warnf("%s is on but the image has no non-root USER: the workload runs as root and can bypass the isolation", isolation.EnvEnabled)
 		}
+	} else if err := isolation.Remove(); err != nil {
+		logrus.WithError(err).Debug("Could not check for sandbox API isolation rules to remove")
 	}
 
 	sentrylib.Version = handler.Version
