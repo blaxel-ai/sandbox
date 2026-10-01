@@ -10,6 +10,7 @@ package tests
 
 import (
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -96,4 +97,47 @@ func TestNonRootProcessCannotCallTheAPI(t *testing.T) {
 	out, err := cmd.Output()
 	require.NoError(t, err)
 	require.Equal(t, noResponse, strings.TrimSpace(string(out)), "a non-root process reached the API")
+}
+
+// uplink returns the default-route interface and its global addresses.
+func uplink(t *testing.T) (string, []string) {
+	t.Helper()
+	for _, family := range []string{"-6", "-4"} {
+		out, err := exec.Command("ip", family, "-o", "route", "show", "default").Output()
+		require.NoError(t, err)
+		fields := strings.Fields(string(out))
+		for i := 0; i+1 < len(fields); i++ {
+			if fields[i] != "dev" {
+				continue
+			}
+			iface, err := net.InterfaceByName(fields[i+1])
+			require.NoError(t, err)
+			addrs, err := iface.Addrs()
+			require.NoError(t, err)
+			var global []string
+			for _, a := range addrs {
+				if ipnet, ok := a.(*net.IPNet); ok && ipnet.IP.IsGlobalUnicast() {
+					global = append(global, ipnet.IP.String())
+				}
+			}
+			return iface.Name, global
+		}
+	}
+	t.Skip("no default route")
+	return "", nil
+}
+
+// A socket bound to the uplink still reaches the VM's own addresses through
+// loopback, where the uid is matched.
+func TestWorkloadBoundToTheUplinkCannotCallTheAPI(t *testing.T) {
+	requireIsolation(t)
+	port := apiPort(t)
+	dev, addrs := uplink(t)
+	require.NotEmpty(t, addrs, "uplink %s has no global address", dev)
+	for _, addr := range addrs {
+		target := net.JoinHostPort(addr, port)
+		// curl exits 7 when the connection is refused, 45 when it cannot bind.
+		command := fmt.Sprintf("curl -s -o /dev/null -w '%%{http_code}' --max-time 5 --interface %s 'http://%s/health'; echo \" $?\"", dev, target)
+		require.Equal(t, noResponse+" 7", runProcess(t, command), "a workload process bound to %s reached the API on %s", dev, target)
+	}
 }

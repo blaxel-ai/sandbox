@@ -46,8 +46,8 @@ it de-privileges PID 1, which is what this replaces.
 
 If the value cannot be resolved, or resolves to uid 0, the API refuses to start.
 Failing open would hand every workload the privileges the feature exists to
-remove. The one exception is an identity enabled by the isolation alone:
-an image `USER` of root then keeps the workload running as root.
+remove. An identity enabled by `BL_SANDBOX_API_ISOLATION` alone is the
+exception: a missing or root `USER` keeps the workload running as root.
 
 ## What runs as the workload user
 
