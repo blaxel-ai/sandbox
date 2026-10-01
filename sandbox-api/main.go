@@ -24,6 +24,7 @@ import (
 	"github.com/blaxel-ai/sandbox-api/src/lib/blaxel"
 	"github.com/blaxel-ai/sandbox-api/src/lib/envfile"
 	"github.com/blaxel-ai/sandbox-api/src/lib/identity"
+	"github.com/blaxel-ai/sandbox-api/src/lib/isolation"
 	"github.com/blaxel-ai/sandbox-api/src/lib/networking"
 	"github.com/blaxel-ai/sandbox-api/src/lib/oom"
 	"github.com/blaxel-ai/sandbox-api/src/lib/proxy"
@@ -89,6 +90,25 @@ func main() {
 	// misconfigured user fails at boot instead of at first exec.
 	identity.SetSpec(*workloadUser)
 	identity.Get()
+
+	// Use the port provided by either flag
+	portValue := *port
+	if *shortPort != 8080 {
+		portValue = *shortPort
+	}
+
+	// Before anything of the workload runs, so no process of it ever sees the
+	// API reachable. Failing to install the rules is fatal: the option was
+	// asked for, and a sandbox silently left open is worse than one that does
+	// not start.
+	if isolation.Enabled() {
+		if err := isolation.Install(portValue); err != nil {
+			logrus.WithError(err).Fatalf("%s is on but the sandbox API could not be isolated", isolation.EnvEnabled)
+		}
+		if identity.Get() == nil {
+			logrus.Warnf("%s is on but the image has no non-root USER: the workload runs as root and can bypass the isolation", isolation.EnvEnabled)
+		}
+	}
 
 	sentrylib.Version = handler.Version
 	sentryFlush := sentrylib.Init(*disableTelemetry)
@@ -172,12 +192,6 @@ func main() {
 	gin.SetMode(gin.ReleaseMode)
 	disableRequestLogging := os.Getenv("DISABLE_REQUEST_LOGGING") == "true"
 	enableProcessingTime := os.Getenv("ENABLE_PROCESSING_TIME") == "true"
-
-	// Use the port provided by either flag
-	portValue := *port
-	if *shortPort != 8080 {
-		portValue = *shortPort
-	}
 
 	commandValue := *command
 	if *shortCommand != "" {

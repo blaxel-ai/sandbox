@@ -50,7 +50,9 @@ jobs:
         # root: the historical behaviour, everything runs as the API user.
         # workload-user: the API keeps root and scopes what it runs for the
         # user to an unprivileged identity (Dockerfile USER / --user).
-        mode: [root, workload-user]
+        # isolation: BL_SANDBOX_API_ISOLATION, which also turns the image USER
+        # on and refuses non-root local callers, so its suite runs as root.
+        mode: [root, workload-user, isolation]
     steps:
       - uses: actions/checkout@v4
 
@@ -71,12 +73,15 @@ jobs:
             sudo sh -c 'printf "root only\n" > /root/.integration-identity-secret && chmod 600 /root/.integration-identity-secret'
             echo "WORKLOAD_USER=sbxtest" >> "$GITHUB_ENV"
             sudo -b sh -c 'SANDBOX_LOG_DIR=/tmp/sandbox-logs BL_WORKSPACE_ID=test /tmp/sandbox-api --user sbxtest -port 8080 > /tmp/sandbox-api.log 2>&1'
+          elif [ "${{ matrix.mode }}" = "isolation" ]; then
+            sudo useradd --create-home --shell /bin/sh sbxtest
+            sudo -b sh -c 'SANDBOX_LOG_DIR=/tmp/sandbox-logs BL_SANDBOX_API_ISOLATION=true BL_SANDBOX_USER=sbxtest /tmp/sandbox-api -port 8080 > /tmp/sandbox-api.log 2>&1'
           else
             sudo -b sh -c 'SANDBOX_LOG_DIR=/tmp/sandbox-logs /tmp/sandbox-api -port 8080 > /tmp/sandbox-api.log 2>&1'
           fi
 
           for _ in $(seq 30); do
-            curl -sf http://localhost:8080/health > /dev/null && exit 0
+            sudo curl -sf http://localhost:8080/health > /dev/null && exit 0
             sleep 1
           done
           echo "sandbox-api did not become ready:"
@@ -84,12 +89,18 @@ jobs:
           exit 1
 
       - name: Run integration tests
+        if: matrix.mode != 'isolation'
         working-directory: sandbox-api/integration-tests
         env:
           API_BASE_URL: http://localhost:8080
         # tests/network is excluded: it drives port monitoring against a real
         # sandbox network stack, which a bare runner does not have.
         run: go test -v . ./tests/codegen/... ./tests/filesystem/... ./tests/identity/... ./tests/mcp/... ./tests/process/... ./tests/welcome/...
+
+      - name: Run isolation tests
+        if: matrix.mode == 'isolation'
+        working-directory: sandbox-api/integration-tests
+        run: sudo env "PATH=$PATH" API_BASE_URL=http://localhost:8080 ISOLATION=true WORKLOAD_USER=sbxtest go test -v ./tests/isolation/...
 
       - name: sandbox-api logs
         if: failure()

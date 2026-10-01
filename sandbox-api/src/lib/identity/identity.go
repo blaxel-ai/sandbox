@@ -7,7 +7,8 @@
 // BL_SANDBOX_USER_ENABLED is on, so the runtime can export the image USER
 // before anyone opts in. When either is missing the whole mechanism is
 // disabled and everything keeps running as the API user (root), which is the
-// historical behaviour. --user opts in by itself.
+// historical behaviour. --user opts in by itself, and so does
+// BL_SANDBOX_API_ISOLATION, which needs the workload off root to mean anything.
 package identity
 
 import (
@@ -20,6 +21,7 @@ import (
 	"sync"
 	"syscall"
 
+	"github.com/blaxel-ai/sandbox-api/src/lib/isolation"
 	"github.com/sirupsen/logrus"
 )
 
@@ -63,9 +65,16 @@ func SetSpec(value string) {
 // process, so no request can influence which user its work runs as.
 func Get() *Identity {
 	once.Do(func() {
+		// Enabled by the isolation alone, the identity is the image USER
+		// applied on a best-effort basis: an image without one, or whose USER
+		// is root, keeps running its workload as root.
+		implicit := false
 		if spec == "" {
 			if !enabled() {
-				return
+				if !isolation.Enabled() {
+					return
+				}
+				implicit = true
 			}
 			spec = strings.TrimSpace(os.Getenv(EnvUser))
 		}
@@ -79,6 +88,9 @@ func Get() *Identity {
 			logrus.WithError(err).Fatalf("Invalid %s=%q", source, spec)
 		}
 		if id.Uid == 0 {
+			if implicit {
+				return
+			}
 			logrus.Fatalf("%s=%q resolves to uid 0; the workload identity must be unprivileged", source, spec)
 		}
 		logrus.WithFields(logrus.Fields{
