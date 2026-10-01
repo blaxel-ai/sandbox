@@ -68,22 +68,22 @@ type ProcessRequest struct {
 
 // ProcessResponse is the response body for a process
 type ProcessResponse struct {
-	PID              string  `json:"pid" example:"1234" binding:"required"`
-	Name             string  `json:"name" example:"my-process" binding:"required"`
-	Command          string  `json:"command" example:"ls -la" binding:"required"`
-	Status           string  `json:"status" example:"running" enums:"failed,killed,stopped,running,completed" binding:"required"`
-	StartedAt        string  `json:"startedAt" example:"Wed, 01 Jan 2023 12:00:00 GMT" binding:"required"`
-	CompletedAt      *string `json:"completedAt" example:"Wed, 01 Jan 2023 12:01:00 GMT" binding:"required" extensions:"x-nullable"`
-	ExitCode         int     `json:"exitCode" example:"0" binding:"required"`
-	WorkingDir       string  `json:"workingDir" example:"/home/user" binding:"required"`
-	Logs             *string `json:"logs" example:"logs output" binding:"required" extensions:"x-nullable"`
-	Stdout           *string `json:"stdout" example:"stdout output" binding:"required" extensions:"x-nullable"`
-	Stderr           *string `json:"stderr" example:"stderr output" binding:"required" extensions:"x-nullable"`
-	RestartOnFailure bool    `json:"restartOnFailure" example:"true"`
-	MaxRestarts      int     `json:"maxRestarts" example:"3"`
-	RestartCount     int     `json:"restartCount" example:"2"`
-	KeepAlive        bool    `json:"keepAlive" example:"false"` // Whether scale-to-zero is disabled for this process
-	Stdin            bool    `json:"stdin" example:"false"`     // Whether the process was started with a writable stdin pipe
+	PID              string `json:"pid" example:"1234" binding:"required"`
+	Name             string `json:"name" example:"my-process" binding:"required"`
+	Command          string `json:"command" example:"ls -la" binding:"required"`
+	Status           string `json:"status" example:"running" enums:"failed,killed,stopped,running,completed" binding:"required"`
+	StartedAt        string `json:"startedAt" example:"Wed, 01 Jan 2023 12:00:00 GMT" binding:"required"`
+	CompletedAt      string `json:"completedAt" example:"Wed, 01 Jan 2023 12:01:00 GMT" binding:"required"`
+	ExitCode         int    `json:"exitCode" example:"0" binding:"required"`
+	WorkingDir       string `json:"workingDir" example:"/home/user" binding:"required"`
+	Logs             string `json:"logs" example:"logs output" binding:"required"`
+	Stdout           string `json:"stdout" example:"stdout output" binding:"required"`
+	Stderr           string `json:"stderr" example:"stderr output" binding:"required"`
+	RestartOnFailure bool   `json:"restartOnFailure" example:"true"`
+	MaxRestarts      int    `json:"maxRestarts" example:"3"`
+	RestartCount     int    `json:"restartCount" example:"2"`
+	KeepAlive        bool   `json:"keepAlive" example:"false"` // Whether scale-to-zero is disabled for this process
+	Stdin            bool   `json:"stdin" example:"false"`     // Whether the process was started with a writable stdin pipe
 } // @name ProcessResponse
 
 type ProcessResponseWithLogs struct {
@@ -113,27 +113,32 @@ func (h *ProcessHandler) ExecuteProcess(command string, workingDir string, name 
 	if !exists {
 		return ProcessResponse{}, fmt.Errorf("process not found")
 	}
-	return processResponse(snapshot, false), err
+	return processResponse(snapshot), err
 }
 
 // processResponse serializes only detached data, never the live ProcessInfo.
-func processResponse(p process.ProcessSnapshot, nullableCompletion bool) ProcessResponse {
-	var completedAt *string
+func processResponse(p process.ProcessSnapshot) ProcessResponse {
+	completedAt := ""
 	if p.CompletedAt != nil {
-		value := p.CompletedAt.Format("Mon, 02 Jan 2006 15:04:05 GMT")
-		completedAt = &value
-	} else if !nullableCompletion {
-		value := ""
-		completedAt = &value
+		completedAt = p.CompletedAt.Format("Mon, 02 Jan 2006 15:04:05 GMT")
 	}
 	return ProcessResponse{
 		PID: p.PID, Name: p.Name, Command: p.Command, Status: string(p.Status),
 		StartedAt:   p.StartedAt.Format("Mon, 02 Jan 2006 15:04:05 GMT"),
 		CompletedAt: completedAt, ExitCode: p.ExitCode, WorkingDir: p.WorkingDir,
-		Logs: p.Logs, Stdout: p.Stdout, Stderr: p.Stderr,
+		Logs: processOutputString(p.Logs), Stdout: processOutputString(p.Stdout), Stderr: processOutputString(p.Stderr),
 		RestartOnFailure: p.RestartOnFailure, MaxRestarts: p.MaxRestarts,
 		RestartCount: p.RestartCount, KeepAlive: p.KeepAlive, Stdin: p.Stdin,
 	}
+}
+
+// processOutputString preserves captured output and represents unavailable output
+// as an empty string, matching the required-string API contract.
+func processOutputString(output *string) string {
+	if output == nil {
+		return ""
+	}
+	return *output
 }
 
 // ListProcesses lists process snapshots with bounded log tails.
@@ -143,7 +148,7 @@ func (h *ProcessHandler) ListProcesses() []ProcessResponse {
 	for _, p := range processes {
 		output := p.OutputTail(process.MaxInlinedLogBytes)
 		p.Logs, p.Stdout, p.Stderr = &output.Logs, &output.Stdout, &output.Stderr
-		result = append(result, processResponse(p, true))
+		result = append(result, processResponse(p))
 	}
 	return result
 }
@@ -156,7 +161,7 @@ func (h *ProcessHandler) GetProcess(identifier string) (ProcessResponse, error) 
 	}
 	output := p.OutputTail(process.MaxInlinedLogBytes)
 	p.Logs, p.Stdout, p.Stderr = &output.Logs, &output.Stdout, &output.Stderr
-	return processResponse(p, false), nil
+	return processResponse(p), nil
 }
 
 // GetProcessOutput gets the output of a process
@@ -384,16 +389,16 @@ done:
 	// Check if we need to send the final output (compare with what jw received)
 	if !jw.HasSentData() {
 		// No streaming data was sent, send the final output now
-		if finalProcessInfo.Stdout != nil && *finalProcessInfo.Stdout != "" {
-			lines := strings.Split(*finalProcessInfo.Stdout, "\n")
+		if finalProcessInfo.Stdout != "" {
+			lines := strings.Split(finalProcessInfo.Stdout, "\n")
 			for _, line := range lines {
 				if line != "" {
 					jw.WriteEvent("stdout", line)
 				}
 			}
 		}
-		if finalProcessInfo.Stderr != nil && *finalProcessInfo.Stderr != "" {
-			lines := strings.Split(*finalProcessInfo.Stderr, "\n")
+		if finalProcessInfo.Stderr != "" {
+			lines := strings.Split(finalProcessInfo.Stderr, "\n")
 			for _, line := range lines {
 				if line != "" {
 					jw.WriteEvent("stderr", line)

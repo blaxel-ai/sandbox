@@ -2981,7 +2981,6 @@ const docTemplate = `{
                 },
                 "completedAt": {
                     "type": "string",
-                    "x-nullable": true,
                     "example": "Wed, 01 Jan 2023 12:01:00 GMT"
                 },
                 "exitCode": {
@@ -2995,7 +2994,6 @@ const docTemplate = `{
                 },
                 "logs": {
                     "type": "string",
-                    "x-nullable": true,
                     "example": "logs output"
                 },
                 "maxRestarts": {
@@ -3035,7 +3033,6 @@ const docTemplate = `{
                 },
                 "stderr": {
                     "type": "string",
-                    "x-nullable": true,
                     "example": "stderr output"
                 },
                 "stdin": {
@@ -3045,7 +3042,6 @@ const docTemplate = `{
                 },
                 "stdout": {
                     "type": "string",
-                    "x-nullable": true,
                     "example": "stdout output"
                 },
                 "workingDir": {
