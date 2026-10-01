@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"sync"
 	"testing"
+
+	"github.com/blaxel-ai/sandbox-api/src/lib/isolation"
 )
 
 func currentUser(t *testing.T) *user.User {
@@ -225,5 +227,40 @@ func TestDoPropagatesErrors(t *testing.T) {
 	}
 	if got := id.Do(func() error { return want }); !errors.Is(got, want) {
 		t.Fatalf("Do error = %v, want %v", got, want)
+	}
+}
+
+// The isolation turns the image USER on by itself, without the identity toggle.
+func TestGetUsesEnvironmentWhenIsolated(t *testing.T) {
+	u := currentUser(t)
+	if u.Uid == "0" {
+		t.Skip("requires a non-root test user")
+	}
+	reset(t)
+	t.Setenv(EnvUser, u.Username)
+	t.Setenv(EnvEnabled, "")
+	t.Setenv(isolation.EnvEnabled, "true")
+
+	id := Get()
+	if id == nil {
+		t.Fatal("Get() with the isolation on = nil, want the image USER")
+	}
+	if id.Name != u.Username {
+		t.Fatalf("Get().Name = %q, want %q", id.Name, u.Username)
+	}
+}
+
+// Enabled by the isolation alone, an image without a USER, or whose USER is
+// root, keeps running as root instead of refusing to start.
+func TestGetIsBestEffortWhenIsolated(t *testing.T) {
+	for _, value := range []string{"", "root", "0", "0:0"} {
+		reset(t)
+		t.Setenv(EnvUser, value)
+		t.Setenv(EnvEnabled, "")
+		t.Setenv(isolation.EnvEnabled, "true")
+
+		if id := Get(); id != nil {
+			t.Fatalf("Get() with %s=%q = %+v, want nil", EnvUser, value, id)
+		}
 	}
 }
