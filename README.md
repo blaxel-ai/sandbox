@@ -134,6 +134,14 @@ Template configurations are defined in `template.json` files within each templat
 - Exposed ports and protocols
 - Enterprise features and availability status
 
+Templates can provide `iconLight` and `iconDark` URLs for each theme. Keep `icon`
+for clients that use the original field. During publication, the CI trims the
+URLs and defaults a missing or blank `iconLight` to `icon`, then `iconDark` if
+necessary. A missing or blank `iconDark` defaults to the resolved `iconLight`.
+Templates without a dark variant use the same image in both themes. Publication
+fails before calling the API if none of the three fields contains a nonempty
+string, so both theme fields are always populated in published metadata.
+
 ## Contributing
 
 We welcome contributions to Sandbox Hub! Please follow these steps:
