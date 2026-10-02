@@ -1,8 +1,10 @@
 package tests
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -40,4 +42,33 @@ func TestFileWithContentHasBaseName(t *testing.T) {
 	defer resp.Body.Close()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	require.Equal(t, "hello.txt", file.Name)
+}
+
+func encodeRoute(prefix, path string) string {
+	return prefix + "%2F" + strings.TrimPrefix(path, "/")
+}
+
+func TestSearchesReturnEmptyMatchesArray(t *testing.T) {
+	dir := uniqueTestDir("fs-empty-search")
+	writeTestFile(t, dir+"/file.txt", "hello")
+	t.Cleanup(func() {
+		resp, err := common.MakeRequest(http.MethodDelete, common.EncodeFilesystemPath(dir)+"?recursive=true", nil)
+		if err == nil {
+			resp.Body.Close()
+		}
+	})
+
+	for _, target := range []string{
+		encodeRoute("/filesystem-content-search", dir) + "?query=nothing-matches-this",
+		encodeRoute("/filesystem-find", dir) + "?patterns=*.nothing",
+		encodeRoute("/filesystem-search", dir) + "?query=nothing-matches-this",
+	} {
+		resp, err := common.MakeRequest(http.MethodGet, target, nil)
+		require.NoError(t, err)
+		var body map[string]json.RawMessage
+		require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+		resp.Body.Close()
+		require.Equal(t, http.StatusOK, resp.StatusCode, target)
+		require.Equal(t, "[]", string(body["matches"]), target)
+	}
 }

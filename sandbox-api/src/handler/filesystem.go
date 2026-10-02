@@ -1796,7 +1796,7 @@ func (h *FileSystemHandler) HandleContentSearch(c *gin.Context) {
 	resultsChan := make(chan searchResult, 100)
 	done := make(chan bool)
 
-	var matches []ContentSearchMatch
+	matches := []ContentSearchMatch{}
 	go func() {
 		for result := range resultsChan {
 			relPath, _ := filepath.Rel(absSearchDir, result.path)

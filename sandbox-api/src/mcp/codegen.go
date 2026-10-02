@@ -250,7 +250,7 @@ func (s *Server) handleEditFile(ctx context.Context, req *mcp.CallToolRequest, a
 
 // handleFileSearch implements fuzzy file search functionality
 func (s *Server) handleFileSearch(ctx context.Context, req *mcp.CallToolRequest, args FileSearchInput) (*mcp.CallToolResult, FileSearchOutput, error) {
-	var matches []string
+	matches := []string{}
 	query := strings.ToLower(args.Query)
 
 	// Get the working directory from the filesystem handler
