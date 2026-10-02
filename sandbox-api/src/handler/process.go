@@ -126,10 +126,15 @@ func processResponse(p process.ProcessSnapshot, nullableCompletion bool) Process
 		value := ""
 		completedAt = &value
 	}
+	workingDir := p.WorkingDir
+	if workingDir == "" {
+		// The process inherited our working directory.
+		workingDir, _ = os.Getwd()
+	}
 	return ProcessResponse{
 		PID: p.PID, Name: p.Name, Command: p.Command, Status: string(p.Status),
 		StartedAt:   p.StartedAt.Format("Mon, 02 Jan 2006 15:04:05 GMT"),
-		CompletedAt: completedAt, ExitCode: p.ExitCode, WorkingDir: p.WorkingDir,
+		CompletedAt: completedAt, ExitCode: p.ExitCode, WorkingDir: workingDir,
 		Logs: p.Logs, Stdout: p.Stdout, Stderr: p.Stderr,
 		RestartOnFailure: p.RestartOnFailure, MaxRestarts: p.MaxRestarts,
 		RestartCount: p.RestartCount, KeepAlive: p.KeepAlive, Stdin: p.Stdin,
