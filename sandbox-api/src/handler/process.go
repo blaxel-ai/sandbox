@@ -73,7 +73,7 @@ type ProcessResponse struct {
 	Command          string  `json:"command" example:"ls -la" binding:"required"`
 	Status           string  `json:"status" example:"running" enums:"failed,killed,stopped,running,completed" binding:"required"`
 	StartedAt        string  `json:"startedAt" example:"Wed, 01 Jan 2023 12:00:00 GMT" binding:"required"`
-	CompletedAt      *string `json:"completedAt" example:"Wed, 01 Jan 2023 12:01:00 GMT" binding:"required"`
+	CompletedAt      *string `json:"completedAt" example:"Wed, 01 Jan 2023 12:01:00 GMT" binding:"required" extensions:"x-nullable"` // Completion time. While the process runs: null in the process list, empty string elsewhere
 	ExitCode         int     `json:"exitCode" example:"0" binding:"required"`
 	WorkingDir       string  `json:"workingDir" example:"/home/user" binding:"required"`
 	Logs             *string `json:"logs" example:"logs output" binding:"required"`

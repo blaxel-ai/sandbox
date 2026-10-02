@@ -66,3 +66,42 @@ func TestProcessResponseReportsInheritedWorkingDir(t *testing.T) {
 		t.Fatalf("explicit workingDir = %v, want %q", got, dir)
 	}
 }
+
+func TestProcessCompletedAtWhileRunning(t *testing.T) {
+	router := newProcessTestRouter(t)
+
+	// cat blocks on its open stdin, so the process is reliably still running.
+	created := serveProcessRequest(t, router, http.MethodPost, "/process",
+		`{"command":"cat","name":"completed-at-running","stdin":true}`)
+	t.Cleanup(func() {
+		request := httptest.NewRequest(http.MethodDelete, "/process/completed-at-running/kill", nil)
+		router.ServeHTTP(httptest.NewRecorder(), request)
+	})
+	body := decodeProcessBody(t, created.Body.Bytes())
+	if body["status"] != "running" || body["completedAt"] != "" {
+		t.Fatalf("POST /process: status = %v, completedAt = %#v, want running and \"\"", body["status"], body["completedAt"])
+	}
+
+	detail := decodeProcessBody(t, serveProcessRequest(t, router, http.MethodGet, "/process/completed-at-running", "").Body.Bytes())
+	if detail["completedAt"] != "" {
+		t.Fatalf("GET /process/{id}: completedAt = %#v, want \"\"", detail["completedAt"])
+	}
+
+	list := serveProcessRequest(t, router, http.MethodGet, "/process", "")
+	var listed []map[string]any
+	if err := json.Unmarshal(list.Body.Bytes(), &listed); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, item := range listed {
+		if item["name"] == "completed-at-running" {
+			found = true
+			if completedAt, present := item["completedAt"]; !present || completedAt != nil {
+				t.Fatalf("GET /process: completedAt = %#v (present=%v), want null", completedAt, present)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("running process missing from the list")
+	}
+}

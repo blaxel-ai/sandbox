@@ -2980,7 +2980,9 @@ const docTemplate = `{
                     "example": "ls -la"
                 },
                 "completedAt": {
+                    "description": "Completion time. While the process runs: null in the process list, empty string elsewhere",
                     "type": "string",
+                    "x-nullable": true,
                     "example": "Wed, 01 Jan 2023 12:01:00 GMT"
                 },
                 "exitCode": {
