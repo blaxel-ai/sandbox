@@ -70,6 +70,16 @@ func (fs *Filesystem) WriteFileFromReader(path string, r io.Reader, perm os.File
 	})
 }
 
+func (fs *Filesystem) Chmod(path string, perm os.FileMode) error {
+	return identity.Do(func() error {
+		absPath, err := fs.GetAbsolutePath(path)
+		if err != nil {
+			return err
+		}
+		return os.Chmod(absPath, perm)
+	})
+}
+
 func (fs *Filesystem) CreateDirectory(path string, perm os.FileMode) error {
 	return identity.Do(func() error {
 		return fs.createDirectory(path, perm)

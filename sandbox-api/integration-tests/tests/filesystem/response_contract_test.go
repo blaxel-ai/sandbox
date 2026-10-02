@@ -1,8 +1,10 @@
 package tests
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"mime/multipart"
 	"net/http"
 	"strings"
 	"testing"
@@ -71,4 +73,39 @@ func TestSearchesReturnEmptyMatchesArray(t *testing.T) {
 		require.Equal(t, http.StatusOK, resp.StatusCode, target)
 		require.Equal(t, "[]", string(body["matches"]), target)
 	}
+}
+
+func TestMultipartUploadAppliesPermissionsSentAfterFile(t *testing.T) {
+	dir := uniqueTestDir("fs-multipart-perms")
+	path := dir + "/script.sh"
+	t.Cleanup(func() {
+		resp, err := common.MakeRequest(http.MethodDelete, common.EncodeFilesystemPath(dir)+"?recursive=true", nil)
+		if err == nil {
+			resp.Body.Close()
+		}
+	})
+
+	var body bytes.Buffer
+	form := multipart.NewWriter(&body)
+	part, err := form.CreateFormFile("file", "script.sh")
+	require.NoError(t, err)
+	_, err = part.Write([]byte("#!/bin/sh\necho hi\n"))
+	require.NoError(t, err)
+	require.NoError(t, form.WriteField("permissions", "0755"))
+	require.NoError(t, form.WriteField("path", path))
+	require.NoError(t, form.Close())
+
+	request, err := http.NewRequest(http.MethodPut, common.BaseURL+common.EncodeFilesystemPath(path), &body)
+	require.NoError(t, err)
+	request.Header.Set("Content-Type", form.FormDataContentType())
+	resp, err := common.Client.Do(request)
+	require.NoError(t, err)
+	resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var file filesystem.FileWithContent
+	resp, err = common.MakeRequestAndParse(http.MethodGet, common.EncodeFilesystemPath(path), nil, &file)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, "755", file.Permissions)
 }

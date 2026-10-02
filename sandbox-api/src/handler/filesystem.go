@@ -528,7 +528,7 @@ func (h *FileSystemHandler) HandleCreateOrUpdateBinary(c *gin.Context) {
 	}
 
 	var permissions os.FileMode = 0644
-	var wroteFile bool
+	var wroteFile, createdFile, permissionsAfterFile bool
 
 	for {
 		part, err := mr.NextPart()
@@ -553,12 +553,15 @@ func (h *FileSystemHandler) HandleCreateOrUpdateBinary(c *gin.Context) {
 					return
 				}
 				permissions = os.FileMode(permInt)
+				permissionsAfterFile = wroteFile
 			}
 			_ = part.Close()
 			continue
 		}
 
 		if name == "file" && filename != "" && !wroteFile {
+			_, statErr := h.fs.Infos(path)
+			createdFile = os.IsNotExist(statErr)
 			// Stream directly to disk with requested permissions
 			if err := h.fs.WriteFileFromReader(path, part, permissions); err != nil {
 				_ = part.Close()
@@ -577,6 +580,15 @@ func (h *FileSystemHandler) HandleCreateOrUpdateBinary(c *gin.Context) {
 	if !wroteFile {
 		h.SendError(c, http.StatusBadRequest, fmt.Errorf("missing 'file' field in multipart form"))
 		return
+	}
+
+	// Permissions sent after the file were unknown when it was created.
+	// An existing file keeps its mode.
+	if createdFile && permissionsAfterFile {
+		if err := h.fs.Chmod(path, permissions); err != nil {
+			h.SendError(c, http.StatusUnprocessableEntity, fmt.Errorf("error setting permissions: %w", err))
+			return
+		}
 	}
 
 	h.SendSuccessWithPath(c, path, "Binary file uploaded successfully")
