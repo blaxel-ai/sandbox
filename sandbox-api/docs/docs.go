@@ -779,7 +779,7 @@ const docTemplate = `{
         },
         "/filesystem-multipart/{uploadId}/part": {
             "put": {
-                "description": "Upload a single part of a multipart upload",
+                "description": "Upload a single part of a multipart upload. Idempotent: uploading the same part number again replaces it, so retrying a part is safe.",
                 "consumes": [
                     "multipart/form-data"
                 ],
@@ -1018,7 +1018,7 @@ const docTemplate = `{
                 }
             },
             "put": {
-                "description": "Create or update multiple files within a directory tree structure",
+                "description": "Create or update multiple files within a directory tree structure. Idempotent: existing files are overwritten, so retrying the same request is safe.",
                 "consumes": [
                     "application/json"
                 ],
@@ -1186,7 +1186,7 @@ const docTemplate = `{
                 }
             },
             "put": {
-                "description": "Create or update a file or directory.\n\nSend either a JSON body (FileRequest) or ` + "`" + `multipart/form-data` + "`" + ` for binary files. Multipart fields, in any order: ` + "`" + `file` + "`" + ` (required, the file content), ` + "`" + `permissions` + "`" + ` (optional octal mode such as ` + "`" + `0755` + "`" + `, applied when the file is created, default ` + "`" + `0644` + "`" + `; an existing file keeps its mode), ` + "`" + `path` + "`" + ` (optional, ignored: the target is always the URL path).",
+                "description": "Create or update a file or directory.\n\nIdempotent: an existing file is overwritten (truncated, not appended to) and an existing directory is kept, so retrying the same request is safe.\n\nSend either a JSON body (FileRequest) or ` + "`" + `multipart/form-data` + "`" + ` for binary files. Multipart fields, in any order: ` + "`" + `file` + "`" + ` (required, the file content), ` + "`" + `permissions` + "`" + ` (optional octal mode such as ` + "`" + `0755` + "`" + `, applied when the file is created, default ` + "`" + `0644` + "`" + `; an existing file keeps its mode), ` + "`" + `path` + "`" + ` (optional, ignored: the target is always the URL path).",
                 "consumes": [
                     "application/json",
                     "multipart/form-data"

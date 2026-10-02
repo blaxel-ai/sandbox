@@ -470,6 +470,8 @@ func (h *FileSystemHandler) handleListDirectory(c *gin.Context, path string) {
 // @Summary Create or update a file or directory
 // @Description Create or update a file or directory.
 // @Description
+// @Description Idempotent: an existing file is overwritten (truncated, not appended to) and an existing directory is kept, so retrying the same request is safe.
+// @Description
 // @Description Send either a JSON body (FileRequest) or `multipart/form-data` for binary files. Multipart fields, in any order: `file` (required, the file content), `permissions` (optional octal mode such as `0755`, applied when the file is created, default `0644`; an existing file keeps its mode), `path` (optional, ignored: the target is always the URL path).
 // @Tags filesystem
 // @Accept json,mpfd
@@ -759,7 +761,7 @@ type TreeRequest struct {
 
 // HandleCreateOrUpdateTree handles PUT requests for directory trees
 // @Summary Create or update directory tree
-// @Description Create or update multiple files within a directory tree structure
+// @Description Create or update multiple files within a directory tree structure. Idempotent: existing files are overwritten, so retrying the same request is safe.
 // @Tags filesystem
 // @Accept json
 // @Produce json
@@ -948,7 +950,7 @@ func (h *FileSystemHandler) HandleInitiateMultipartUpload(c *gin.Context) {
 
 // HandleUploadPart uploads a single part of a multipart upload
 // @Summary Upload part
-// @Description Upload a single part of a multipart upload
+// @Description Upload a single part of a multipart upload. Idempotent: uploading the same part number again replaces it, so retrying a part is safe.
 // @Tags filesystem
 // @Accept multipart/form-data
 // @Produce json
