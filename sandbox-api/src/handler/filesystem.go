@@ -1184,12 +1184,15 @@ func (h *FileSystemHandler) HandleListMultipartUploads(c *gin.Context) {
 
 // HandleWatchDirectory streams file modification events for a directory
 // @Summary Stream file modification events in a directory
-// @Description Streams the path of modified files (one per line) in the given directory. Closes when the client disconnects.
+// @Description Streams change events for a directory until the client disconnects.
+// @Description
+// @Description The body is JSON lines (sent with `Content-Type: text/plain`): one event object per line, e.g. `{"op":"WRITE","name":"main.go","path":"/app/src","error":null}`. `op` is the fsnotify operation (CREATE, WRITE, REMOVE, RENAME or CHMOD, several can be joined with `|`), `name` the base name of the changed entry, `path` the directory containing it, and `error` is always null. A `[keepalive]` line (not JSON) is sent every 30 seconds.
+// @Description Only the directory's direct entries are watched. To also watch every subdirectory, including ones created later, end the path with `/**`; the stream then starts with a synthetic CREATE event for each entry that already exists.
 // @Tags filesystem
 // @Produce plain
-// @Param ignore query string false "Ignore patterns (comma-separated)"
-// @Param path path string true "Directory path to watch"
-// @Success 200 {string} string "Stream of modified file paths, one per line"
+// @Param ignore query string false "Comma-separated substrings; events whose full path contains one are skipped"
+// @Param path path string true "Directory path to watch (append /** to watch subdirectories)"
+// @Success 200 {string} string "JSON lines stream of change events"
 // @Failure 400 {object} ErrorResponse "Invalid path"
 // @Failure 500 {object} ErrorResponse "Internal server error"
 // @Router /watch/filesystem/{path} [get]
