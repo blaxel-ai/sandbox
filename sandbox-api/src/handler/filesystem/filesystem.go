@@ -44,10 +44,19 @@ type File struct {
 	Group        string    `json:"group" binding:"required"`
 } // @name File
 
+// baseName is the last element of a file path, or "" when there is none.
+func baseName(path string) string {
+	if path == "" {
+		return ""
+	}
+	return filepath.Base(path)
+}
+
 // MarshalJSON implements json.Marshaler for custom JSON marshaling
 func (f FileByte) MarshalJSON() ([]byte, error) {
 	return json.Marshal(File{
 		Path:         f.Path,
+		Name:         baseName(f.Path),
 		Permissions:  fmt.Sprintf("%o", f.Permissions),
 		Size:         f.Size,
 		LastModified: f.LastModified,
@@ -141,6 +150,7 @@ type FileWithContent struct {
 func (f FileWithContentByte) MarshalJSON() ([]byte, error) {
 	fileDTO := File{
 		Path:         f.Path,
+		Name:         baseName(f.Path),
 		Permissions:  fmt.Sprintf("%o", f.Permissions),
 		Size:         f.Size,
 		LastModified: f.LastModified,
