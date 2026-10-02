@@ -1186,9 +1186,10 @@ const docTemplate = `{
                 }
             },
             "put": {
-                "description": "Create or update a file or directory",
+                "description": "Create or update a file or directory.\n\nSend either a JSON body (FileRequest) or ` + "`" + `multipart/form-data` + "`" + ` for binary files. Multipart fields, in any order: ` + "`" + `file` + "`" + ` (required, the file content), ` + "`" + `permissions` + "`" + ` (optional octal mode such as ` + "`" + `0755` + "`" + `, applied when the file is created, default ` + "`" + `0644` + "`" + `; an existing file keeps its mode), ` + "`" + `path` + "`" + ` (optional, ignored: the target is always the URL path).",
                 "consumes": [
-                    "application/json"
+                    "application/json",
+                    "multipart/form-data"
                 ],
                 "produces": [
                     "application/json"

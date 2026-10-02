@@ -468,9 +468,11 @@ func (h *FileSystemHandler) handleListDirectory(c *gin.Context, path string) {
 
 // HandleCreateOrUpdateFile handles PUT requests to /filesystem/:path
 // @Summary Create or update a file or directory
-// @Description Create or update a file or directory
+// @Description Create or update a file or directory.
+// @Description
+// @Description Send either a JSON body (FileRequest) or `multipart/form-data` for binary files. Multipart fields, in any order: `file` (required, the file content), `permissions` (optional octal mode such as `0755`, applied when the file is created, default `0644`; an existing file keeps its mode), `path` (optional, ignored: the target is always the URL path).
 // @Tags filesystem
-// @Accept json
+// @Accept json,mpfd
 // @Produce json
 // @Param path path string true "File or directory path"
 // @Param request body FileRequest true "File or directory details"
