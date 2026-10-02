@@ -884,7 +884,7 @@ const docTemplate = `{
         },
         "/filesystem-search/{path}": {
             "get": {
-                "description": "Performs fuzzy search on filesystem paths using fuzzy matching algorithm. Optimized alternative to find and grep commands.",
+                "description": "Ranks the files and directories under a path by how well their relative path fuzzy-matches ` + "`" + `query` + "`" + ` (fzf algorithm: the query's characters must appear in order, not necessarily next to each other), best match first.\nUnlike find, which returns every path matching exact glob ` + "`" + `patterns` + "`" + `, fuzzy search is for \"jump to file\" lookups from a partial name; ` + "`" + `patterns` + "`" + ` here only narrows the candidates.",
                 "consumes": [
                     "application/json"
                 ],
@@ -902,6 +902,12 @@ const docTemplate = `{
                         "name": "path",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Fuzzy pattern matched against each relative path (e.g., mngo for src/main.go). When omitted, the search path itself is used as the pattern.",
+                        "name": "query",
+                        "in": "query"
                     },
                     {
                         "type": "integer",

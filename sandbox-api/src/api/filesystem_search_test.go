@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -49,5 +51,36 @@ func TestSearchesReturnEmptyArraysWhenNothingMatches(t *testing.T) {
 		if got := string(body["matches"]); got != "[]" {
 			t.Errorf("GET %s: matches = %s, want []", target, got)
 		}
+	}
+}
+
+func TestFuzzySearchMatchesQueryNotPath(t *testing.T) {
+	router := newFilesystemTestRouter(t)
+	dir := t.TempDir()
+	for _, name := range []string{"main.go", "readme.md"} {
+		if err := os.WriteFile(filepath.Join(dir, name), nil, 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	withoutQuery := serveFilesystem(router, http.MethodGet, absoluteRoute("/filesystem-search", dir))
+	if withoutQuery.Code != http.StatusOK {
+		t.Fatalf("without query: HTTP %d, want 200 (path used as the pattern)", withoutQuery.Code)
+	}
+
+	response := serveFilesystem(router, http.MethodGet, absoluteRoute("/filesystem-search", dir)+"?query=mngo")
+	if response.Code != http.StatusOK {
+		t.Fatalf("HTTP %d: %s", response.Code, response.Body.String())
+	}
+	var body struct {
+		Matches []struct {
+			Path string `json:"path"`
+		} `json:"matches"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.Matches) != 1 || body.Matches[0].Path != "main.go" {
+		t.Fatalf("matches = %+v, want only main.go", body.Matches)
 	}
 }
