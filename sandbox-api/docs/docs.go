@@ -1575,7 +1575,7 @@ const docTemplate = `{
                 }
             },
             "post": {
-                "description": "Execute a command and return process information.\n\nStreaming: with ` + "`" + `Accept: application/x-ndjson` + "`" + ` (or ` + "`" + `Accept: text/event-stream` + "`" + `, kept for compatibility) the response is NDJSON (` + "`" + `Content-Type: application/x-ndjson` + "`" + `), not SSE: one JSON object per line, ` + "`" + `{\"type\": \"...\", \"data\": \"...\"}` + "`" + `.\n` + "`" + `type` + "`" + ` is ` + "`" + `stdout` + "`" + ` or ` + "`" + `stderr` + "`" + ` (` + "`" + `data` + "`" + ` is process output), ` + "`" + `keepalive` + "`" + ` (every 5 seconds, no data), ` + "`" + `error` + "`" + ` (` + "`" + `data` + "`" + ` is the message, ends the stream) or ` + "`" + `result` + "`" + ` (last event, ` + "`" + `data` + "`" + ` is the ProcessResponse as a JSON string).",
+                "description": "Execute a command and return process information.\n\nStreaming: with ` + "`" + `Accept: application/x-ndjson` + "`" + ` (or ` + "`" + `Accept: text/event-stream` + "`" + `, kept for compatibility) the response is NDJSON (` + "`" + `Content-Type: application/x-ndjson` + "`" + `), not SSE: one JSON object per line, ` + "`" + `{\"type\": \"...\", \"data\": \"...\"}` + "`" + `.\n` + "`" + `type` + "`" + ` is ` + "`" + `stdout` + "`" + ` or ` + "`" + `stderr` + "`" + ` (` + "`" + `data` + "`" + ` is a raw output chunk, sent as soon as the process writes it, newlines included; if the process finished before any chunk was streamed, its output is sent instead as one event per line, without the newline), ` + "`" + `keepalive` + "`" + ` (every 5 seconds, no data), ` + "`" + `error` + "`" + ` (` + "`" + `data` + "`" + ` is the message, ends the stream) or ` + "`" + `result` + "`" + ` (last event, ` + "`" + `data` + "`" + ` is the ProcessResponse as a JSON string).",
                 "consumes": [
                     "application/json"
                 ],
@@ -1815,7 +1815,7 @@ const docTemplate = `{
         },
         "/process/{identifier}/logs/stream": {
             "get": {
-                "description": "Streams the stdout and stderr output of a process in real time, one line per log, prefixed with 'stdout:' or 'stderr:'. Closes when the process exits or the client disconnects.",
+                "description": "Streams the stdout and stderr output of a process in real time: the output so far, then live output as the process writes it. Closes when the process exits or the client disconnects.\nEach output line starts with ` + "`" + `stdout:` + "`" + ` or ` + "`" + `stderr:` + "`" + ` and keeps its trailing newline. A partial line (e.g. a prompt) is sent as soon as it is written; when the process completes it, the rest follows without a new prefix. ` + "`" + `[keepalive]` + "`" + ` lines are sent every 30 seconds.",
                 "produces": [
                     "text/plain"
                 ],
@@ -1834,7 +1834,7 @@ const docTemplate = `{
                 ],
                 "responses": {
                     "200": {
-                        "description": "Stream of process logs, one line per log (prefixed with stdout:/stderr:)",
+                        "description": "Process output, each line prefixed with stdout: or stderr:",
                         "schema": {
                             "type": "string"
                         }

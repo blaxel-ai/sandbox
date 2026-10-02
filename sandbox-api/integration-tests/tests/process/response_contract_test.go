@@ -1,10 +1,12 @@
 package tests
 
 import (
+	"bufio"
 	"encoding/json"
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/blaxel-ai/sandbox-api/integration_tests/common"
 	"github.com/stretchr/testify/require"
@@ -49,4 +51,31 @@ func TestProcessExecuteStreamsWithNDJSONAccept(t *testing.T) {
 		}
 	}
 	require.Contains(t, stdout, "hello")
+}
+
+// A prompt with no newline must reach the client before the process writes
+// anything else, and the newlines it writes must arrive untouched.
+func TestProcessExecuteStreamSendsPartialLinesRightAway(t *testing.T) {
+	start := time.Now()
+	resp, err := makeRequestWithHeaders(http.MethodPost, "/process", map[string]interface{}{
+		"command": "printf 'prompt> '; sleep 3; printf 'a\\nb\\n'",
+	}, map[string]string{"Accept": "application/x-ndjson"})
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	scanner := bufio.NewScanner(resp.Body)
+	var stdout string
+	for scanner.Scan() {
+		var event StreamEvent
+		if json.Unmarshal(scanner.Bytes(), &event) != nil || event.Type != "stdout" {
+			continue
+		}
+		if stdout == "" {
+			require.Equal(t, "prompt> ", event.Data)
+			require.Less(t, time.Since(start), 2*time.Second, "prompt was held back")
+		}
+		stdout += event.Data
+	}
+	require.Equal(t, "prompt> a\nb\n", stdout)
 }

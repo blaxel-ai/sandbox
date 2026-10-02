@@ -207,7 +207,7 @@ func (h *ProcessHandler) HandleListProcesses(c *gin.Context) {
 // @Description Execute a command and return process information.
 // @Description
 // @Description Streaming: with `Accept: application/x-ndjson` (or `Accept: text/event-stream`, kept for compatibility) the response is NDJSON (`Content-Type: application/x-ndjson`), not SSE: one JSON object per line, `{"type": "...", "data": "..."}`.
-// @Description `type` is `stdout` or `stderr` (`data` is process output), `keepalive` (every 5 seconds, no data), `error` (`data` is the message, ends the stream) or `result` (last event, `data` is the ProcessResponse as a JSON string).
+// @Description `type` is `stdout` or `stderr` (`data` is a raw output chunk, sent as soon as the process writes it, newlines included; if the process finished before any chunk was streamed, its output is sent instead as one event per line, without the newline), `keepalive` (every 5 seconds, no data), `error` (`data` is the message, ends the stream) or `result` (last event, `data` is the ProcessResponse as a JSON string).
 // @Tags process
 // @Accept json
 // @Produce json
@@ -456,11 +456,12 @@ func (h *ProcessHandler) HandleGetProcessLogs(c *gin.Context) {
 
 // HandleGetProcessLogsStream handles GET requests to /process/{identifier}/logs/stream
 // @Summary Stream process logs in real time
-// @Description Streams the stdout and stderr output of a process in real time, one line per log, prefixed with 'stdout:' or 'stderr:'. Closes when the process exits or the client disconnects.
+// @Description Streams the stdout and stderr output of a process in real time: the output so far, then live output as the process writes it. Closes when the process exits or the client disconnects.
+// @Description Each output line starts with `stdout:` or `stderr:` and keeps its trailing newline. A partial line (e.g. a prompt) is sent as soon as it is written; when the process completes it, the rest follows without a new prefix. `[keepalive]` lines are sent every 30 seconds.
 // @Tags process
 // @Produce plain
 // @Param identifier path string true "Process identifier (PID or name)"
-// @Success 200 {string} string "Stream of process logs, one line per log (prefixed with stdout:/stderr:)"
+// @Success 200 {string} string "Process output, each line prefixed with stdout: or stderr:"
 // @Failure 404 {object} ErrorResponse "Process not found"
 // @Failure 422 {object} ErrorResponse "Unprocessable entity"
 // @Failure 500 {object} ErrorResponse "Internal server error"
