@@ -30,3 +30,23 @@ func TestProcessResponseReportsDefaultWorkingDir(t *testing.T) {
 	require.NotEmpty(t, workingDir)
 	require.Equal(t, strings.TrimSpace(body["stdout"].(string)), workingDir)
 }
+
+func TestProcessExecuteStreamsWithNDJSONAccept(t *testing.T) {
+	resp, err := makeRequestWithHeaders(http.MethodPost, "/process", map[string]interface{}{
+		"command": "echo hello",
+	}, map[string]string{"Accept": "application/x-ndjson"})
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, "application/x-ndjson", resp.Header.Get("Content-Type"))
+
+	events, result := parseStreamEvents(t, resp)
+	require.NotNil(t, result)
+	var stdout string
+	for _, event := range events {
+		if event.Type == "stdout" {
+			stdout += event.Data
+		}
+	}
+	require.Contains(t, stdout, "hello")
+}

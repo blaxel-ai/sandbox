@@ -1575,13 +1575,14 @@ const docTemplate = `{
                 }
             },
             "post": {
-                "description": "Execute a command and return process information. If Accept header is text/event-stream, streams logs in SSE format and returns the process response as a final event.",
+                "description": "Execute a command and return process information.\n\nStreaming: with ` + "`" + `Accept: application/x-ndjson` + "`" + ` (or ` + "`" + `Accept: text/event-stream` + "`" + `, kept for compatibility) the response is NDJSON (` + "`" + `Content-Type: application/x-ndjson` + "`" + `), not SSE: one JSON object per line, ` + "`" + `{\"type\": \"...\", \"data\": \"...\"}` + "`" + `.\n` + "`" + `type` + "`" + ` is ` + "`" + `stdout` + "`" + ` or ` + "`" + `stderr` + "`" + ` (` + "`" + `data` + "`" + ` is process output), ` + "`" + `keepalive` + "`" + ` (every 5 seconds, no data), ` + "`" + `error` + "`" + ` (` + "`" + `data` + "`" + ` is the message, ends the stream) or ` + "`" + `result` + "`" + ` (last event, ` + "`" + `data` + "`" + ` is the ProcessResponse as a JSON string).",
                 "consumes": [
                     "application/json"
                 ],
                 "produces": [
                     "application/json",
-                    "text/event-stream"
+                    "text/event-stream",
+                    "application/x-ndjson"
                 ],
                 "tags": [
                     "process"

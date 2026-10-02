@@ -204,11 +204,15 @@ func (h *ProcessHandler) HandleListProcesses(c *gin.Context) {
 
 // HandleExecuteCommand handles POST requests to /process/
 // @Summary Execute a command
-// @Description Execute a command and return process information. If Accept header is text/event-stream, streams logs in SSE format and returns the process response as a final event.
+// @Description Execute a command and return process information.
+// @Description
+// @Description Streaming: with `Accept: application/x-ndjson` (or `Accept: text/event-stream`, kept for compatibility) the response is NDJSON (`Content-Type: application/x-ndjson`), not SSE: one JSON object per line, `{"type": "...", "data": "..."}`.
+// @Description `type` is `stdout` or `stderr` (`data` is process output), `keepalive` (every 5 seconds, no data), `error` (`data` is the message, ends the stream) or `result` (last event, `data` is the ProcessResponse as a JSON string).
 // @Tags process
 // @Accept json
 // @Produce json
 // @Produce text/event-stream
+// @Produce application/x-ndjson
 // @Param request body ProcessRequest true "Process execution request"
 // @Success 200 {object} ProcessResponse "Process information"
 // @Failure 400 {object} ErrorResponse "Invalid request"
@@ -216,9 +220,7 @@ func (h *ProcessHandler) HandleListProcesses(c *gin.Context) {
 // @Failure 500 {object} ErrorResponse "Internal server error"
 // @Router /process [post]
 func (h *ProcessHandler) HandleExecuteCommand(c *gin.Context) {
-	// Check if client wants SSE streaming
-	acceptHeader := c.GetHeader("Accept")
-	if strings.Contains(acceptHeader, "text/event-stream") {
+	if wantsProcessStream(c.GetHeader("Accept")) {
 		h.handleExecuteCommandStream(c)
 		return
 	}
@@ -276,6 +278,12 @@ func (h *ProcessHandler) HandleExecuteCommand(c *gin.Context) {
 	}
 
 	h.SendJSON(c, http.StatusOK, processInfo)
+}
+
+// wantsProcessStream reports whether the client asked for the NDJSON event
+// stream. text/event-stream is accepted too: older clients send it.
+func wantsProcessStream(accept string) bool {
+	return strings.Contains(accept, "application/x-ndjson") || strings.Contains(accept, "text/event-stream")
 }
 
 // handleExecuteCommandStream handles streaming execution with JSON events

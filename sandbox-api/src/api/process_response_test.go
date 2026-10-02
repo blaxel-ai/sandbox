@@ -105,3 +105,29 @@ func TestProcessCompletedAtWhileRunning(t *testing.T) {
 		t.Fatal("running process missing from the list")
 	}
 }
+
+func TestProcessExecuteStreamsNDJSONForEitherAccept(t *testing.T) {
+	router := newProcessTestRouter(t)
+	for _, accept := range []string{"application/x-ndjson", "text/event-stream"} {
+		request := httptest.NewRequest(http.MethodPost, "/process", strings.NewReader(`{"command":"echo hi"}`))
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set("Accept", accept)
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+
+		if got := response.Header().Get("Content-Type"); got != "application/x-ndjson" {
+			t.Fatalf("Accept %s: Content-Type = %q, want application/x-ndjson", accept, got)
+		}
+		lines := strings.Split(strings.TrimSpace(response.Body.String()), "\n")
+		var last struct {
+			Type string `json:"type"`
+			Data string `json:"data"`
+		}
+		if err := json.Unmarshal([]byte(lines[len(lines)-1]), &last); err != nil {
+			t.Fatalf("Accept %s: last line %q is not JSON: %v", accept, lines[len(lines)-1], err)
+		}
+		if last.Type != "result" {
+			t.Fatalf("Accept %s: last event type = %q, want result", accept, last.Type)
+		}
+	}
+}

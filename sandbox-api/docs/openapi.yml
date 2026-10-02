@@ -1294,7 +1294,13 @@ paths:
       tags:
         - process
     post:
-      description: Execute a command and return process information. If Accept header is text/event-stream, streams logs in SSE format and returns the process response as a final event.
+      description: >-
+        Execute a command and return process information.
+
+
+        Streaming: with `Accept: application/x-ndjson` (or `Accept: text/event-stream`, kept for compatibility) the response is NDJSON (`Content-Type: application/x-ndjson`), not SSE: one JSON object per line, `{"type": "...", "data": "..."}`.
+
+        `type` is `stdout` or `stderr` (`data` is process output), `keepalive` (every 5 seconds, no data), `error` (`data` is the message, ends the stream) or `result` (last event, `data` is the ProcessResponse as a JSON string).
       requestBody:
         content:
           application/json:
@@ -1312,6 +1318,9 @@ paths:
             text/event-stream:
               schema:
                 $ref: "#/components/schemas/ProcessResponse"
+            application/x-ndjson:
+              schema:
+                $ref: "#/components/schemas/ProcessResponse"
         "400":
           description: Invalid request
           content:
@@ -1319,6 +1328,9 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
             text/event-stream:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+            application/x-ndjson:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "422":
@@ -1330,6 +1342,9 @@ paths:
             text/event-stream:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+            application/x-ndjson:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "500":
           description: Internal server error
           content:
@@ -1337,6 +1352,9 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
             text/event-stream:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+            application/x-ndjson:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
       summary: Execute a command
