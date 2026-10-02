@@ -162,3 +162,37 @@ func TestContentSearchFillsContextLines(t *testing.T) {
 	require.Len(t, body.Matches, 1)
 	require.Equal(t, "two\nthree needle\nfour", body.Matches[0].Context)
 }
+
+func TestHeadFilesystemReturnsStatHeaders(t *testing.T) {
+	dir := uniqueTestDir("fs-stat")
+	path := dir + "/hello.txt"
+	writeTestFile(t, path, "hello")
+	t.Cleanup(func() {
+		resp, err := common.MakeRequest(http.MethodDelete, common.EncodeFilesystemPath(dir)+"?recursive=true", nil)
+		if err == nil {
+			resp.Body.Close()
+		}
+	})
+
+	resp, err := common.MakeRequest(http.MethodHead, common.EncodeFilesystemPath(path), nil)
+	require.NoError(t, err)
+	resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, "5", resp.Header.Get("Content-Length"))
+	require.Equal(t, "file", resp.Header.Get("X-File-Type"))
+	require.NotEmpty(t, resp.Header.Get("X-File-Mode"))
+	_, err = http.ParseTime(resp.Header.Get("Last-Modified"))
+	require.NoError(t, err)
+
+	resp, err = common.MakeRequest(http.MethodHead, common.EncodeFilesystemPath(dir), nil)
+	require.NoError(t, err)
+	resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, "directory", resp.Header.Get("X-File-Type"))
+
+	resp, err = common.MakeRequest(http.MethodHead, common.EncodeFilesystemPath(dir+"/missing"), nil)
+	require.NoError(t, err)
+	resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Empty(t, resp.Header.Get("X-File-Type"))
+}

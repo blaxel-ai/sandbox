@@ -299,6 +299,42 @@ func (h *FileSystemHandler) HandleGetFile(c *gin.Context) {
 	h.SendError(c, http.StatusNotFound, fmt.Errorf("file or directory not found"))
 }
 
+// HandleStatFile handles HEAD requests to /filesystem/:path
+// @Summary Stat a file or directory
+// @Description Returns the metadata of a file or directory as headers, with no body. When the path does not exist or cannot be read, the response is an empty 200 without the X-File-Type header.
+// @Tags filesystem
+// @Param path path string true "File or directory path"
+// @Success 200 "Path metadata (X-File-Type is set only when the path exists)"
+// @Header 200 {integer} Content-Length "File size in bytes (files only)"
+// @Header 200 {string} Last-Modified "Modification time (HTTP date)"
+// @Header 200 {string} X-File-Type "file or directory"
+// @Header 200 {string} X-File-Mode "Permission bits in octal (e.g., 644)"
+// @Router /filesystem/{path} [head]
+func (h *FileSystemHandler) HandleStatFile(c *gin.Context) {
+	path, err := lib.FormatPath(h.extractPathFromRequest(c))
+	if err != nil {
+		c.Status(http.StatusOK)
+		return
+	}
+
+	info, err := h.fs.Infos(path)
+	if err != nil {
+		c.Status(http.StatusOK)
+		return
+	}
+
+	header := c.Writer.Header()
+	header.Set("Last-Modified", info.ModTime().UTC().Format(http.TimeFormat))
+	header.Set("X-File-Mode", fmt.Sprintf("%o", info.Mode().Perm()))
+	if info.IsDir() {
+		header.Set("X-File-Type", "directory")
+	} else {
+		header.Set("X-File-Type", "file")
+		header.Set("Content-Length", strconv.FormatInt(info.Size(), 10))
+	}
+	c.Status(http.StatusOK)
+}
+
 // handleReadFile handles requests to read a file
 func (h *FileSystemHandler) handleReadFile(c *gin.Context, path string) {
 	// Check if client wants to download the file content directly

@@ -913,6 +913,38 @@ paths:
       summary: Get file or directory information
       tags:
         - filesystem
+    head:
+      description: Returns the metadata of a file or directory as headers, with no body. When the path does not exist or cannot be read, the response is an empty 200 without the X-File-Type header.
+      parameters:
+        - description: File or directory path
+          in: path
+          name: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Path metadata (X-File-Type is set only when the path exists)
+          headers:
+            Content-Length:
+              description: File size in bytes (files only)
+              schema:
+                type: integer
+            Last-Modified:
+              description: Modification time (HTTP date)
+              schema:
+                type: string
+            X-File-Mode:
+              description: Permission bits in octal (e.g., 644)
+              schema:
+                type: string
+            X-File-Type:
+              description: file or directory
+              schema:
+                type: string
+      summary: Stat a file or directory
+      tags:
+        - filesystem
     put:
       description: Create or update a file or directory
       parameters:
