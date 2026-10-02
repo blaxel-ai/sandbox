@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -123,5 +124,35 @@ func TestContentSearchContextLines(t *testing.T) {
 		if code, matches := search(invalid); code != http.StatusOK || len(matches) != 1 || matches[0]["context"] != nil {
 			t.Errorf("%s: HTTP %d, matches %v, want one match without context", invalid, code, matches)
 		}
+	}
+}
+
+func TestContentSearchReturnsWhenMatchesExceedTheLimit(t *testing.T) {
+	router := newFilesystemTestRouter(t)
+	dir := t.TempDir()
+	content := strings.Repeat("needle\n", 500)
+	for _, name := range []string{"a.txt", "b.txt"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	responses := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		responses <- serveFilesystem(router, http.MethodGet, absoluteRoute("/filesystem-content-search", dir)+"?query=needle&contextLines=1")
+	}()
+	select {
+	case response := <-responses:
+		var body struct {
+			Matches []map[string]any `json:"matches"`
+		}
+		if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		if response.Code != http.StatusOK || len(body.Matches) != 100 {
+			t.Fatalf("HTTP %d, %d matches, want 100", response.Code, len(body.Matches))
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("content search did not return")
 	}
 }

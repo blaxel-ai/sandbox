@@ -1865,10 +1865,16 @@ func (h *FileSystemHandler) HandleContentSearch(c *gin.Context) {
 
 	resultsChan := make(chan searchResult, 100)
 	done := make(chan bool)
+	// Closed once maxResults matches are collected so workers stop sending.
+	full := make(chan struct{})
 
 	matches := []ContentSearchMatch{}
 	go func() {
+		collected := false
 		for result := range resultsChan {
+			if collected {
+				continue
+			}
 			relPath, _ := filepath.Rel(absSearchDir, result.path)
 			matches = append(matches, ContentSearchMatch{
 				Path:    relPath,
@@ -1878,7 +1884,8 @@ func (h *FileSystemHandler) HandleContentSearch(c *gin.Context) {
 				Context: result.context,
 			})
 			if len(matches) >= maxResults {
-				break
+				collected = true
+				close(full)
 			}
 		}
 		done <- true
@@ -1925,12 +1932,16 @@ func (h *FileSystemHandler) HandleContentSearch(c *gin.Context) {
 							last := min(lineNum+contextLines+1, len(lines))
 							context = strings.Join(lines[first:last], "\n")
 						}
-						resultsChan <- searchResult{
+						select {
+						case resultsChan <- searchResult{
 							path:    filePath,
 							line:    lineNum + 1,
 							column:  col + 1,
 							text:    line,
 							context: context,
+						}:
+						case <-full:
+							return
 						}
 					}
 				}
