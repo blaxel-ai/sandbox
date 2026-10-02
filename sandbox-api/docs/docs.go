@@ -2702,6 +2702,7 @@ const docTemplate = `{
                     "example": "amd64"
                 },
                 "buildTime": {
+                    "description": "Build time in RFC 3339 (UTC), or \"unknown\" for builds without it",
                     "type": "string",
                     "example": "2026-01-29T17:36:52Z"
                 },
@@ -2721,6 +2722,7 @@ const docTemplate = `{
                     "example": "linux"
                 },
                 "startedAt": {
+                    "description": "API start time in RFC 3339",
                     "type": "string",
                     "example": "2026-01-29T18:45:49Z"
                 },
@@ -2980,7 +2982,7 @@ const docTemplate = `{
                     "example": "ls -la"
                 },
                 "completedAt": {
-                    "description": "Completion time. While the process runs: null in the process list, empty string elsewhere",
+                    "description": "Completion time, same format as startedAt. While the process runs: null in the process list, empty string elsewhere",
                     "type": "string",
                     "x-nullable": true,
                     "example": "Wed, 01 Jan 2023 12:01:00 GMT"
@@ -3019,6 +3021,7 @@ const docTemplate = `{
                     "example": true
                 },
                 "startedAt": {
+                    "description": "Start time as an HTTP date (RFC 1123, e.g. Wed, 01 Jan 2023 12:00:00 GMT)",
                     "type": "string",
                     "example": "Wed, 01 Jan 2023 12:00:00 GMT"
                 },
