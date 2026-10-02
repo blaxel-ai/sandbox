@@ -117,8 +117,11 @@ type ContentSearchMatch struct {
 	Line    int    `json:"line" binding:"required" example:"42"`
 	Column  int    `json:"column" binding:"required" example:"10"`
 	Text    string `json:"text" binding:"required" example:"const searchText = 'example'"`
-	Context string `json:"context,omitempty" example:"previous line\ncurrent line\nnext line"`
+	Context string `json:"context,omitempty" example:"previous line\ncurrent line\nnext line"` // The matching line with up to contextLines lines before and after it, newline-separated; omitted when contextLines is 0
 } // @name ContentSearchMatch
+
+// maxContextLines caps the contextLines a content search accepts.
+const maxContextLines = 20
 
 // ContentSearchResponse represents the response from content search
 type ContentSearchResponse struct {
@@ -1657,7 +1660,7 @@ func (h *FileSystemHandler) HandleFuzzySearch(c *gin.Context) {
 
 // HandleContentSearch performs content search using ripgrep
 // @Summary Search for text content in files
-// @Description Searches for text content inside files using ripgrep. Returns matching lines with context.
+// @Description Searches for text content inside files. Returns each matching line, with the lines around it when contextLines is set.
 // @Tags filesystem
 // @Accept json
 // @Produce json
@@ -1667,6 +1670,7 @@ func (h *FileSystemHandler) HandleFuzzySearch(c *gin.Context) {
 // @Param maxResults query int false "Maximum number of results to return (default: 100)"
 // @Param filePattern query string false "File pattern to include (e.g., *.go)"
 // @Param excludeDirs query string false "Comma-separated directory names to skip (default: node_modules,vendor,.git,dist,build,target,__pycache__,.venv,.next,coverage)"
+// @Param contextLines query int false "Lines to include before and after each match in its context field (default: 0, max: 20; invalid values count as 0)"
 // @Success 200 {object} ContentSearchResponse "Content search results"
 // @Failure 400 {object} ErrorResponse "Bad request"
 // @Failure 422 {object} ErrorResponse "Unprocessable entity"
@@ -1724,6 +1728,11 @@ func (h *FileSystemHandler) HandleContentSearch(c *gin.Context) {
 			h.SendError(c, http.StatusBadRequest, fmt.Errorf("invalid maxResults: %s", c.Query("maxResults")))
 			return
 		}
+	}
+
+	contextLines := 0
+	if parsed, err := strconv.Atoi(c.Query("contextLines")); err == nil && parsed > 0 {
+		contextLines = min(parsed, maxContextLines)
 	}
 
 	// Parse file pattern
@@ -1804,10 +1813,11 @@ func (h *FileSystemHandler) HandleContentSearch(c *gin.Context) {
 
 	// Search files in parallel
 	type searchResult struct {
-		path   string
-		line   int
-		column int
-		text   string
+		path    string
+		line    int
+		column  int
+		text    string
+		context string
 	}
 
 	resultsChan := make(chan searchResult, 100)
@@ -1818,10 +1828,11 @@ func (h *FileSystemHandler) HandleContentSearch(c *gin.Context) {
 		for result := range resultsChan {
 			relPath, _ := filepath.Rel(absSearchDir, result.path)
 			matches = append(matches, ContentSearchMatch{
-				Path:   relPath,
-				Line:   result.line,
-				Column: result.column,
-				Text:   result.text,
+				Path:    relPath,
+				Line:    result.line,
+				Column:  result.column,
+				Text:    result.text,
+				Context: result.context,
 			})
 			if len(matches) >= maxResults {
 				break
@@ -1865,11 +1876,18 @@ func (h *FileSystemHandler) HandleContentSearch(c *gin.Context) {
 					}
 
 					if col := strings.Index(searchLine, searchQuery); col >= 0 {
+						context := ""
+						if contextLines > 0 {
+							first := max(lineNum-contextLines, 0)
+							last := min(lineNum+contextLines+1, len(lines))
+							context = strings.Join(lines[first:last], "\n")
+						}
 						resultsChan <- searchResult{
-							path:   filePath,
-							line:   lineNum + 1,
-							column: col + 1,
-							text:   line,
+							path:    filePath,
+							line:    lineNum + 1,
+							column:  col + 1,
+							text:    line,
+							context: context,
 						}
 					}
 				}

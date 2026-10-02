@@ -84,3 +84,44 @@ func TestFuzzySearchMatchesQueryNotPath(t *testing.T) {
 		t.Fatalf("matches = %+v, want only main.go", body.Matches)
 	}
 }
+
+func TestContentSearchContextLines(t *testing.T) {
+	router := newFilesystemTestRouter(t)
+	dir := t.TempDir()
+	content := "one\ntwo\nthree needle\nfour\nfive\n"
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	search := func(query string) (int, []map[string]any) {
+		response := serveFilesystem(router, http.MethodGet, absoluteRoute("/filesystem-content-search", dir)+"?query=needle"+query)
+		var body struct {
+			Matches []map[string]any `json:"matches"`
+		}
+		_ = json.Unmarshal(response.Body.Bytes(), &body)
+		return response.Code, body.Matches
+	}
+
+	for query, want := range map[string]string{
+		"&contextLines=1":   "two\nthree needle\nfour",
+		"&contextLines=5":   "one\ntwo\nthree needle\nfour\nfive\n",
+		"&contextLines=999": "one\ntwo\nthree needle\nfour\nfive\n",
+	} {
+		code, matches := search(query)
+		if code != http.StatusOK || len(matches) != 1 {
+			t.Fatalf("%s: HTTP %d, matches %v", query, code, matches)
+		}
+		if got := matches[0]["context"]; got != want {
+			t.Errorf("%s: context = %q, want %q", query, got, want)
+		}
+	}
+
+	if _, matches := search(""); len(matches) != 1 || matches[0]["context"] != nil {
+		t.Errorf("default: matches = %v, want one match without context", matches)
+	}
+	for _, invalid := range []string{"&contextLines=-1", "&contextLines=abc"} {
+		if code, matches := search(invalid); code != http.StatusOK || len(matches) != 1 || matches[0]["context"] != nil {
+			t.Errorf("%s: HTTP %d, matches %v, want one match without context", invalid, code, matches)
+		}
+	}
+}
