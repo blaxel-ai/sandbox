@@ -68,7 +68,8 @@ func lastLines(s string, n int) string {
 	return strings.TrimSpace(strings.Join(lines, "\n"))
 }
 
-// ExecuteProcess executes a process with the given parameters
+// ExecuteProcess starts a process with its own execution timeout. An optional
+// waitTimeout limits only how long this call waits; it never stops the process.
 func (pm *ProcessManager) ExecuteProcess(
 	command string,
 	workingDir string,
@@ -81,18 +82,18 @@ func (pm *ProcessManager) ExecuteProcess(
 	maxRestarts int,
 	keepAlive bool,
 	stdin bool,
+	waitTimeout ...int,
 ) (*ProcessInfo, error) {
 	portCh := make(chan int)
-	completionCh := make(chan string)
+	completionCh := make(chan string, 1)
 
-	// Add flags to track if channels have been closed
+	// Track port readiness independently of process completion.
 	portChClosed := false
-	completionChClosed := false
 
-	// Use a mutex to protect the flags
+	// Protect the port channel from concurrent readiness notifications.
 	var mu sync.Mutex
 
-	// Defer closing the channels if they're not already closed
+	// Stop port polling when this call returns.
 	defer func() {
 		mu.Lock()
 		defer mu.Unlock()
@@ -100,35 +101,29 @@ func (pm *ProcessManager) ExecuteProcess(
 		if !portChClosed {
 			close(portCh)
 		}
-
-		if !completionChClosed {
-			close(completionCh)
-		}
 	}()
 
-	// Create a context with the specified timeout
+	// Bound waiting independently of the process execution deadline.
+	waitSeconds := timeout
+	if len(waitTimeout) > 0 {
+		waitSeconds = waitTimeout[0]
+	}
+
+	// This context never controls the child process.
 	var ctx context.Context
 	var cancel context.CancelFunc
-	if timeout > 0 {
-		ctx, cancel = context.WithTimeout(context.Background(), time.Duration(timeout)*time.Second)
+	if waitSeconds > 0 {
+		ctx, cancel = context.WithTimeout(context.Background(), time.Duration(waitSeconds)*time.Second)
 		defer cancel()
 	} else {
 		ctx = context.Background()
 	}
 
-	// Create a callback function
+	// Completion can arrive after the caller's wait expired. A buffered channel
+	// lets the single final callback finish without racing a channel close.
 	callback := func(p *ProcessInfo) {
 		if waitForCompletion {
-			mu.Lock()
-			closed := completionChClosed
-			mu.Unlock()
-			if !closed {
-				// Use a recover block in case of a race condition
-				defer func() {
-					_ = recover()
-				}()
-				completionCh <- p.PID
-			}
+			completionCh <- p.PID
 		}
 	}
 
@@ -254,7 +249,7 @@ func (pm *ProcessManager) ExecuteProcess(
 					return nil, pm.exitedBeforePortsError(pid, waitForPorts)
 				}
 			case <-ctx.Done():
-				return nil, fmt.Errorf("process timed out waiting for ports after %d seconds", timeout)
+				return nil, fmt.Errorf("process timed out waiting for ports after %d seconds", waitSeconds)
 			}
 		}
 	}
@@ -270,13 +265,13 @@ func (pm *ProcessManager) ExecuteProcess(
 			pid = receivedPID // Update pid to the received PID
 			break
 		case <-ctx.Done():
-			// Process timed out but is still running - return process info along with error
-			// so the caller can still access the running process
+			// The wait deadline may precede the execution deadline (e.g. MCP).
+			// Return process info so the caller can inspect the eventual outcome.
 			processInfo, exists := pm.GetProcessByIdentifier(pid)
 			if exists {
-				return processInfo, fmt.Errorf("process timed out after %d seconds", timeout)
+				return processInfo, fmt.Errorf("process timed out after %d seconds", waitSeconds)
 			}
-			return nil, fmt.Errorf("process timed out after %d seconds", timeout)
+			return nil, fmt.Errorf("process timed out after %d seconds", waitSeconds)
 		}
 	}
 
