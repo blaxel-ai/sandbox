@@ -161,9 +161,7 @@ func (s *Server) registerProcessTools() error {
 					processInfo.PID,
 				),
 			}
-			if processInfo.Logs != nil {
-				output.Logs = *processInfo.Logs
-			}
+			output.Logs = processInfo.Logs
 			return nil, output, nil
 		}
 
@@ -179,9 +177,7 @@ func (s *Server) registerProcessTools() error {
 			ExitCode: processInfo.ExitCode,
 		}
 
-		if processInfo.Logs != nil {
-			output.Logs = *processInfo.Logs
-		}
+		output.Logs = processInfo.Logs
 
 		return nil, output, nil
 	}))
