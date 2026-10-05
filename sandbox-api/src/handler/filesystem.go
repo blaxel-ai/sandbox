@@ -429,9 +429,13 @@ func (h *FileSystemHandler) handleListDirectory(c *gin.Context, path string) {
 
 // HandleCreateOrUpdateFile handles PUT requests to /filesystem/:path
 // @Summary Create or update a file or directory
-// @Description Create or update a file or directory
+// @Description Create or update a file or directory.
+// @Description
+// @Description Idempotent: an existing file is overwritten (truncated, not appended to) and an existing directory is kept, so retrying the same request is safe.
+// @Description
+// @Description Send either a JSON body (FileRequest) or `multipart/form-data` for binary files. Multipart fields, in any order: `file` (required, the file content), `permissions` (optional octal mode such as `0755`, applied when the file is created, default `0644`; an existing file keeps its mode), `path` (optional, ignored: the target is always the URL path).
 // @Tags filesystem
-// @Accept json
+// @Accept json,mpfd
 // @Produce json
 // @Param path path string true "File or directory path"
 // @Param request body FileRequest true "File or directory details"
@@ -528,7 +532,8 @@ func (h *FileSystemHandler) HandleCreateOrUpdateBinary(c *gin.Context) {
 	}
 
 	var permissions os.FileMode = 0644
-	var wroteFile bool
+	var wroteFile, explicitPermissions bool
+	var upload *filesystem.UploadFile
 
 	for {
 		part, err := mr.NextPart()
@@ -553,18 +558,21 @@ func (h *FileSystemHandler) HandleCreateOrUpdateBinary(c *gin.Context) {
 					return
 				}
 				permissions = os.FileMode(permInt)
+				explicitPermissions = true
 			}
 			_ = part.Close()
 			continue
 		}
 
 		if name == "file" && filename != "" && !wroteFile {
-			// Stream directly to disk with requested permissions
-			if err := h.fs.WriteFileFromReader(path, part, permissions); err != nil {
+			upload, err = h.fs.WriteUpload(path, part)
+			if err != nil {
 				_ = part.Close()
 				h.SendError(c, http.StatusUnprocessableEntity, fmt.Errorf("error writing binary file: %w", err))
 				return
 			}
+			defer upload.Close()
+
 			wroteFile = true
 			_ = part.Close()
 			continue
@@ -579,6 +587,14 @@ func (h *FileSystemHandler) HandleCreateOrUpdateBinary(c *gin.Context) {
 		return
 	}
 
+	// Explicit permissions are exact for both multipart field orders. Existing
+	// files retain their mode, and the descriptor prevents path replacement races.
+	if explicitPermissions {
+		if err := upload.SetPermissions(permissions); err != nil {
+			h.SendError(c, http.StatusUnprocessableEntity, fmt.Errorf("error setting permissions: %w", err))
+			return
+		}
+	}
 	h.SendSuccessWithPath(c, path, "Binary file uploaded successfully")
 }
 
@@ -706,7 +722,7 @@ type TreeRequest struct {
 
 // HandleCreateOrUpdateTree handles PUT requests for directory trees
 // @Summary Create or update directory tree
-// @Description Create or update multiple files within a directory tree structure
+// @Description Create or update multiple files within a directory tree structure. Idempotent: existing files are overwritten, so retrying the same request is safe.
 // @Tags filesystem
 // @Accept json
 // @Produce json
@@ -895,7 +911,7 @@ func (h *FileSystemHandler) HandleInitiateMultipartUpload(c *gin.Context) {
 
 // HandleUploadPart uploads a single part of a multipart upload
 // @Summary Upload part
-// @Description Upload a single part of a multipart upload
+// @Description Upload a single part of a multipart upload. Re-uploading a part number replaces that part. Wait for the previous request for that part to finish before retrying.
 // @Tags filesystem
 // @Accept multipart/form-data
 // @Produce json
