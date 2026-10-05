@@ -84,7 +84,7 @@ func TestStatusIsACopy(t *testing.T) {
 
 func TestResumeIsRefusedWhileAnExportReadsTheFilesystem(t *testing.T) {
 	t.Cleanup(func() { forceResume() })
-	if err := freezeForExport("archive export"); err != nil {
+	if _, err := freezeForExport(exportFreezeReason); err != nil {
 		t.Fatal(err)
 	}
 	completeQuiesce(nil, false)
@@ -107,7 +107,7 @@ func TestFreezingForAnExportClaimsTheFilesystemAtOnce(t *testing.T) {
 	// no export in progress and lifts the freeze the export is about to rely
 	// on, which would let the API serve mutating calls while it reads.
 	t.Cleanup(func() { forceResume() })
-	if err := freezeForExport("archive export"); err != nil {
+	if _, err := freezeForExport(exportFreezeReason); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := Resume(); !errors.Is(err, ErrExportInProgress) {
@@ -126,7 +126,7 @@ func TestFreezingLeavesFailedProcessesDown(t *testing.T) {
 	if process.RestartsSuspended() {
 		t.Fatal("a sandbox starts restarting its failed processes")
 	}
-	if err := freezeForExport("archive export"); err != nil {
+	if _, err := freezeForExport(exportFreezeReason); err != nil {
 		t.Fatal(err)
 	}
 	if !process.RestartsSuspended() {
@@ -157,7 +157,7 @@ func TestResumeCannotLiftTheFreezeAnExportJustTook(t *testing.T) {
 		}()
 		go func() {
 			defer wait.Done()
-			claimed = freezeForExport("archive export")
+			_, claimed = freezeForExport(exportFreezeReason)
 		}()
 		wait.Wait()
 

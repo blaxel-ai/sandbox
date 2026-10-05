@@ -95,6 +95,13 @@ var ErrRestoreInProgress = errors.New("an archive is being restored")
 // of the export itself.
 var ErrAlreadyQuiesced = errors.New("sandbox is already frozen")
 
+// exportFreezeReason is the reason an export freezes the sandbox with.
+const exportFreezeReason = "archive export"
+
+// interruptedArchiveReason is the reason a sandbox restarted in the middle of an
+// archive is frozen with, see AdoptRootState.
+const interruptedArchiveReason = "an interrupted archive left the root filesystem read-only"
+
 // Quiesced reports whether the sandbox currently refuses mutating calls.
 func Quiesced() bool {
 	quiesceMu.RLock()
@@ -127,19 +134,52 @@ func Freeze(reason string) error {
 	return freezeLocked(reason)
 }
 
+// ExportRefused reports whether an export would be refused because the sandbox
+// is frozen for something an export cannot build on.
+func ExportRefused() bool {
+	quiesceMu.RLock()
+	defer quiesceMu.RUnlock()
+	return quiesceStatus.State != StateActive && !reusableFreezeLocked()
+}
+
 // freezeForExport freezes the sandbox and claims the filesystem for the export
 // in one step. Freezing and claiming separately leaves a window a resume fits
 // into: it would find no export in progress, lift the freeze the export is
 // about to rely on, and the export would then read a filesystem the API is
 // serving mutating calls on again.
-func freezeForExport(reason string) error {
+//
+// A sandbox still frozen by an earlier export - one whose archive was lost on
+// the way, or never claimed - is claimed as it is, and reused reports it: its
+// workload is already stopped and its process list already saved, and freezing
+// it again would save a list where every process is stopped.
+func freezeForExport(reason string) (reused bool, err error) {
 	quiesceMu.Lock()
 	defer quiesceMu.Unlock()
+	if reusableFreezeLocked() {
+		exporting = true
+		return true, nil
+	}
 	if err := freezeLocked(reason); err != nil {
-		return err
+		return false, err
 	}
 	exporting = true
-	return nil
+	return false, nil
+}
+
+// reusableFreezeLocked reports whether the sandbox is frozen by an export that
+// is over, which another export can archive as it is. A freeze for anything
+// else - a restore, a quarantined import - is not: its filesystem is not one
+// the workload left.
+func reusableFreezeLocked() bool {
+	if exporting || quiesceStatus.State != StateQuiesced {
+		return false
+	}
+	switch quiesceStatus.Reason {
+	case exportFreezeReason, interruptedArchiveReason:
+		return true
+	default:
+		return false
+	}
 }
 
 func freezeLocked(reason string) error {
@@ -189,7 +229,7 @@ func adoptRootState(root string) {
 	allowRestarts = process.SuspendRestarts()
 	quiesceStatus = QuiesceStatus{
 		State:        StateQuiesced,
-		Reason:       "an interrupted archive left the root filesystem read-only",
+		Reason:       interruptedArchiveReason,
 		Since:        &now,
 		ReadOnlyRoot: true,
 	}
