@@ -107,7 +107,10 @@ type ProcessInfo struct {
 	terminationRequested constants.ProcessStatus // Protected by ProcessManager.mu.
 	runExited            bool                    // Wait has returned; no live OS process may be signalled.
 
-	WorkingDir       string            `json:"workingDir"`
+	WorkingDir string `json:"workingDir"`
+
+	EffectiveWorkingDir string `json:"-"` // Captured per run; WorkingDir remains the requested spawn configuration.
+
 	Env              map[string]string `json:"-"` // Custom env vars provided at start, reused (re-merged with os.Environ()) on restart
 	Logs             *string           `json:"logs"`
 	Stdout           *string           `json:"stdout"`
@@ -474,6 +477,9 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 
 	defer cleanupStdin()
 
+	// Capture inherited cwd once per run without setting cmd.Dir: an unprivileged
+	// child may inherit a directory it cannot chdir into.
+	process.EffectiveWorkingDir = effectiveWorkingDir(workingDir)
 	// Start the process
 	if err := cmd.Start(); err != nil {
 		stdoutFile.Close()
@@ -905,6 +911,8 @@ func (pm *ProcessManager) restartProcess(oldProcess *ProcessInfo, callback func(
 
 	defer cleanupStdin()
 
+	effectiveDir := effectiveWorkingDir(workingDir)
+
 	// Serialize the actual spawn with explicit stop/kill requests. Setup above
 	// does not hold the manager lock or allow a stop to miss the new OS PID.
 	pm.mu.Lock()
@@ -922,6 +930,7 @@ func (pm *ProcessManager) restartProcess(oldProcess *ProcessInfo, callback func(
 	}
 	started = true
 	oldProcess.ProcessPid = cmd.Process.Pid
+	oldProcess.EffectiveWorkingDir = effectiveDir
 	oldProcess.runExited = false
 	oldProcess.RestartCount++
 	oldProcess.Status = StatusRunning
@@ -1245,4 +1254,13 @@ func GenerateRandomName(length int) string {
 	}
 
 	return randomName.String()
+}
+
+// effectiveWorkingDir resolves response metadata without changing spawn configuration.
+func effectiveWorkingDir(requested string) string {
+	if requested != "" {
+		return requested
+	}
+	dir, _ := os.Getwd()
+	return dir
 }

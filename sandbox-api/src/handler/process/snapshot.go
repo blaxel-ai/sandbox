@@ -43,10 +43,14 @@ func copyString(value *string) *string {
 func snapshotLocked(p *ProcessInfo) ProcessSnapshot {
 	snapshot := ProcessSnapshot{
 		PID: p.PID, Name: p.Name, Command: p.Command, StartedAt: p.StartedAt,
-		ExitCode: p.ExitCode, Status: p.Status, WorkingDir: p.WorkingDir,
+		ExitCode: p.ExitCode, Status: p.Status, WorkingDir: p.EffectiveWorkingDir,
 		RestartOnFailure: p.RestartOnFailure, MaxRestarts: p.MaxRestarts,
 		RestartCount: p.RestartCount, KeepAlive: p.KeepAlive, Stdin: p.Stdin,
 		stdoutFile: p.StdoutFile, stderrFile: p.StderrFile,
+	}
+	if snapshot.WorkingDir == "" {
+		// Older state files may only contain an explicit requested directory.
+		snapshot.WorkingDir = p.WorkingDir
 	}
 	if p.CompletedAt != nil {
 		completedAt := *p.CompletedAt
