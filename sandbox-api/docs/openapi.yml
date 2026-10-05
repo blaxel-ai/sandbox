@@ -915,6 +915,38 @@ paths:
       summary: Get file or directory information
       tags:
         - filesystem
+    head:
+      description: Returns the metadata of a file or directory as headers, with no body. This checks stat availability, not permission to read file contents or list a directory. When the path does not exist or its metadata cannot be accessed, the response is an empty 200 without the X-File-Type header.
+      parameters:
+        - description: File or directory path
+          in: path
+          name: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Path metadata (X-File-Type is set only when stat succeeds)
+          headers:
+            Content-Length:
+              description: File size in bytes (files only)
+              schema:
+                type: integer
+            Last-Modified:
+              description: Modification time (HTTP date)
+              schema:
+                type: string
+            X-File-Mode:
+              description: Permission bits including sticky, setgid and setuid in octal (e.g., 644 or 1777)
+              schema:
+                type: string
+            X-File-Type:
+              description: file or directory
+              schema:
+                type: string
+      summary: Stat a file or directory
+      tags:
+        - filesystem
     put:
       description: >-
         Create or update a file or directory.
