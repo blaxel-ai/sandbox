@@ -428,7 +428,7 @@ const docTemplate = `{
         },
         "/filesystem-content-search/{path}": {
             "get": {
-                "description": "Searches for text content inside files using ripgrep. Returns matching lines with context.",
+                "description": "Searches for text content inside files. Returns each matching line, with the lines around it when contextLines is set.",
                 "consumes": [
                     "application/json"
                 ],
@@ -476,6 +476,12 @@ const docTemplate = `{
                         "type": "string",
                         "description": "Comma-separated directory names to skip (default: node_modules,vendor,.git,dist,build,target,__pycache__,.venv,.next,coverage)",
                         "name": "excludeDirs",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Lines to include before and after each match in its context field (default: 0, max: 20; invalid values count as 0)",
+                        "name": "contextLines",
                         "in": "query"
                     }
                 ],
@@ -2188,6 +2194,7 @@ const docTemplate = `{
                     "example": 10
                 },
                 "context": {
+                    "description": "The matching line with up to contextLines lines before and after it, newline-separated; omitted when contextLines is 0",
                     "type": "string",
                     "example": "previous line\ncurrent line\nnext line"
                 },

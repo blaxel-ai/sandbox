@@ -203,3 +203,27 @@ func TestContentSearchReturnsAtMaxResults(t *testing.T) {
 	require.Len(t, body.Matches, 100)
 	require.Equal(t, 100, body.Total)
 }
+
+func TestContentSearchFillsContextLines(t *testing.T) {
+	dir := uniqueTestDir("fs-context")
+	writeTestFile(t, dir+"/a.txt", "one\ntwo\nthree needle\nfour\nfive\n")
+	t.Cleanup(func() {
+		resp, err := common.MakeRequest(http.MethodDelete, common.EncodeFilesystemPath(dir)+"?recursive=true", nil)
+		if err == nil {
+			resp.Body.Close()
+		}
+	})
+
+	var body struct {
+		Matches []struct {
+			Text    string `json:"text"`
+			Context string `json:"context"`
+		} `json:"matches"`
+	}
+	resp, err := common.MakeRequestAndParse(http.MethodGet, encodeRoute("/filesystem-content-search", dir)+"?query=needle&contextLines=1", nil, &body)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Len(t, body.Matches, 1)
+	require.Equal(t, "two\nthree needle\nfour", body.Matches[0].Context)
+}
