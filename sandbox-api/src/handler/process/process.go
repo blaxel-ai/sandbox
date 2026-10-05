@@ -117,7 +117,7 @@ type ProcessInfo struct {
 	RestartCount     int               `json:"restartCount"`
 	KeepAlive        bool              `json:"keepAlive"`
 	Stdin            bool              `json:"stdin"` // Whether the process was started with a writable stdin pipe
-	Timeout          int               `json:"-"`     // Internal: timeout in seconds for keepAlive processes
+	Timeout          int               `json:"-"`     // Internal: execution timeout in seconds; zero means unlimited
 	LogFile          string            `json:"-"`     // Path to combined log file
 	StdoutFile       string            `json:"-"`     // Path to stdout log file
 	StderrFile       string            `json:"-"`     // Path to stderr log file
@@ -515,25 +515,7 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 
 	// Start file tailer for real-time log streaming
 	go pm.tailLogFiles(process)
-	// If keepAlive is enabled with a timeout > 0, start a goroutine to kill the process after timeout
-	// Timeout of 0 means infinite (no auto-kill)
-	if keepAlive && timeout > 0 {
-		go func() {
-			timer := time.NewTimer(time.Duration(timeout) * time.Second)
-			defer timer.Stop()
-			select {
-			case <-timer.C:
-				logrus.WithFields(logrus.Fields{
-					"process_pid":  process.PID,
-					"process_name": process.Name,
-					"timeout":      timeout,
-				}).Info("[KeepAlive] Timeout expired, killing process")
-				_ = pm.KillProcess(process.PID)
-			case <-process.stopTimeout:
-				// Process completed before timeout
-			}
-		}()
-	}
+	pm.startExecutionTimeout(process)
 
 	go pm.waitForRun(process, cmd, callback)
 
@@ -955,28 +937,7 @@ func (pm *ProcessManager) restartProcess(oldProcess *ProcessInfo, callback func(
 
 	// Start file tailer for real-time log streaming
 	go pm.tailLogFiles(oldProcess)
-	// If keepAlive is enabled, start timeout goroutine for the restarted process
-	pm.mu.RLock()
-	keepAlive := oldProcess.KeepAlive
-	timeout := oldProcess.Timeout
-	pm.mu.RUnlock()
-	if keepAlive && timeout > 0 {
-		go func() {
-			timer := time.NewTimer(time.Duration(timeout) * time.Second)
-			defer timer.Stop()
-			select {
-			case <-timer.C:
-				logrus.WithFields(logrus.Fields{
-					"process_pid":  oldProcess.PID,
-					"process_name": oldProcess.Name,
-					"timeout":      timeout,
-				}).Info("[KeepAlive] Timeout expired, killing process")
-				_ = pm.KillProcess(oldProcess.PID)
-			case <-oldProcess.stopTimeout:
-				// Process completed before timeout
-			}
-		}()
-	}
+	pm.startExecutionTimeout(oldProcess)
 
 	go pm.waitForRun(oldProcess, cmd, callback)
 

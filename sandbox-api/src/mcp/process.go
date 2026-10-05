@@ -124,13 +124,8 @@ func (s *Server) registerProcessTools() error {
 			timeout = 600 // Default 10 minutes for keepAlive
 		}
 
-		// Cap the effective timeout for waitForCompletion to prevent proxy timeouts
-		effectiveTimeout := timeout
-		originalTimeoutExceeded := false
-		if waitForCompletion && timeout > MaxWaitForCompletionTimeout {
-			effectiveTimeout = MaxWaitForCompletionTimeout
-			originalTimeoutExceeded = true
-		}
+		// Cap only the synchronous wait, preserving the process execution deadline.
+		effectiveTimeout, originalTimeoutExceeded := processWaitTimeout(timeout, waitForCompletion)
 
 		processInfo, err := s.handlers.Process.ExecuteProcess(
 			input.Command,
@@ -138,12 +133,13 @@ func (s *Server) registerProcessTools() error {
 			name,
 			env,
 			waitForCompletion,
-			effectiveTimeout,
+			timeout,
 			waitForPorts,
 			restartOnFailure,
 			maxRestarts,
 			keepAlive,
 			false, // stdin: no MCP tool writes to it yet
+			effectiveTimeout,
 		)
 
 		// Check if this is a timeout error due to the capped timeout (CloudFront workaround)
@@ -160,7 +156,7 @@ func (s *Server) registerProcessTools() error {
 				PollRequired: true,
 				Message: fmt.Sprintf(
 					"Process is still running after %d seconds. Poll processGet with identifier '%s' (or PID %s) in a loop until the status is 'completed', 'failed', 'killed', or 'stopped'. The process continues running in the background.",
-					MaxWaitForCompletionTimeout+2,
+					MaxWaitForCompletionTimeout,
 					processInfo.Name,
 					processInfo.PID,
 				),
@@ -245,4 +241,12 @@ func (s *Server) registerProcessTools() error {
 	}))
 
 	return nil
+}
+
+// processWaitTimeout bounds the synchronous MCP call without changing execution.
+func processWaitTimeout(timeout int, waitForCompletion bool) (int, bool) {
+	if waitForCompletion && (timeout <= 0 || timeout > MaxWaitForCompletionTimeout) {
+		return MaxWaitForCompletionTimeout, true
+	}
+	return timeout, false
 }

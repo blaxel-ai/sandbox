@@ -31,6 +31,11 @@ func (pm *ProcessManager) lookupProcessLocked(identifier string) *ProcessInfo {
 func (pm *ProcessManager) signalProcess(identifier string, signal syscall.Signal, status constants.ProcessStatus) error {
 	pm.mu.Lock()
 	defer pm.mu.Unlock()
+	return pm.signalProcessLocked(identifier, signal, status)
+}
+
+// signalProcessLocked requires pm.mu to be held.
+func (pm *ProcessManager) signalProcessLocked(identifier string, signal syscall.Signal, status constants.ProcessStatus) error {
 	p := pm.lookupProcessLocked(identifier)
 	if p == nil {
 		return fmt.Errorf("process with Identifier %s not found", identifier)
