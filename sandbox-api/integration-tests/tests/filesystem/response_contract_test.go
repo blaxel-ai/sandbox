@@ -178,3 +178,28 @@ func TestFuzzySearchUsesQueryParam(t *testing.T) {
 	require.Len(t, body.Matches, 1)
 	require.Equal(t, "main.go", body.Matches[0].Path)
 }
+
+func TestContentSearchReturnsAtMaxResults(t *testing.T) {
+	dir := uniqueTestDir("fs-max-results")
+	t.Cleanup(func() {
+		resp, err := common.MakeRequest(http.MethodDelete, common.EncodeFilesystemPath(dir)+"?recursive=true", nil)
+		if err == nil {
+			resp.Body.Close()
+		}
+	})
+	for _, name := range []string{"a.txt", "b.txt"} {
+		writeTestFile(t, dir+"/"+name, strings.Repeat("needle\n", 500))
+	}
+	var body struct {
+		Matches []struct {
+			Path string `json:"path"`
+		} `json:"matches"`
+		Total int `json:"total"`
+	}
+	resp, err := common.MakeRequestAndParse(http.MethodGet, encodeRoute("/filesystem-content-search", dir)+"?query=needle", nil, &body)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Len(t, body.Matches, 100)
+	require.Equal(t, 100, body.Total)
+}

@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -85,5 +86,35 @@ func TestFuzzySearchMatchesQueryNotPath(t *testing.T) {
 	}
 	if len(body.Matches) != 1 || body.Matches[0].Path != "main.go" {
 		t.Fatalf("matches = %+v, want only main.go", body.Matches)
+	}
+}
+
+func TestContentSearchReturnsWhenMatchesExceedTheLimit(t *testing.T) {
+	router := newFilesystemTestRouter(t)
+	dir := t.TempDir()
+	content := strings.Repeat("needle\n", 500)
+	for _, name := range []string{"a.txt", "b.txt"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	responses := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		responses <- serveFilesystem(router, http.MethodGet, absoluteRoute("/filesystem-content-search", dir)+"?query=needle")
+	}()
+	select {
+	case response := <-responses:
+		var body struct {
+			Matches []map[string]any `json:"matches"`
+		}
+		if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		if response.Code != http.StatusOK || len(body.Matches) != 100 {
+			t.Fatalf("HTTP %d, %d matches, want 100", response.Code, len(body.Matches))
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("content search did not return")
 	}
 }
