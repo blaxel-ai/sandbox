@@ -2062,7 +2062,7 @@ const docTemplate = `{
         },
         "/watch/filesystem/{path}": {
             "get": {
-                "description": "Streams the path of modified files (one per line) in the given directory. Closes when the client disconnects.",
+                "description": "Streams change events for a directory until the client disconnects.\n\nThe body is JSON lines (sent with ` + "`" + `Content-Type: text/plain` + "`" + `): one event object per line, e.g. ` + "`" + `{\"op\":\"WRITE\",\"name\":\"main.go\",\"path\":\"/app/src\",\"error\":null}` + "`" + `. ` + "`" + `op` + "`" + ` is the fsnotify operation (CREATE, WRITE, REMOVE, RENAME or CHMOD, several can be joined with ` + "`" + `|` + "`" + `), ` + "`" + `name` + "`" + ` the base name of the changed entry, ` + "`" + `path` + "`" + ` the directory containing it, and ` + "`" + `error` + "`" + ` is always null. A ` + "`" + `[keepalive]` + "`" + ` line (not JSON) is sent every 30 seconds.\nOnly the directory's direct entries are watched. To also watch every subdirectory, including ones created later, end the path with ` + "`" + `/**` + "`" + `; the stream then starts with a synthetic CREATE event for each entry that already exists.",
                 "produces": [
                     "text/plain"
                 ],
@@ -2073,13 +2073,13 @@ const docTemplate = `{
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Ignore patterns (comma-separated)",
+                        "description": "Comma-separated substrings; events whose full path contains one are skipped",
                         "name": "ignore",
                         "in": "query"
                     },
                     {
                         "type": "string",
-                        "description": "Directory path to watch",
+                        "description": "Directory path to watch (append /** to watch subdirectories)",
                         "name": "path",
                         "in": "path",
                         "required": true
@@ -2087,7 +2087,7 @@ const docTemplate = `{
                 ],
                 "responses": {
                     "200": {
-                        "description": "Stream of modified file paths, one per line",
+                        "description": "JSON lines stream of change events",
                         "schema": {
                             "type": "string"
                         }
