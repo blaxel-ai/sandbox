@@ -26,6 +26,7 @@ func NewArchiveHandler() *ArchiveHandler {
 // @Summary Export the filesystem changes to a presigned URL
 // @Description Archives everything the sandbox changed on top of its base image and streams it, uncompressed, to a presigned S3 PUT URL. The memory of the sandbox is not archived.
 // @Description The sandbox is quiesced first: the process list is saved (unless saveProcesses is false), every process is stopped, and the API then refuses the calls that would write to the filesystem. The freeze is not lifted afterwards, since an exported sandbox is meant to be restored elsewhere; call POST /archive/resume to lift it.
+// @Description A sandbox still frozen by an earlier export is exported as it is, with the process list that export saved.
 // @Description Use dryRun to get the archive's content and exact size without stopping anything and without uploading.
 // @Description Set async to start the export and answer immediately, which is what archiving a large filesystem needs: the export then reports itself through GET /archive/status.
 // @Tags archive
@@ -35,7 +36,7 @@ func NewArchiveHandler() *ArchiveHandler {
 // @Success 200 {object} ExportResult "Export result"
 // @Success 202 {object} ExportProgress "The export was started and runs in the background"
 // @Failure 400 {object} ErrorResponse "Invalid request"
-// @Failure 409 {object} ErrorResponse "An export is already in progress"
+// @Failure 409 {object} ErrorResponse "An export is already in progress, or the sandbox is frozen for a restore"
 // @Failure 500 {object} ErrorResponse "Export failed"
 // @Router /archive/export [post]
 func (h *ArchiveHandler) HandleExport(c *gin.Context) {
@@ -45,7 +46,7 @@ func (h *ArchiveHandler) HandleExport(c *gin.Context) {
 		return
 	}
 
-	if archive.Quiesced() {
+	if archive.ExportRefused() {
 		// An error, not the bare status: a client reads the reason of a failure
 		// from the error field, and /archive/status is where the state itself is
 		// asked for.

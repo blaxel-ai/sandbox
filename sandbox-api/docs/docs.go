@@ -17,7 +17,7 @@ const docTemplate = `{
     "paths": {
         "/archive/export": {
             "post": {
-                "description": "Archives everything the sandbox changed on top of its base image and streams it, uncompressed, to a presigned S3 PUT URL. The memory of the sandbox is not archived.\nThe sandbox is quiesced first: the process list is saved (unless saveProcesses is false), every process is stopped, and the API then refuses the calls that would write to the filesystem. The freeze is not lifted afterwards, since an exported sandbox is meant to be restored elsewhere; call POST /archive/resume to lift it.\nUse dryRun to get the archive's content and exact size without stopping anything and without uploading.\nSet async to start the export and answer immediately, which is what archiving a large filesystem needs: the export then reports itself through GET /archive/status.",
+                "description": "Archives everything the sandbox changed on top of its base image and streams it, uncompressed, to a presigned S3 PUT URL. The memory of the sandbox is not archived.\nThe sandbox is quiesced first: the process list is saved (unless saveProcesses is false), every process is stopped, and the API then refuses the calls that would write to the filesystem. The freeze is not lifted afterwards, since an exported sandbox is meant to be restored elsewhere; call POST /archive/resume to lift it.\nA sandbox still frozen by an earlier export is exported as it is, with the process list that export saved.\nUse dryRun to get the archive's content and exact size without stopping anything and without uploading.\nSet async to start the export and answer immediately, which is what archiving a large filesystem needs: the export then reports itself through GET /archive/status.",
                 "consumes": [
                     "application/json"
                 ],
@@ -59,7 +59,7 @@ const docTemplate = `{
                         }
                     },
                     "409": {
-                        "description": "An export is already in progress",
+                        "description": "An export is already in progress, or the sandbox is frozen for a restore",
                         "schema": {
                             "$ref": "#/definitions/ErrorResponse"
                         }
