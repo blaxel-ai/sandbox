@@ -1816,10 +1816,16 @@ func (h *FileSystemHandler) HandleContentSearch(c *gin.Context) {
 
 	resultsChan := make(chan searchResult, 100)
 	done := make(chan bool)
+	// Closed once maxResults matches are collected so workers stop sending.
+	full := make(chan struct{})
 
 	matches := []ContentSearchMatch{}
 	go func() {
+		collected := false
 		for result := range resultsChan {
+			if collected {
+				continue
+			}
 			relPath, _ := filepath.Rel(absSearchDir, result.path)
 			matches = append(matches, ContentSearchMatch{
 				Path:   relPath,
@@ -1828,7 +1834,8 @@ func (h *FileSystemHandler) HandleContentSearch(c *gin.Context) {
 				Text:   result.text,
 			})
 			if len(matches) >= maxResults {
-				break
+				collected = true
+				close(full)
 			}
 		}
 		done <- true
@@ -1848,6 +1855,11 @@ func (h *FileSystemHandler) HandleContentSearch(c *gin.Context) {
 		go func() {
 			defer wg.Done()
 			for filePath := range filesChan {
+				select {
+				case <-full:
+					return
+				default:
+				}
 				// Read file as the workload user, like every other read the API
 				// does on its behalf.
 				var content []byte
@@ -1862,21 +1874,25 @@ func (h *FileSystemHandler) HandleContentSearch(c *gin.Context) {
 
 				// Search line by line
 				lines := strings.Split(string(content), "\n")
-				for lineNum, line := range lines {
+				visitContentSearchLines(lines, full, func(lineNum int, line string) {
 					searchLine := line
 					if !caseSensitive {
 						searchLine = strings.ToLower(line)
 					}
 
 					if col := strings.Index(searchLine, searchQuery); col >= 0 {
-						resultsChan <- searchResult{
+						select {
+						case resultsChan <- searchResult{
 							path:   filePath,
 							line:   lineNum + 1,
 							column: col + 1,
 							text:   line,
+						}:
+						case <-full:
+							return
 						}
 					}
-				}
+				})
 			}
 		}()
 	}
@@ -1892,4 +1908,22 @@ func (h *FileSystemHandler) HandleContentSearch(c *gin.Context) {
 	}
 
 	h.SendJSON(c, http.StatusOK, response)
+}
+
+// visitContentSearchLines stops before scanning more lines once the collector
+// has its results. Line numbering and trailing empty lines match strings.Split.
+func visitContentSearchLines(lines []string, stopped <-chan struct{}, visit func(int, string)) {
+	select {
+	case <-stopped:
+		return
+	default:
+	}
+	for number, line := range lines {
+		select {
+		case <-stopped:
+			return
+		default:
+		}
+		visit(number, line)
+	}
 }
