@@ -249,7 +249,13 @@ func (pm *ProcessManager) ExecuteProcess(
 					return nil, pm.exitedBeforePortsError(pid, waitForPorts)
 				}
 			case <-ctx.Done():
-				return nil, fmt.Errorf("process timed out waiting for ports after %d seconds", waitSeconds)
+				err := fmt.Errorf("process timed out waiting for ports after %d seconds", waitSeconds)
+				if len(waitTimeout) > 0 && waitSeconds > 0 && (timeout <= 0 || waitSeconds < timeout) {
+					// A capped caller wait leaves execution running. Return its
+					// identity so the caller can continue monitoring the process.
+					return pm.processByPID(pid), err
+				}
+				return nil, err
 			}
 		}
 	}
