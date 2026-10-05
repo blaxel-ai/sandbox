@@ -379,7 +379,7 @@ paths:
         - system
   "/filesystem-content-search/{path}":
     get:
-      description: Searches for text content inside files using ripgrep. Returns matching lines with context.
+      description: Searches for text content inside files. Returns each matching line, with the lines around it when contextLines is set.
       parameters:
         - description: Directory path to search in
           in: path
@@ -413,6 +413,11 @@ paths:
           name: excludeDirs
           schema:
             type: string
+        - description: "Lines to include before and after each match in its context field (default: 0, max: 20; invalid values count as 0)"
+          in: query
+          name: contextLines
+          schema:
+            type: integer
       responses:
         "200":
           description: Content search results
@@ -1841,6 +1846,7 @@ components:
           example: 10
           type: integer
         context:
+          description: The matching line with up to contextLines lines before and after it, newline-separated; omitted when contextLines is 0
           example: |-
             previous line
             current line
