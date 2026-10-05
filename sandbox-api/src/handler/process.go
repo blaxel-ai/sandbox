@@ -4,8 +4,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -204,11 +206,14 @@ func (h *ProcessHandler) HandleListProcesses(c *gin.Context) {
 
 // HandleExecuteCommand handles POST requests to /process/
 // @Summary Execute a command
-// @Description Execute a command and return process information. If Accept header is text/event-stream, streams logs in SSE format and returns the process response as a final event.
+// @Description Execute a command and return process information.
+// @Description
+// @Description Streaming: with `Accept: application/x-ndjson` (or `Accept: text/event-stream`, kept for compatibility) the response is NDJSON (`Content-Type: application/x-ndjson`), not SSE: one JSON object per line, `{"type": "...", "data": "..."}`.
+// @Description `type` is `stdout` or `stderr` (`data` is a raw output chunk, sent as soon as the process writes it, newlines included; if the process finished before any chunk was streamed, its output is sent instead as one event per line, without the newline), `keepalive` (every 5 seconds, no data), `error` (`data` is the message, ends the stream) or `result` (last event, `data` is the ProcessResponse as a JSON string).
 // @Tags process
 // @Accept json
 // @Produce json
-// @Produce text/event-stream
+// @Produce application/x-ndjson
 // @Param request body ProcessRequest true "Process execution request"
 // @Success 200 {object} ProcessResponse "Process information"
 // @Failure 400 {object} ErrorResponse "Invalid request"
@@ -216,9 +221,7 @@ func (h *ProcessHandler) HandleListProcesses(c *gin.Context) {
 // @Failure 500 {object} ErrorResponse "Internal server error"
 // @Router /process [post]
 func (h *ProcessHandler) HandleExecuteCommand(c *gin.Context) {
-	// Check if client wants SSE streaming
-	acceptHeader := c.GetHeader("Accept")
-	if strings.Contains(acceptHeader, "text/event-stream") {
+	if wantsProcessStream(c.GetHeader("Accept")) {
 		h.handleExecuteCommandStream(c)
 		return
 	}
@@ -276,6 +279,34 @@ func (h *ProcessHandler) HandleExecuteCommand(c *gin.Context) {
 	}
 
 	h.SendJSON(c, http.StatusOK, processInfo)
+}
+
+// wantsProcessStream reports whether the client asked for the NDJSON event
+// stream. text/event-stream is accepted too: older clients send it.
+func wantsProcessStream(accept string) bool {
+	streamQuality, jsonQuality := 0.0, 0.0
+	for _, mediaRange := range strings.Split(accept, ",") {
+		mediaType, params, err := mime.ParseMediaType(strings.TrimSpace(mediaRange))
+		if err != nil {
+			continue
+		}
+		quality := 1.0
+		if raw, ok := params["q"]; ok {
+			quality, err = strconv.ParseFloat(raw, 64)
+			if err != nil || !(quality >= 0 && quality <= 1) {
+				continue
+			}
+		}
+		switch mediaType {
+		case "application/x-ndjson", "text/event-stream":
+			streamQuality = max(streamQuality, quality)
+		case "application/json":
+			jsonQuality = max(jsonQuality, quality)
+		}
+	}
+	// Wildcards alone retain the default JSON response; ties preserve the
+	// explicit streaming preference used by existing clients.
+	return streamQuality > 0 && streamQuality >= jsonQuality
 }
 
 // handleExecuteCommandStream handles streaming execution with JSON events
@@ -448,11 +479,12 @@ func (h *ProcessHandler) HandleGetProcessLogs(c *gin.Context) {
 
 // HandleGetProcessLogsStream handles GET requests to /process/{identifier}/logs/stream
 // @Summary Stream process logs in real time
-// @Description Streams the stdout and stderr output of a process in real time, one line per log, prefixed with 'stdout:' or 'stderr:'. Closes when the process exits or the client disconnects.
+// @Description Streams the stdout and stderr output of a process in real time: the output so far, then live output as the process writes it. Closes when the process exits or the client disconnects.
+// @Description Each output line starts with `stdout:` or `stderr:` and keeps its trailing newline. A partial line (e.g. a prompt) is sent as soon as it is written; when the process completes it, the rest follows without a new prefix. `[keepalive]` lines are sent every 30 seconds.
 // @Tags process
 // @Produce plain
 // @Param identifier path string true "Process identifier (PID or name)"
-// @Success 200 {string} string "Stream of process logs, one line per log (prefixed with stdout:/stderr:)"
+// @Success 200 {string} string "Process output, each line prefixed with stdout: or stderr:"
 // @Failure 404 {object} ErrorResponse "Process not found"
 // @Failure 422 {object} ErrorResponse "Unprocessable entity"
 // @Failure 500 {object} ErrorResponse "Internal server error"
