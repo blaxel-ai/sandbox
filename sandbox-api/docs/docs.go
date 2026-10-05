@@ -1296,6 +1296,45 @@ const docTemplate = `{
                         }
                     }
                 }
+            },
+            "head": {
+                "description": "Returns the metadata of a file or directory as headers, with no body. This checks stat availability, not permission to read file contents or list a directory. When the path does not exist or its metadata cannot be accessed, the response is an empty 200 without the X-File-Type header.",
+                "tags": [
+                    "filesystem"
+                ],
+                "summary": "Stat a file or directory",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "File or directory path",
+                        "name": "path",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Path metadata (X-File-Type is set only when stat succeeds)",
+                        "headers": {
+                            "Content-Length": {
+                                "type": "integer",
+                                "description": "File size in bytes (files only)"
+                            },
+                            "Last-Modified": {
+                                "type": "string",
+                                "description": "Modification time (HTTP date)"
+                            },
+                            "X-File-Mode": {
+                                "type": "string",
+                                "description": "Permission bits including sticky, setgid and setuid in octal (e.g., 644 or 1777)"
+                            },
+                            "X-File-Type": {
+                                "type": "string",
+                                "description": "file or directory"
+                            }
+                        }
+                    }
+                }
             }
         },
         "/health": {
