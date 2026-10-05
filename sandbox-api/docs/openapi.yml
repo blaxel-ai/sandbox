@@ -841,7 +841,7 @@ paths:
     get:
       description: Get content of a file or listing of a directory. Use Accept header to control response format for files.
       parameters:
-        - description: File or directory path
+        - description: "File or directory path. Relative paths are resolved against the filesystem working directory. For example, with a working directory of /app, GET /filesystem/workspace resolves to /app/workspace. To access the absolute path /workspace over HTTP, encode its leading slash as %2F: GET /filesystem/%2Fworkspace. The double-slash form GET /filesystem//workspace also addresses /workspace."
           in: path
           name: path
           required: true

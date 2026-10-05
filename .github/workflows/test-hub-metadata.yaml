@@ -1,0 +1,28 @@
+name: Test Hub metadata
+
+on:
+  pull_request:
+    paths:
+      - 'hub/**/template.json'
+      - 'scripts/publish-sandbox.sh'
+      - 'scripts/test_publish_sandbox.py'
+      - '.github/workflows/test-hub-metadata.yaml'
+  push:
+    branches: [main, develop]
+    paths:
+      - 'hub/**/template.json'
+      - 'scripts/publish-sandbox.sh'
+      - 'scripts/test_publish_sandbox.py'
+      - '.github/workflows/test-hub-metadata.yaml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  publish-metadata:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test Hub publication and icon fallbacks
+        run: python3 -m unittest discover -s scripts -p 'test_publish_sandbox.py' -v
