@@ -884,7 +884,7 @@ const docTemplate = `{
         },
         "/filesystem-search/{path}": {
             "get": {
-                "description": "Performs fuzzy search on filesystem paths using fuzzy matching algorithm. Optimized alternative to find and grep commands.",
+                "description": "Ranks the files and directories under a path by how well their relative path fuzzy-matches ` + "`" + `query` + "`" + ` (fzf algorithm: the query's characters must appear in order, not necessarily next to each other), best match first.\nFuzzy search is for \"jump to file\" lookups from a partial name. The ` + "`" + `patterns` + "`" + ` parameter is currently ignored by this endpoint; use find for exact glob filtering.",
                 "consumes": [
                     "application/json"
                 ],
@@ -904,6 +904,12 @@ const docTemplate = `{
                         "required": true
                     },
                     {
+                        "type": "string",
+                        "description": "Fuzzy pattern matched against each relative path (e.g., mngo for src/main.go). When omitted, the search path itself is used as the pattern.",
+                        "name": "query",
+                        "in": "query"
+                    },
+                    {
                         "type": "integer",
                         "description": "Maximum number of results to return (default: 20)",
                         "name": "maxResults",
@@ -911,7 +917,7 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "Comma-separated file patterns to include (e.g., *.go,*.js)",
+                        "description": "Accepted for compatibility but currently ignored; use filesystem-find for glob filtering",
                         "name": "patterns",
                         "in": "query"
                     },

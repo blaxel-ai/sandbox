@@ -739,7 +739,10 @@ paths:
         - filesystem
   "/filesystem-search/{path}":
     get:
-      description: Performs fuzzy search on filesystem paths using fuzzy matching algorithm. Optimized alternative to find and grep commands.
+      description: >-
+        Ranks the files and directories under a path by how well their relative path fuzzy-matches `query` (fzf algorithm: the query's characters must appear in order, not necessarily next to each other), best match first.
+
+        Fuzzy search is for "jump to file" lookups from a partial name. The `patterns` parameter is currently ignored by this endpoint; use find for exact glob filtering.
       parameters:
         - description: Path to search in (e.g., /home/user/projects)
           in: path
@@ -747,12 +750,17 @@ paths:
           required: true
           schema:
             type: string
+        - description: Fuzzy pattern matched against each relative path (e.g., mngo for src/main.go). When omitted, the search path itself is used as the pattern.
+          in: query
+          name: query
+          schema:
+            type: string
         - description: "Maximum number of results to return (default: 20)"
           in: query
           name: maxResults
           schema:
             type: integer
-        - description: Comma-separated file patterns to include (e.g., *.go,*.js)
+        - description: Accepted for compatibility but currently ignored; use filesystem-find for glob filtering
           in: query
           name: patterns
           schema:

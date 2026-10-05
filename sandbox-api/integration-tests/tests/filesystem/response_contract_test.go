@@ -149,3 +149,32 @@ func TestMultipartUploadPermissionsOrderAndExistingMode(t *testing.T) {
 		}
 	}
 }
+
+func TestFuzzySearchUsesQueryParam(t *testing.T) {
+	dir := uniqueTestDir("fs-fuzzy")
+	writeTestFile(t, dir+"/main.go", "package main")
+	writeTestFile(t, dir+"/readme.md", "hi")
+	t.Cleanup(func() {
+		resp, err := common.MakeRequest(http.MethodDelete, common.EncodeFilesystemPath(dir)+"?recursive=true", nil)
+		if err == nil {
+			resp.Body.Close()
+		}
+	})
+
+	resp, err := common.MakeRequest(http.MethodGet, encodeRoute("/filesystem-search", dir), nil)
+	require.NoError(t, err)
+	resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var body struct {
+		Matches []struct {
+			Path string `json:"path"`
+		} `json:"matches"`
+	}
+	resp, err = common.MakeRequestAndParse(http.MethodGet, encodeRoute("/filesystem-search", dir)+"?query=mngo", nil, &body)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Len(t, body.Matches, 1)
+	require.Equal(t, "main.go", body.Matches[0].Path)
+}

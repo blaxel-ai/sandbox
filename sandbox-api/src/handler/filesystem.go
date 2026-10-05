@@ -1475,13 +1475,15 @@ func (h *FileSystemHandler) HandleFind(c *gin.Context) {
 
 // HandleFuzzySearch performs fuzzy search on filesystem paths
 // @Summary Fuzzy search for files and directories
-// @Description Performs fuzzy search on filesystem paths using fuzzy matching algorithm. Optimized alternative to find and grep commands.
+// @Description Ranks the files and directories under a path by how well their relative path fuzzy-matches `query` (fzf algorithm: the query's characters must appear in order, not necessarily next to each other), best match first.
+// @Description Fuzzy search is for "jump to file" lookups from a partial name. The `patterns` parameter is currently ignored by this endpoint; use find for exact glob filtering.
 // @Tags filesystem
 // @Accept json
 // @Produce json
 // @Param path path string true "Path to search in (e.g., /home/user/projects)"
+// @Param query query string false "Fuzzy pattern matched against each relative path (e.g., mngo for src/main.go). When omitted, the search path itself is used as the pattern."
 // @Param maxResults query int false "Maximum number of results to return (default: 20)"
-// @Param patterns query string false "Comma-separated file patterns to include (e.g., *.go,*.js)"
+// @Param patterns query string false "Accepted for compatibility but currently ignored; use filesystem-find for glob filtering"
 // @Param excludeDirs query string false "Comma-separated directory names to skip (default: node_modules,vendor,.git,dist,build,target,__pycache__,.venv,.next,coverage). Use empty string to skip no directories."
 // @Param excludeHidden query boolean false "Exclude hidden files and directories (default: true)"
 // @Success 200 {object} FuzzySearchResponse "Fuzzy search results"
@@ -1558,11 +1560,14 @@ func (h *FileSystemHandler) HandleFuzzySearch(c *gin.Context) {
 		return
 	}
 
-	// Get query from path parameter
-	query := h.extractPathFromRequest(c)
-	if query == "" || query == "/" || query == "." {
-		h.SendError(c, http.StatusBadRequest, fmt.Errorf("query parameter is required in path"))
-		return
+	query := c.Query("query")
+	if query == "" {
+		// Without query, the search path doubles as the pattern.
+		query = searchDir
+		if query == "" || query == "/" || query == "." {
+			h.SendError(c, http.StatusBadRequest, fmt.Errorf("query parameter is required in path"))
+			return
+		}
 	}
 
 	// Collect candidates
