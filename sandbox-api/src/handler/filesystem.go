@@ -117,8 +117,11 @@ type ContentSearchMatch struct {
 	Line    int    `json:"line" binding:"required" example:"42"`
 	Column  int    `json:"column" binding:"required" example:"10"`
 	Text    string `json:"text" binding:"required" example:"const searchText = 'example'"`
-	Context string `json:"context,omitempty" example:"previous line\ncurrent line\nnext line"`
+	Context string `json:"context,omitempty" example:"previous line\ncurrent line\nnext line"` // The matching line with up to contextLines lines before and after it, newline-separated; omitted when contextLines is 0
 } // @name ContentSearchMatch
+
+// maxContextLines caps the contextLines a content search accepts.
+const maxContextLines = 20
 
 // ContentSearchResponse represents the response from content search
 type ContentSearchResponse struct {
@@ -296,6 +299,42 @@ func (h *FileSystemHandler) HandleGetFile(c *gin.Context) {
 	h.SendError(c, http.StatusNotFound, fmt.Errorf("file or directory not found"))
 }
 
+// HandleStatFile handles HEAD requests to /filesystem/:path
+// @Summary Stat a file or directory
+// @Description Returns the metadata of a file or directory as headers, with no body. This checks stat availability, not permission to read file contents or list a directory. When the path does not exist or its metadata cannot be accessed, the response is an empty 200 without the X-File-Type header.
+// @Tags filesystem
+// @Param path path string true "File or directory path"
+// @Success 200 "Path metadata (X-File-Type is set only when stat succeeds)"
+// @Header 200 {integer} Content-Length "File size in bytes (files only)"
+// @Header 200 {string} Last-Modified "Modification time (HTTP date)"
+// @Header 200 {string} X-File-Type "file or directory"
+// @Header 200 {string} X-File-Mode "Permission bits including sticky, setgid and setuid in octal (e.g., 644 or 1777)"
+// @Router /filesystem/{path} [head]
+func (h *FileSystemHandler) HandleStatFile(c *gin.Context) {
+	path, err := lib.FormatPath(h.extractPathFromRequest(c))
+	if err != nil {
+		c.Status(http.StatusOK)
+		return
+	}
+
+	info, err := h.fs.Infos(path)
+	if err != nil {
+		c.Status(http.StatusOK)
+		return
+	}
+
+	header := c.Writer.Header()
+	header.Set("Last-Modified", info.ModTime().UTC().Format(http.TimeFormat))
+	header.Set("X-File-Mode", fmt.Sprintf("%o", filesystem.UnixPermissions(info.Mode())))
+	if info.IsDir() {
+		header.Set("X-File-Type", "directory")
+	} else {
+		header.Set("X-File-Type", "file")
+		header.Set("Content-Length", strconv.FormatInt(info.Size(), 10))
+	}
+	c.Status(http.StatusOK)
+}
+
 // handleReadFile handles requests to read a file
 func (h *FileSystemHandler) handleReadFile(c *gin.Context, path string) {
 	// Check if client wants to download the file content directly
@@ -429,9 +468,13 @@ func (h *FileSystemHandler) handleListDirectory(c *gin.Context, path string) {
 
 // HandleCreateOrUpdateFile handles PUT requests to /filesystem/:path
 // @Summary Create or update a file or directory
-// @Description Create or update a file or directory
+// @Description Create or update a file or directory.
+// @Description
+// @Description Idempotent: an existing file is overwritten (truncated, not appended to) and an existing directory is kept, so retrying the same request is safe.
+// @Description
+// @Description Send either a JSON body (FileRequest) or `multipart/form-data` for binary files. Multipart fields, in any order: `file` (required, the file content), `permissions` (optional octal mode such as `0755`, applied when the file is created, default `0644`; an existing file keeps its mode), `path` (optional, ignored: the target is always the URL path).
 // @Tags filesystem
-// @Accept json
+// @Accept json,mpfd
 // @Produce json
 // @Param path path string true "File or directory path"
 // @Param request body FileRequest true "File or directory details"
@@ -528,7 +571,8 @@ func (h *FileSystemHandler) HandleCreateOrUpdateBinary(c *gin.Context) {
 	}
 
 	var permissions os.FileMode = 0644
-	var wroteFile bool
+	var wroteFile, explicitPermissions bool
+	var upload *filesystem.UploadFile
 
 	for {
 		part, err := mr.NextPart()
@@ -553,18 +597,21 @@ func (h *FileSystemHandler) HandleCreateOrUpdateBinary(c *gin.Context) {
 					return
 				}
 				permissions = os.FileMode(permInt)
+				explicitPermissions = true
 			}
 			_ = part.Close()
 			continue
 		}
 
 		if name == "file" && filename != "" && !wroteFile {
-			// Stream directly to disk with requested permissions
-			if err := h.fs.WriteFileFromReader(path, part, permissions); err != nil {
+			upload, err = h.fs.WriteUpload(path, part)
+			if err != nil {
 				_ = part.Close()
 				h.SendError(c, http.StatusUnprocessableEntity, fmt.Errorf("error writing binary file: %w", err))
 				return
 			}
+			defer upload.Close()
+
 			wroteFile = true
 			_ = part.Close()
 			continue
@@ -579,6 +626,14 @@ func (h *FileSystemHandler) HandleCreateOrUpdateBinary(c *gin.Context) {
 		return
 	}
 
+	// Explicit permissions are exact for both multipart field orders. Existing
+	// files retain their mode, and the descriptor prevents path replacement races.
+	if explicitPermissions {
+		if err := upload.SetPermissions(permissions); err != nil {
+			h.SendError(c, http.StatusUnprocessableEntity, fmt.Errorf("error setting permissions: %w", err))
+			return
+		}
+	}
 	h.SendSuccessWithPath(c, path, "Binary file uploaded successfully")
 }
 
@@ -706,7 +761,7 @@ type TreeRequest struct {
 
 // HandleCreateOrUpdateTree handles PUT requests for directory trees
 // @Summary Create or update directory tree
-// @Description Create or update multiple files within a directory tree structure
+// @Description Create or update multiple files within a directory tree structure. Idempotent: existing files are overwritten, so retrying the same request is safe.
 // @Tags filesystem
 // @Accept json
 // @Produce json
@@ -895,7 +950,7 @@ func (h *FileSystemHandler) HandleInitiateMultipartUpload(c *gin.Context) {
 
 // HandleUploadPart uploads a single part of a multipart upload
 // @Summary Upload part
-// @Description Upload a single part of a multipart upload
+// @Description Upload a single part of a multipart upload. Re-uploading a part number replaces that part. Wait for the previous request for that part to finish before retrying.
 // @Tags filesystem
 // @Accept multipart/form-data
 // @Produce json
@@ -1131,12 +1186,15 @@ func (h *FileSystemHandler) HandleListMultipartUploads(c *gin.Context) {
 
 // HandleWatchDirectory streams file modification events for a directory
 // @Summary Stream file modification events in a directory
-// @Description Streams the path of modified files (one per line) in the given directory. Closes when the client disconnects.
+// @Description Streams change events for a directory until the client disconnects.
+// @Description
+// @Description The body is JSON lines (sent with `Content-Type: text/plain`): one event object per line, e.g. `{"op":"WRITE","name":"main.go","path":"/app/src","error":null}`. `op` is the fsnotify operation (CREATE, WRITE, REMOVE, RENAME or CHMOD, several can be joined with `|`), `name` the base name of the changed entry, `path` the directory containing it, and `error` is always null. A `[keepalive]` line (not JSON) is sent every 30 seconds.
+// @Description Only the directory's direct entries are watched. To also watch every subdirectory, including ones created later, end the path with `/**`; the stream then starts with a synthetic CREATE event for each entry that already exists.
 // @Tags filesystem
 // @Produce plain
-// @Param ignore query string false "Ignore patterns (comma-separated)"
-// @Param path path string true "Directory path to watch"
-// @Success 200 {string} string "Stream of modified file paths, one per line"
+// @Param ignore query string false "Comma-separated substrings; events whose full path contains one are skipped"
+// @Param path path string true "Directory path to watch (append /** to watch subdirectories)"
+// @Success 200 {string} string "JSON lines stream of change events"
 // @Failure 400 {object} ErrorResponse "Invalid path"
 // @Failure 500 {object} ErrorResponse "Internal server error"
 // @Router /watch/filesystem/{path} [get]
@@ -1459,13 +1517,15 @@ func (h *FileSystemHandler) HandleFind(c *gin.Context) {
 
 // HandleFuzzySearch performs fuzzy search on filesystem paths
 // @Summary Fuzzy search for files and directories
-// @Description Performs fuzzy search on filesystem paths using fuzzy matching algorithm. Optimized alternative to find and grep commands.
+// @Description Ranks the files and directories under a path by how well their relative path fuzzy-matches `query` (fzf algorithm: the query's characters must appear in order, not necessarily next to each other), best match first.
+// @Description Fuzzy search is for "jump to file" lookups from a partial name. The `patterns` parameter is currently ignored by this endpoint; use find for exact glob filtering.
 // @Tags filesystem
 // @Accept json
 // @Produce json
 // @Param path path string true "Path to search in (e.g., /home/user/projects)"
+// @Param query query string false "Fuzzy pattern matched against each relative path (e.g., mngo for src/main.go). When omitted, the search path itself is used as the pattern."
 // @Param maxResults query int false "Maximum number of results to return (default: 20)"
-// @Param patterns query string false "Comma-separated file patterns to include (e.g., *.go,*.js)"
+// @Param patterns query string false "Accepted for compatibility but currently ignored; use filesystem-find for glob filtering"
 // @Param excludeDirs query string false "Comma-separated directory names to skip (default: node_modules,vendor,.git,dist,build,target,__pycache__,.venv,.next,coverage). Use empty string to skip no directories."
 // @Param excludeHidden query boolean false "Exclude hidden files and directories (default: true)"
 // @Success 200 {object} FuzzySearchResponse "Fuzzy search results"
@@ -1542,11 +1602,14 @@ func (h *FileSystemHandler) HandleFuzzySearch(c *gin.Context) {
 		return
 	}
 
-	// Get query from path parameter
-	query := h.extractPathFromRequest(c)
-	if query == "" || query == "/" || query == "." {
-		h.SendError(c, http.StatusBadRequest, fmt.Errorf("query parameter is required in path"))
-		return
+	query := c.Query("query")
+	if query == "" {
+		// Without query, the search path doubles as the pattern.
+		query = searchDir
+		if query == "" || query == "/" || query == "." {
+			h.SendError(c, http.StatusBadRequest, fmt.Errorf("query parameter is required in path"))
+			return
+		}
 	}
 
 	// Collect candidates
@@ -1640,7 +1703,7 @@ func (h *FileSystemHandler) HandleFuzzySearch(c *gin.Context) {
 
 // HandleContentSearch performs content search using ripgrep
 // @Summary Search for text content in files
-// @Description Searches for text content inside files using ripgrep. Returns matching lines with context.
+// @Description Searches for text content inside files. Returns each matching line, with the lines around it when contextLines is set.
 // @Tags filesystem
 // @Accept json
 // @Produce json
@@ -1650,6 +1713,7 @@ func (h *FileSystemHandler) HandleFuzzySearch(c *gin.Context) {
 // @Param maxResults query int false "Maximum number of results to return (default: 100)"
 // @Param filePattern query string false "File pattern to include (e.g., *.go)"
 // @Param excludeDirs query string false "Comma-separated directory names to skip (default: node_modules,vendor,.git,dist,build,target,__pycache__,.venv,.next,coverage)"
+// @Param contextLines query int false "Lines to include before and after each match in its context field (default: 0, max: 20; invalid values count as 0)"
 // @Success 200 {object} ContentSearchResponse "Content search results"
 // @Failure 400 {object} ErrorResponse "Bad request"
 // @Failure 422 {object} ErrorResponse "Unprocessable entity"
@@ -1707,6 +1771,11 @@ func (h *FileSystemHandler) HandleContentSearch(c *gin.Context) {
 			h.SendError(c, http.StatusBadRequest, fmt.Errorf("invalid maxResults: %s", c.Query("maxResults")))
 			return
 		}
+	}
+
+	contextLines := 0
+	if parsed, err := strconv.Atoi(c.Query("contextLines")); err == nil && parsed > 0 {
+		contextLines = min(parsed, maxContextLines)
 	}
 
 	// Parse file pattern
@@ -1787,27 +1856,36 @@ func (h *FileSystemHandler) HandleContentSearch(c *gin.Context) {
 
 	// Search files in parallel
 	type searchResult struct {
-		path   string
-		line   int
-		column int
-		text   string
+		path    string
+		line    int
+		column  int
+		text    string
+		context string
 	}
 
 	resultsChan := make(chan searchResult, 100)
 	done := make(chan bool)
+	// Closed once maxResults matches are collected so workers stop sending.
+	full := make(chan struct{})
 
-	var matches []ContentSearchMatch
+	matches := []ContentSearchMatch{}
 	go func() {
+		collected := false
 		for result := range resultsChan {
+			if collected {
+				continue
+			}
 			relPath, _ := filepath.Rel(absSearchDir, result.path)
 			matches = append(matches, ContentSearchMatch{
-				Path:   relPath,
-				Line:   result.line,
-				Column: result.column,
-				Text:   result.text,
+				Path:    relPath,
+				Line:    result.line,
+				Column:  result.column,
+				Text:    result.text,
+				Context: result.context,
 			})
 			if len(matches) >= maxResults {
-				break
+				collected = true
+				close(full)
 			}
 		}
 		done <- true
@@ -1827,6 +1905,11 @@ func (h *FileSystemHandler) HandleContentSearch(c *gin.Context) {
 		go func() {
 			defer wg.Done()
 			for filePath := range filesChan {
+				select {
+				case <-full:
+					return
+				default:
+				}
 				// Read file as the workload user, like every other read the API
 				// does on its behalf.
 				var content []byte
@@ -1841,21 +1924,32 @@ func (h *FileSystemHandler) HandleContentSearch(c *gin.Context) {
 
 				// Search line by line
 				lines := strings.Split(string(content), "\n")
-				for lineNum, line := range lines {
+				visitContentSearchLines(lines, full, func(lineNum int, line string) {
 					searchLine := line
 					if !caseSensitive {
 						searchLine = strings.ToLower(line)
 					}
 
 					if col := strings.Index(searchLine, searchQuery); col >= 0 {
-						resultsChan <- searchResult{
-							path:   filePath,
-							line:   lineNum + 1,
-							column: col + 1,
-							text:   line,
+						context := ""
+						if contextLines > 0 {
+							first := max(lineNum-contextLines, 0)
+							last := min(lineNum+contextLines+1, len(lines))
+							context = strings.Join(lines[first:last], "\n")
+						}
+						select {
+						case resultsChan <- searchResult{
+							path:    filePath,
+							line:    lineNum + 1,
+							column:  col + 1,
+							text:    line,
+							context: context,
+						}:
+						case <-full:
+							return
 						}
 					}
-				}
+				})
 			}
 		}()
 	}
@@ -1871,4 +1965,22 @@ func (h *FileSystemHandler) HandleContentSearch(c *gin.Context) {
 	}
 
 	h.SendJSON(c, http.StatusOK, response)
+}
+
+// visitContentSearchLines stops before scanning more lines once the collector
+// has its results. Line numbering and trailing empty lines match strings.Split.
+func visitContentSearchLines(lines []string, stopped <-chan struct{}, visit func(int, string)) {
+	select {
+	case <-stopped:
+		return
+	default:
+	}
+	for number, line := range lines {
+		select {
+		case <-stopped:
+			return
+		default:
+		}
+		visit(number, line)
+	}
 }

@@ -42,7 +42,7 @@ func TestProcessOperations(t *testing.T) {
 	processID := processResponse["pid"].(string)
 	require.Contains(t, processResponse, "name")
 	require.Contains(t, processResponse, "logs")
-	require.IsType(t, nil, processResponse["logs"])
+	require.IsType(t, "", processResponse["logs"])
 
 	// Test getting process details by PID
 	resp, err = common.MakeRequest(http.MethodGet, "/process/"+processID, nil)

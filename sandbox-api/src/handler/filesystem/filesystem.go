@@ -44,10 +44,19 @@ type File struct {
 	Group        string    `json:"group" binding:"required"`
 } // @name File
 
+// baseName is the last element of a file path, or "" when there is none.
+func baseName(path string) string {
+	if path == "" {
+		return ""
+	}
+	return filepath.Base(path)
+}
+
 // MarshalJSON implements json.Marshaler for custom JSON marshaling
 func (f FileByte) MarshalJSON() ([]byte, error) {
 	return json.Marshal(File{
 		Path:         f.Path,
+		Name:         baseName(f.Path),
 		Permissions:  fmt.Sprintf("%o", f.Permissions),
 		Size:         f.Size,
 		LastModified: f.LastModified,
@@ -141,6 +150,7 @@ type FileWithContent struct {
 func (f FileWithContentByte) MarshalJSON() ([]byte, error) {
 	fileDTO := File{
 		Path:         f.Path,
+		Name:         baseName(f.Path),
 		Permissions:  fmt.Sprintf("%o", f.Permissions),
 		Size:         f.Size,
 		LastModified: f.LastModified,
@@ -355,6 +365,40 @@ func (fs *Filesystem) writeFileFromReader(path string, r io.Reader, perm os.File
 		return err
 	}
 	return nil
+}
+
+// UploadFile retains the actual inode and creation provenance until multipart
+// metadata has been read. Never apply permissions by path after the upload.
+type UploadFile struct {
+	file    *os.File
+	created bool
+}
+
+func (f *UploadFile) Close() error { return f.file.Close() }
+
+func (fs *Filesystem) openUpload(path string, r io.Reader) (*UploadFile, error) {
+	absPath, err := fs.GetAbsolutePath(path)
+	if err != nil {
+		return nil, err
+	}
+	if err := os.MkdirAll(filepath.Dir(absPath), 0755); err != nil {
+		return nil, err
+	}
+	// O_EXCL attributes creation to this open. The fallback never creates, so
+	// a concurrent deletion returns an error instead of misidentifying a creator.
+	f, err := os.OpenFile(absPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0644)
+	created := err == nil
+	if os.IsExist(err) {
+		f, err = os.OpenFile(absPath, os.O_WRONLY|os.O_TRUNC, 0)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if _, err := io.Copy(f, r); err != nil {
+		_ = f.Close()
+		return nil, err
+	}
+	return &UploadFile{file: f, created: created}, nil
 }
 
 // CreateDirectory creates a directory at the given path

@@ -56,6 +56,8 @@ type ProcessState struct {
 	KeepAlive        bool                    `json:"keepAlive,omitempty"`
 	Timeout          int                     `json:"timeout,omitempty"`
 
+	EffectiveWorkingDir string `json:"effectiveWorkingDir,omitempty"`
+
 	TerminationRequested constants.ProcessStatus `json:"terminationRequested,omitempty"`
 }
 
@@ -108,6 +110,7 @@ func (pm *ProcessManager) SaveState() error {
 
 		state.Processes[pid] = ProcessState{
 			TerminationRequested: proc.terminationRequested,
+			EffectiveWorkingDir:  proc.EffectiveWorkingDir,
 
 			PID:              proc.PID,
 			Name:             proc.Name,
@@ -229,6 +232,7 @@ func (pm *ProcessManager) LoadState() error {
 		// Create ProcessInfo from saved state
 		proc := &ProcessInfo{
 			terminationRequested: procState.TerminationRequested,
+			EffectiveWorkingDir:  procState.EffectiveWorkingDir,
 
 			PID:              procState.PID,
 			Name:             procState.Name,
