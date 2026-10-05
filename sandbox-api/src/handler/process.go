@@ -97,11 +97,11 @@ type ProcessKillRequest struct {
 } // @name ProcessKillRequest
 
 // ExecuteProcess executes a process
-func (h *ProcessHandler) ExecuteProcess(command string, workingDir string, name string, env map[string]string, waitForCompletion bool, timeout int, waitForPorts []int, restartOnFailure bool, maxRestarts int, keepAlive bool, stdin bool) (ProcessResponse, error) {
+func (h *ProcessHandler) ExecuteProcess(command string, workingDir string, name string, env map[string]string, waitForCompletion bool, timeout int, waitForPorts []int, restartOnFailure bool, maxRestarts int, keepAlive bool, stdin bool, waitTimeout ...int) (ProcessResponse, error) {
 	if keepAlive && blaxel.KeepAliveDisabled() {
 		return ProcessResponse{}, ErrKeepAliveDisabled
 	}
-	processInfo, err := h.processManager.ExecuteProcess(command, workingDir, name, env, waitForCompletion, timeout, waitForPorts, restartOnFailure, maxRestarts, keepAlive, stdin)
+	processInfo, err := h.processManager.ExecuteProcess(command, workingDir, name, env, waitForCompletion, timeout, waitForPorts, restartOnFailure, maxRestarts, keepAlive, stdin, waitTimeout...)
 
 	// If processInfo is nil (process failed to start), return empty response with error
 	if processInfo == nil {
