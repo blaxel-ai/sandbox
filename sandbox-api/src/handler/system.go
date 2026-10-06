@@ -53,14 +53,14 @@ type HealthResponse struct {
 	Status        string                `json:"status" binding:"required" example:"ok"`
 	Version       string                `json:"version" binding:"required" example:"v0.1.0"`
 	GitCommit     string                `json:"gitCommit" binding:"required" example:"abc123"`
-	BuildTime     string                `json:"buildTime" binding:"required" example:"2026-01-29T17:36:52Z"`
+	BuildTime     string                `json:"buildTime" binding:"required" example:"2026-01-29T17:36:52Z"` // Build time in RFC 3339 (UTC), or "unknown" for builds without it
 	GoVersion     string                `json:"goVersion" binding:"required" example:"go1.25.0"`
 	OS            string                `json:"os" binding:"required" example:"linux"`
 	Arch          string                `json:"arch" binding:"required" example:"amd64"`
 	Uptime        string                `json:"uptime" binding:"required" example:"1h30m"`
 	UptimeSeconds float64               `json:"uptimeSeconds" binding:"required" example:"5400.5"`
 	UpgradeCount  int                   `json:"upgradeCount" binding:"required" example:"0"`
-	StartedAt     string                `json:"startedAt" binding:"required" example:"2026-01-29T18:45:49Z"`
+	StartedAt     string                `json:"startedAt" binding:"required" example:"2026-01-29T18:45:49Z"` // API start time in RFC 3339
 	LastUpgrade   process.UpgradeStatus `json:"lastUpgrade" binding:"required"`
 } // @name HealthResponse
 
@@ -93,7 +93,7 @@ func (h *SystemHandler) HandleHealth(c *gin.Context) {
 
 // UpgradeRequest represents the request body for the upgrade endpoint
 type UpgradeRequest struct {
-	Version string `json:"version" example:"latest"`                                         // Version to upgrade to: "latest" (default), "develop", "main", or specific tag like "v1.0.0"
+	Version string `json:"version" example:"latest"`                                        // Version to upgrade to: "latest" (default), "develop", "main", or specific tag like "v1.0.0"
 	BaseURL string `json:"baseUrl" example:"https://github.com/blaxel-ai/sandbox/releases"` // Base URL for releases (useful for forks)
 } // @name UpgradeRequest
 

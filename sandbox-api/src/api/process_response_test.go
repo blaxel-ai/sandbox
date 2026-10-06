@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/blaxel-ai/sandbox-api/src/handler/process"
 	"github.com/gin-gonic/gin"
@@ -75,5 +76,56 @@ func TestProcessResponseReportsInheritedWorkingDir(t *testing.T) {
 		`{"command":"pwd","waitForCompletion":true,"workingDir":"`+dir+`"}`)
 	if got := decodeProcessBody(t, response.Body.Bytes())["workingDir"]; got != dir {
 		t.Fatalf("explicit workingDir = %v, want %q", got, dir)
+	}
+}
+
+func TestProcessCompletedAtWhileRunning(t *testing.T) {
+	router := newProcessTestRouter(t)
+
+	// cat blocks on its open stdin, so the process is reliably still running.
+	created := serveProcessRequest(t, router, http.MethodPost, "/process",
+		`{"command":"cat","stdin":true}`)
+	body := decodeProcessBody(t, created.Body.Bytes())
+	pid := body["pid"].(string)
+	proc, exists := process.GetProcessManager().GetProcessByIdentifier(pid)
+	if !exists {
+		t.Fatal("created process missing from manager")
+	}
+	t.Cleanup(func() {
+		request := httptest.NewRequest(http.MethodDelete, "/process/"+pid+"/kill", nil)
+		router.ServeHTTP(httptest.NewRecorder(), request)
+		// Finished closes only after exit and final log ingestion. Wait before
+		// TempDir cleanup removes the files the tailer is still using.
+		select {
+		case <-proc.Finished:
+		case <-time.After(5 * time.Second):
+			t.Error("killed process did not finish before log directory cleanup")
+		}
+	})
+	if body["status"] != "running" || body["completedAt"] != "" {
+		t.Fatalf("POST /process: status = %v, completedAt = %#v, want running and \"\"", body["status"], body["completedAt"])
+	}
+
+	detail := decodeProcessBody(t, serveProcessRequest(t, router, http.MethodGet, "/process/"+pid, "").Body.Bytes())
+	if detail["completedAt"] != "" {
+		t.Fatalf("GET /process/{id}: completedAt = %#v, want \"\"", detail["completedAt"])
+	}
+
+	list := serveProcessRequest(t, router, http.MethodGet, "/process", "")
+	var listed []map[string]any
+	if err := json.Unmarshal(list.Body.Bytes(), &listed); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, item := range listed {
+		if item["pid"] == pid {
+			found = true
+			if completedAt, present := item["completedAt"]; !present || completedAt != "" {
+				t.Fatalf("GET /process: completedAt = %#v (present=%v), want empty string", completedAt, present)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("running process missing from the list")
 	}
 }
