@@ -309,6 +309,48 @@ func TestFailedExportLeavesTheFreezeItFound(t *testing.T) {
 	}
 }
 
+func TestExportRefusesTheFreezeOfAnInterruptedArchive(t *testing.T) {
+	// A restart after a partial import leaves the same read-only root as one in
+	// the middle of an export: the filesystem may be half restored.
+	root, lower := fakeSandbox(t)
+	options := exportOptions(t, root, lower)
+	options.URL = "http://127.0.0.1:1"
+	quiesceMu.Lock()
+	quiesceStatus = QuiesceStatus{State: StateQuiesced, Reason: interruptedArchiveReason}
+	quiesceMu.Unlock()
+	if !ExportRefused() {
+		t.Error("the freeze of an interrupted archive must refuse an export")
+	}
+	if _, err := Export(context.Background(), options); !errors.Is(err, ErrAlreadyQuiesced) {
+		t.Errorf("expected the export to be refused, got %v", err)
+	}
+}
+
+func TestExportOnAFreezeWithoutProcessesCarriesNone(t *testing.T) {
+	root, lower := fakeSandbox(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	saveProcesses := false
+	options := exportOptions(t, root, lower)
+	options.URL = server.URL
+	options.SaveProcesses = &saveProcesses
+	if _, err := Export(context.Background(), options); err != nil {
+		t.Fatalf("export failed: %v", err)
+	}
+
+	options.SaveProcesses = nil
+	result, err := Export(context.Background(), options)
+	if err != nil {
+		t.Fatalf("an export on the freeze of an earlier one failed: %v", err)
+	}
+	if result.Manifest.Processes {
+		t.Error("a process list the freeze did not save must not be archived")
+	}
+}
+
 func TestExportRefusesADryRunWhileAnExportIsReadingTheImage(t *testing.T) {
 	// A dry run is not held back by the freeze, but it mounts the pristine
 	// image at the same place: replacing that mount under a running export
