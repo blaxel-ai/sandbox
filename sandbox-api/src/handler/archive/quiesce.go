@@ -63,6 +63,9 @@ type QuiesceStatus struct {
 	// Restore reports the archive this sandbox was started from, if it was
 	// started from one: how far its restore has got, and how it ended.
 	Restore *RestoreProgress `json:"restore,omitempty"`
+	// processesSaved reports whether the export that froze the sandbox saved its
+	// process list before stopping it.
+	processesSaved bool
 } // @name QuiesceStatus
 
 var (
@@ -99,7 +102,8 @@ var ErrAlreadyQuiesced = errors.New("sandbox is already frozen")
 const exportFreezeReason = "archive export"
 
 // interruptedArchiveReason is the reason a sandbox restarted in the middle of an
-// archive is frozen with, see AdoptRootState.
+// archive is frozen with, see AdoptRootState. It is not reused by an export: a
+// restart after a partial import leaves the same read-only root.
 const interruptedArchiveReason = "an interrupted archive left the root filesystem read-only"
 
 // Quiesced reports whether the sandbox currently refuses mutating calls.
@@ -152,7 +156,7 @@ func ExportRefused() bool {
 // the way, or never claimed - is claimed as it is, and reused reports it: its
 // workload is already stopped and its process list already saved, and freezing
 // it again would save a list where every process is stopped.
-func freezeForExport(reason string) (reused bool, err error) {
+func freezeForExport(reason string, saveProcesses bool) (reused bool, err error) {
 	quiesceMu.Lock()
 	defer quiesceMu.Unlock()
 	if reusableFreezeLocked() {
@@ -162,6 +166,7 @@ func freezeForExport(reason string) (reused bool, err error) {
 	if err := freezeLocked(reason); err != nil {
 		return false, err
 	}
+	quiesceStatus.processesSaved = saveProcesses
 	exporting = true
 	return false, nil
 }
@@ -174,12 +179,7 @@ func reusableFreezeLocked() bool {
 	if exporting || quiesceStatus.State != StateQuiesced {
 		return false
 	}
-	switch quiesceStatus.Reason {
-	case exportFreezeReason, interruptedArchiveReason:
-		return true
-	default:
-		return false
-	}
+	return quiesceStatus.Reason == exportFreezeReason
 }
 
 func freezeLocked(reason string) error {
