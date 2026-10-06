@@ -193,9 +193,101 @@ func TestExportWithoutProcessesArchivesStorageOnly(t *testing.T) {
 	}
 }
 
-func TestExportRefusesConcurrentExport(t *testing.T) {
+func TestExportContinuesOnTheFreezeOfAnEarlierExport(t *testing.T) {
+	// An export that uploaded but whose archive was never claimed leaves the
+	// sandbox frozen with its workload stopped: archiving it again must build on
+	// that freeze, with the process list saved while the workload still ran.
+	root, lower := fakeSandbox(t)
+	var uploads [][]byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		uploads = append(uploads, body)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	pm := process.GetProcessManager()
+	if _, err := pm.StartProcessWithName("sleep 30", "", "frozen-worker", nil, false, 0, false, 0, false, func(*process.ProcessInfo) {}); err != nil {
+		t.Fatalf("failed to start the workload: %v", err)
+	}
+	t.Cleanup(func() {
+		for _, info := range pm.ListProcesses() {
+			if info.Name == "frozen-worker" {
+				_ = pm.KillProcess(info.PID)
+			}
+		}
+	})
+
+	options := exportOptions(t, root, lower)
+	options.URL = server.URL
+	first, err := Export(context.Background(), options)
+	if err != nil {
+		t.Fatalf("export failed: %v", err)
+	}
+	if ExportRefused() {
+		t.Error("a sandbox frozen by an export that is over must accept another export")
+	}
+	second, err := Export(context.Background(), options)
+	if err != nil {
+		t.Fatalf("an export on the freeze of an earlier one failed: %v", err)
+	}
+
+	if !second.Uploaded {
+		t.Error("expected the second export to upload")
+	}
+	if Status().State != StateQuiesced {
+		t.Errorf("expected the sandbox to stay frozen, got %s", Status().State)
+	}
+	if len(second.StoppedProcesses) != len(first.StoppedProcesses) {
+		t.Errorf("expected the processes stopped by the first export, got %v", second.StoppedProcesses)
+	}
+	if len(uploads) != 2 {
+		t.Fatalf("expected two uploads, got %d", len(uploads))
+	}
+	var saved process.ManagerState
+	if err := json.Unmarshal(readMember(t, uploads[1], ProcessesName), &saved); err != nil {
+		t.Fatal(err)
+	}
+	running := false
+	for _, state := range saved.Processes {
+		if state.Name == "frozen-worker" && state.Status == process.StatusRunning {
+			running = true
+		}
+	}
+	if !running {
+		t.Error("the second archive must carry the workload as it ran before the first freeze, to be relaunched on restore")
+	}
+}
+
+func TestExportRefusesAFreezeItCannotBuildOn(t *testing.T) {
 	root, lower := fakeSandbox(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("nothing must be uploaded from a quarantined filesystem")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	options := exportOptions(t, root, lower)
+	options.URL = server.URL
+	if err := quarantine(root, "failed archive import"); err != nil {
+		t.Fatal(err)
+	}
+	if !ExportRefused() {
+		t.Error("a quarantined sandbox must refuse an export")
+	}
+	if _, err := Export(context.Background(), options); !errors.Is(err, ErrAlreadyQuiesced) {
+		t.Errorf("expected the export to be refused, got %v", err)
+	}
+}
+
+func TestFailedExportLeavesTheFreezeItFound(t *testing.T) {
+	root, lower := fakeSandbox(t)
+	fail := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if fail {
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer server.Close()
@@ -205,8 +297,57 @@ func TestExportRefusesConcurrentExport(t *testing.T) {
 	if _, err := Export(context.Background(), options); err != nil {
 		t.Fatalf("export failed: %v", err)
 	}
+	fail = true
 	if _, err := Export(context.Background(), options); err == nil {
-		t.Error("expected a second export to be refused while the sandbox is frozen")
+		t.Fatal("expected the rejected upload to fail the export")
+	}
+	if status := Status(); status.State != StateQuiesced || status.Reason != exportFreezeReason {
+		t.Errorf("a failed export must leave the earlier freeze in place, got %+v", status)
+	}
+	if ExportRefused() {
+		t.Error("the sandbox must still accept another export")
+	}
+}
+
+func TestExportRefusesTheFreezeOfAnInterruptedArchive(t *testing.T) {
+	// A restart after a partial import leaves the same read-only root as one in
+	// the middle of an export: the filesystem may be half restored.
+	root, lower := fakeSandbox(t)
+	options := exportOptions(t, root, lower)
+	options.URL = "http://127.0.0.1:1"
+	quiesceMu.Lock()
+	quiesceStatus = QuiesceStatus{State: StateQuiesced, Reason: interruptedArchiveReason}
+	quiesceMu.Unlock()
+	if !ExportRefused() {
+		t.Error("the freeze of an interrupted archive must refuse an export")
+	}
+	if _, err := Export(context.Background(), options); !errors.Is(err, ErrAlreadyQuiesced) {
+		t.Errorf("expected the export to be refused, got %v", err)
+	}
+}
+
+func TestExportOnAFreezeWithoutProcessesCarriesNone(t *testing.T) {
+	root, lower := fakeSandbox(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	saveProcesses := false
+	options := exportOptions(t, root, lower)
+	options.URL = server.URL
+	options.SaveProcesses = &saveProcesses
+	if _, err := Export(context.Background(), options); err != nil {
+		t.Fatalf("export failed: %v", err)
+	}
+
+	options.SaveProcesses = nil
+	result, err := Export(context.Background(), options)
+	if err != nil {
+		t.Fatalf("an export on the freeze of an earlier one failed: %v", err)
+	}
+	if result.Manifest.Processes {
+		t.Error("a process list the freeze did not save must not be archived")
 	}
 }
 
@@ -367,6 +508,27 @@ func TestSuccessfulExportLeavesTheWorkloadStopped(t *testing.T) {
 	for _, info := range pm.ListProcesses() {
 		if info.Name == "exported-worker" && info.Status == process.StatusRunning {
 			t.Fatal("an exported sandbox is destroyed next, its workload must stay stopped")
+		}
+	}
+}
+
+func readMember(t *testing.T, archived []byte, name string) []byte {
+	t.Helper()
+	reader := tar.NewReader(bytes.NewReader(archived))
+	for {
+		header, err := reader.Next()
+		if err == io.EOF {
+			t.Fatalf("archive has no %s", name)
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if header.Name == name {
+			data, err := io.ReadAll(reader)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return data
 		}
 	}
 }
