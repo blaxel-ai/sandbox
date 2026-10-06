@@ -70,6 +70,25 @@ func (fs *Filesystem) WriteFileFromReader(path string, r io.Reader, perm os.File
 	})
 }
 
+// WriteUpload streams as the workload identity and retains the opened inode.
+func (fs *Filesystem) WriteUpload(path string, r io.Reader) (*UploadFile, error) {
+	var file *UploadFile
+	err := identity.Do(func() error {
+		var err error
+		file, err = fs.openUpload(path, r)
+		return err
+	})
+	return file, err
+}
+
+// SetPermissions applies exact permissions only to the inode this upload created.
+func (f *UploadFile) SetPermissions(perm os.FileMode) error {
+	if !f.created {
+		return nil
+	}
+	return identity.Do(func() error { return f.file.Chmod(perm) })
+}
+
 func (fs *Filesystem) CreateDirectory(path string, perm os.FileMode) error {
 	return identity.Do(func() error {
 		return fs.createDirectory(path, perm)
