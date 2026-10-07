@@ -21,3 +21,11 @@ yq eval '.paths["/filesystem/{path}"].put.requestBody.content["multipart/form-da
     "path": {"type": "string", "description": "Ignored: the target is always the URL path"}
   }
 }' -i openapi.yml
+
+# A streaming response is a sequence of records, not one JSON object.
+yq eval '.paths."/process/{identifier}/logs/stream".get.responses."200".content."application/x-ndjson".schema = {"type": "string", "description": "Newline-delimited JSON records with type (stdout, stderr, keepalive, restart, truncated, error), optional data, and optional encoding=base64 for non-UTF-8 chunks. Decode each output record before concatenating bytes by source. No result record."}' -i openapi.yml
+
+# Errors before streaming use the regular JSON response regardless of Accept.
+for status in 400 404 409 500; do
+  STATUS="$status" yq eval '.paths."/process/{identifier}/logs/stream".get.responses[strenv(STATUS)].content = {"application/json": {"schema": {"$ref": "#/components/schemas/ErrorResponse"}}}' -i openapi.yml
+done
