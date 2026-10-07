@@ -459,3 +459,56 @@ func TestStructuredRestartWaitsForRestoreFinalization(t *testing.T) {
 	default:
 	}
 }
+
+func TestStructuredSameNameProcessesKeepSeparateLogs(t *testing.T) {
+	pm := newStdinTestManager(t)
+	oldPID, err := pm.StartProcessWithName("printf old-start; sleep 0.3; printf old-end", "", "same-name", nil, false, 0, false, 0, false, noop)
+	if err != nil {
+		t.Fatal(err)
+	}
+	old, _ := pm.GetProcessByIdentifier(oldPID)
+	t.Cleanup(func() { _ = pm.KillProcess(oldPID) })
+	waitFor(t, "old output collected", func() bool { old.logLock.RLock(); defer old.logLock.RUnlock(); return old.stdout.Len() > 0 })
+	newPID, err := pm.StartProcessWithName("printf new-output", "", "same-name", nil, false, 0, false, 0, false, noop)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fresh, _ := pm.GetProcessByIdentifier(newPID)
+	t.Cleanup(func() { _ = pm.KillProcess(newPID) })
+	for _, p := range []*ProcessInfo{old, fresh} {
+		select {
+		case <-p.Finished:
+		case <-time.After(5 * time.Second):
+			t.Fatal("same-name process did not finish")
+		}
+	}
+	for _, tc := range []struct {
+		p    *ProcessInfo
+		want string
+	}{{old, "old-startold-end"}, {fresh, "new-output"}} {
+		w := &structuredCapture{}
+		if err := pm.StreamProcessOutputForProcess(tc.p, w); err != nil {
+			t.Fatal(err)
+		}
+		var got string
+		for _, event := range w.events {
+			if event.Type != "stdout" {
+				t.Fatalf("unexpected event %#v", event)
+			}
+			got += event.Data
+		}
+		if got != tc.want {
+			t.Fatalf("process %s replay=%q want %q", tc.p.PID, got, tc.want)
+		}
+		snapshot, ok := pm.GetProcessSnapshot(tc.p.PID)
+		if !ok {
+			t.Fatal("process missing")
+		}
+		if got := snapshot.OutputTail(1024).Stdout; got != tc.want {
+			t.Fatalf("snapshot=%q want %q", got, tc.want)
+		}
+	}
+	if old.LogFile == fresh.LogFile || old.StdoutFile == fresh.StdoutFile || old.StderrFile == fresh.StderrFile {
+		t.Fatal("same-name instances share log paths")
+	}
+}

@@ -276,3 +276,49 @@ func TestNDJSONLogStreamRestartIsControlNotStdout(t *testing.T) {
 	requireLogMediaType(t, replay, "application/x-ndjson")
 	require.Equal(t, liveOutput, readRuns(replay))
 }
+
+func TestNDJSONLogStreamSameNameProcessesKeepIndependentLogs(t *testing.T) {
+	name := uniqueProcessName("ndjson-shared-name")
+	start := func(command string, stdin bool) string {
+		response, err := common.MakeRequest(http.MethodPost, "/process", map[string]any{
+			"name": name, "command": command, "stdin": stdin,
+		})
+		require.NoError(t, err)
+		defer response.Body.Close()
+		require.Equal(t, http.StatusOK, response.StatusCode)
+		var process struct {
+			PID string `json:"pid"`
+		}
+		require.NoError(t, json.NewDecoder(response.Body).Decode(&process))
+		require.NotEmpty(t, process.PID)
+		t.Cleanup(func() {
+			if r, err := common.MakeRequest(http.MethodDelete, "/process/"+process.PID+"/kill", nil); err == nil {
+				r.Body.Close()
+			}
+		})
+		return process.PID
+	}
+	firstPID := start(`printf old; read gate; printf -- '-tail\n'`, true)
+	first := openLogStream(t, firstPID, "application/x-ndjson")
+	requireLogMediaType(t, first, "application/x-ndjson")
+	reader := bufio.NewReader(first.Body)
+	readNDJSONSource(t, reader, "stdout", "old")
+
+	// The API allows reusing a name once the first instance has finished.
+	// Its PID must still replay its own logs after the name is reused.
+	require.Equal(t, http.StatusOK, writeStdin(t, firstPID, "continue").StatusCode)
+	require.Equal(t, map[string]string{"stdout": "-tail\n", "stderr": ""}, collectNDJSONLogs(t, reader))
+	secondPID := start(`printf 'new\n'; printf 'new-error\n' >&2`, false)
+	require.NotEqual(t, firstPID, secondPID)
+	second := openLogStream(t, secondPID, "application/x-ndjson")
+	requireLogMediaType(t, second, "application/x-ndjson")
+	require.Equal(t, map[string]string{"stdout": "new\n", "stderr": "new-error\n"}, collectNDJSONLogs(t, bufio.NewReader(second.Body)))
+
+	for _, tc := range []struct{ pid, stdout, stderr string }{
+		{firstPID, "old-tail\n", ""}, {secondPID, "new\n", "new-error\n"},
+	} {
+		replay := openLogStream(t, tc.pid, "application/x-ndjson")
+		requireLogMediaType(t, replay, "application/x-ndjson")
+		require.Equal(t, map[string]string{"stdout": tc.stdout, "stderr": tc.stderr}, collectNDJSONLogs(t, bufio.NewReader(replay.Body)))
+	}
+}

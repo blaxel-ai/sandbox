@@ -22,6 +22,7 @@ import (
 	"github.com/blaxel-ai/sandbox-api/src/lib/blaxel"
 	"github.com/blaxel-ai/sandbox-api/src/lib/identity"
 	"github.com/blaxel-ai/sandbox-api/src/lib/oom"
+	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
 )
 
@@ -430,25 +431,33 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 	// Create separate log files for stdout and stderr
 	// Child processes write DIRECTLY to these files (no pipes)
 	// This ensures processes survive sandbox-api restarts
-	stdoutPath, stderrPath, combinedPath := getLogFilePaths(name)
+	// Names can be reused while an earlier process is still alive. Allocate
+	// paths per instance so spawning a namesake never truncates its output or
+	// contends on its journal lock. Restarts and restore reuse these saved paths.
+	instanceID, err := uuid.NewRandom()
+	if err != nil {
+		return "", fmt.Errorf("failed to allocate process log identity: %w", err)
+	}
+	stdoutPath, stderrPath, combinedPath := getLogFilePaths(name + "-" + instanceID.String())
 
-	stdoutFile, err := os.OpenFile(stdoutPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	stdoutFile, err := os.OpenFile(stdoutPath, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0644)
 	if err != nil {
 		return "", fmt.Errorf("failed to create stdout log file: %w", err)
 	}
 
-	stderrFile, err := os.OpenFile(stderrPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	stderrFile, err := os.OpenFile(stderrPath, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0644)
 	if err != nil {
 		stdoutFile.Close()
 		return "", fmt.Errorf("failed to create stderr log file: %w", err)
 	}
 
-	// A reused process name must not inherit an older combined log.
-	if err := os.WriteFile(combinedPath, nil, 0644); err != nil {
+	combinedFile, err := os.OpenFile(combinedPath, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0644)
+	if err != nil {
 		stdoutFile.Close()
 		stderrFile.Close()
 		return "", err
 	}
+	_ = combinedFile.Close()
 
 	process := &ProcessInfo{
 		Name:             name,
