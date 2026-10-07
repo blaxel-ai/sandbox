@@ -543,13 +543,13 @@ func (pm *ProcessManager) tailLogFiles(proc *ProcessInfo) {
 	defer close(proc.TailDone)
 	defer proc.finishLogReady(errors.New("process log collector is unavailable"))
 	// Open files for reading
-	stdoutFile, err := os.Open(proc.StdoutFile)
+	stdoutFile, err := openPrivateProcessLog(proc.StdoutFile, os.O_RDONLY)
 	if err != nil {
 		return
 	}
 	defer stdoutFile.Close()
 
-	stderrFile, err := os.Open(proc.StderrFile)
+	stderrFile, err := openPrivateProcessLog(proc.StderrFile, os.O_RDONLY)
 	if err != nil {
 		return
 	}
@@ -561,7 +561,7 @@ func (pm *ProcessManager) tailLogFiles(proc *ProcessInfo) {
 		combinedFile = proc.journalOwner
 		proc.logLock.RUnlock()
 		if combinedFile == nil {
-			combinedFile, err = os.OpenFile(proc.LogFile, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0644)
+			combinedFile, err = openPrivateProcessLog(proc.LogFile, os.O_CREATE|os.O_RDWR|os.O_APPEND)
 			if err != nil {
 				return
 			}
@@ -587,7 +587,7 @@ func (pm *ProcessManager) tailLogFiles(proc *ProcessInfo) {
 		_, _ = stderrFile.Seek(int64(proc.stderr.Len()), io.SeekStart)
 		proc.logLock.Unlock()
 	} else if proc.LogFile != "" {
-		combinedFile, err = os.OpenFile(proc.LogFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+		combinedFile, err = openPrivateProcessLog(proc.LogFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND)
 		if err == nil {
 			defer combinedFile.Close()
 		} else {
@@ -935,12 +935,12 @@ func (pm *ProcessManager) restartProcess(oldProcess *ProcessInfo, callback func(
 	cmd.Env = identity.Get().DecorateEnv(buildProcessEnv(oldProcess.Env))
 
 	// Open log files for appending - child writes directly to files
-	stdoutFile, err := os.OpenFile(oldProcess.StdoutFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	stdoutFile, err := openPrivateProcessLog(oldProcess.StdoutFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY)
 	if err != nil {
 		return "", fmt.Errorf("failed to open stdout log file: %w", err)
 	}
 
-	stderrFile, err := os.OpenFile(oldProcess.StderrFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	stderrFile, err := openPrivateProcessLog(oldProcess.StderrFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY)
 	if err != nil {
 		stdoutFile.Close()
 		return "", fmt.Errorf("failed to open stderr log file: %w", err)
