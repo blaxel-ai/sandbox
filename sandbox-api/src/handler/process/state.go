@@ -556,6 +556,11 @@ func verifyProcessCommand(pid int, expectedCommand string) bool {
 		return false
 	}
 
+	if len(expectedCommand) >= maxArgStrlen {
+		// shellCommand never put this command on the command line.
+		expectedCommand = largeScriptArg
+	}
+
 	// Read the process command line from /proc
 	cmdlinePath := fmt.Sprintf("/proc/%d/cmdline", pid)
 	data, err := os.ReadFile(cmdlinePath)
