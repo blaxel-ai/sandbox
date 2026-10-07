@@ -3,6 +3,7 @@ package process
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -510,5 +511,73 @@ func TestStructuredSameNameProcessesKeepSeparateLogs(t *testing.T) {
 	}
 	if old.LogFile == fresh.LogFile || old.StdoutFile == fresh.StdoutFile || old.StderrFile == fresh.StderrFile {
 		t.Fatal("same-name instances share log paths")
+	}
+}
+
+func TestStructuredFailedStartRemovesAllLogFiles(t *testing.T) {
+	pm := newStdinTestManager(t)
+	t.Setenv("SHELL", filepath.Join(t.TempDir(), "missing-shell"))
+	if _, err := pm.StartProcess("true", "", nil, false, 0, false, 0, true, noop); err == nil {
+		t.Fatal("missing shell unexpectedly started")
+	}
+	entries, err := os.ReadDir(ProcessLogDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("failed startup leaked %d log files: %v", len(entries), entries)
+	}
+}
+
+func TestStructuredRetentionPreservesRecordAtPunchedBoundary(t *testing.T) {
+	_, p, feed := structuredFixture(t)
+	feed("stdout", []byte("discarded"))
+	before, err := os.Stat(p.LogFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	feed("stderr", []byte("retained\n"))
+	info, _ := os.Stat(p.LogFile)
+	file, err := os.OpenFile(p.LogFile, os.O_WRONLY, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = file.WriteAt(make([]byte, before.Size()), 0); err != nil {
+		t.Fatal(err)
+	}
+	file.Close()
+	var records []logRecord
+	gaps := 0
+	if err := readLogRecords(p.LogFile, info.Size(), info.Size(), func(r logRecord) { records = append(records, r) }, func() { gaps++ }); err != nil {
+		t.Fatal(err)
+	}
+	if gaps != 1 || len(records) != 1 || records[0].Type != "stderr" || string(records[0].Data) != "retained\n" {
+		t.Fatalf("gap=%d retained=%#v", gaps, records)
+	}
+}
+
+func TestStructuredPartialLogCreationRemovesOnlyCreatedFiles(t *testing.T) {
+	for _, conflict := range []int{0, 1, 2} {
+		t.Run(fmt.Sprint(conflict), func(t *testing.T) {
+			dir := t.TempDir()
+			paths := []string{filepath.Join(dir, "stdout"), filepath.Join(dir, "stderr"), filepath.Join(dir, "combined")}
+			if err := os.WriteFile(paths[conflict], []byte("existing"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := openProcessLogFiles(paths...); err == nil {
+				t.Fatal("expected exclusive-create failure")
+			}
+			entries, err := os.ReadDir(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(entries) != 1 {
+				t.Fatalf("partial creation leaked files: %v", entries)
+			}
+			body, err := os.ReadFile(paths[conflict])
+			if err != nil || string(body) != "existing" {
+				t.Fatalf("preexisting file changed: %q %v", body, err)
+			}
+		})
 	}
 }

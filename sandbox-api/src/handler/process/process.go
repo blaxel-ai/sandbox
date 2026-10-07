@@ -440,24 +440,14 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 	}
 	stdoutPath, stderrPath, combinedPath := getLogFilePaths(name + "-" + instanceID.String())
 
-	stdoutFile, err := os.OpenFile(stdoutPath, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0644)
+	logFiles, err := openProcessLogFiles(stdoutPath, stderrPath, combinedPath)
 	if err != nil {
-		return "", fmt.Errorf("failed to create stdout log file: %w", err)
-	}
-
-	stderrFile, err := os.OpenFile(stderrPath, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0644)
-	if err != nil {
-		stdoutFile.Close()
-		return "", fmt.Errorf("failed to create stderr log file: %w", err)
-	}
-
-	combinedFile, err := os.OpenFile(combinedPath, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0644)
-	if err != nil {
-		stdoutFile.Close()
-		stderrFile.Close()
 		return "", err
 	}
-	_ = combinedFile.Close()
+	started := false
+	defer func() { cleanupProcessLogFiles(logFiles, !started) }()
+	stdoutFile, stderrFile := logFiles[0], logFiles[1]
+	_ = logFiles[2].Close()
 
 	process := &ProcessInfo{
 		Name:             name,
@@ -495,10 +485,6 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 
 	cleanupStdin, err := attachStdin(cmd, process)
 	if err != nil {
-		stdoutFile.Close()
-		stderrFile.Close()
-		os.Remove(stdoutPath)
-		os.Remove(stderrPath)
 		return "", err
 	}
 
@@ -509,13 +495,10 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 	process.EffectiveWorkingDir = effectiveWorkingDir(workingDir)
 	// Start the process
 	if err := cmd.Start(); err != nil {
-		stdoutFile.Close()
-		stderrFile.Close()
-		os.Remove(stdoutPath)
-		os.Remove(stderrPath)
 		return "", err
 	}
 
+	started = true
 	process.PID = fmt.Sprintf("%d", cmd.Process.Pid)
 	process.ProcessPid = cmd.Process.Pid
 	oom.PreferAsVictim(process.ProcessPid)
