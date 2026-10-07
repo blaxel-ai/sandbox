@@ -2,8 +2,8 @@
 
 `POST /process` runs a command with stdout and stderr going to log files. By
 default the process has no stdin (it reads EOF at once). Set `"stdin": true` to
-give it a writable pipe instead, then drive it over HTTP. This is what a stdio
-protocol such as MCP needs: raw bytes in, raw lines out, no PTY in between.
+give it a writable pipe instead, then send raw input bytes over HTTP without a
+PTY. The log stream is for observing output; it is not a lossless stdio transport.
 
 ## API
 
@@ -11,8 +11,14 @@ protocol such as MCP needs: raw bytes in, raw lines out, no PTY in between.
 |---|---|
 | `POST /process` with `{"command": "...", "name": "...", "stdin": true}` | Start the process with a stdin pipe. The response carries `"stdin": true`. |
 | `POST /process/{name}/stdin` with a raw body | Write the body verbatim to stdin. Include the trailing newline your protocol expects. Max 8 MiB per call. |
-| `GET /process/{name}/logs/stream` | Read stdout. Lines are tagged `stdout:` / `stderr:`; drop the tag and ignore `[keepalive]` lines. |
+| `GET /process/{name}/logs/stream` | Observe mixed stdout and stderr as prefixed text. Partial lines and keepalive markers can interleave; source attribution is not reliable. |
 | `DELETE /process/{name}/stdin` | Close stdin (EOF). Idempotent. For MCP this is the clean shutdown. |
+
+Do not reconstruct stdout by stripping prefixes or filtering keepalive lines.
+An unfinished stdout line can contain stderr output or a keepalive marker, and
+its continuation may have no prefix. `GET /process/{name}/logs` returns separate
+`stdout` and `stderr` snapshots, subject to retention and response limits; these
+snapshots are not a streaming protocol transport either.
 
 Errors:
 
@@ -57,7 +63,9 @@ A pipe rather than a FIFO on disk is a deliberate trade: stdin survival across a
 sandbox-api restart would buy little, since the client's log stream drops at the
 same moment and any stdio session has to be re-initialised anyway.
 
-## Example: an MCP server over stdio
+## Example: manually sending MCP input
+
+This demonstrates stdin writes and diagnostic output, not a reliable MCP client.
 
 ```sh
 BASE=http://localhost:8080
@@ -68,8 +76,8 @@ curl -s $BASE/process -H 'Content-Type: application/json' -d '{
   "stdin": true
 }'
 
-# Follow stdout in another shell, keeping only stdout lines:
-curl -sN $BASE/process/mcp-fs/logs/stream | sed -n 's/^stdout://p'
+# Observe mixed diagnostic output in another shell; do not parse it as JSON-RPC:
+curl -sN $BASE/process/mcp-fs/logs/stream
 
 curl -s $BASE/process/mcp-fs/stdin --data-binary \
   '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"curl","version":"0"}}}
@@ -82,5 +90,6 @@ curl -s $BASE/process/mcp-fs/stdin --data-binary '{"jsonrpc":"2.0","id":2,"metho
 curl -s -X DELETE $BASE/process/mcp-fs/stdin
 ```
 
-To use an MCP SDK's stdio transport unchanged, run a small local shim whose own
-stdin/stdout are bridged to these two calls, and point the transport at the shim.
+An MCP SDK's stdio transport needs reliably separated output. Bridging this text
+log stream into the SDK's stdout can corrupt JSON-RPC messages. Use a transport
+that preserves message framing and stream identity for a production MCP client.
