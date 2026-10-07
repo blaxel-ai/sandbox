@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
@@ -59,11 +60,11 @@ type TerminalMessage struct {
 type terminalEscapeState int
 
 const (
-	termEscNone   terminalEscapeState = iota // normal input
-	termEscStart                             // saw ESC, type not yet known
-	termEscCSI                               // inside CSI sequence (ESC [)
-	termEscOSC                               // inside OSC sequence (ESC ])
-	termEscOSCST                             // saw ESC inside OSC (possible ST = ESC \)
+	termEscNone  terminalEscapeState = iota // normal input
+	termEscStart                            // saw ESC, type not yet known
+	termEscCSI                              // inside CSI sequence (ESC [)
+	termEscOSC                              // inside OSC sequence (ESC ])
+	termEscOSCST                            // saw ESC inside OSC (possible ST = ESC \)
 )
 
 // terminalCommandBuffer reconstructs typed commands from raw PTY input bytes.
@@ -196,6 +197,9 @@ func (h *TerminalHandler) HandleTerminalWS(c *gin.Context) {
 	// Subscribe to terminal output
 	sub := ms.Subscribe()
 
+	// Bound replay as well as subsequent output for unresponsive clients.
+	_ = conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
+
 	// Replay buffered output so the client sees the full terminal history.
 	// For a new session this is typically empty or just the initial prompt.
 	// For a reconnection this restores the terminal state.
@@ -221,15 +225,15 @@ func (h *TerminalHandler) HandleTerminalWS(c *gin.Context) {
 		})
 	}
 
-	// WaitGroup ensures the output goroutine finishes writing before we
-	// close the WebSocket connection. gorilla/websocket does not support
-	// concurrent writes, so conn.Close() must not race with WriteJSON.
+	// Only the output goroutine writes after replay. Closing the underlying
+	// connection also releases the input goroutine blocked in ReadMessage.
 	var wg sync.WaitGroup
 	wg.Add(1)
 
 	// Read from subscriber channel and send to WebSocket
 	go func() {
 		defer wg.Done()
+		defer conn.Close()
 		defer func() {
 			if r := recover(); r != nil {
 				logrus.Errorf("Terminal WS output goroutine panic: %v", r)
@@ -237,23 +241,45 @@ func (h *TerminalHandler) HandleTerminalWS(c *gin.Context) {
 			closeDone()
 		}()
 
+		var closeDeadline time.Time
+		writeOutput := func(data []byte) error {
+			deadline := closeDeadline
+			if deadline.IsZero() {
+				deadline = time.Now().Add(5 * time.Second)
+			}
+			if err := conn.SetWriteDeadline(deadline); err != nil {
+				return err
+			}
+			return conn.WriteJSON(TerminalMessage{Type: "output", Data: string(data)})
+		}
 		for {
 			select {
 			case data, ok := <-sub.Ch:
 				if !ok {
 					return
 				}
-				msg := TerminalMessage{
-					Type: "output",
-					Data: string(data),
-				}
-				if err := conn.WriteJSON(msg); err != nil {
+				if err := writeOutput(data); err != nil {
 					return
 				}
 			case <-done:
 				return
 			case <-ms.Done():
-				return
+				closeDeadline = time.Now().Add(5 * time.Second)
+				// No more output is published after Done. Drain queued output
+				// before signalling normal session completion.
+				for {
+					select {
+					case data := <-sub.Ch:
+						if err := writeOutput(data); err != nil {
+							return
+						}
+					default:
+						_ = conn.WriteControl(websocket.CloseMessage,
+							websocket.FormatCloseMessage(websocket.CloseNormalClosure, "Shell exited"),
+							closeDeadline)
+						return
+					}
+				}
 			}
 		}
 	}()
@@ -299,7 +325,7 @@ func (h *TerminalHandler) HandleTerminalWS(c *gin.Context) {
 			for _, cmd := range cmdBuf.feed(data) {
 				audit.LogEventDirect(id, "terminal_command", logrus.Fields{
 					"session-id": sessionId,
-					"command":   cmd,
+					"command":    cmd,
 				})
 			}
 			if _, err := ms.Write(data); err != nil {
