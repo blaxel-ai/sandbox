@@ -10,7 +10,6 @@ import (
 	"io"
 	"math/rand"
 	"os"
-	"os/exec"
 	"strconv"
 	"strings"
 	"sync"
@@ -378,27 +377,11 @@ func (pm *ProcessManager) StartProcess(command string, workingDir string, env ma
 }
 
 func (pm *ProcessManager) StartProcessWithName(command string, workingDir string, name string, env map[string]string, restartOnFailure bool, maxRestarts int, keepAlive bool, timeout int, stdin bool, callback func(process *ProcessInfo)) (string, error) {
-	// Always use shell to execute commands
-	// This ensures shell built-ins (cd, export, alias) work properly
-	// Use SHELL and SHELL_ARGS environment variables if set
-	shell := os.Getenv("SHELL")
-	if shell == "" {
-		shell = "sh"
+	cmd, releaseScript, err := shellCommand(command)
+	if err != nil {
+		return "", err
 	}
-
-	shellArgs := os.Getenv("SHELL_ARGS")
-	if shellArgs == "" {
-		shellArgs = "-c"
-	}
-
-	// Build command arguments
-	cmdArgs := []string{}
-	if shellArgs != "" {
-		cmdArgs = append(cmdArgs, strings.Fields(shellArgs)...)
-	}
-	cmdArgs = append(cmdArgs, command)
-
-	cmd := exec.Command(shell, cmdArgs...)
+	defer releaseScript()
 
 	if workingDir != "" {
 		// Check if the working directory exists
@@ -870,25 +853,6 @@ func (pm *ProcessManager) restartProcess(oldProcess *ProcessInfo, callback func(
 	command := oldProcess.Command
 	workingDir := oldProcess.WorkingDir
 
-	// Always use shell to execute commands (same as StartProcessWithName)
-	// This ensures shell built-ins (cd, export, exit, alias) work properly
-	shell := os.Getenv("SHELL")
-	if shell == "" {
-		shell = "sh"
-	}
-
-	shellArgs := os.Getenv("SHELL_ARGS")
-	if shellArgs == "" {
-		shellArgs = "-c"
-	}
-
-	// Build command arguments
-	cmdArgs := []string{}
-	if shellArgs != "" {
-		cmdArgs = append(cmdArgs, strings.Fields(shellArgs)...)
-	}
-	cmdArgs = append(cmdArgs, command)
-
 	// Swap in the new run's channels before anything that can fail. The caller
 	// closed the previous Done before calling us, and closes Done again if we
 	// return an error; leaving the old channel in place until after the
@@ -911,7 +875,11 @@ func (pm *ProcessManager) restartProcess(oldProcess *ProcessInfo, callback func(
 		}
 	}()
 
-	cmd := exec.Command(shell, cmdArgs...)
+	cmd, releaseScript, err := shellCommand(command)
+	if err != nil {
+		return "", err
+	}
+	defer releaseScript()
 
 	if workingDir != "" {
 		// Check if the working directory exists

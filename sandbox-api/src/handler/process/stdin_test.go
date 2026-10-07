@@ -75,7 +75,13 @@ func TestStdinNotEnabled(t *testing.T) {
 	if err != nil {
 		t.Fatalf("starting sleep: %v", err)
 	}
-	t.Cleanup(func() { _ = pm.KillProcess(pid) })
+	t.Cleanup(func() {
+		_ = pm.KillProcess(pid)
+		// The log tailer creates files in the temp dir; let it finish first.
+		if p, ok := pm.GetProcessByIdentifier(pid); ok {
+			<-p.TailDone
+		}
+	})
 
 	if err := pm.WriteStdin(pid, []byte("x\n")); !errors.Is(err, ErrStdinNotEnabled) {
 		t.Fatalf("got %v, want ErrStdinNotEnabled", err)
