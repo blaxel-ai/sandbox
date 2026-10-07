@@ -1564,9 +1564,13 @@ paths:
       description: >-
         Streams the stdout and stderr output of a process in real time: the output so far, then live output as the process writes it. Closes when the process exits or the client disconnects.
 
-        Output is plain text with `stdout:` or `stderr:` prefixes at the start of each source stream's lines. Partial lines (e.g. prompts) are sent without waiting for a newline; their continuations have no new prefix. The other stream is not held back while a line is incomplete, and chronological order across stdout and stderr is not guaranteed.
+        By default, output is plain text with `stdout:` or `stderr:` prefixes at the start of each source stream's lines. Partial lines (e.g. prompts) are sent without waiting for a newline; their continuations have no new prefix. The other stream is not held back while a line is incomplete, and chronological order across stdout and stderr is not guaranteed.
 
-        This format does not provide unambiguous framing: output from the other stream, or a `[keepalive]` marker sent every 30 seconds, can appear inside an unfinished line. A later continuation can therefore lack a prefix identifying its source. Do not rely on this text stream to reconstruct stdout and stderr separately; use GET /process/{identifier}/logs for separate output snapshots.
+        This format does not provide unambiguous framing: output from the other stream, or a `[keepalive]` marker sent every 30 seconds, can appear inside an unfinished line. A later continuation can therefore lack a prefix identifying its source. Do not rely on this text stream to reconstruct stdout and stderr separately; request NDJSON for source-preserving streaming, or use GET /process/{identifier}/logs for separate output snapshots.
+
+        With `Accept: application/x-ndjson`, each line is a JSON object with `type` (`stdout`, `stderr`, `keepalive`, `restart`, `truncated`, or `error`) and optional `data`. Output records retain source identity and original bytes, including partial lines and newlines, for both retained history and live output. For `encoding: "base64"`, decode `data` before concatenating bytes per source; this occurs for binary data or a UTF-8 character split across chunks. Chunk boundaries are arbitrary and ordering is collection order, not a strict chronology across streams.
+
+        `keepalive` has no output data. `restart` carries a supervisor restart notice, not process output. `truncated` reports a retention or slow-reader gap and must not be appended to stdout/stderr. `error` reports a streaming failure. The connection ends after the final process exit, including automatic restarts; there is no `result` record. Older processes without structured history return HTTP 409 for NDJSON; their text stream remains available.
       parameters:
         - description: Process identifier (PID or name)
           in: path
@@ -1574,29 +1578,53 @@ paths:
           required: true
           schema:
             type: string
+        - description: Explicit application/x-ndjson opts into structured records; absent or wildcard Accept retains text/plain. Supported explicit media types honor q weights, preferring NDJSON on a tie.
+          in: header
+          name: Accept
+          schema:
+            type: string
       responses:
         "200":
-          description: Process output with source-line prefixes; partial lines may interleave
+          description: Process output as prefixed text or NDJSON records
           content:
             text/plain:
               schema:
                 type: string
+            application/x-ndjson:
+              schema:
+                type: string
+                description: Newline-delimited JSON records with type (stdout, stderr, keepalive, restart, truncated, error), optional data, and optional encoding=base64 for non-UTF-8 chunks. Decode each output record before concatenating bytes by source. No result record.
+        "400":
+          description: Invalid process identifier
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "404":
           description: Process not found
           content:
             text/plain:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
-        "422":
-          description: Unprocessable entity
+            application/x-ndjson:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Structured history unavailable for this older process
           content:
             text/plain:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+            application/x-ndjson:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "500":
           description: Internal server error
           content:
             text/plain:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+            application/x-ndjson:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
       summary: Stream process logs in real time
@@ -2887,3 +2915,18 @@ components:
         - UpgradeStateFailed
 security:
   - BearerAuth: []
+"404":
+  content:
+    application/json:
+      schema:
+        $ref: '#/components/schemas/ErrorResponse'
+"409":
+  content:
+    application/json:
+      schema:
+        $ref: '#/components/schemas/ErrorResponse'
+"500":
+  content:
+    application/json:
+      schema:
+        $ref: '#/components/schemas/ErrorResponse'

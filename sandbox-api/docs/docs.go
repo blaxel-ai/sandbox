@@ -1866,9 +1866,10 @@ const docTemplate = `{
         },
         "/process/{identifier}/logs/stream": {
             "get": {
-                "description": "Streams the stdout and stderr output of a process in real time: the output so far, then live output as the process writes it. Closes when the process exits or the client disconnects.\nOutput is plain text with ` + "`" + `stdout:` + "`" + ` or ` + "`" + `stderr:` + "`" + ` prefixes at the start of each source stream's lines. Partial lines (e.g. prompts) are sent without waiting for a newline; their continuations have no new prefix. The other stream is not held back while a line is incomplete, and chronological order across stdout and stderr is not guaranteed.\nThis format does not provide unambiguous framing: output from the other stream, or a ` + "`" + `[keepalive]` + "`" + ` marker sent every 30 seconds, can appear inside an unfinished line. A later continuation can therefore lack a prefix identifying its source. Do not rely on this text stream to reconstruct stdout and stderr separately; use GET /process/{identifier}/logs for separate output snapshots.",
+                "description": "Streams the stdout and stderr output of a process in real time: the output so far, then live output as the process writes it. Closes when the process exits or the client disconnects.\nBy default, output is plain text with ` + "`" + `stdout:` + "`" + ` or ` + "`" + `stderr:` + "`" + ` prefixes at the start of each source stream's lines. Partial lines (e.g. prompts) are sent without waiting for a newline; their continuations have no new prefix. The other stream is not held back while a line is incomplete, and chronological order across stdout and stderr is not guaranteed.\nThis format does not provide unambiguous framing: output from the other stream, or a ` + "`" + `[keepalive]` + "`" + ` marker sent every 30 seconds, can appear inside an unfinished line. A later continuation can therefore lack a prefix identifying its source. Do not rely on this text stream to reconstruct stdout and stderr separately; request NDJSON for source-preserving streaming, or use GET /process/{identifier}/logs for separate output snapshots.\nWith ` + "`" + `Accept: application/x-ndjson` + "`" + `, each line is a JSON object with ` + "`" + `type` + "`" + ` (` + "`" + `stdout` + "`" + `, ` + "`" + `stderr` + "`" + `, ` + "`" + `keepalive` + "`" + `, ` + "`" + `restart` + "`" + `, ` + "`" + `truncated` + "`" + `, or ` + "`" + `error` + "`" + `) and optional ` + "`" + `data` + "`" + `. Output records retain source identity and original bytes, including partial lines and newlines, for both retained history and live output. For ` + "`" + `encoding: \"base64\"` + "`" + `, decode ` + "`" + `data` + "`" + ` before concatenating bytes per source; this occurs for binary data or a UTF-8 character split across chunks. Chunk boundaries are arbitrary and ordering is collection order, not a strict chronology across streams.\n` + "`" + `keepalive` + "`" + ` has no output data. ` + "`" + `restart` + "`" + ` carries a supervisor restart notice, not process output. ` + "`" + `truncated` + "`" + ` reports a retention or slow-reader gap and must not be appended to stdout/stderr. ` + "`" + `error` + "`" + ` reports a streaming failure. The connection ends after the final process exit, including automatic restarts; there is no ` + "`" + `result` + "`" + ` record. Older processes without structured history return HTTP 409 for NDJSON; their text stream remains available.",
                 "produces": [
-                    "text/plain"
+                    "text/plain",
+                    "application/x-ndjson"
                 ],
                 "tags": [
                     "process"
@@ -1881,13 +1882,25 @@ const docTemplate = `{
                         "name": "identifier",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Explicit application/x-ndjson opts into structured records; absent or wildcard Accept retains text/plain. Supported explicit media types honor q weights, preferring NDJSON on a tie.",
+                        "name": "Accept",
+                        "in": "header"
                     }
                 ],
                 "responses": {
                     "200": {
-                        "description": "Process output with source-line prefixes; partial lines may interleave",
+                        "description": "Process output as prefixed text or NDJSON records",
                         "schema": {
                             "type": "string"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid process identifier",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
                         }
                     },
                     "404": {
@@ -1896,8 +1909,8 @@ const docTemplate = `{
                             "$ref": "#/definitions/ErrorResponse"
                         }
                     },
-                    "422": {
-                        "description": "Unprocessable entity",
+                    "409": {
+                        "description": "Structured history unavailable for this older process",
                         "schema": {
                             "$ref": "#/definitions/ErrorResponse"
                         }

@@ -3,7 +3,9 @@ package process
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math/rand"
@@ -122,6 +124,7 @@ type ProcessInfo struct {
 	KeepAlive        bool              `json:"keepAlive"`
 	Stdin            bool              `json:"stdin"` // Whether the process was started with a writable stdin pipe
 	Timeout          int               `json:"-"`     // Internal: execution timeout in seconds; zero means unlimited
+	LogFormat        string            `json:"-"`     // Combined log encoding; immutable
 	LogFile          string            `json:"-"`     // Path to combined log file
 	StdoutFile       string            `json:"-"`     // Path to stdout log file
 	StderrFile       string            `json:"-"`     // Path to stderr log file
@@ -142,8 +145,14 @@ type ProcessInfo struct {
 	// window, not a line, so a long line spans several reads and must be tagged
 	// only at its start. Phrased as "mid-line" so the zero value means "at a
 	// line start", which is what a fresh process is.
-	stdoutMidLine bool
-	stderrMidLine bool
+	restoreFinalized chan struct{} // Closed after asynchronous restored-process final drain
+	journalOwner     *os.File      // Exclusive journal ownership survives automatic restarts
+	logReady         chan struct{}
+	logReadyOnce     sync.Once
+	logReadyErr      error
+	logIncomplete    bool // Guarded by logLock; persisted failure to collect all output
+	stdoutMidLine    bool
+	stderrMidLine    bool
 	// Reused across reads so tagging a chunk costs no allocation.
 	prefixBuf       []byte
 	logLock         sync.RWMutex
@@ -239,7 +248,7 @@ func (pm *ProcessManager) leaveStopped(proc *ProcessInfo, callback func(*Process
 // restart attempt. A negative MaxRestarts means unlimited restarts.
 // markFinished closes Finished exactly once, so every terminal path can call it.
 func (p *ProcessInfo) markFinished() {
-	p.finishOnce.Do(func() { close(p.Finished) })
+	p.finishOnce.Do(func() { p.releaseJournalOwnership(); close(p.Finished) })
 }
 
 func shouldRestart(p *ProcessInfo) bool {
@@ -434,6 +443,13 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 		return "", fmt.Errorf("failed to create stderr log file: %w", err)
 	}
 
+	// A reused process name must not inherit an older combined log.
+	if err := os.WriteFile(combinedPath, nil, 0644); err != nil {
+		stdoutFile.Close()
+		stderrFile.Close()
+		return "", err
+	}
+
 	process := &ProcessInfo{
 		Name:             name,
 		Command:          command,
@@ -449,6 +465,7 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 		Stdin:            stdin,
 		Timeout:          timeout,
 		LogFile:          combinedPath,
+		LogFormat:        structuredLogFormat,
 		StdoutFile:       stdoutPath,
 		StderrFile:       stderrPath,
 		Done:             make(chan struct{}),
@@ -532,6 +549,7 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 // tailLogFiles tails the stdout and stderr log files for real-time streaming
 func (pm *ProcessManager) tailLogFiles(proc *ProcessInfo) {
 	defer close(proc.TailDone)
+	defer proc.finishLogReady(errors.New("process log collector is unavailable"))
 	// Open files for reading
 	stdoutFile, err := os.Open(proc.StdoutFile)
 	if err != nil {
@@ -545,16 +563,46 @@ func (pm *ProcessManager) tailLogFiles(proc *ProcessInfo) {
 	}
 	defer stderrFile.Close()
 
-	// Open combined log file for writing prefixed output (preserves order)
 	var combinedFile *os.File
-	if proc.LogFile != "" {
+	if proc.SupportsStructuredLogs() {
+		proc.logLock.RLock()
+		combinedFile = proc.journalOwner
+		proc.logLock.RUnlock()
+		if combinedFile == nil {
+			combinedFile, err = os.OpenFile(proc.LogFile, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0644)
+			if err != nil {
+				return
+			}
+			if !acquireLogOwnership(combinedFile, proc.Done) {
+				combinedFile.Close()
+				return
+			}
+			proc.logLock.Lock()
+			proc.journalOwner = combinedFile
+			proc.logLock.Unlock()
+		}
+		proc.logLock.Lock()
+		if err := repairJournalTail(combinedFile); err != nil {
+			proc.logIncomplete = true
+			proc.logLock.Unlock()
+			return
+		}
+		if !restoreStructuredPosition(proc) {
+			proc.logLock.Unlock()
+			return
+		}
+		_, _ = stdoutFile.Seek(int64(proc.stdout.Len()), io.SeekStart)
+		_, _ = stderrFile.Seek(int64(proc.stderr.Len()), io.SeekStart)
+		proc.logLock.Unlock()
+	} else if proc.LogFile != "" {
 		combinedFile, err = os.OpenFile(proc.LogFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-		if err != nil {
-			combinedFile = nil
-		} else {
+		if err == nil {
 			defer combinedFile.Close()
+		} else {
+			combinedFile = nil
 		}
 	}
+	proc.finishLogReady(nil)
 
 	stdoutBuf := make([]byte, 4096)
 	stderrBuf := make([]byte, 4096)
@@ -668,6 +716,7 @@ func (pm *ProcessManager) readAndBroadcast(file *os.File, buf []byte, proc *Proc
 		if streamType == "stderr" {
 			atLineStart = !proc.stderrMidLine
 		}
+		recordLineStart := atLineStart
 		prefix := []byte(streamType + ":")
 		proc.prefixBuf = proc.prefixBuf[:0]
 		for rest := data; len(rest) > 0; {
@@ -697,7 +746,9 @@ func (pm *ProcessManager) readAndBroadcast(file *os.File, buf []byte, proc *Proc
 		}
 
 		// Preserves the interleaved order of the two streams.
-		if combinedFile != nil {
+		if proc.SupportsStructuredLogs() {
+			proc.persistLogRecord(combinedFile, streamType, data, recordLineStart)
+		} else if combinedFile != nil {
 			_, _ = combinedFile.Write(proc.prefixBuf)
 		}
 		// Send to log writers for streaming
@@ -818,6 +869,12 @@ func severityLevel(severity string) *logrus.Level {
 
 // restartProcess restarts a failed process with the same configuration
 func (pm *ProcessManager) restartProcess(oldProcess *ProcessInfo, callback func(process *ProcessInfo)) (string, error) {
+	// Restoration may still be draining the previous run. Its finalizer owns
+	// that run's channels and journal until it publishes completion.
+	if oldProcess.restoreFinalized != nil {
+		<-oldProcess.restoreFinalized
+	}
+
 	command := oldProcess.Command
 	workingDir := oldProcess.WorkingDir
 
@@ -846,6 +903,12 @@ func (pm *ProcessManager) restartProcess(oldProcess *ProcessInfo, callback func(
 	// working-dir and log-file checks made that second close panic on an
 	// already-closed channel.
 	pm.mu.Lock()
+	select {
+	case <-oldProcess.Finished:
+		oldProcess.Finished = make(chan struct{})
+		oldProcess.finishOnce = sync.Once{}
+	default:
+	}
 	oldProcess.Done = make(chan struct{})
 	oldProcess.TailDone = make(chan struct{})
 	pm.mu.Unlock()
@@ -1126,6 +1189,23 @@ func (pm *ProcessManager) StreamProcessOutput(identifier string, w io.Writer) er
 		return fmt.Errorf("process with Identifier %s not found", identifier)
 	}
 
+	return pm.StreamProcessOutputForProcess(process, w)
+}
+
+// StreamProcessOutputForProcess attaches to the captured process even if its name is reused.
+func (pm *ProcessManager) StreamProcessOutputForProcess(process *ProcessInfo, w io.Writer) error {
+	if requiresStructuredLogs(w) && !process.SupportsStructuredLogs() {
+		return ErrLegacyLogFormat
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if cw, ok := w.(interface{ LogStreamContext() context.Context }); ok {
+		ctx = cw.LogStreamContext()
+	}
+	if err := process.WaitForLogCollector(ctx); err != nil {
+		return err
+	}
+
 	// Attach the writer before the backlog is replayed: it queues what the
 	// process writes meanwhile, so that output is neither lost nor sent out of
 	// order. The combined log file is written under the same lock, so its size
@@ -1133,16 +1213,29 @@ func (pm *ProcessManager) StreamProcessOutput(identifier string, w io.Writer) er
 	// and no line is sent twice.
 	pending := newPendingWriter(w)
 	process.logLock.Lock()
+	incomplete := process.logIncomplete
 	backlogEnd := int64(-1)
 	if info, err := os.Stat(process.LogFile); err == nil {
 		backlogEnd = info.Size()
+	} else if process.SupportsStructuredLogs() {
+		process.logLock.Unlock()
+		return errors.New("process log journal is unavailable")
 	}
 	process.logWriters = append(process.logWriters, pending)
 	process.logLock.Unlock()
 
+	if incomplete {
+		writeStreamGap(w)
+	}
+
 	// Write current content first - read from combined log file which has prefixed, ordered content
 	// The combined log file is written by tailLogFiles with "stdout:" and "stderr:" prefixes
-	if process.LogFile != "" && backlogEnd > 0 {
+	if process.SupportsStructuredLogs() && backlogEnd > 0 {
+		if err := replayStructuredLogs(process, w, backlogEnd); err != nil {
+			_ = pm.RemoveLogWriterForProcess(process, w)
+			return err
+		}
+	} else if process.LogFile != "" && backlogEnd > 0 {
 		// Parse prefixed lines and send as proper events, a line at a time so a
 		// long-running process' backlog is not held in memory all at once.
 		// This ensures JSONStreamWriter receives structured stdout/stderr events
@@ -1200,16 +1293,16 @@ func (pm *ProcessManager) StreamProcessOutput(identifier string, w io.Writer) er
 		ticker := time.NewTicker(30 * time.Second)
 		defer ticker.Stop()
 
-		keepaliveMsg := []byte("[keepalive]\n")
 		for {
 			select {
 			case <-process.Finished:
 				return
 			case <-ticker.C:
-				if _, stillTracked := pm.GetProcessByIdentifier(identifier); !stillTracked {
+				if !pm.hasLogWriter(process, w) {
 					return
 				}
-				if _, err := w.Write(keepaliveMsg); err != nil {
+				err := writeLogKeepalive(w)
+				if err != nil {
 					return
 				}
 				if f, ok := w.(interface{ Flush() }); ok {
@@ -1229,6 +1322,10 @@ func (pm *ProcessManager) RemoveLogWriter(identifier string, w io.Writer) error 
 		return fmt.Errorf("process with Identifier %s not found", identifier)
 	}
 
+	return pm.RemoveLogWriterForProcess(process, w)
+}
+
+func (pm *ProcessManager) RemoveLogWriterForProcess(process *ProcessInfo, w io.Writer) error {
 	process.logLock.Lock()
 	defer process.logLock.Unlock()
 
@@ -1264,4 +1361,24 @@ func effectiveWorkingDir(requested string) string {
 	}
 	dir, _ := os.Getwd()
 	return dir
+}
+
+func (pm *ProcessManager) hasLogWriter(p *ProcessInfo, w io.Writer) bool {
+	p.logLock.RLock()
+	defer p.logLock.RUnlock()
+	for _, candidate := range p.logWriters {
+		if unwrapWriter(candidate) == w {
+			return true
+		}
+	}
+	return false
+}
+
+func writeLogKeepalive(w io.Writer) error {
+	if jw, ok := w.(JSONStreamWriter); ok && jw.IsJSONStreamWriter() {
+		_, err := jw.WriteEvent("keepalive", "")
+		return err
+	}
+	_, err := w.Write([]byte("[keepalive]\n"))
+	return err
 }
