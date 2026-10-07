@@ -1866,7 +1866,7 @@ const docTemplate = `{
         },
         "/process/{identifier}/logs/stream": {
             "get": {
-                "description": "Streams the stdout and stderr output of a process in real time: the output so far, then live output as the process writes it. Closes when the process exits or the client disconnects.\nEach output line starts with ` + "`" + `stdout:` + "`" + ` or ` + "`" + `stderr:` + "`" + ` and keeps its trailing newline. A partial line (e.g. a prompt) is sent as soon as it is written; when the process completes it, the rest follows without a new prefix. ` + "`" + `[keepalive]` + "`" + ` lines are sent every 30 seconds.",
+                "description": "Streams the stdout and stderr output of a process in real time: the output so far, then live output as the process writes it. Closes when the process exits or the client disconnects.\nOutput is plain text with ` + "`" + `stdout:` + "`" + ` or ` + "`" + `stderr:` + "`" + ` prefixes at the start of each source stream's lines. Partial lines (e.g. prompts) are sent without waiting for a newline; their continuations have no new prefix. The other stream is not held back while a line is incomplete, and chronological order across stdout and stderr is not guaranteed.\nThis format does not provide unambiguous framing: output from the other stream, or a ` + "`" + `[keepalive]` + "`" + ` marker sent every 30 seconds, can appear inside an unfinished line. A later continuation can therefore lack a prefix identifying its source. Do not rely on this text stream to reconstruct stdout and stderr separately; use GET /process/{identifier}/logs for separate output snapshots.",
                 "produces": [
                     "text/plain"
                 ],
@@ -1885,7 +1885,7 @@ const docTemplate = `{
                 ],
                 "responses": {
                     "200": {
-                        "description": "Process output, each line prefixed with stdout: or stderr:",
+                        "description": "Process output with source-line prefixes; partial lines may interleave",
                         "schema": {
                             "type": "string"
                         }
@@ -2934,6 +2934,7 @@ const docTemplate = `{
             ],
             "properties": {
                 "logs": {
+                    "description": "Concatenation of the returned stdout followed by the returned stderr. Output from the two streams is not interleaved.",
                     "type": "string",
                     "example": "logs output"
                 },
