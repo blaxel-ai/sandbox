@@ -3,9 +3,10 @@
 # the converted OpenAPI media schemas without describing a stream as one result.
 yq eval '.paths."/process".post.responses."200".content."application/x-ndjson".schema = {"type": "string", "description": "Newline-delimited JSON event objects. Each record has type (stdout, stderr, result, error, or keepalive) and optional string data. Result data is a JSON-encoded ProcessResponse; output data preserves raw chunks."} | del(.paths."/process".post.responses."200".content."text/event-stream")' -i openapi.yml
 
-# Only the generic file/directory read has polymorphic responses. Tree reads
-# and writes always return Directory; keep downloads in their binary media type.
-yq eval '.paths."/filesystem/{path}".get.responses."200".content."application/json".schema = {"oneOf": [{"$ref": "#/components/schemas/Directory"}, {"$ref": "#/components/schemas/FileWithContent"}]} | .paths."/filesystem/{path}".get.responses."200".content."application/octet-stream".schema = {"type": "string", "format": "binary"}' -i openapi.yml
+# Only the generic file/directory read has polymorphic responses. Downloads
+# may use the file's MIME type, so retain its raw-file alternative for each media.
+# Tree reads and writes always return Directory.
+yq eval '.paths."/filesystem/{path}".get.responses."200".content[].schema = {"oneOf": [{"$ref": "#/components/schemas/Directory"}, {"$ref": "#/components/schemas/FileWithContent"}, {"type": "string", "format": "binary"}]}' -i openapi.yml
 
 # swag (Swagger 2.0) cannot document a JSON body and form fields on the same operation
 yq eval '.paths["/filesystem/{path}"].put.requestBody.content["multipart/form-data"].schema = {

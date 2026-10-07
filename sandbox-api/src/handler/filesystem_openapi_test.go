@@ -24,14 +24,15 @@ func TestFilesystemOpenAPIResponseSchemas(t *testing.T) {
 		t.Fatal(err)
 	}
 	directory := map[string]any{"$ref": "#/components/schemas/Directory"}
+	fileOrDirectory := map[string]any{"oneOf": []any{directory, map[string]any{"$ref": "#/components/schemas/FileWithContent"}, map[string]any{"type": "string", "format": "binary"}}}
 	for _, tc := range []struct {
 		name, path, method, media string
 		want                      map[string]any
 	}{
 		{"write tree", "/filesystem/tree/{path}", "put", "application/json", directory},
 		{"read tree", "/filesystem/tree/{path}", "get", "application/json", directory},
-		{"read file or directory JSON", "/filesystem/{path}", "get", "application/json", map[string]any{"oneOf": []any{directory, map[string]any{"$ref": "#/components/schemas/FileWithContent"}}}},
-		{"download file", "/filesystem/{path}", "get", "application/octet-stream", map[string]any{"type": "string", "format": "binary"}},
+		{"read file or directory JSON", "/filesystem/{path}", "get", "application/json", fileOrDirectory},
+		{"download file", "/filesystem/{path}", "get", "application/octet-stream", fileOrDirectory},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := document.Paths[tc.path][tc.method].Responses["200"].Content[tc.media].Schema
