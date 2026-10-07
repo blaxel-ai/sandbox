@@ -152,8 +152,12 @@ func GetTerminalHTML() string {
                 }
             };
 
-            ws.onclose = function() {
+            ws.onclose = function(event) {
                 setStatus('disconnected', 'Disconnected');
+                if (event.code === 1000) {
+                    term.write('\r\nSession ended. Refresh the page to start a new session.\r\n');
+                    return;
+                }
                 if (reconnectAttempts < maxReconnectAttempts) {
                     reconnectAttempts++;
                     setTimeout(connect, 1000 * reconnectAttempts);

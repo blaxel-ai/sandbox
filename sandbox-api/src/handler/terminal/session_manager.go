@@ -21,6 +21,9 @@ const (
 	// sessionIdleTimeout is how long a session with no connected clients stays alive.
 	sessionIdleTimeout = 10 * time.Minute
 
+	// Bound draining when a child keeps the PTY slave open after the shell exits.
+	shellDrainTimeout = 250 * time.Millisecond
+
 	// ansiReset resets all terminal text attributes. Prepended to buffer replays
 	// to avoid inheriting stale formatting from truncated escape sequences.
 	ansiReset = "\x1b[0m"
@@ -80,6 +83,7 @@ func newManagedSession(id string, session *TerminalSession) *ManagedSession {
 // still hold the PTY slave fd open, which would otherwise keep readLoop alive
 // and leave the terminal in a stuck state.
 func (ms *ManagedSession) watchShellExit() {
+	defer ms.Session.Close()
 	defer func() {
 		if r := recover(); r != nil {
 			logrus.Errorf("watchShellExit panic in session %s: %v", ms.ID, r)
@@ -89,8 +93,14 @@ func (ms *ManagedSession) watchShellExit() {
 	select {
 	case <-ms.Session.ShellDone():
 		logrus.Infof("Shell process exited for session %s, closing session", ms.ID)
-		ms.Session.Close()
-		ms.markDead()
+		// Let readLoop publish the shell's final output before ending the session.
+		// A background child may keep the PTY open indefinitely.
+		timer := time.NewTimer(shellDrainTimeout)
+		defer timer.Stop()
+		select {
+		case <-timer.C:
+		case <-ms.doneCh:
+		}
 	case <-ms.doneCh:
 	}
 }
@@ -110,14 +120,14 @@ func (ms *ManagedSession) readLoop() {
 	buf := make([]byte, 4096)
 	for {
 		n, err := ms.Session.Read(buf)
-		if err != nil {
-			return
-		}
 		if n > 0 {
 			data := make([]byte, n)
 			copy(data, buf[:n])
 			ms.appendBuffer(data)
 			ms.broadcast(data)
+		}
+		if err != nil {
+			return
 		}
 	}
 }
