@@ -480,11 +480,12 @@ func (h *ProcessHandler) HandleGetProcessLogs(c *gin.Context) {
 // HandleGetProcessLogsStream handles GET requests to /process/{identifier}/logs/stream
 // @Summary Stream process logs in real time
 // @Description Streams the stdout and stderr output of a process in real time: the output so far, then live output as the process writes it. Closes when the process exits or the client disconnects.
-// @Description Each output line starts with `stdout:` or `stderr:` and keeps its trailing newline. A partial line (e.g. a prompt) is sent as soon as it is written; when the process completes it, the rest follows without a new prefix. `[keepalive]` lines are sent every 30 seconds.
+// @Description Output is plain text with `stdout:` or `stderr:` prefixes at the start of each source stream's lines. Partial lines (e.g. prompts) are sent without waiting for a newline; their continuations have no new prefix. The other stream is not held back while a line is incomplete, and chronological order across stdout and stderr is not guaranteed.
+// @Description This format does not provide unambiguous framing: output from the other stream, or a `[keepalive]` marker sent every 30 seconds, can appear inside an unfinished line. A later continuation can therefore lack a prefix identifying its source. Do not rely on this text stream to reconstruct stdout and stderr separately; use GET /process/{identifier}/logs for separate output snapshots.
 // @Tags process
 // @Produce plain
 // @Param identifier path string true "Process identifier (PID or name)"
-// @Success 200 {string} string "Process output, each line prefixed with stdout: or stderr:"
+// @Success 200 {string} string "Process output with source-line prefixes; partial lines may interleave"
 // @Failure 404 {object} ErrorResponse "Process not found"
 // @Failure 422 {object} ErrorResponse "Unprocessable entity"
 // @Failure 500 {object} ErrorResponse "Internal server error"
