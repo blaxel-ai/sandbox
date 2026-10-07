@@ -37,13 +37,15 @@ func TestWatchDirectoryRecursiveReportsChangesWithoutInitialSnapshot(t *testing.
 	})
 
 	// Registration completes before WatchDirectoryRecursive returns. A subsequent
-	// event proves the watcher works and provides a boundary for initial events.
+	// event proves the watcher works; keep observing briefly afterward to catch
+	// an initial snapshot emitted asynchronously after that event.
 	created := filepath.Join(subdir, "after-watch.txt")
 	if err := os.WriteFile(created, []byte("after watch"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	timer := time.NewTimer(5 * time.Second)
 	defer timer.Stop()
+	createdSeen := false
 	for {
 		select {
 		case event := <-events:
@@ -53,8 +55,14 @@ func TestWatchDirectoryRecursiveReportsChangesWithoutInitialSnapshot(t *testing.
 			if event.Name != created {
 				t.Fatalf("unexpected initial CREATE event: %v", event)
 			}
-			return
+			if !createdSeen {
+				createdSeen = true
+				timer.Reset(200 * time.Millisecond)
+			}
 		case <-timer.C:
+			if createdSeen {
+				return
+			}
 			t.Fatal("timed out waiting for a CREATE event in an existing subdirectory")
 		}
 	}
