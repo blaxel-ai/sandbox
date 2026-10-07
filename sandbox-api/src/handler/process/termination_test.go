@@ -51,7 +51,11 @@ func TestTerminationWaitsForExit(t *testing.T) {
 			wantStatus, wantExit := StatusStopped, 7
 			if !graceful {
 				// Timeout escalation must still work after an ignored graceful stop.
-				go pm.enforceKeepAliveTimeout(proc, 0)
+				pm.mu.Lock()
+				proc.Timeout = 1
+				proc.StartedAt = time.Now().Add(-time.Second)
+				pm.startExecutionTimeoutLocked(proc)
+				pm.mu.Unlock()
 				wantStatus, wantExit = StatusKilled, -1
 			}
 			var readers sync.WaitGroup

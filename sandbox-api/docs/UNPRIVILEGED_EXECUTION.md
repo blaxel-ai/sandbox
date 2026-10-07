@@ -27,6 +27,8 @@ it unprompted would change how existing images behave.
 
 `sandbox-api --user app` is equivalent and opts in by itself — the flag wins
 over the environment and does not need the toggle.
+`BL_SANDBOX_API_ISOLATION=true` also opts in by itself, on a best-effort basis
+(see [API_ISOLATION.md](API_ISOLATION.md)).
 Use an entrypoint when the image also needs root-only preparation before the
 workload identity applies:
 
@@ -44,7 +46,8 @@ it de-privileges PID 1, which is what this replaces.
 
 If the value cannot be resolved, or resolves to uid 0, the API refuses to start.
 Failing open would hand every workload the privileges the feature exists to
-remove.
+remove. An identity enabled by `BL_SANDBOX_API_ISOLATION` alone is the
+exception: a missing or root `USER` keeps the workload running as root.
 
 ## What runs as the workload user
 

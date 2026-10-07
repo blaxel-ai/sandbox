@@ -2,16 +2,74 @@ package process
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/blaxel-ai/sandbox-api/src/handler/network"
 )
 
-// ExecuteProcess executes a process with the given parameters
+// exitedBeforePortsTailLines bounds how much of the process's output is quoted
+// when it ends before opening its ports: enough to show why it failed.
+const exitedBeforePortsTailLines = 20
+
+// processByPID returns the process record for a PID without copying its logs.
+func (pm *ProcessManager) processByPID(pid string) *ProcessInfo {
+	pm.mu.RLock()
+	defer pm.mu.RUnlock()
+	return pm.processes[pid]
+}
+
+// endedInFailure reports whether a finished process failed or was killed or
+// stopped, as opposed to exiting cleanly with code 0.
+func (pm *ProcessManager) endedInFailure(pid string) bool {
+	proc := pm.processByPID(pid)
+	if proc == nil {
+		return false
+	}
+	pm.mu.RLock()
+	defer pm.mu.RUnlock()
+	return proc.Status != StatusCompleted || proc.ExitCode != 0
+}
+
+// exitedBeforePortsError explains that the process failed before the ports it
+// was expected to open came up, with its exit code and the end of its output.
+func (pm *ProcessManager) exitedBeforePortsError(pid string, ports []int) error {
+	proc := pm.processByPID(pid)
+	if proc == nil {
+		return fmt.Errorf("process failed before ports %v opened", ports)
+	}
+	pm.mu.RLock()
+	status, exitCode := proc.Status, proc.ExitCode
+	pm.mu.RUnlock()
+
+	msg := fmt.Sprintf("process exited with code %d before ports %v opened", exitCode, ports)
+	if status == StatusKilled || status == StatusStopped {
+		msg = fmt.Sprintf("process was %s before ports %v opened", status, ports)
+	}
+	if output, err := pm.GetProcessOutputTail(pid, 4096); err == nil {
+		if tail := lastLines(output.Logs, exitedBeforePortsTailLines); tail != "" {
+			msg += "; last output:\n" + tail
+		}
+	}
+	return errors.New(msg)
+}
+
+// lastLines returns the last n lines of s, without surrounding whitespace.
+func lastLines(s string, n int) string {
+	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
+	if len(lines) > n {
+		lines = lines[len(lines)-n:]
+	}
+	return strings.TrimSpace(strings.Join(lines, "\n"))
+}
+
+// ExecuteProcess starts a process with its own execution timeout. An optional
+// waitTimeout limits only how long this call waits; it never stops the process.
 func (pm *ProcessManager) ExecuteProcess(
 	command string,
 	workingDir string,
@@ -24,18 +82,18 @@ func (pm *ProcessManager) ExecuteProcess(
 	maxRestarts int,
 	keepAlive bool,
 	stdin bool,
+	waitTimeout ...int,
 ) (*ProcessInfo, error) {
 	portCh := make(chan int)
-	completionCh := make(chan string)
+	completionCh := make(chan string, 1)
 
-	// Add flags to track if channels have been closed
+	// Track port readiness independently of process completion.
 	portChClosed := false
-	completionChClosed := false
 
-	// Use a mutex to protect the flags
+	// Protect the port channel from concurrent readiness notifications.
 	var mu sync.Mutex
 
-	// Defer closing the channels if they're not already closed
+	// Stop port polling when this call returns.
 	defer func() {
 		mu.Lock()
 		defer mu.Unlock()
@@ -43,35 +101,29 @@ func (pm *ProcessManager) ExecuteProcess(
 		if !portChClosed {
 			close(portCh)
 		}
-
-		if !completionChClosed {
-			close(completionCh)
-		}
 	}()
 
-	// Create a context with the specified timeout
+	// Bound waiting independently of the process execution deadline.
+	waitSeconds := timeout
+	if len(waitTimeout) > 0 {
+		waitSeconds = waitTimeout[0]
+	}
+
+	// This context never controls the child process.
 	var ctx context.Context
 	var cancel context.CancelFunc
-	if timeout > 0 {
-		ctx, cancel = context.WithTimeout(context.Background(), time.Duration(timeout)*time.Second)
+	if waitSeconds > 0 {
+		ctx, cancel = context.WithTimeout(context.Background(), time.Duration(waitSeconds)*time.Second)
 		defer cancel()
 	} else {
 		ctx = context.Background()
 	}
 
-	// Create a callback function
+	// Completion can arrive after the caller's wait expired. A buffered channel
+	// lets the single final callback finish without racing a channel close.
 	callback := func(p *ProcessInfo) {
 		if waitForCompletion {
-			mu.Lock()
-			closed := completionChClosed
-			mu.Unlock()
-			if !closed {
-				// Use a recover block in case of a race condition
-				defer func() {
-					_ = recover()
-				}()
-				completionCh <- p.PID
-			}
+			completionCh <- p.PID
 		}
 	}
 
@@ -166,11 +218,45 @@ func (pm *ProcessManager) ExecuteProcess(
 
 	// Wait for ports if requested
 	if len(waitForPorts) > 0 {
-		select {
-		case <-portCh:
-			// Ports are ready
-		case <-ctx.Done():
-			return nil, fmt.Errorf("process timed out waiting for ports after %d seconds", timeout)
+		// A process that fails for good can never open its ports, so stop
+		// waiting as soon as it does instead of running out the timeout (or
+		// waiting forever when there is none). Finished stays open across
+		// restarts, so restartOnFailure still gets its retries.
+		//
+		// A clean exit is not treated as a failure: a command can exit 0 after
+		// starting a server in the background (`npm run dev &`), and where the
+		// port owner can't be enumerated the connect-probe fallback still sees
+		// that server open the port. So on exit code 0 we keep waiting as before.
+		var finished <-chan struct{}
+		if proc := pm.processByPID(pid); proc != nil {
+			finished = proc.Finished
+		}
+	waitPorts:
+		for {
+			select {
+			case <-portCh:
+				break waitPorts // Ports are ready
+			case <-finished:
+				finished = nil // fires once; a nil channel never selects again
+				select {
+				case <-portCh:
+					// The ports opened just before the process ended; that
+					// still counts as ready, as it did before.
+					break waitPorts
+				default:
+				}
+				if pm.endedInFailure(pid) {
+					return nil, pm.exitedBeforePortsError(pid, waitForPorts)
+				}
+			case <-ctx.Done():
+				err := fmt.Errorf("process timed out waiting for ports after %d seconds", waitSeconds)
+				if len(waitTimeout) > 0 && waitSeconds > 0 && (timeout <= 0 || waitSeconds < timeout) {
+					// A capped caller wait leaves execution running. Return its
+					// identity so the caller can continue monitoring the process.
+					return pm.processByPID(pid), err
+				}
+				return nil, err
+			}
 		}
 	}
 
@@ -185,13 +271,13 @@ func (pm *ProcessManager) ExecuteProcess(
 			pid = receivedPID // Update pid to the received PID
 			break
 		case <-ctx.Done():
-			// Process timed out but is still running - return process info along with error
-			// so the caller can still access the running process
+			// The wait deadline may precede the execution deadline (e.g. MCP).
+			// Return process info so the caller can inspect the eventual outcome.
 			processInfo, exists := pm.GetProcessByIdentifier(pid)
 			if exists {
-				return processInfo, fmt.Errorf("process timed out after %d seconds", timeout)
+				return processInfo, fmt.Errorf("process timed out after %d seconds", waitSeconds)
 			}
-			return nil, fmt.Errorf("process timed out after %d seconds", timeout)
+			return nil, fmt.Errorf("process timed out after %d seconds", waitSeconds)
 		}
 	}
 

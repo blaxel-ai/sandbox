@@ -279,6 +279,7 @@ func exportClaimed(ctx context.Context, options ExportOptions) (result *ExportRe
 	started := time.Now()
 	result = &ExportResult{}
 
+	var reused bool
 	if !options.DryRun {
 		// Stopping the workload is what makes the sandbox look idle to the
 		// infrastructure: the processes holding the keep-alive are gone, and an
@@ -292,7 +293,7 @@ func exportClaimed(ctx context.Context, options ExportOptions) (result *ExportRe
 		// freeze the export relies on, and the filesystem would be read while
 		// the API serves mutating calls again. From here a resume is refused
 		// until the export is done.
-		if err = freezeForExport("archive export"); err != nil {
+		if reused, err = freezeForExport(exportFreezeReason, options.saveProcesses()); err != nil {
 			return nil, err
 		}
 		defer endExport()
@@ -303,7 +304,8 @@ func exportClaimed(ctx context.Context, options ExportOptions) (result *ExportRe
 		// writable again.
 		var quiesced quiescedWorkload
 		defer func() {
-			if err != nil {
+			// A freeze this export did not take is left as it was found.
+			if err != nil && !reused {
 				// A root left read-only cannot run the workload: the sandbox stays
 				// quiesced and says so, rather than starting processes that fail
 				// at the first write.
@@ -315,10 +317,25 @@ func exportClaimed(ctx context.Context, options ExportOptions) (result *ExportRe
 			}
 		}()
 
-		if quiesced, err = quiesceWorkload(options); err != nil {
-			return nil, err
+		if reused {
+			// The workload was stopped and its process list saved by the export
+			// that froze the sandbox: that list is the one the archive carries.
+			status := Status()
+			result.StoppedProcesses = status.StoppedProcesses
+			if !status.processesSaved && options.saveProcesses() {
+				// Stopped without its list being saved: the list on disk, if any,
+				// is an older one, and nothing of this workload can be restored.
+				saveProcesses := false
+				options.SaveProcesses = &saveProcesses
+				logrus.Warn("[Archive] The earlier export did not save the process list, the archive carries none")
+			}
+			logrus.Info("[Archive] The sandbox is still frozen by an earlier export, archiving it as it is")
+		} else {
+			if quiesced, err = quiesceWorkload(options); err != nil {
+				return nil, err
+			}
+			result.StoppedProcesses = quiesced.identifiers
 		}
-		result.StoppedProcesses = quiesced.identifiers
 	}
 
 	mountPoint := options.imageMountPoint()
@@ -349,7 +366,10 @@ func exportClaimed(ctx context.Context, options ExportOptions) (result *ExportRe
 	// stopped processes keep writing their logs until they exit. Until here the
 	// freeze is the API refusing the routes that write.
 	if !options.DryRun {
-		completeQuiesce(result.StoppedProcesses, freezeRoot(options))
+		// A reused freeze already made the root read-only: a remount that fails
+		// now does not make it writable again.
+		readOnlyRoot := freezeRoot(options) || reused && Status().ReadOnlyRoot
+		completeQuiesce(result.StoppedProcesses, readOnlyRoot)
 	}
 
 	excludes := append(append([]string(nil), DefaultExcludes...), options.Excludes...)

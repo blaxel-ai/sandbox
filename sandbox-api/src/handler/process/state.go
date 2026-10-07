@@ -56,6 +56,8 @@ type ProcessState struct {
 	KeepAlive        bool                    `json:"keepAlive,omitempty"`
 	Timeout          int                     `json:"timeout,omitempty"`
 
+	EffectiveWorkingDir string `json:"effectiveWorkingDir,omitempty"`
+
 	TerminationRequested constants.ProcessStatus `json:"terminationRequested,omitempty"`
 }
 
@@ -108,6 +110,7 @@ func (pm *ProcessManager) SaveState() error {
 
 		state.Processes[pid] = ProcessState{
 			TerminationRequested: proc.terminationRequested,
+			EffectiveWorkingDir:  proc.EffectiveWorkingDir,
 
 			PID:              proc.PID,
 			Name:             proc.Name,
@@ -229,6 +232,7 @@ func (pm *ProcessManager) LoadState() error {
 		// Create ProcessInfo from saved state
 		proc := &ProcessInfo{
 			terminationRequested: procState.TerminationRequested,
+			EffectiveWorkingDir:  procState.EffectiveWorkingDir,
 
 			PID:              procState.PID,
 			Name:             procState.Name,
@@ -345,15 +349,9 @@ func (pm *ProcessManager) LoadState() error {
 						"name": proc.Name,
 					}).Warn("[KeepAlive] Failed to disable scale-to-zero for adopted process")
 				}
-				// Re-arm the timeout the previous run was enforcing, for
-				// whatever of it is left, so the hold cannot outlive the
-				// bound the process was started with.
-				if proc.Timeout > 0 {
-					proc.stopTimeout = make(chan struct{})
-					remaining := time.Until(proc.StartedAt.Add(time.Duration(proc.Timeout) * time.Second))
-					go pm.enforceKeepAliveTimeout(proc, remaining)
-				}
 			}
+			proc.stopTimeout = make(chan struct{})
+			pm.startExecutionTimeoutLocked(proc)
 
 			// Start a goroutine to monitor the adopted process
 			go pm.monitorAdoptedProcess(proc)
@@ -613,29 +611,6 @@ func verifyProcessHealth(pid int) bool {
 	}
 
 	return true
-}
-
-// enforceKeepAliveTimeout kills a keepAlive process when what remains of its
-// timeout elapses, unless stopTimeout is closed first. It backs the same
-// contract as the timer StartProcessWithName arms, for processes adopted
-// after a restart with part of their timeout already spent.
-func (pm *ProcessManager) enforceKeepAliveTimeout(proc *ProcessInfo, remaining time.Duration) {
-	if remaining < 0 {
-		remaining = 0
-	}
-	timer := time.NewTimer(remaining)
-	defer timer.Stop()
-	select {
-	case <-timer.C:
-		logrus.WithFields(logrus.Fields{
-			"process_pid":  proc.PID,
-			"process_name": proc.Name,
-			"timeout":      proc.Timeout,
-		}).Info("[KeepAlive] Timeout expired, killing adopted process")
-		_ = pm.KillProcess(proc.PID)
-	case <-proc.stopTimeout:
-		// Process completed before timeout
-	}
 }
 
 // monitorAdoptedProcess monitors an adopted process for completion

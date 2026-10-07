@@ -149,7 +149,7 @@ func SetupRouter(disableRequestLogging bool, enableProcessingTime bool) *gin.Eng
 	r.GET("/watch/filesystem/*path", fsHandler.HandleWatchDirectory)
 	r.HEAD("/watch/filesystem/*path", head)
 	r.GET("/filesystem/*path", fsHandler.HandleGetFile)
-	r.HEAD("/filesystem/*path", head)
+	r.HEAD("/filesystem/*path", fsHandler.HandleStatFile)
 	r.PUT("/filesystem/*path", fsHandler.HandleCreateOrUpdateFile)
 	r.DELETE("/filesystem/*path", fsHandler.HandleDeleteFile)
 

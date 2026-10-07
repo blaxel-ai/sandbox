@@ -17,7 +17,7 @@ const docTemplate = `{
     "paths": {
         "/archive/export": {
             "post": {
-                "description": "Archives everything the sandbox changed on top of its base image and streams it, uncompressed, to a presigned S3 PUT URL. The memory of the sandbox is not archived.\nThe sandbox is quiesced first: the process list is saved (unless saveProcesses is false), every process is stopped, and the API then refuses the calls that would write to the filesystem. The freeze is not lifted afterwards, since an exported sandbox is meant to be restored elsewhere; call POST /archive/resume to lift it.\nUse dryRun to get the archive's content and exact size without stopping anything and without uploading.\nSet async to start the export and answer immediately, which is what archiving a large filesystem needs: the export then reports itself through GET /archive/status.",
+                "description": "Archives everything the sandbox changed on top of its base image and streams it, uncompressed, to a presigned S3 PUT URL. The memory of the sandbox is not archived.\nThe sandbox is quiesced first: the process list is saved (unless saveProcesses is false), every process is stopped, and the API then refuses the calls that would write to the filesystem. The freeze is not lifted afterwards, since an exported sandbox is meant to be restored elsewhere; call POST /archive/resume to lift it.\nA sandbox still frozen by an earlier export is exported as it is, with the process list that export saved.\nUse dryRun to get the archive's content and exact size without stopping anything and without uploading.\nSet async to start the export and answer immediately, which is what archiving a large filesystem needs: the export then reports itself through GET /archive/status.",
                 "consumes": [
                     "application/json"
                 ],
@@ -59,7 +59,7 @@ const docTemplate = `{
                         }
                     },
                     "409": {
-                        "description": "An export is already in progress",
+                        "description": "An export is already in progress, or the sandbox is frozen for a restore",
                         "schema": {
                             "$ref": "#/definitions/ErrorResponse"
                         }
@@ -428,7 +428,7 @@ const docTemplate = `{
         },
         "/filesystem-content-search/{path}": {
             "get": {
-                "description": "Searches for text content inside files using ripgrep. Returns matching lines with context.",
+                "description": "Searches for text content inside files. Returns each matching line, with the lines around it when contextLines is set.",
                 "consumes": [
                     "application/json"
                 ],
@@ -476,6 +476,12 @@ const docTemplate = `{
                         "type": "string",
                         "description": "Comma-separated directory names to skip (default: node_modules,vendor,.git,dist,build,target,__pycache__,.venv,.next,coverage)",
                         "name": "excludeDirs",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Lines to include before and after each match in its context field (default: 0, max: 20; invalid values count as 0)",
+                        "name": "contextLines",
                         "in": "query"
                     }
                 ],
@@ -773,7 +779,7 @@ const docTemplate = `{
         },
         "/filesystem-multipart/{uploadId}/part": {
             "put": {
-                "description": "Upload a single part of a multipart upload",
+                "description": "Upload a single part of a multipart upload. Re-uploading a part number replaces that part. Wait for the previous request for that part to finish before retrying.",
                 "consumes": [
                     "multipart/form-data"
                 ],
@@ -884,7 +890,7 @@ const docTemplate = `{
         },
         "/filesystem-search/{path}": {
             "get": {
-                "description": "Performs fuzzy search on filesystem paths using fuzzy matching algorithm. Optimized alternative to find and grep commands.",
+                "description": "Ranks the files and directories under a path by how well their relative path fuzzy-matches ` + "`" + `query` + "`" + ` (fzf algorithm: the query's characters must appear in order, not necessarily next to each other), best match first.\nFuzzy search is for \"jump to file\" lookups from a partial name. The ` + "`" + `patterns` + "`" + ` parameter is currently ignored by this endpoint; use find for exact glob filtering.",
                 "consumes": [
                     "application/json"
                 ],
@@ -904,6 +910,12 @@ const docTemplate = `{
                         "required": true
                     },
                     {
+                        "type": "string",
+                        "description": "Fuzzy pattern matched against each relative path (e.g., mngo for src/main.go). When omitted, the search path itself is used as the pattern.",
+                        "name": "query",
+                        "in": "query"
+                    },
+                    {
                         "type": "integer",
                         "description": "Maximum number of results to return (default: 20)",
                         "name": "maxResults",
@@ -911,7 +923,7 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "Comma-separated file patterns to include (e.g., *.go,*.js)",
+                        "description": "Accepted for compatibility but currently ignored; use filesystem-find for glob filtering",
                         "name": "patterns",
                         "in": "query"
                     },
@@ -1006,7 +1018,7 @@ const docTemplate = `{
                 }
             },
             "put": {
-                "description": "Create or update multiple files within a directory tree structure",
+                "description": "Create or update multiple files within a directory tree structure. Idempotent: existing files are overwritten, so retrying the same request is safe.",
                 "consumes": [
                     "application/json"
                 ],
@@ -1134,7 +1146,7 @@ const docTemplate = `{
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "File or directory path",
+                        "description": "File or directory path. Relative paths are resolved against the filesystem working directory. For example, with a working directory of /app, GET /filesystem/workspace resolves to /app/workspace. To access the absolute path /workspace over HTTP, encode its leading slash as %2F: GET /filesystem/%2Fworkspace. The double-slash form GET /filesystem//workspace also addresses /workspace.",
                         "name": "path",
                         "in": "path",
                         "required": true
@@ -1174,9 +1186,10 @@ const docTemplate = `{
                 }
             },
             "put": {
-                "description": "Create or update a file or directory",
+                "description": "Create or update a file or directory.\n\nIdempotent: an existing file is overwritten (truncated, not appended to) and an existing directory is kept, so retrying the same request is safe.\n\nSend either a JSON body (FileRequest) or ` + "`" + `multipart/form-data` + "`" + ` for binary files. Multipart fields, in any order: ` + "`" + `file` + "`" + ` (required, the file content), ` + "`" + `permissions` + "`" + ` (optional octal mode such as ` + "`" + `0755` + "`" + `, applied when the file is created, default ` + "`" + `0644` + "`" + `; an existing file keeps its mode), ` + "`" + `path` + "`" + ` (optional, ignored: the target is always the URL path).",
                 "consumes": [
-                    "application/json"
+                    "application/json",
+                    "multipart/form-data"
                 ],
                 "produces": [
                     "application/json"
@@ -1280,6 +1293,45 @@ const docTemplate = `{
                         "description": "Internal server error",
                         "schema": {
                             "$ref": "#/definitions/ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "head": {
+                "description": "Returns the metadata of a file or directory as headers, with no body. This checks stat availability, not permission to read file contents or list a directory. When the path does not exist or its metadata cannot be accessed, the response is an empty 200 without the X-File-Type header.",
+                "tags": [
+                    "filesystem"
+                ],
+                "summary": "Stat a file or directory",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "File or directory path",
+                        "name": "path",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Path metadata (X-File-Type is set only when stat succeeds)",
+                        "headers": {
+                            "Content-Length": {
+                                "type": "integer",
+                                "description": "File size in bytes (files only)"
+                            },
+                            "Last-Modified": {
+                                "type": "string",
+                                "description": "Modification time (HTTP date)"
+                            },
+                            "X-File-Mode": {
+                                "type": "string",
+                                "description": "Permission bits including sticky, setgid and setuid in octal (e.g., 644 or 1777)"
+                            },
+                            "X-File-Type": {
+                                "type": "string",
+                                "description": "file or directory"
+                            }
                         }
                     }
                 }
@@ -1575,13 +1627,13 @@ const docTemplate = `{
                 }
             },
             "post": {
-                "description": "Execute a command and return process information. If Accept header is text/event-stream, streams logs in SSE format and returns the process response as a final event.",
+                "description": "Execute a command and return process information.\n\nStreaming: with ` + "`" + `Accept: application/x-ndjson` + "`" + ` (or ` + "`" + `Accept: text/event-stream` + "`" + `, kept for compatibility) the response is NDJSON (` + "`" + `Content-Type: application/x-ndjson` + "`" + `), not SSE: one JSON object per line, ` + "`" + `{\"type\": \"...\", \"data\": \"...\"}` + "`" + `.\n` + "`" + `type` + "`" + ` is ` + "`" + `stdout` + "`" + ` or ` + "`" + `stderr` + "`" + ` (` + "`" + `data` + "`" + ` is a raw output chunk, sent as soon as the process writes it, newlines included; if the process finished before any chunk was streamed, its output is sent instead as one event per line, without the newline), ` + "`" + `keepalive` + "`" + ` (every 5 seconds, no data), ` + "`" + `error` + "`" + ` (` + "`" + `data` + "`" + ` is the message, ends the stream) or ` + "`" + `result` + "`" + ` (last event, ` + "`" + `data` + "`" + ` is the ProcessResponse as a JSON string).",
                 "consumes": [
                     "application/json"
                 ],
                 "produces": [
                     "application/json",
-                    "text/event-stream"
+                    "application/x-ndjson"
                 ],
                 "tags": [
                     "process"
@@ -1814,7 +1866,7 @@ const docTemplate = `{
         },
         "/process/{identifier}/logs/stream": {
             "get": {
-                "description": "Streams the stdout and stderr output of a process in real time, one line per log, prefixed with 'stdout:' or 'stderr:'. Closes when the process exits or the client disconnects.",
+                "description": "Streams the stdout and stderr output of a process in real time: the output so far, then live output as the process writes it. Closes when the process exits or the client disconnects.\nEach output line starts with ` + "`" + `stdout:` + "`" + ` or ` + "`" + `stderr:` + "`" + ` and keeps its trailing newline. A partial line (e.g. a prompt) is sent as soon as it is written; when the process completes it, the rest follows without a new prefix. ` + "`" + `[keepalive]` + "`" + ` lines are sent every 30 seconds.",
                 "produces": [
                     "text/plain"
                 ],
@@ -1833,7 +1885,7 @@ const docTemplate = `{
                 ],
                 "responses": {
                     "200": {
-                        "description": "Stream of process logs, one line per log (prefixed with stdout:/stderr:)",
+                        "description": "Process output, each line prefixed with stdout: or stderr:",
                         "schema": {
                             "type": "string"
                         }
@@ -2010,7 +2062,7 @@ const docTemplate = `{
         },
         "/watch/filesystem/{path}": {
             "get": {
-                "description": "Streams the path of modified files (one per line) in the given directory. Closes when the client disconnects.",
+                "description": "Streams change events for a directory until the client disconnects.\n\nThe body is JSON lines (sent with ` + "`" + `Content-Type: text/plain` + "`" + `): one event object per line, e.g. ` + "`" + `{\"op\":\"WRITE\",\"name\":\"main.go\",\"path\":\"/app/src\",\"error\":null}` + "`" + `. ` + "`" + `op` + "`" + ` is the fsnotify operation (CREATE, WRITE, REMOVE, RENAME or CHMOD, several can be joined with ` + "`" + `|` + "`" + `), ` + "`" + `name` + "`" + ` the base name of the changed entry, ` + "`" + `path` + "`" + ` the directory containing it, and ` + "`" + `error` + "`" + ` is always null. A ` + "`" + `[keepalive]` + "`" + ` line (not JSON) is sent every 30 seconds.\nOnly the directory's direct entries are watched. To also watch every subdirectory, including ones created later, end the path with ` + "`" + `/**` + "`" + `; the stream then starts with a synthetic CREATE event for each entry that already exists.",
                 "produces": [
                     "text/plain"
                 ],
@@ -2021,13 +2073,13 @@ const docTemplate = `{
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Ignore patterns (comma-separated)",
+                        "description": "Comma-separated substrings; events whose full path contains one are skipped",
                         "name": "ignore",
                         "in": "query"
                     },
                     {
                         "type": "string",
-                        "description": "Directory path to watch",
+                        "description": "Directory path to watch (append /** to watch subdirectories)",
                         "name": "path",
                         "in": "path",
                         "required": true
@@ -2035,7 +2087,7 @@ const docTemplate = `{
                 ],
                 "responses": {
                     "200": {
-                        "description": "Stream of modified file paths, one per line",
+                        "description": "JSON lines stream of change events",
                         "schema": {
                             "type": "string"
                         }
@@ -2181,6 +2233,7 @@ const docTemplate = `{
                     "example": 10
                 },
                 "context": {
+                    "description": "The matching line with up to contextLines lines before and after it, newline-separated; omitted when contextLines is 0",
                     "type": "string",
                     "example": "previous line\ncurrent line\nnext line"
                 },
@@ -2702,6 +2755,7 @@ const docTemplate = `{
                     "example": "amd64"
                 },
                 "buildTime": {
+                    "description": "Build time in RFC 3339 (UTC), or \"unknown\" for builds without it",
                     "type": "string",
                     "example": "2026-01-29T17:36:52Z"
                 },
@@ -2721,6 +2775,7 @@ const docTemplate = `{
                     "example": "linux"
                 },
                 "startedAt": {
+                    "description": "API start time in RFC 3339",
                     "type": "string",
                     "example": "2026-01-29T18:45:49Z"
                 },
@@ -2980,6 +3035,7 @@ const docTemplate = `{
                     "example": "ls -la"
                 },
                 "completedAt": {
+                    "description": "Completion time, same format as startedAt. Empty string while the process runs",
                     "type": "string",
                     "example": "Wed, 01 Jan 2023 12:01:00 GMT"
                 },
@@ -3017,6 +3073,7 @@ const docTemplate = `{
                     "example": true
                 },
                 "startedAt": {
+                    "description": "Start time as an HTTP date (RFC 1123, e.g. Wed, 01 Jan 2023 12:00:00 GMT)",
                     "type": "string",
                     "example": "Wed, 01 Jan 2023 12:00:00 GMT"
                 },
