@@ -1,12 +1,12 @@
 package handler
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"mime"
 	"net/http"
-	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -480,13 +480,18 @@ func (h *ProcessHandler) HandleGetProcessLogs(c *gin.Context) {
 // HandleGetProcessLogsStream handles GET requests to /process/{identifier}/logs/stream
 // @Summary Stream process logs in real time
 // @Description Streams the stdout and stderr output of a process in real time: the output so far, then live output as the process writes it. Closes when the process exits or the client disconnects.
-// @Description Each output line starts with `stdout:` or `stderr:` and keeps its trailing newline. A partial line (e.g. a prompt) is sent as soon as it is written; when the process completes it, the rest follows without a new prefix. `[keepalive]` lines are sent every 30 seconds.
+// @Description By default, output is plain text with `stdout:` or `stderr:` prefixes at the start of each source stream's lines. Partial lines (e.g. prompts) are sent without waiting for a newline; their continuations have no new prefix. The other stream is not held back while a line is incomplete, and chronological order across stdout and stderr is not guaranteed.
+// @Description This format does not provide unambiguous framing: output from the other stream, or a `[keepalive]` marker sent every 30 seconds, can appear inside an unfinished line. A later continuation can therefore lack a prefix identifying its source. Do not rely on this text stream to reconstruct stdout and stderr separately; request NDJSON for source-preserving streaming, or use GET /process/{identifier}/logs for separate output snapshots.
 // @Tags process
-// @Produce plain
+// @Description With `Accept: application/x-ndjson`, each line is a JSON object with `type` (`stdout`, `stderr`, `keepalive`, `restart`, `truncated`, or `error`) and optional `data`. Output records retain source identity and original bytes, including partial lines and newlines, for both retained history and live output. For `encoding: "base64"`, decode `data` before concatenating bytes per source; this occurs for binary data or a UTF-8 character split across chunks. Chunk boundaries are arbitrary and ordering is collection order, not a strict chronology across streams.
+// @Description `keepalive` has no output data. `restart` carries a supervisor restart notice, not process output. `truncated` reports a retention or slow-reader gap and must not be appended to stdout/stderr. `error` reports a streaming failure. The connection ends after the final process exit, including automatic restarts; there is no `result` record. Older processes without structured history return HTTP 409 for NDJSON; their text stream remains available.
+// @Produce plain,application/x-ndjson
 // @Param identifier path string true "Process identifier (PID or name)"
-// @Success 200 {string} string "Process output, each line prefixed with stdout: or stderr:"
+// @Param Accept header string false "Explicit application/x-ndjson opts into structured records; absent or wildcard Accept retains text/plain. Supported explicit media types honor q weights, preferring NDJSON on a tie."
+// @Success 200 {string} string "Process output as prefixed text or NDJSON records"
 // @Failure 404 {object} ErrorResponse "Process not found"
-// @Failure 422 {object} ErrorResponse "Unprocessable entity"
+// @Failure 409 {object} ErrorResponse "Structured history unavailable for this older process"
+// @Failure 400 {object} ErrorResponse "Invalid process identifier"
 // @Failure 500 {object} ErrorResponse "Internal server error"
 // @Router /process/{identifier}/logs/stream [get]
 func (h *ProcessHandler) HandleGetProcessLogsStream(c *gin.Context) {
@@ -496,53 +501,67 @@ func (h *ProcessHandler) HandleGetProcessLogsStream(c *gin.Context) {
 		return
 	}
 
-	audit.LogEvent(c, "process_logs_stream", logrus.Fields{})
-
-	// Set headers for streaming
-	c.Writer.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	c.Writer.Header().Set("Cache-Control", "no-cache")
-	c.Writer.Header().Set("Connection", "keep-alive")
-	c.Writer.Header().Set("X-Accel-Buffering", "no")
-	c.Writer.Flush()
-
-	// Use the custom ResponseWriter for flushing
-	rw := &ResponseWriter{gin: c}
-
-	err = h.StreamProcessOutput(identifier, rw)
-	if err != nil {
-		h.SendError(c, http.StatusUnprocessableEntity, err)
-		return
-	}
-
-	// Wait until the process is done for good, or the client disconnects.
-	//
-	// Waiting on Done here used to end the stream on a restart: a restart closes
-	// the current Done and installs a fresh one, so the handler returned 200
-	// while the process bounced back up and kept producing output nobody
-	// received. Finished is closed once, when there is no restart to come.
+	// Capture the process once: a reused name must not attach or detach a
+	// different process while the response is being streamed.
 	proc, exists := h.processManager.GetProcessByIdentifier(identifier)
 	if !exists {
+		h.SendError(c, http.StatusNotFound, fmt.Errorf("process not found"))
 		return
 	}
+	ndjson := wantsLogNDJSON(c.GetHeader("Accept"))
+	c.Writer.Header().Add("Vary", "Accept")
+	if ndjson && !proc.SupportsStructuredLogs() {
+		h.SendError(c, http.StatusConflict, process.ErrLegacyLogFormat)
+		return
+	}
+
+	if err := proc.WaitForLogCollector(c.Request.Context()); err != nil {
+		if c.Request.Context().Err() == nil {
+			h.SendError(c, http.StatusInternalServerError, err)
+		}
+		return
+	}
+
+	audit.LogEvent(c, "process_logs_stream", logrus.Fields{})
+	contentType := "text/plain; charset=utf-8"
+	if ndjson {
+		contentType = "application/x-ndjson"
+	}
+	c.Header("Content-Type", contentType)
+	c.Header("Cache-Control", "no-cache")
+	c.Header("Connection", "keep-alive")
+	c.Header("X-Accel-Buffering", "no")
+	c.Writer.Flush()
+
+	rw := &ResponseWriter{gin: c}
+	var writer io.Writer = rw
+	var jw *logJSONStreamWriter
+	if ndjson {
+		jw = &logJSONStreamWriter{ResponseWriter: rw}
+		writer = jw
+	}
+	defer func() {
+		// Close first so any in-flight writer observes cancellation before
+		// detaching, and no keepalive can access a returned Gin context.
+		rw.Close()
+		h.processManager.RemoveLogWriterForProcess(proc, writer)
+	}()
+
+	if err := h.processManager.StreamProcessOutputForProcess(proc, writer); err != nil {
+		if jw != nil {
+			_, _ = jw.WriteEvent("error", err.Error())
+		} else {
+			_, _ = rw.Write([]byte("[error: " + err.Error() + "]\n"))
+		}
+		return
+	}
+
 	streamStart := time.Now()
 	select {
 	case <-proc.Finished:
 		logStreamEnd(identifier, "process_finished", streamStart, rw)
 	case <-c.Request.Context().Done():
 		logStreamEnd(identifier, "client_disconnected", streamStart, rw)
-		h.RemoveLogWriter(identifier, rw)
-		return
-	}
-
-	// Detach the writer
-	h.RemoveLogWriter(identifier, rw)
-
-	// For very fast commands, streaming might not have sent anything.
-	// Only re-send from the log file if nothing was streamed, to avoid duplicating output.
-	if !rw.HasSentData() && proc.LogFile != "" {
-		if content, err := os.ReadFile(proc.LogFile); err == nil && len(content) > 0 {
-			rw.Write(content)
-		}
 	}
 }
 
@@ -793,6 +812,11 @@ func (w *ResponseWriter) Close() {
 	w.closed = true
 }
 
+// LogStreamContext lets collector handoff and replay honor client cancellation.
+func (w *ResponseWriter) LogStreamContext() context.Context {
+	return w.gin.Request.Context()
+}
+
 // JSONStreamWriter wraps a writer and formats output as JSON events
 // Used by handleExecuteCommandStream for structured streaming output
 type JSONStreamWriter struct {
@@ -806,6 +830,10 @@ type JSONStreamWriter struct {
 type StreamEvent struct {
 	Type string `json:"type"`
 	Data string `json:"data,omitempty"`
+}
+
+func (w *JSONStreamWriter) LogStreamContext() context.Context {
+	return w.gin.Request.Context()
 }
 
 // IsJSONStreamWriter is a marker method to identify JSON stream writers

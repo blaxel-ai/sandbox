@@ -2,8 +2,9 @@
 
 `POST /process` runs a command with stdout and stderr going to log files. By
 default the process has no stdin (it reads EOF at once). Set `"stdin": true` to
-give it a writable pipe instead, then drive it over HTTP. This is what a stdio
-protocol such as MCP needs: raw bytes in, raw lines out, no PTY in between.
+give it a writable pipe instead, then send raw input bytes over HTTP without a
+PTY. Request the NDJSON log stream to keep stdout and stderr separate, including
+partial lines. The default text log stream is for diagnostic output.
 
 ## API
 
@@ -11,8 +12,23 @@ protocol such as MCP needs: raw bytes in, raw lines out, no PTY in between.
 |---|---|
 | `POST /process` with `{"command": "...", "name": "...", "stdin": true}` | Start the process with a stdin pipe. The response carries `"stdin": true`. |
 | `POST /process/{name}/stdin` with a raw body | Write the body verbatim to stdin. Include the trailing newline your protocol expects. Max 8 MiB per call. |
-| `GET /process/{name}/logs/stream` | Read stdout. Lines are tagged `stdout:` / `stderr:`; drop the tag and ignore `[keepalive]` lines. |
+| `GET /process/{name}/logs/stream` with `Accept: application/x-ndjson` | Receive records with `type: stdout` or `stderr` and `data`. Decode `encoding: base64` when present, then concatenate bytes per source. |
+| `GET /process/{name}/logs/stream` without NDJSON Accept | Observe mixed prefixed text. Partial lines and keepalives can interleave; source attribution is not reliable. |
 | `DELETE /process/{name}/stdin` | Close stdin (EOF). Idempotent. For MCP this is the clean shutdown. |
+
+For NDJSON, handle `keepalive`, `restart`, `truncated`, and `error` as control records, never
+as output. A `truncated` record means retained history or queued live output was
+lost; a protocol client must treat that gap as a broken session. A `restart` record
+reports a supervisor restart notice; a stdio client must reinitialize its
+protocol session after a restart. The stream closes
+after the final process exit, without a result record. Old processes whose logs
+were created before structured storage return HTTP 409 when NDJSON is requested.
+
+For the default text stream, do not reconstruct stdout by stripping prefixes or filtering keepalive lines.
+An unfinished stdout line can contain stderr output or a keepalive marker, and
+its continuation may have no prefix. `GET /process/{name}/logs` returns separate
+`stdout` and `stderr` snapshots, subject to retention and response limits; these
+snapshots are not a streaming protocol transport either.
 
 Errors:
 
@@ -57,7 +73,9 @@ A pipe rather than a FIFO on disk is a deliberate trade: stdin survival across a
 sandbox-api restart would buy little, since the client's log stream drops at the
 same moment and any stdio session has to be re-initialised anyway.
 
-## Example: an MCP server over stdio
+## Example: manually sending MCP input
+
+This demonstrates stdin writes and diagnostic output, not a reliable MCP client.
 
 ```sh
 BASE=http://localhost:8080
@@ -68,8 +86,8 @@ curl -s $BASE/process -H 'Content-Type: application/json' -d '{
   "stdin": true
 }'
 
-# Follow stdout in another shell, keeping only stdout lines:
-curl -sN $BASE/process/mcp-fs/logs/stream | sed -n 's/^stdout://p'
+# Observe structured output in another shell (each data field is a chunk, not a message):
+curl -sN -H 'Accept: application/x-ndjson' $BASE/process/mcp-fs/logs/stream
 
 curl -s $BASE/process/mcp-fs/stdin --data-binary \
   '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"curl","version":"0"}}}
@@ -82,5 +100,8 @@ curl -s $BASE/process/mcp-fs/stdin --data-binary '{"jsonrpc":"2.0","id":2,"metho
 curl -s -X DELETE $BASE/process/mcp-fs/stdin
 ```
 
-To use an MCP SDK's stdio transport unchanged, run a small local shim whose own
-stdin/stdout are bridged to these two calls, and point the transport at the shim.
+An MCP SDK's stdio transport needs reliably separated output. A bridge can
+consume NDJSON, decode each chunk, and forward only stdout bytes to the SDK.
+Reassemble protocol messages across chunks and fail the session on an error or
+truncation event; do not feed raw NDJSON records or the default text stream to
+the SDK's stdout.
