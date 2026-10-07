@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	stdjson "encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -172,5 +173,63 @@ func TestLegacyLogStreamRejectsNDJSONButKeepsText(t *testing.T) {
 		} else if recorder.Code != http.StatusOK || recorder.Body.String() != "stdout:old output\n" {
 			t.Fatalf("legacy text changed: status=%d body=%q", recorder.Code, recorder.Body.String())
 		}
+	}
+}
+
+func TestLogReplayFailureUsesNDJSONErrorRecord(t *testing.T) {
+	for _, missing := range []bool{false, true} {
+		t.Run(fmt.Sprintf("missing=%t", missing), func(t *testing.T) {
+			dir := t.TempDir()
+			logPath := filepath.Join(dir, "journal.log")
+			if !missing {
+				if err := os.WriteFile(logPath, []byte("invalid journal\n"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			completed := time.Now()
+			state := process.ManagerState{Version: 1, Processes: map[string]process.ProcessState{
+				"123": {PID: "123", Name: "broken", Status: constants.ProcessStatusCompleted, CompletedAt: &completed, LogFile: logPath, LogFormat: "jsonl-v1"},
+			}}
+			encoded, err := stdjson.Marshal(state)
+			if err != nil {
+				t.Fatal(err)
+			}
+			statePath := filepath.Join(dir, "state.json")
+			if err := os.WriteFile(statePath, encoded, 0600); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("SANDBOX_STATE_FILE", statePath)
+			pm := process.NewProcessManager()
+			if err := pm.LoadState(); err != nil {
+				t.Fatal(err)
+			}
+			recorder := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(recorder)
+			c.Request = httptest.NewRequest(http.MethodGet, "/process/broken/logs/stream", nil)
+			c.Request.Header.Set("Accept", "application/x-ndjson")
+			c.Params = gin.Params{{Key: "identifier", Value: "broken"}}
+			h := &ProcessHandler{BaseHandler: NewBaseHandler(), processManager: pm}
+			h.HandleGetProcessLogsStream(c)
+			if recorder.Code != http.StatusOK {
+				t.Fatalf("status = %d", recorder.Code)
+			}
+			decoder := stdjson.NewDecoder(recorder.Body)
+			var last ProcessLogEvent
+			for {
+				var event ProcessLogEvent
+				if err := decoder.Decode(&event); err == io.EOF {
+					break
+				} else if err != nil {
+					t.Fatal(err)
+				}
+				if event.Type != "error" && event.Type != "truncated" {
+					t.Fatalf("failure emitted as output: %+v", event)
+				}
+				last = event
+			}
+			if last.Type != "error" || last.Data == "" {
+				t.Fatalf("unexpected final event: %+v", last)
+			}
+		})
 	}
 }

@@ -1603,30 +1603,21 @@ paths:
         "404":
           description: Process not found
           content:
-            text/plain:
+            application/json:
               schema:
-                $ref: "#/components/schemas/ErrorResponse"
-            application/x-ndjson:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
+                $ref: '#/components/schemas/ErrorResponse'
         "409":
           description: Structured history unavailable for this older process
           content:
-            text/plain:
+            application/json:
               schema:
-                $ref: "#/components/schemas/ErrorResponse"
-            application/x-ndjson:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
+                $ref: '#/components/schemas/ErrorResponse'
         "500":
           description: Internal server error
           content:
-            text/plain:
+            application/json:
               schema:
-                $ref: "#/components/schemas/ErrorResponse"
-            application/x-ndjson:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
+                $ref: '#/components/schemas/ErrorResponse'
       summary: Stream process logs in real time
       tags:
         - process
@@ -2915,18 +2906,3 @@ components:
         - UpgradeStateFailed
 security:
   - BearerAuth: []
-"404":
-  content:
-    application/json:
-      schema:
-        $ref: '#/components/schemas/ErrorResponse'
-"409":
-  content:
-    application/json:
-      schema:
-        $ref: '#/components/schemas/ErrorResponse'
-"500":
-  content:
-    application/json:
-      schema:
-        $ref: '#/components/schemas/ErrorResponse'
