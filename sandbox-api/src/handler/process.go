@@ -484,7 +484,7 @@ func (h *ProcessHandler) HandleGetProcessLogs(c *gin.Context) {
 // @Description This format does not provide unambiguous framing: output from the other stream, or a `[keepalive]` marker sent every 30 seconds, can appear inside an unfinished line. A later continuation can therefore lack a prefix identifying its source. Do not rely on this text stream to reconstruct stdout and stderr separately; request NDJSON for source-preserving streaming, or use GET /process/{identifier}/logs for separate output snapshots.
 // @Tags process
 // @Description With `Accept: application/x-ndjson`, each line is a JSON object with `type` (`stdout`, `stderr`, `keepalive`, `restart`, `truncated`, or `error`) and optional `data`. Output records retain source identity and original bytes, including partial lines and newlines, for both retained history and live output. For `encoding: "base64"`, decode `data` before concatenating bytes per source; this occurs for binary data or a UTF-8 character split across chunks. Chunk boundaries are arbitrary and ordering is collection order, not a strict chronology across streams.
-// @Description `keepalive` has no output data. `restart` carries a supervisor restart notice, not process output. `truncated` reports a retention or slow-reader gap and must not be appended to stdout/stderr. `error` reports a streaming failure. The connection ends after the final process exit, including automatic restarts; there is no `result` record. Older processes without structured history return HTTP 409 for NDJSON; their text stream remains available.
+// @Description `keepalive` has no output data. A quiet active stream sends an initial keepalive after attachment so clients can receive the response before sending stdin; subsequent keepalives are sent every 30 seconds. `restart` carries a supervisor restart notice, not process output. `truncated` reports a retention or slow-reader gap and must not be appended to stdout/stderr. `error` reports a streaming failure. The connection ends after the final process exit, including automatic restarts; there is no `result` record. Older processes without structured history return HTTP 409 for NDJSON; their text stream remains available.
 // @Produce plain,application/x-ndjson
 // @Param identifier path string true "Process identifier (PID or name)"
 // @Param Accept header string false "Explicit application/x-ndjson opts into structured records; absent or wildcard Accept retains text/plain. Supported explicit media types honor q weights, preferring NDJSON on a tie."
@@ -554,6 +554,18 @@ func (h *ProcessHandler) HandleGetProcessLogsStream(c *gin.Context) {
 			_, _ = rw.Write([]byte("[error: " + err.Error() + "]\n"))
 		}
 		return
+	}
+
+	// Some HTTP/2 intermediaries hold body-free response headers. Open a quiet
+	// NDJSON stream with a control record so clients can then send stdin.
+	if jw != nil && !rw.HasSentData() {
+		select {
+		case <-proc.Finished:
+		default:
+			if _, err := jw.WriteEvent("keepalive", ""); err != nil {
+				return
+			}
+		}
 	}
 
 	streamStart := time.Now()

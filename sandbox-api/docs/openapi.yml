@@ -1562,7 +1562,7 @@ paths:
 
         With `Accept: application/x-ndjson`, each line is a JSON object with `type` (`stdout`, `stderr`, `keepalive`, `restart`, `truncated`, or `error`) and optional `data`. Output records retain source identity and original bytes, including partial lines and newlines, for both retained history and live output. For `encoding: "base64"`, decode `data` before concatenating bytes per source; this occurs for binary data or a UTF-8 character split across chunks. Chunk boundaries are arbitrary and ordering is collection order, not a strict chronology across streams.
 
-        `keepalive` has no output data. `restart` carries a supervisor restart notice, not process output. `truncated` reports a retention or slow-reader gap and must not be appended to stdout/stderr. `error` reports a streaming failure. The connection ends after the final process exit, including automatic restarts; there is no `result` record. Older processes without structured history return HTTP 409 for NDJSON; their text stream remains available.
+        `keepalive` has no output data. A quiet active stream sends an initial keepalive after attachment so clients can receive the response before sending stdin; subsequent keepalives are sent every 30 seconds. `restart` carries a supervisor restart notice, not process output. `truncated` reports a retention or slow-reader gap and must not be appended to stdout/stderr. `error` reports a streaming failure. The connection ends after the final process exit, including automatic restarts; there is no `result` record. Older processes without structured history return HTTP 409 for NDJSON; their text stream remains available.
       parameters:
         - description: Process identifier (PID or name)
           in: path

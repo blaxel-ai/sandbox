@@ -19,6 +19,50 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+func TestQuietNDJSONStreamOpensBeforeStdin(t *testing.T) {
+	useTempLogDir(t)
+	h := NewProcessHandler()
+	p, err := h.ExecuteProcess("read gate; printf released", "", "", nil, false, 10, nil, false, 0, false, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer h.KillProcess(p.PID)
+	router := gin.New()
+	router.GET("/process/:identifier/logs/stream", h.HandleGetProcessLogsStream)
+	server := httptest.NewServer(router)
+	defer server.Close()
+	req, err := http.NewRequest(http.MethodGet, server.URL+"/process/"+p.PID+"/logs/stream", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Accept", "application/x-ndjson")
+	response, err := (&http.Client{Timeout: 2 * time.Second}).Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	decoder := stdjson.NewDecoder(response.Body)
+	var event ProcessLogEvent
+	if err := decoder.Decode(&event); err != nil {
+		t.Fatalf("silent stream did not send an opening record before stdin: %v", err)
+	}
+	if event != (ProcessLogEvent{Type: "keepalive"}) {
+		t.Fatalf("unexpected opening record: %#v", event)
+	}
+	if err := h.processManager.WriteStdin(p.PID, []byte("go\n")); err != nil {
+		t.Fatal(err)
+	}
+	if err := decoder.Decode(&event); err != nil {
+		t.Fatal(err)
+	}
+	if event != (ProcessLogEvent{Type: "stdout", Data: "released"}) {
+		t.Fatalf("output changed after opening record: %#v", event)
+	}
+	if err := decoder.Decode(&event); err != io.EOF {
+		t.Fatalf("stream did not finish after output: %v", err)
+	}
+}
+
 func TestWantsLogNDJSON(t *testing.T) {
 	for _, tc := range []struct {
 		accept string
