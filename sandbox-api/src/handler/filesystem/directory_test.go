@@ -1,9 +1,72 @@
 package filesystem
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/fsnotify/fsnotify"
 )
+
+func TestWatchDirectoryRecursiveReportsChangesWithoutInitialSnapshot(t *testing.T) {
+	root := t.TempDir()
+	subdir := filepath.Join(root, "existing-directory")
+	if err := os.Mkdir(subdir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	existing := filepath.Join(subdir, "existing.txt")
+	if err := os.WriteFile(existing, []byte("before watch"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	events := make(chan fsnotify.Event, 32)
+	done := make(chan struct{})
+	stop, err := NewFilesystem(root).WatchDirectoryRecursive(root, func(event fsnotify.Event) {
+		select {
+		case events <- event:
+		case <-done:
+		}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		close(done)
+		stop()
+	})
+
+	// Registration completes before WatchDirectoryRecursive returns. A subsequent
+	// event proves the watcher works; keep observing briefly afterward to catch
+	// an initial snapshot emitted asynchronously after that event.
+	created := filepath.Join(subdir, "after-watch.txt")
+	if err := os.WriteFile(created, []byte("after watch"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	timer := time.NewTimer(5 * time.Second)
+	defer timer.Stop()
+	createdSeen := false
+	for {
+		select {
+		case event := <-events:
+			if event.Op&fsnotify.Create == 0 {
+				continue
+			}
+			if event.Name != created {
+				t.Fatalf("unexpected initial CREATE event: %v", event)
+			}
+			if !createdSeen {
+				createdSeen = true
+				timer.Reset(200 * time.Millisecond)
+			}
+		case <-timer.C:
+			if createdSeen {
+				return
+			}
+			t.Fatal("timed out waiting for a CREATE event in an existing subdirectory")
+		}
+	}
+}
 
 // TestDirectoryMethods tests the Directory struct methods
 func TestDirectoryMethods(t *testing.T) {
