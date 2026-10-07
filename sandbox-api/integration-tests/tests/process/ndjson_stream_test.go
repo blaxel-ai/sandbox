@@ -21,6 +21,34 @@ type ndjsonLogRecord struct {
 	Encoding string `json:"encoding,omitempty"`
 }
 
+func TestNDJSONLogStreamOpensBeforeStdin(t *testing.T) {
+	name := uniqueProcessName("ndjson-quiet-open")
+	response, err := common.MakeRequest(http.MethodPost, "/process", map[string]any{
+		"name": name, "command": "read gate; printf released", "stdin": true, "keepAlive": true,
+	})
+	require.NoError(t, err)
+	response.Body.Close()
+	require.Equal(t, http.StatusOK, response.StatusCode)
+	t.Cleanup(func() {
+		if r, err := common.MakeRequest(http.MethodDelete, "/process/"+name+"/kill", nil); err == nil {
+			r.Body.Close()
+		}
+	})
+
+	// Send no stdin until both the headers and the opening record arrive. This
+	// also detects intermediaries that withhold headers until the first body byte.
+	stream := openLogStream(t, name, "application/x-ndjson")
+	requireLogMediaType(t, stream, "application/x-ndjson")
+	reader := bufio.NewReader(stream.Body)
+	line, err := reader.ReadBytes('\n')
+	require.NoError(t, err, "quiet stream must open before stdin")
+	var opening ndjsonLogRecord
+	require.NoError(t, json.Unmarshal(line, &opening))
+	require.Equal(t, ndjsonLogRecord{Type: "keepalive"}, opening)
+	require.Equal(t, http.StatusOK, writeStdin(t, name, "go").StatusCode)
+	require.Equal(t, map[string]string{"stdout": "released", "stderr": ""}, collectNDJSONLogs(t, reader))
+}
+
 func openLogStream(t *testing.T, name, accept string) *http.Response {
 	t.Helper()
 	req, err := http.NewRequest(http.MethodGet, common.BaseURL+"/process/"+name+"/logs/stream", nil)
