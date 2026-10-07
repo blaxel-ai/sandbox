@@ -39,6 +39,8 @@ type ProcessState struct {
 	ExitCode         int                     `json:"exitCode"`
 	Status           constants.ProcessStatus `json:"status"`
 	WorkingDir       string                  `json:"workingDir"`
+	LogIncomplete    bool                    `json:"logIncomplete,omitempty"`
+	LogFormat        string                  `json:"logFormat,omitempty"`
 	LogFile          string                  `json:"logFile,omitempty"`
 	StdoutFile       string                  `json:"stdoutFile,omitempty"`
 	StderrFile       string                  `json:"stderrFile,omitempty"`
@@ -106,6 +108,7 @@ func (pm *ProcessManager) SaveState() error {
 			stderr = proc.stderr.tail()
 			stderrBytes = proc.stderr.Len()
 		}
+		incomplete := proc.logIncomplete
 		proc.logLock.RUnlock()
 
 		state.Processes[pid] = ProcessState{
@@ -122,6 +125,8 @@ func (pm *ProcessManager) SaveState() error {
 			Status:           proc.Status,
 			WorkingDir:       proc.WorkingDir,
 			LogFile:          proc.LogFile,
+			LogFormat:        proc.LogFormat,
+			LogIncomplete:    incomplete,
 			StdoutFile:       proc.StdoutFile,
 			StderrFile:       proc.StderrFile,
 			Logs:             logs,
@@ -244,6 +249,8 @@ func (pm *ProcessManager) LoadState() error {
 			Status:           procState.Status,
 			WorkingDir:       procState.WorkingDir,
 			LogFile:          procState.LogFile,
+			LogFormat:        procState.LogFormat,
+			logIncomplete:    procState.LogIncomplete,
 			StdoutFile:       procState.StdoutFile,
 			StderrFile:       procState.StderrFile,
 			RestartOnFailure: procState.RestartOnFailure,
@@ -269,7 +276,7 @@ func (pm *ProcessManager) LoadState() error {
 
 		// Also read any new logs from the separate log files since state was saved
 		// Use atomic read with bounds checking to avoid TOCTOU issues
-		if procState.StdoutFile != "" {
+		if !proc.SupportsStructuredLogs() && procState.StdoutFile != "" {
 			newContent, end := readLogsSince(procState.StdoutFile, streamOffset(procState.StdoutBytes, procState.Stdout))
 			if len(newContent) > 0 {
 				proc.stdout.Write(newContent)
@@ -277,7 +284,7 @@ func (pm *ProcessManager) LoadState() error {
 				proc.stdout.resume(end)
 			}
 		}
-		if procState.StderrFile != "" {
+		if !proc.SupportsStructuredLogs() && procState.StderrFile != "" {
 			newContent, end := readLogsSince(procState.StderrFile, streamOffset(procState.StderrBytes, procState.Stderr))
 			if len(newContent) > 0 {
 				proc.stderr.Write(newContent)
@@ -286,8 +293,13 @@ func (pm *ProcessManager) LoadState() error {
 			}
 		}
 
+		if proc.SupportsStructuredLogs() {
+			proc.logReady = make(chan struct{})
+			restoreStructuredPosition(proc)
+		}
+
 		// Legacy: Also read from combined log file if separate files don't exist
-		if procState.StdoutFile == "" && procState.LogFile != "" {
+		if !proc.SupportsStructuredLogs() && procState.StdoutFile == "" && procState.LogFile != "" {
 			newContent, end := readLogsSince(procState.LogFile, streamOffset(procState.LogsBytes, procState.Logs))
 			if len(newContent) > 0 {
 				proc.logs.Write(newContent)
@@ -313,9 +325,7 @@ func (pm *ProcessManager) LoadState() error {
 				now := time.Now()
 				proc.CompletedAt = &now
 				proc.ExitCode = -1
-				close(proc.Done)
-				close(proc.TailDone)
-				proc.markFinished()
+				pm.finishRestoredProcess(proc)
 				deadCount++
 				pm.processes[pid] = proc
 				continue
@@ -354,6 +364,9 @@ func (pm *ProcessManager) LoadState() error {
 			pm.startExecutionTimeoutLocked(proc)
 
 			// Start a goroutine to monitor the adopted process
+			if proc.SupportsStructuredLogs() {
+				go pm.tailLogFiles(proc)
+			}
 			go pm.monitorAdoptedProcess(proc)
 
 			logrus.WithFields(logrus.Fields{
@@ -374,9 +387,7 @@ func (pm *ProcessManager) LoadState() error {
 			deadCount++
 
 			// Close the Done and TailDone channels since process is no longer running
-			close(proc.Done)
-			close(proc.TailDone)
-			proc.markFinished()
+			pm.finishRestoredProcess(proc)
 
 			logrus.WithFields(logrus.Fields{
 				"pid":     proc.PID,
@@ -385,11 +396,7 @@ func (pm *ProcessManager) LoadState() error {
 			}).Warn("Process died during restart")
 		} else {
 			// Process was already completed/failed/stopped - just restore state
-			if proc.CompletedAt != nil {
-				close(proc.Done)
-				close(proc.TailDone)
-				proc.markFinished()
-			}
+			pm.finishRestoredProcess(proc)
 		}
 
 		pm.processes[pid] = proc
@@ -403,6 +410,26 @@ func (pm *ProcessManager) LoadState() error {
 	}).Info("Process state loaded from disk")
 
 	return nil
+}
+
+// Drain output written while the API was offline before publishing completion.
+// LoadState owns pm.mu: the goroutine waits until all entries are installed.
+func (pm *ProcessManager) finishRestoredProcess(p *ProcessInfo) {
+	close(p.Done)
+	if p.SupportsStructuredLogs() && p.StdoutFile != "" && p.StderrFile != "" {
+		p.restoreFinalized = make(chan struct{})
+		go func() {
+			defer close(p.restoreFinalized)
+			pm.mu.RLock()
+			pm.mu.RUnlock()
+			pm.tailLogFiles(p)
+			p.markFinished()
+		}()
+	} else {
+		p.finishLogReady(nil)
+		close(p.TailDone)
+		p.markFinished()
+	}
 }
 
 // isProcessRunning checks if a process with the given PID is still running
@@ -659,7 +686,11 @@ func (pm *ProcessManager) monitorAdoptedProcess(proc *ProcessInfo) {
 				}
 				pm.mu.Unlock()
 				close(proc.Done)
-				close(proc.TailDone)
+				if proc.SupportsStructuredLogs() {
+					<-proc.TailDone
+				} else {
+					close(proc.TailDone)
+				}
 				pm.finishProcess(proc, nil)
 
 				logrus.WithFields(logrus.Fields{
@@ -674,7 +705,11 @@ func (pm *ProcessManager) monitorAdoptedProcess(proc *ProcessInfo) {
 			}
 		case <-proc.Done:
 			// Process was killed/stopped through our API
-			close(proc.TailDone)
+			if proc.SupportsStructuredLogs() {
+				<-proc.TailDone
+			} else {
+				close(proc.TailDone)
+			}
 			logrus.WithFields(logrus.Fields{
 				"pid":  proc.PID,
 				"name": proc.Name,

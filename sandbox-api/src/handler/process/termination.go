@@ -120,15 +120,25 @@ func (pm *ProcessManager) waitForRun(p *ProcessInfo, cmd *exec.Cmd, callback fun
 	p.stdout.WriteString(restartMsg)
 	p.logs.WriteString(restartMsg)
 	if p.StdoutFile != "" {
-		if f, err := os.OpenFile(p.StdoutFile, os.O_APPEND|os.O_WRONLY, 0644); err == nil {
+		if f, err := openPrivateProcessLog(p.StdoutFile, os.O_APPEND|os.O_WRONLY); err == nil {
 			_, _ = f.WriteString(restartMsg)
 			_ = f.Close()
 		}
 	}
-	for _, w := range p.logWriters {
-		_, _ = w.Write([]byte(restartMsg))
-		if f, ok := w.(interface{ Flush() }); ok {
-			f.Flush()
+	if p.SupportsStructuredLogs() {
+		start := !p.stdoutMidLine
+		p.stdoutMidLine = false
+		p.stderrMidLine = false
+		p.persistLogRecord(p.journalOwner, "stdout", []byte(restartMsg), start, true)
+		for _, w := range p.logWriters {
+			writeLogRecord(w, logRecord{Type: "stdout", Data: []byte(restartMsg), RawText: true})
+		}
+	} else {
+		for _, w := range p.logWriters {
+			_, _ = w.Write([]byte(restartMsg))
+			if f, ok := w.(interface{ Flush() }); ok {
+				f.Flush()
+			}
 		}
 	}
 	p.logLock.Unlock()

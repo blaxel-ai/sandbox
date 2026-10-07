@@ -105,7 +105,11 @@ func (p *pendingWriter) release() {
 	// The gap is between what was queued and what is written from now on, so it
 	// is said here rather than before the queue.
 	if p.dropped {
-		p.sendLocked("stdout", []byte(streamGapMarker))
+		if requiresStructuredLogs(p.target) {
+			p.sendLocked("truncated", []byte("Output is incomplete"))
+		} else {
+			p.sendLocked("stdout", []byte(streamGapMarker))
+		}
 	}
 	p.queue = nil
 	p.queued = 0
