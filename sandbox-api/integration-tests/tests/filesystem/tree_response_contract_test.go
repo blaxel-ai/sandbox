@@ -22,7 +22,8 @@ func TestFilesystemTreeResponseContract(t *testing.T) {
 	})
 	const rootContent = "root content\n"
 	const nestedContent = "nested content\n"
-	response, err := common.MakeRequest(http.MethodPut, common.EncodeTreePath(root), map[string]any{"files": map[string]string{"root.txt": rootContent, "nested/child.txt": nestedContent}})
+	const jsonContent = `{"enabled":true}`
+	response, err := common.MakeRequest(http.MethodPut, common.EncodeTreePath(root), map[string]any{"files": map[string]string{"root.txt": rootContent, "nested/child.txt": nestedContent, "nested/config.json": jsonContent}})
 	require.NoError(t, err)
 	defer response.Body.Close()
 	require.Equal(t, http.StatusOK, response.StatusCode)
@@ -65,4 +66,14 @@ func TestFilesystemTreeResponseContract(t *testing.T) {
 	body, err := io.ReadAll(response.Body)
 	require.NoError(t, err)
 	require.Equal(t, nestedContent, string(body))
+
+	// Downloads retain the file MIME type, including raw JSON documents.
+	response, err = common.MakeRequest(http.MethodGet, common.EncodeFilesystemPath(root+"/nested/config.json")+"?download=true", nil)
+	require.NoError(t, err)
+	defer response.Body.Close()
+	require.Equal(t, http.StatusOK, response.StatusCode)
+	require.Contains(t, response.Header.Get("Content-Type"), "application/json")
+	body, err = io.ReadAll(response.Body)
+	require.NoError(t, err)
+	require.Equal(t, jsonContent, string(body))
 }

@@ -876,10 +876,15 @@ paths:
                 oneOf:
                   - $ref: '#/components/schemas/Directory'
                   - $ref: '#/components/schemas/FileWithContent'
+                  - type: string
+                    format: binary
             application/octet-stream:
               schema:
-                type: string
-                format: binary
+                oneOf:
+                  - $ref: '#/components/schemas/Directory'
+                  - $ref: '#/components/schemas/FileWithContent'
+                  - type: string
+                    format: binary
         "404":
           description: File or directory not found
           content:
