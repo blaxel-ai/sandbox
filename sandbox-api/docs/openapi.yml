@@ -874,15 +874,15 @@ paths:
             application/json:
               schema:
                 oneOf:
-                  - $ref: "#/components/schemas/Directory"
-                  - $ref: "#/components/schemas/FileWithContent"
+                  - $ref: '#/components/schemas/Directory'
+                  - $ref: '#/components/schemas/FileWithContent'
                   - type: string
                     format: binary
             application/octet-stream:
               schema:
                 oneOf:
-                  - $ref: "#/components/schemas/Directory"
-                  - $ref: "#/components/schemas/FileWithContent"
+                  - $ref: '#/components/schemas/Directory'
+                  - $ref: '#/components/schemas/FileWithContent'
                   - type: string
                     format: binary
         "404":
@@ -1073,11 +1073,7 @@ paths:
           content:
             application/json:
               schema:
-                oneOf:
-                  - $ref: "#/components/schemas/Directory"
-                  - $ref: "#/components/schemas/FileWithContent"
-                  - type: string
-                    format: binary
+                $ref: "#/components/schemas/Directory"
         "400":
           description: Bad request
           content:
@@ -1121,11 +1117,7 @@ paths:
           content:
             application/json:
               schema:
-                oneOf:
-                  - $ref: "#/components/schemas/Directory"
-                  - $ref: "#/components/schemas/FileWithContent"
-                  - type: string
-                    format: binary
+                $ref: "#/components/schemas/Directory"
         "400":
           description: Bad request
           content:
