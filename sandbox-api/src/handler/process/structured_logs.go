@@ -117,7 +117,13 @@ func readLogRecords(path string, end, max int64, emit func(logRecord), gap func(
 	for s.Scan() {
 		line := s.Bytes()
 		if skip {
+			// A punched head may end exactly at a record boundary. Its
+			// preceding newline is gone, so validate before discarding it.
 			skip = false
+			var candidate logRecord
+			if json.Unmarshal(line, &candidate) == nil && validLogRecord(candidate) {
+				emit(candidate)
+			}
 			continue
 		}
 		if len(line) == 0 {
