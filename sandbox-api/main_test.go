@@ -76,3 +76,21 @@ func TestWriteTimeoutTruncatesLongLivedStream(t *testing.T) {
 		t.Errorf("expected %d lines without WriteTimeout, got %d", lines, got)
 	}
 }
+
+func TestSandboxHost(t *testing.T) {
+	cases := []struct{ env, workspace, want string }{
+		{"prod", "acme", "sbx-box-ws1.us-pdx-1.bl.run"},
+		{"prod", "baseten-q84x4yw", "sbx-box-ws1.us-pdx-1.b10.co"},
+		{"dev", "acme", "sbx-box-ws1.us-pdx-1.runv2.blaxel.dev"},
+		{"dev", "baseten-q84x4yw", "sbx-box-ws1.us-pdx-1.staging.b10.co"},
+		{"", "acme", ""},
+	}
+	for _, c := range cases {
+		if got := sandboxHost(c.env, c.workspace, "WS1", "box", "us-pdx-1"); got != c.want {
+			t.Errorf("sandboxHost(%q, %q) = %q, want %q", c.env, c.workspace, got, c.want)
+		}
+	}
+	if got := sandboxHost("prod", "acme", "", "box", "us-pdx-1"); got != "" {
+		t.Errorf("missing workspace id must yield empty host, got %q", got)
+	}
+}
