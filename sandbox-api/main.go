@@ -14,7 +14,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/blaxel-ai/sandbox-api/docs" // swagger generated docs
 	"github.com/blaxel-ai/sandbox-api/src/api"
 	"github.com/getsentry/sentry-go"
 
@@ -169,16 +168,6 @@ func main() {
 	wg.Wait()
 	txn.Finish()
 	sentrylib.DistributionMetric("sandbox.startup_duration", float64(time.Since(startupStart).Milliseconds()), sentry.UnitMillisecond)
-
-	// Swagger docs setup: point generated clients at this sandbox's own URL.
-	docs.SwaggerInfo.BasePath = "/"
-	if host := sandboxHost(os.Getenv("BL_ENV"), os.Getenv("BL_WORKSPACE"), os.Getenv("BL_WORKSPACE_ID"), os.Getenv("BL_NAME"), os.Getenv("BL_REGION")); host != "" {
-		docs.SwaggerInfo.Host = host
-		docs.SwaggerInfo.Schemes = []string{"https"}
-	} else {
-		docs.SwaggerInfo.Host = "localhost:8080"
-		docs.SwaggerInfo.Schemes = []string{"http"}
-	}
 
 	gin.SetMode(gin.ReleaseMode)
 	disableRequestLogging := os.Getenv("DISABLE_REQUEST_LOGGING") == "true"
@@ -415,28 +404,4 @@ func startBackgroundCommand(ctx context.Context, command string) error {
 		}
 	}()
 	return nil
-}
-
-// sandboxHost returns the public hostname of this sandbox,
-// sbx-{name}-{workspace_id}.{region}.{domain}, or "" outside prod/dev or when
-// the identity is incomplete. Workspaces prefixed "baseten-" are served on b10.co.
-func sandboxHost(env, workspace, workspaceID, name, region string) string {
-	if name == "" || workspaceID == "" || region == "" {
-		return ""
-	}
-	baseten := strings.HasPrefix(workspace, "baseten-")
-	var domain string
-	switch {
-	case env == "prod" && baseten:
-		domain = "b10.co"
-	case env == "prod":
-		domain = "bl.run"
-	case env == "dev" && baseten:
-		domain = "staging.b10.co"
-	case env == "dev":
-		domain = "runv2.blaxel.dev"
-	default:
-		return ""
-	}
-	return fmt.Sprintf("sbx-%s-%s.%s.%s", name, strings.ToLower(workspaceID), region, domain)
 }
