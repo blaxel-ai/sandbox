@@ -14,7 +14,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/blaxel-ai/sandbox-api/docs" // swagger generated docs
 	"github.com/blaxel-ai/sandbox-api/src/api"
 	"github.com/getsentry/sentry-go"
 
@@ -169,27 +168,6 @@ func main() {
 	wg.Wait()
 	txn.Finish()
 	sentrylib.DistributionMetric("sandbox.startup_duration", float64(time.Since(startupStart).Milliseconds()), sentry.UnitMillisecond)
-
-	// Swagger docs setup
-	blEnv := os.Getenv("BL_ENV")
-	workspace := os.Getenv("BL_WORKSPACE")
-	name := os.Getenv("BL_NAME")
-
-	if workspace != "" && name != "" {
-		docs.SwaggerInfo.BasePath = fmt.Sprintf("/%s/sandboxes/%s", workspace, name)
-	}
-
-	if blEnv == "prod" {
-		docs.SwaggerInfo.Host = "run.blaxel.ai"
-		docs.SwaggerInfo.Schemes = []string{"https"}
-	} else if blEnv == "dev" {
-		docs.SwaggerInfo.Host = "run.blaxel.dev"
-		docs.SwaggerInfo.Schemes = []string{"https"}
-	} else {
-		docs.SwaggerInfo.Host = "localhost:8080"
-		docs.SwaggerInfo.BasePath = "/"
-		docs.SwaggerInfo.Schemes = []string{"http"}
-	}
 
 	gin.SetMode(gin.ReleaseMode)
 	disableRequestLogging := os.Getenv("DISABLE_REQUEST_LOGGING") == "true"

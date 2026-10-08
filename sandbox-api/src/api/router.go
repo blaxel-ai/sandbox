@@ -16,7 +16,7 @@ import (
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
 
-	_ "github.com/blaxel-ai/sandbox-api/docs" // Import generated docs
+	"github.com/blaxel-ai/sandbox-api/docs"
 	"github.com/blaxel-ai/sandbox-api/src/handler"
 	"github.com/blaxel-ai/sandbox-api/src/handler/archive"
 	"github.com/blaxel-ai/sandbox-api/src/lib/audit"
@@ -59,7 +59,7 @@ func SetupRouter(disableRequestLogging bool, enableProcessingTime bool) *gin.Eng
 	r.GET("/swagger", func(c *gin.Context) {
 		c.Redirect(301, "/swagger/index.html")
 	})
-	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
+	r.GET("/swagger/*any", swaggerHandler())
 
 	// Initialize handlers
 	baseHandler := handler.NewBaseHandler()
@@ -466,4 +466,48 @@ func logrusMiddleware() gin.HandlerFunc {
 			}
 		}
 	}
+}
+
+// swaggerHandler serves the Swagger UI, and renders doc.json per request so
+// its host follows the current environment, which /environment/reload can
+// change after startup.
+func swaggerHandler() gin.HandlerFunc {
+	ui := ginSwagger.WrapHandler(swaggerFiles.Handler)
+	return func(c *gin.Context) {
+		if c.Param("any") != "/doc.json" {
+			ui(c)
+			return
+		}
+		spec := *docs.SwaggerInfo // copy: ReadDoc mutates the spec it renders
+		spec.BasePath = "/"
+		spec.Host, spec.Schemes = "localhost:8080", []string{"http"}
+		if host := sandboxHost(os.Getenv("BL_ENV"), os.Getenv("BL_WORKSPACE"), os.Getenv("BL_WORKSPACE_ID"), os.Getenv("BL_NAME"), os.Getenv("BL_REGION")); host != "" {
+			spec.Host, spec.Schemes = host, []string{"https"}
+		}
+		c.Data(http.StatusOK, "application/json; charset=utf-8", []byte(spec.ReadDoc()))
+	}
+}
+
+// sandboxHost returns the public hostname of this sandbox,
+// sbx-{name}-{workspace_id}.{region}.{domain}, or "" outside prod/dev or when
+// the identity is incomplete. Workspaces prefixed "baseten-" are served on b10.co.
+func sandboxHost(env, workspace, workspaceID, name, region string) string {
+	if workspace == "" || workspaceID == "" || name == "" || region == "" {
+		return ""
+	}
+	baseten := strings.HasPrefix(workspace, "baseten-")
+	var domain string
+	switch {
+	case env == "prod" && baseten:
+		domain = "b10.co"
+	case env == "prod":
+		domain = "bl.run"
+	case env == "dev" && baseten:
+		domain = "staging.b10.co"
+	case env == "dev":
+		domain = "runv2.blaxel.dev"
+	default:
+		return ""
+	}
+	return fmt.Sprintf("sbx-%s-%s.%s.%s", name, strings.ToLower(workspaceID), region, domain)
 }
