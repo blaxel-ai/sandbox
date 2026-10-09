@@ -446,6 +446,48 @@ paths:
       summary: Search for text content in files
       tags:
         - filesystem
+  /filesystem-copy:
+    post:
+      description: >-
+        Recursively copy a file or directory in one request, placed like `cp -r`: when destination is an existing directory (or a symlink to one), the copy goes inside it, named after source; otherwise destination is the copy's path. Relative paths use the filesystem working directory. Source symlinks are copied as symlinks; special files are refused. By default existing files are overwritten and existing directories merged.
+
+
+        With noOverwrite=true, every entry is created exclusively (O_EXCL, mkdir, symlink), with no check-then-write race: an existing final target, including an empty directory or a dangling symlink, returns 409 with code FILE_ALREADY_EXISTS and is left unchanged. A copy is not a transaction: on a later failure, entries it already created remain.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CopyRequest"
+        description: Source, destination, and optional noOverwrite flag
+        required: true
+      responses:
+        "200":
+          description: Files copied
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CopyResponse"
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Destination exists (FILE_ALREADY_EXISTS)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Copy failed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+      summary: Copy a file or directory
+      tags:
+        - filesystem
   "/filesystem-find/{path}":
     get:
       description: Finds files and directories using the find command.
@@ -1935,6 +1977,35 @@ components:
         - query
         - total
       type: object
+    CopyRequest:
+      properties:
+        destination:
+          example: /app/destination
+          type: string
+        noOverwrite:
+          default: false
+          example: false
+          type: boolean
+        source:
+          example: /app/source
+          type: string
+      required:
+        - destination
+        - source
+      type: object
+    CopyResponse:
+      properties:
+        destination:
+          type: string
+        message:
+          type: string
+        source:
+          type: string
+      required:
+        - destination
+        - message
+        - source
+      type: object
     Directory:
       properties:
         files:
@@ -2034,6 +2105,9 @@ components:
       type: object
     ErrorResponse:
       properties:
+        code:
+          example: FILE_ALREADY_EXISTS
+          type: string
         error:
           example: Error message
           type: string

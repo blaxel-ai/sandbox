@@ -340,7 +340,7 @@ func (fs *Filesystem) writeFile(path string, content []byte, perm os.FileMode) e
 }
 
 // WriteFileFromReader streams content from a reader to a file on disk
-func (fs *Filesystem) writeFileFromReader(path string, r io.Reader, perm os.FileMode) error {
+func (fs *Filesystem) writeFileFromReader(path string, r io.Reader, perm os.FileMode, options ...WriteOptions) error {
 	absPath, err := fs.GetAbsolutePath(path)
 	if err != nil {
 		return err
@@ -352,7 +352,7 @@ func (fs *Filesystem) writeFileFromReader(path string, r io.Reader, perm os.File
 		return err
 	}
 
-	f, err := os.OpenFile(absPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, perm)
+	f, err := os.OpenFile(absPath, writeOptions(options).openFlags(), perm)
 	if err != nil {
 		return err
 	}
@@ -364,7 +364,7 @@ func (fs *Filesystem) writeFileFromReader(path string, r io.Reader, perm os.File
 		_ = f.Close() // Close file before attempting to remove
 		return err
 	}
-	return nil
+	return f.Close()
 }
 
 // UploadFile retains the actual inode and creation provenance until multipart
@@ -498,7 +498,7 @@ func (fs *Filesystem) deleteDirectory(path string, recursive bool) error {
 }
 
 // CopyFile copies a file from src to dst
-func (fs *Filesystem) copyFile(src, dst string) error {
+func (fs *Filesystem) copyFile(src, dst string, options ...WriteOptions) error {
 	srcAbs, err := fs.GetAbsolutePath(src)
 	if err != nil {
 		return err
@@ -509,26 +509,29 @@ func (fs *Filesystem) copyFile(src, dst string) error {
 		return err
 	}
 
-	// Read the source file
-	content, err := os.ReadFile(srcAbs)
+	// Stream the source rather than buffering the entire file in memory.
+	source, err := os.Open(srcAbs)
 	if err != nil {
 		return err
 	}
+	defer source.Close()
 
 	// Get source file info for permissions
-	srcInfo, err := os.Stat(srcAbs)
+	srcInfo, err := source.Stat()
 	if err != nil {
 		return err
 	}
-
-	// Ensure destination directory exists
-	destDir := filepath.Dir(dstAbs)
-	if err := os.MkdirAll(destDir, 0755); err != nil {
-		return err
+	if !srcInfo.Mode().IsRegular() {
+		return fmt.Errorf("source is not a regular file: %s", src)
+	}
+	if !writeOptions(options).NoOverwrite {
+		if destInfo, err := os.Stat(dstAbs); err == nil && os.SameFile(srcInfo, destInfo) {
+			return fmt.Errorf("source and destination are the same file: %s", src)
+		}
 	}
 
 	// Write to destination with same permissions
-	return os.WriteFile(dstAbs, content, srcInfo.Mode())
+	return fs.writeFileFromReader(dstAbs, source, srcInfo.Mode(), options...)
 }
 
 // MoveFile moves a file from src to dst

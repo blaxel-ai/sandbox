@@ -513,6 +513,58 @@ const docTemplate = `{
                 }
             }
         },
+        "/filesystem-copy": {
+            "post": {
+                "description": "Recursively copy a file or directory in one request, placed like ` + "`" + `cp -r` + "`" + `: when destination is an existing directory (or a symlink to one), the copy goes inside it, named after source; otherwise destination is the copy's path. Relative paths use the filesystem working directory. Source symlinks are copied as symlinks; special files are refused. By default existing files are overwritten and existing directories merged.\n\nWith noOverwrite=true, every entry is created exclusively (O_EXCL, mkdir, symlink), with no check-then-write race: an existing final target, including an empty directory or a dangling symlink, returns 409 with code FILE_ALREADY_EXISTS and is left unchanged. A copy is not a transaction: on a later failure, entries it already created remain.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "filesystem"
+                ],
+                "summary": "Copy a file or directory",
+                "parameters": [
+                    {
+                        "description": "Source, destination, and optional noOverwrite flag",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/CopyRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Files copied",
+                        "schema": {
+                            "$ref": "#/definitions/CopyResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "Destination exists (FILE_ALREADY_EXISTS)",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "Copy failed",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/filesystem-find/{path}": {
             "get": {
                 "description": "Finds files and directories using the find command.",
@@ -2288,6 +2340,47 @@ const docTemplate = `{
                 }
             }
         },
+        "CopyRequest": {
+            "type": "object",
+            "required": [
+                "destination",
+                "source"
+            ],
+            "properties": {
+                "destination": {
+                    "type": "string",
+                    "example": "/app/destination"
+                },
+                "noOverwrite": {
+                    "type": "boolean",
+                    "default": false,
+                    "example": false
+                },
+                "source": {
+                    "type": "string",
+                    "example": "/app/source"
+                }
+            }
+        },
+        "CopyResponse": {
+            "type": "object",
+            "required": [
+                "destination",
+                "message",
+                "source"
+            ],
+            "properties": {
+                "destination": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "source": {
+                    "type": "string"
+                }
+            }
+        },
         "Directory": {
             "type": "object",
             "required": [
@@ -2436,6 +2529,10 @@ const docTemplate = `{
                 "error"
             ],
             "properties": {
+                "code": {
+                    "type": "string",
+                    "example": "FILE_ALREADY_EXISTS"
+                },
                 "error": {
                     "type": "string",
                     "example": "Error message"

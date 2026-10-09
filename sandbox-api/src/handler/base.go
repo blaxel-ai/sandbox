@@ -20,6 +20,7 @@ func NewBaseHandler() *BaseHandler {
 // ErrorResponse represents an error response
 type ErrorResponse struct {
 	Error string `json:"error" example:"Error message" binding:"required"`
+	Code  string `json:"code,omitempty" example:"FILE_ALREADY_EXISTS"`
 } // @name ErrorResponse
 
 // SuccessResponse represents a success response

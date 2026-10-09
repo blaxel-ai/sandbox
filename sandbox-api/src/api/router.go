@@ -140,6 +140,7 @@ func SetupRouter(disableRequestLogging bool, enableProcessingTime bool) *gin.Eng
 	r.HEAD("/filesystem-multipart/:uploadId/parts", head)
 
 	// Filesystem routes
+	r.POST("/filesystem-copy", fsHandler.HandleCopy)
 	r.GET("/filesystem-find/*path", fsHandler.HandleFind)
 	r.HEAD("/filesystem-find/*path", head)
 	r.GET("/filesystem-search/*path", fsHandler.HandleFuzzySearch)
