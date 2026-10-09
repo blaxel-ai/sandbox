@@ -14,7 +14,7 @@ func TestSandboxHost(t *testing.T) {
 		{"prod", "acme", "WS1", "sbx-box-ws1.us-pdx-1.bl.run"},
 		{"prod", "baseten-q84x4yw", "WS1", "sbx-box-ws1.us-pdx-1.b10.co"},
 		{"dev", "acme", "WS1", "sbx-box-ws1.us-pdx-1.runv2.blaxel.dev"},
-		{"dev", "baseten-q84x4yw", "WS1", "sbx-box-ws1.us-pdx-1.staging.b10.co"},
+		{"dev", "baseten-q84x4yw", "WS1", "sbx-box-ws1.us-pdx-1.dev.b10.co"},
 		{"", "acme", "WS1", ""},
 		{"prod", "acme", "", ""},
 		// Without the workspace slug we cannot tell b10.co from bl.run.
