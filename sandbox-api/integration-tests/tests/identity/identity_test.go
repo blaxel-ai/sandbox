@@ -137,6 +137,14 @@ func TestFilesystemIsScopedToTheWorkloadUser(t *testing.T) {
 	defer resp.Body.Close()
 	assert.NotEqual(t, http.StatusOK, resp.StatusCode, "a root-only file was readable through the filesystem API")
 
+	// Nor through a tree read that returns contents.
+	resp, err = common.MakeRequest(http.MethodGet, common.EncodeTreePath("/root")+"?recursive=true&content=true&excludeHidden=false", nil)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	assert.NotContains(t, string(body), "integration-identity-secret", "a root-only directory was listed through a tree read")
+	assert.NotEqual(t, http.StatusOK, resp.StatusCode, "a root-only directory was readable through a tree read")
+
 	// Writing into a root-owned directory must be refused too.
 	resp, err = common.MakeRequest(http.MethodPut, common.EncodeFilesystemPath("/root/identity-probe"), map[string]interface{}{
 		"content": "nope",

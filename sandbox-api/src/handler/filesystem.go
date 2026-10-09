@@ -702,14 +702,25 @@ func (h *FileSystemHandler) HandleDeleteFile(c *gin.Context) {
 
 // HandleGetTree handles GET requests for directory trees
 // @Summary Get directory tree
-// @Description Get a recursive directory tree structure starting from the specified path
+// @Description List a directory. Without query parameters, `files` and `subdirectories` hold its direct children.
+// @Description
+// @Description With `recursive=true`, they hold every file and directory below the path (flat, with full paths). With `content=true`, each regular file (or symlink to one) also carries its `content` as UTF-8 text, like a JSON file read; other entries have no `content`. `patterns`, `excludeDirs` and `excludeHidden` select entries the same way as find, but nothing is excluded by default.
+// @Description
+// @Description The response is all or nothing: when more than `maxFiles` files match, or `content=true` and they hold more than `maxBytes` bytes, the request fails with 422 before any content is read.
 // @Tags filesystem
 // @Accept json
 // @Produce json
 // @Param path path string true "Root directory path"
+// @Param recursive query boolean false "List every file and directory below the path, not only its direct children (default: false)"
+// @Param content query boolean false "Include the content of each regular file, as UTF-8 text (default: false)"
+// @Param patterns query string false "Comma-separated glob patterns matched against file names (e.g., *.json,*.md). Directories are not filtered."
+// @Param excludeDirs query string false "Comma-separated directory names to skip with everything below them (default: none)"
+// @Param excludeHidden query boolean false "Skip files and directories whose name starts with a dot (default: false)"
+// @Param maxFiles query int false "Fail with 422 when more files match (default: 10000 with recursive or content, otherwise unlimited; at most 100000)"
+// @Param maxBytes query int false "With content=true, fail with 422 when the matching files hold more bytes (default: 33554432, 32 MiB; at most 268435456, 256 MiB)"
 // @Success 200 {object} filesystem.Directory "Directory tree"
 // @Failure 400 {object} ErrorResponse "Bad request"
-// @Failure 422 {object} ErrorResponse "Unprocessable entity"
+// @Failure 422 {object} ErrorResponse "Unprocessable entity, including a maxFiles or maxBytes limit"
 // @Failure 500 {object} ErrorResponse "Internal server error"
 // @Router /filesystem/tree/{path} [get]
 func (h *FileSystemHandler) HandleGetTree(c *gin.Context) {
@@ -744,14 +755,107 @@ func (h *FileSystemHandler) HandleGetTree(c *gin.Context) {
 		return
 	}
 
-	// Get directory listing
-	dir, err := h.ListDirectory(rootPathStr)
+	options, err := parseTreeOptions(c)
+	if err != nil {
+		h.SendError(c, http.StatusBadRequest, err)
+		return
+	}
+
+	// Get directory listing. Without options, keep the historical listing path.
+	var dir *filesystem.Directory
+	if options == nil {
+		dir, err = h.ListDirectory(rootPathStr)
+	} else {
+		dir, err = h.fs.ReadTree(rootPathStr, *options)
+	}
 	if err != nil {
 		h.SendError(c, http.StatusUnprocessableEntity, fmt.Errorf("error getting file system tree: %w", err))
 		return
 	}
 
 	h.SendJSON(c, http.StatusOK, dir)
+}
+
+const (
+	defaultTreeMaxFiles = 10000
+	maxTreeMaxFiles     = 100000
+	defaultTreeMaxBytes = 32 << 20
+	maxTreeMaxBytes     = 256 << 20
+)
+
+// parseTreeOptions reads the tree query parameters. It returns nil when none is
+// set, so a plain tree request behaves exactly as before.
+func parseTreeOptions(c *gin.Context) (*filesystem.TreeOptions, error) {
+	query := c.Request.URL.Query()
+	set := false
+	for _, name := range []string{"recursive", "content", "patterns", "excludeDirs", "excludeHidden", "maxFiles", "maxBytes"} {
+		if query.Has(name) {
+			set = true
+		}
+	}
+	if !set {
+		return nil, nil
+	}
+
+	options := &filesystem.TreeOptions{}
+	var err error
+	if options.Recursive, err = parseBoolQuery(c, "recursive"); err != nil {
+		return nil, err
+	}
+	if options.Content, err = parseBoolQuery(c, "content"); err != nil {
+		return nil, err
+	}
+	if options.ExcludeHidden, err = parseBoolQuery(c, "excludeHidden"); err != nil {
+		return nil, err
+	}
+	options.Patterns = splitCommaList(c.Query("patterns"))
+	options.ExcludeDirs = splitCommaList(c.Query("excludeDirs"))
+
+	if options.Recursive || options.Content {
+		options.MaxFiles = defaultTreeMaxFiles
+	}
+	if value := c.Query("maxFiles"); value != "" {
+		parsed, err := strconv.Atoi(value)
+		if err != nil || parsed < 1 || parsed > maxTreeMaxFiles {
+			return nil, fmt.Errorf("invalid maxFiles %q: must be between 1 and %d", value, maxTreeMaxFiles)
+		}
+		options.MaxFiles = parsed
+	}
+	if options.Content {
+		options.MaxBytes = defaultTreeMaxBytes
+	}
+	if value := c.Query("maxBytes"); value != "" {
+		parsed, err := strconv.ParseInt(value, 10, 64)
+		if err != nil || parsed < 1 || parsed > maxTreeMaxBytes {
+			return nil, fmt.Errorf("invalid maxBytes %q: must be between 1 and %d", value, maxTreeMaxBytes)
+		}
+		if options.Content {
+			options.MaxBytes = parsed
+		}
+	}
+	return options, nil
+}
+
+func parseBoolQuery(c *gin.Context, name string) (bool, error) {
+	value := c.Query(name)
+	if value == "" {
+		return false, nil
+	}
+	parsed, err := strconv.ParseBool(value)
+	if err != nil {
+		return false, fmt.Errorf("invalid %s %q: must be true or false", name, value)
+	}
+	return parsed, nil
+}
+
+func splitCommaList(value string) []string {
+	var items []string
+	for _, item := range strings.Split(value, ",") {
+		if item = strings.TrimSpace(item); item != "" {
+			items = append(items, item)
+		}
+	}
+	return items
 }
 
 // TreeRequest represents the request body for creating or updating a directory tree
