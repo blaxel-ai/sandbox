@@ -86,6 +86,22 @@ BL_TYPE="${BL_TYPE:-sandbox}"
 LOG_LEVEL="${LOG_LEVEL:-debug}"
 BASE_IMAGE_TAG="${BASE_IMAGE_TAG:-latest}"
 
+# Guest architecture of the sandbox being built (amd64 or arm64).
+ARCH="${ARCH:-amd64}"
+case "$ARCH" in
+    amd64|arm64) ;;
+    *) echo "Error: unsupported ARCH '$ARCH' (expected amd64 or arm64)"; exit 1 ;;
+esac
+PLATFORM="linux/$ARCH"
+
+# arm64 artifacts live next to the amd64 ones, under an arch suffixed tag, so
+# both architectures of the same commit can coexist in S3 and in the registry.
+ARCH_SUFFIX=""
+if [ "$ARCH" != "amd64" ]; then
+    ARCH_SUFFIX="-$ARCH"
+fi
+ARTIFACT_TAG="${IMAGE_TAG}${ARCH_SUFFIX}"
+
 echo "Starting mk3 build process for sandbox..."
 echo "Sandbox Name: $SANDBOX_NAME"
 echo "Image Tag: $IMAGE_TAG"
@@ -93,11 +109,13 @@ echo "BL Environment: $BL_ENV"
 echo "BL Type: $BL_TYPE"
 echo "Build ID: $BUILD_ID"
 echo "Base Image Tag: $BASE_IMAGE_TAG"
+echo "Platform: $PLATFORM"
+echo "Artifact Tag: $ARTIFACT_TAG"
 echo "Batch Job Queue: $BATCH_JOB_QUEUE"
 echo "Batch Job Definition: $BATCH_JOB_DEFINITION"
 echo "Batch Region: $BATCH_REGION"
 
-OUTPUT_S3="s3://$IMAGE_BUCKET_MK3/blaxel/sbx/$SANDBOX_NAME/$IMAGE_TAG"
+OUTPUT_S3="s3://$IMAGE_BUCKET_MK3/blaxel/sbx/$SANDBOX_NAME/$ARTIFACT_TAG"
 echo "Target S3 location: $OUTPUT_S3"
 
 # Check if template.json has build.slim set to false
@@ -113,9 +131,10 @@ fi
 
 # Build container overrides with environment variables and command for the Batch job.
 # Pass --image as CLI arg since metamorph may not read IMAGE env var (INPUT_S3 flow works, IMAGE flow fails).
-IMAGE_REF="$SRC_REGISTRY:$BASE_IMAGE_TAG"
+IMAGE_REF="$SRC_REGISTRY:${BASE_IMAGE_TAG}${ARCH_SUFFIX}"
 CONTAINER_OVERRIDES=$(jq -n \
   --arg image "$IMAGE_REF" \
+  --arg platform "$PLATFORM" \
   --arg otel_enabled "false" \
   --arg bl_env "$BL_ENV" \
   --arg output_s3 "$OUTPUT_S3" \
@@ -128,7 +147,7 @@ CONTAINER_OVERRIDES=$(jq -n \
   --arg depot_project_id "$DEPOT_PROJECT_ID" \
   --arg no_slim "$NO_SLIM" \
   '{
-    command: ["--image", $image],
+    command: ["--image", $image, "--platform", $platform],
     environment: [
       {name: "OTEL_ENABLED", value: $otel_enabled},
       {name: "BL_ENV", value: $bl_env},
@@ -141,11 +160,12 @@ CONTAINER_OVERRIDES=$(jq -n \
       {name: "LOG_LEVEL", value: $log_level},
       {name: "DEPOT_PROJECT_ID", value: $depot_project_id},
       {name: "IMAGE", value: $image},
-      {name: "NO_SLIM", value: $no_slim}
+      {name: "NO_SLIM", value: $no_slim},
+      {name: "PLATFORM", value: $platform}
     ]
   }')
 
-JOB_NAME="mk3-build-${SANDBOX_NAME}-${IMAGE_TAG//[^a-zA-Z0-9-]/-}-$(date +%s)"
+JOB_NAME="mk3-build-${SANDBOX_NAME}-${ARTIFACT_TAG//[^a-zA-Z0-9-]/-}-$(date +%s)"
 
 echo "Submitting Batch job..."
 JOB_SUBMIT=$(aws batch submit-job \
@@ -227,10 +247,10 @@ API_PAYLOAD=$(jq -n \
   --arg registry "$REGISTRY_URL" \
   --arg workspace "$WORKSPACE" \
   --arg repository "$SANDBOX_NAME" \
-  --arg mk3 "blaxel/blaxel/sbx/$SANDBOX_NAME:$IMAGE_TAG" \
-  --arg tag "$IMAGE_TAG" \
+  --arg mk3 "blaxel/blaxel/sbx/$SANDBOX_NAME:$ARTIFACT_TAG" \
+  --arg tag "$ARTIFACT_TAG" \
   --arg registry_type "$REGISTRY_TYPE" \
-  --arg original "sbx/$SANDBOX_NAME:$IMAGE_TAG" \
+  --arg original "sbx/$SANDBOX_NAME:$ARTIFACT_TAG" \
   --arg region "$BATCH_REGION" \
   --arg bucket "$IMAGE_BUCKET_MK3" \
   '{
@@ -249,7 +269,7 @@ echo "Calling Blaxel API to register image..."
 echo "URL: $BL_API_URL/admin/images"
 echo "Workspace: $WORKSPACE"
 echo "Repository: $SANDBOX_NAME"
-echo "Tag: $IMAGE_TAG"
+echo "Tag: $ARTIFACT_TAG"
 echo "Payload: $API_PAYLOAD"
 
 # Make the API call
