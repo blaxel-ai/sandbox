@@ -93,6 +93,7 @@ Every `template.json` file should include:
 
 1. `build-ghcr-hub` pushes the Docker image to `ghcr.io/blaxel-ai/sandbox-<name>:<tag>`.
 2. `build-blaxel-hub` runs `bl push --image <ghcr ref>` into the `blaxel` workspace, authenticated with the `BL_BUILD_API_KEY` environment secret, then publishes the template to the store. The in-sandbox builder converts the image, the build logs stream into the job, the image is registered as `blaxel/<name>` when it succeeds, and the job fails when the build fails. Only amd64 images go through this step.
+   The same images are also pushed to the `baseten` workspace (`BL_BASETEN_BUILD_API_KEY`), without store publication. That build is skipped in an environment where the key is not set.
 
 ### Testing without touching production
 

@@ -418,7 +418,8 @@ jobs:
 
   build-blaxel-hub:
     # Builds the mk3 image with the in-sandbox builder: bl push imports the ghcr
-    # image into the blaxel workspace, which registers it as blaxel/<name>.
+    # image into each target workspace, which registers it as <workspace>/<name>.
+    # blaxel is the hub (published to the store); baseten gets the same images.
     runs-on: ubuntu-latest
     environment: |-
       ${{
@@ -437,6 +438,7 @@ jobs:
       fail-fast: false
       matrix:
         sandbox: ${{ fromJson(needs.generate-matrix.outputs.sandboxes )}}
+        workspace: [blaxel, baseten]
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -468,20 +470,27 @@ jobs:
           fi
       - name: Build sandbox image
         env:
-          BL_API_KEY: ${{ secrets.BL_BUILD_API_KEY }}
-          BL_WORKSPACE: blaxel
+          BL_API_KEY: ${{ matrix.workspace == 'baseten' && secrets.BL_BASETEN_BUILD_API_KEY || secrets.BL_BUILD_API_KEY }}
+          BL_WORKSPACE: ${{ matrix.workspace }}
           BL_ENV: ${{ env.BL_ENV }}
           # The ref is unique per commit, so the build is never served from the
           # cache of an older image pushed under a reused tag.
           IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-${{ matrix.sandbox }}:${{ steps.image-tag.outputs.tag }}
         run: |
           if [[ -z "$BL_API_KEY" ]]; then
+            # baseten is rolled out per environment: no key yet means not enabled here.
+            if [[ "$BL_WORKSPACE" == "baseten" ]]; then
+              echo "::warning::BL_BASETEN_BUILD_API_KEY is not set for this environment, skipping the baseten build"
+              exit 0
+            fi
             echo "BL_BUILD_API_KEY is not set for this environment"
             exit 1
           fi
           # bl push streams the build logs and exits non-zero when the build fails.
-          bl push -y -w blaxel -t sandbox -n "${{ matrix.sandbox }}" --image "$IMAGE" --timeout 45m
+          bl push -y -w "$BL_WORKSPACE" -t sandbox -n "${{ matrix.sandbox }}" --image "$IMAGE" --timeout 45m
       - name: Publish sandbox
+        # Only the blaxel workspace backs the public hub store.
+        if: matrix.workspace == 'blaxel'
         env:
           SANDBOX_NAME: ${{ matrix.sandbox }}
           TAG: latest # We want to display latest in UI, controlplane will automaticly use the latest tag
