@@ -87,6 +87,30 @@ Every `template.json` file should include:
    docker-compose up -d
    ```
 
+## How Hub Images Are Built
+
+`.github/workflows/build.yaml` builds each changed `hub/<name>` image in two steps:
+
+1. `build-ghcr-hub` pushes the Docker image to `ghcr.io/blaxel-ai/sandbox-<name>:<tag>`.
+2. `build-blaxel-hub` runs `bl push --image <ghcr ref>` into the `blaxel` workspace, authenticated with the `BL_BUILD_API_KEY` environment secret, then publishes the template to the store. The in-sandbox builder converts the image, the build logs stream into the job, the image is registered as `blaxel/<name>` when it succeeds, and the job fails when the build fails. Only amd64 images go through this step.
+
+### Testing without touching production
+
+Push to `develop`: it builds against the dev control plane only. To build without publishing to the dev store, run `bl push` locally under another name:
+
+```bash
+BL_API_KEY=<dev key> BL_ENV=dev bl push -y -w blaxel -t sandbox -n <name>-canary \
+  --image ghcr.io/blaxel-ai/sandbox-<name>:<tag>
+```
+
+### When the builder is broken
+
+Hub images are built by the `blaxel/inf/builder` image, which is built in `blaxel-ai/executionplane-services` by AWS Batch, never by itself. If it is broken:
+
+1. **Rebuild the builder**: run the `executionplane-services` build workflow manually with `service=builder` on the branch of the target environment (`develop` for dev, `main` for prod). It runs on AWS Batch, so it does not need a working builder. The builder embeds `sandbox-api` from `ghcr.io/blaxel-ai/sandbox:latest`: if a `sandbox-api` release broke it, fix or roll back that release first.
+2. **Roll back right away**: point the control plane at a known good builder with `BUILD_SANDBOX_IMAGE=blaxel/inf/builder:<good tag>`.
+3. Re-run this workflow manually for the images that failed.
+
 ## Styleguides
 
 ### Git Commit Messages
