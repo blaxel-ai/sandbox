@@ -503,7 +503,7 @@ func sandboxHost(env, workspace, workspaceID, name, region string) string {
 	case env == "prod":
 		domain = "bl.run"
 	case env == "dev" && baseten:
-		domain = "staging.b10.co"
+		domain = "dev.b10.co"
 	case env == "dev":
 		domain = "runv2.blaxel.dev"
 	default:
