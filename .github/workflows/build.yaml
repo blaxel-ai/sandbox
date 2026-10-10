@@ -406,13 +406,13 @@ jobs:
             exit 1
           fi
       - name: Install Blaxel CLI and log in
-        # Pinned to https://github.com/blaxel-ai/bl-action/pull/14 (installs the latest
-        # published CLI release, version input); repin to main once it is merged.
-        uses: blaxel-ai/bl-action@066867c79ebb7b1476beaf7fa5fb0b022b45e773
+        # main at the merge of https://github.com/blaxel-ai/bl-action/pull/14: installs the
+        # latest published CLI release, version input. The v1 tag predates it.
+        uses: blaxel-ai/bl-action@de9d043c44da4ba07c4417c5abe0dcbe789524b2
         with:
           workspace: blaxel
           apikey: ${{ secrets.BL_BUILD_API_KEY }}
-          # Pin with the BL_CLI_VERSION repo variable (e.g. v0.1.123); latest published release otherwise.
+          # Pin with the BL_CLI_VERSION repo variable (e.g. v0.1.124, the first with --tag); latest published release otherwise.
           version: ${{ vars.BL_CLI_VERSION }}
       - name: Set image tag
         id: image-tag
