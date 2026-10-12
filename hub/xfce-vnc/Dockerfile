@@ -1,11 +1,11 @@
 ARG SANDBOX_VERSION=latest
-FROM ghcr.io/blaxel-ai/sandbox:${SANDBOX_VERSION} AS sandbox-api
+FROM ghcr.io/basetenlabs/sandbox:${SANDBOX_VERSION} AS sandbox-api
 
 FROM trycua/cua-xfce:0.1.9
 
 USER root
 
-# Copy sandbox-api binary from Blaxel
+# Copy sandbox-api binary
 COPY --from=sandbox-api /sandbox-api /usr/local/bin/sandbox-api
 
 # Create D-Bus directory and fake socket to prevent connection errors (needed on the sandbox runtime)
@@ -22,7 +22,7 @@ COPY hub/xfce-vnc/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
 # Expose ports:
-# - 8080: sandbox-api (Blaxel)
+# - 8080: sandbox-api
 # - 5901: TigerVNC server
 # - 6901: noVNC HTML5 client
 EXPOSE 8080 5901 6901

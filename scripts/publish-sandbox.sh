@@ -10,23 +10,28 @@ if [ -z "$SANDBOX_NAME" ]; then
     exit 1
 fi
 
-if [ -z "$BL_ENV" ]; then
-    echo "Error: BL_ENV environment variable is required"
+if [ -z "$HUB_ENV" ]; then
+    echo "Error: HUB_ENV environment variable is required"
     exit 1
 fi
 
-if [ -z "$BL_API_URL" ]; then
-    echo "Error: BL_API_URL environment variable is required"
+if [ -z "$HUB_API_URL" ]; then
+    echo "Error: HUB_API_URL environment variable is required"
     exit 1
 fi
 
-if [ -z "$BL_ADMIN_USERNAME" ]; then
-    echo "Error: BL_ADMIN_USERNAME environment variable is required"
+if [ -z "$HUB_ADMIN_USERNAME" ]; then
+    echo "Error: HUB_ADMIN_USERNAME environment variable is required"
     exit 1
 fi
 
-if [ -z "$BL_ADMIN_PASSWORD" ]; then
-    echo "Error: BL_ADMIN_PASSWORD environment variable is required"
+if [ -z "$HUB_ADMIN_PASSWORD" ]; then
+    echo "Error: HUB_ADMIN_PASSWORD environment variable is required"
+    exit 1
+fi
+
+if [ -z "$HUB_WORKSPACE" ]; then
+    echo "Error: HUB_WORKSPACE environment variable is required"
     exit 1
 fi
 
@@ -34,7 +39,7 @@ fi
 TAG="${TAG:-latest}"
 
 echo "Publishing sandbox: $SANDBOX_NAME"
-echo "Environment: $BL_ENV"
+echo "Environment: $HUB_ENV"
 echo "Tag: $TAG"
 
 mkdir -p tmp/$SANDBOX_NAME
@@ -42,7 +47,7 @@ mkdir -p tmp/$SANDBOX_NAME
 # Read and update the JSON file
 if [ -f "hub/$SANDBOX_NAME/template.json" ]; then
     echo "Updating hub/$SANDBOX_NAME/template.json with image information"
-    jq -e --arg img "blaxel/$SANDBOX_NAME:$TAG" '
+    jq -e --arg img "$HUB_WORKSPACE/$SANDBOX_NAME:$TAG" '
         def usable_icon: select(type == "string") | gsub("^\\s+|\\s+$"; "") | select(length > 0);
         .image = $img
         | .iconLight = ((.iconLight | usable_icon) // (.icon | usable_icon) // (.iconDark | usable_icon))
@@ -59,8 +64,8 @@ fi
 echo "Making API call to update sandbox..."
 if ! curl -X PUT -H "Content-Type: application/json" \
     -d @tmp/$SANDBOX_NAME/template.json.tmp \
-    $BL_API_URL/admin/store/sandboxes/$SANDBOX_NAME \
-    -u $BL_ADMIN_USERNAME:$BL_ADMIN_PASSWORD; then
+    $HUB_API_URL/admin/store/sandboxes/$SANDBOX_NAME \
+    -u $HUB_ADMIN_USERNAME:$HUB_ADMIN_PASSWORD; then
     echo "ERROR: API call to update sandbox failed!"
     exit 1
 fi

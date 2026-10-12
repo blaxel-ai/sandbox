@@ -24,7 +24,7 @@ func TestAdoptedKeepAliveProcessRetakesScaleHold(t *testing.T) {
 	t.Setenv("SANDBOX_STATE_FILE", stateFile)
 
 	scaleFile := filepath.Join(dir, "scale_to_zero_disable")
-	t.Setenv("BLAXEL_SCALE_FILE", scaleFile)
+	t.Setenv("SANDBOX_SCALE_FILE", scaleFile)
 
 	// The previous run's keepAlive process, still alive across the restart.
 	cmd := exec.Command("sleep", "60")
@@ -108,7 +108,7 @@ func TestAdoptedProcessEnforcesTimeout(t *testing.T) {
 			t.Setenv("SANDBOX_STATE_FILE", stateFile)
 
 			scaleFile := filepath.Join(dir, "scale_to_zero_disable")
-			t.Setenv("BLAXEL_SCALE_FILE", scaleFile)
+			t.Setenv("SANDBOX_SCALE_FILE", scaleFile)
 
 			cmd := exec.Command("sleep", "60")
 			if err := cmd.Start(); err != nil {

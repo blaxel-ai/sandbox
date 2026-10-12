@@ -51,10 +51,11 @@ class PublishSandboxTest(unittest.TestCase):
                 **os.environ,
                 "SANDBOX_NAME": name,
                 "TAG": "test-tag",
-                "BL_ENV": "dev",
-                "BL_API_URL": f"http://127.0.0.1:{self.server.server_port}",
-                "BL_ADMIN_USERNAME": "local-test",
-                "BL_ADMIN_PASSWORD": "local-test",
+                "HUB_ENV": "dev",
+                "HUB_API_URL": f"http://127.0.0.1:{self.server.server_port}",
+                "HUB_ADMIN_USERNAME": "local-test",
+                "HUB_ADMIN_PASSWORD": "local-test",
+                "HUB_WORKSPACE": "hub",
                 "NO_PROXY": "127.0.0.1",
                 "no_proxy": "127.0.0.1",
             }
@@ -71,7 +72,7 @@ class PublishSandboxTest(unittest.TestCase):
             request_path, content_type, payload = self.requests.get(timeout=2)
             self.assertEqual(request_path, f"/admin/store/sandboxes/{name}")
             self.assertEqual(content_type, "application/json")
-            self.assertEqual(payload["image"], f"blaxel/{name}:test-tag")
+            self.assertEqual(payload["image"], f"hub/{name}:test-tag")
             for field in ("iconLight", "iconDark"):
                 self.assertIsInstance(payload[field], str)
                 self.assertTrue(payload[field].strip())

@@ -2036,7 +2036,7 @@ const docTemplate = `{
         },
         "/upgrade": {
             "post": {
-                "description": "Triggers an upgrade of the sandbox-api process. Returns 200 immediately before upgrading.\nThe upgrade will: download the specified binary from GitHub releases, validate it, and restart.\nAll running processes will be preserved across the upgrade.\nAvailable versions: \"latest\" (default, most recent release), \"develop\", \"main\", or specific tag like \"v1.0.0\"\nYou can also specify a custom baseUrl for forks (defaults to https://github.com/blaxel-ai/sandbox/releases)",
+                "description": "Triggers an upgrade of the sandbox-api process. Returns 200 immediately before upgrading.\nThe upgrade will: download the specified binary from GitHub releases, validate it, and restart.\nAll running processes will be preserved across the upgrade.\nAvailable versions: \"latest\" (default, most recent release), \"develop\", \"main\", or specific tag like \"v1.0.0\"\nYou can also specify a custom baseUrl for forks (defaults to https://github.com/basetenlabs/sandbox/releases)",
                 "consumes": [
                     "application/json"
                 ],
@@ -3314,7 +3314,7 @@ const docTemplate = `{
                 "baseUrl": {
                     "description": "Base URL for releases (useful for forks)",
                     "type": "string",
-                    "example": "https://github.com/blaxel-ai/sandbox/releases"
+                    "example": "https://github.com/basetenlabs/sandbox/releases"
                 },
                 "version": {
                     "description": "Version to upgrade to: \"latest\" (default), \"develop\", \"main\", or specific tag like \"v1.0.0\"",
@@ -3561,7 +3561,7 @@ const docTemplate = `{
 // SwaggerInfo holds exported Swagger Info so clients can modify it
 var SwaggerInfo = &swag.Spec{
 	Version:          "0.0.1",
-	Host:             "sbx-{sandbox_id}-{workspace_id}.{region}.bl.run",
+	Host:             "sbx-{sandbox_id}-{workspace_id}.{region}.b10.co",
 	BasePath:         "",
 	Schemes:          []string{"https"},
 	Title:            "Sandbox API",

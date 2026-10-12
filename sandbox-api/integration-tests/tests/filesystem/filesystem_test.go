@@ -652,14 +652,14 @@ func TestFileSystemWatchRecursiveNpmInstall(t *testing.T) {
 	require.NoError(t, err)
 	resp.Body.Close()
 
-	// ========== Test 1: Blaxel native watchFolder during npm install ==========
-	t.Log("\n========== Starting Blaxel watchFolder test ==========")
+	// ========== Test 1: Sandbox API native watchFolder during npm install ==========
+	t.Log("\n========== Starting sandbox API watchFolder test ==========")
 
 	watchPath := projectDir + "/**"
-	blaxelEvents := make([]map[string]interface{}, 0, 1000)
-	var blaxelEventsMu sync.Mutex
+	nativeEvents := make([]map[string]interface{}, 0, 1000)
+	var nativeEventsMu sync.Mutex
 
-	blaxelStartTime := time.Now()
+	nativeStartTime := time.Now()
 
 	// Start watcher goroutine
 	go func() {
@@ -680,9 +680,9 @@ func TestFileSystemWatchRecursiveNpmInstall(t *testing.T) {
 			if line != "" && !strings.Contains(line, "keepalive") {
 				var event map[string]interface{}
 				if json.Unmarshal([]byte(line), &event) == nil {
-					blaxelEventsMu.Lock()
-					blaxelEvents = append(blaxelEvents, event)
-					blaxelEventsMu.Unlock()
+					nativeEventsMu.Lock()
+					nativeEvents = append(nativeEvents, event)
+					nativeEventsMu.Unlock()
 				}
 			}
 		}
@@ -692,19 +692,19 @@ func TestFileSystemWatchRecursiveNpmInstall(t *testing.T) {
 	time.Sleep(500 * time.Millisecond)
 
 	// Run npm install
-	blaxelInstallStart := time.Now()
+	nativeInstallStart := time.Now()
 	resp, err = common.MakeRequest(http.MethodPost, "/process", map[string]interface{}{
 		"command": fmt.Sprintf("cd %s && npm install --silent 2>&1", projectDir),
 		"timeout": 180000,
 	})
 	require.NoError(t, err)
 	resp.Body.Close()
-	blaxelInstallEnd := time.Now()
+	nativeInstallEnd := time.Now()
 
 	// Wait for events to propagate
 	time.Sleep(3 * time.Second)
 
-	blaxelEndTime := time.Now()
+	nativeEndTime := time.Now()
 
 	// ========== Test 2: inotify-based watching during npm install ==========
 	// Check if inotifywait is available
@@ -808,54 +808,54 @@ func TestFileSystemWatchRecursiveNpmInstall(t *testing.T) {
 		}
 	}
 
-	// Build Blaxel path to events map
-	blaxelPathToEvents := make(map[string]map[string]bool)
-	blaxelEventsMu.Lock()
-	for _, event := range blaxelEvents {
+	// Build sandbox API path to events map
+	nativePathToEvents := make(map[string]map[string]bool)
+	nativeEventsMu.Lock()
+	for _, event := range nativeEvents {
 		path, _ := event["path"].(string)
 		name, _ := event["name"].(string)
 		op, _ := event["op"].(string)
 		fullPath := path + "/" + name
-		if _, exists := blaxelPathToEvents[fullPath]; !exists {
-			blaxelPathToEvents[fullPath] = make(map[string]bool)
+		if _, exists := nativePathToEvents[fullPath]; !exists {
+			nativePathToEvents[fullPath] = make(map[string]bool)
 		}
-		blaxelPathToEvents[fullPath][op] = true
+		nativePathToEvents[fullPath][op] = true
 	}
-	blaxelEventsMu.Unlock()
+	nativeEventsMu.Unlock()
 
 	// Compute set differences
-	var onlyInBlaxel, onlyInInotify, inBoth []string
-	for path := range blaxelPathToEvents {
+	var onlyInNative, onlyInInotify, inBoth []string
+	for path := range nativePathToEvents {
 		if _, exists := inotifyPathToEvents[path]; exists {
 			inBoth = append(inBoth, path)
 		} else {
-			onlyInBlaxel = append(onlyInBlaxel, path)
+			onlyInNative = append(onlyInNative, path)
 		}
 	}
 	for path := range inotifyPathToEvents {
-		if _, exists := blaxelPathToEvents[path]; !exists {
+		if _, exists := nativePathToEvents[path]; !exists {
 			onlyInInotify = append(onlyInInotify, path)
 		}
 	}
 
-	// Get unique event types for Blaxel
-	blaxelEventTypes := make(map[string]bool)
-	for _, events := range blaxelPathToEvents {
+	// Get unique event types for sandbox API
+	nativeEventTypes := make(map[string]bool)
+	for _, events := range nativePathToEvents {
 		for evt := range events {
-			blaxelEventTypes[evt] = true
+			nativeEventTypes[evt] = true
 		}
 	}
 
 	// ========== Results comparison ==========
 	t.Log("\n========== npm install Watch Comparison ==========")
 	t.Log("")
-	t.Log("--- Blaxel Native watchFolder ---")
-	t.Logf("  Total events: %d", len(blaxelEvents))
-	t.Logf("  Unique paths: %d", len(blaxelPathToEvents))
-	t.Logf("  Install time: %v", blaxelInstallEnd.Sub(blaxelInstallStart))
-	t.Logf("  Total time (including setup): %v", blaxelEndTime.Sub(blaxelStartTime))
-	eventTypesList := make([]string, 0, len(blaxelEventTypes))
-	for evt := range blaxelEventTypes {
+	t.Log("--- Sandbox API Native watchFolder ---")
+	t.Logf("  Total events: %d", len(nativeEvents))
+	t.Logf("  Unique paths: %d", len(nativePathToEvents))
+	t.Logf("  Install time: %v", nativeInstallEnd.Sub(nativeInstallStart))
+	t.Logf("  Total time (including setup): %v", nativeEndTime.Sub(nativeStartTime))
+	eventTypesList := make([]string, 0, len(nativeEventTypes))
+	for evt := range nativeEventTypes {
 		eventTypesList = append(eventTypesList, evt)
 	}
 	t.Logf("  Event types: %s", strings.Join(eventTypesList, ", "))
@@ -871,31 +871,31 @@ func TestFileSystemWatchRecursiveNpmInstall(t *testing.T) {
 
 		// Calculate ratios
 		if len(inotifyLines) > 0 {
-			eventRatio := float64(len(blaxelEvents)) / float64(len(inotifyLines))
-			t.Logf("  Event count ratio (Blaxel/inotify): %.2fx", eventRatio)
+			eventRatio := float64(len(nativeEvents)) / float64(len(inotifyLines))
+			t.Logf("  Event count ratio (sandbox API/inotify): %.2fx", eventRatio)
 		}
 		if len(inotifyPathToEvents) > 0 {
-			pathRatio := float64(len(blaxelPathToEvents)) / float64(len(inotifyPathToEvents))
-			t.Logf("  Unique paths ratio (Blaxel/inotify): %.2fx", pathRatio)
+			pathRatio := float64(len(nativePathToEvents)) / float64(len(inotifyPathToEvents))
+			t.Logf("  Unique paths ratio (sandbox API/inotify): %.2fx", pathRatio)
 		}
 		t.Log("")
 		t.Log("--- Path Differences ---")
 		t.Logf("  Paths in both: %d", len(inBoth))
-		t.Logf("  Only in Blaxel: %d", len(onlyInBlaxel))
+		t.Logf("  Only in sandbox API: %d", len(onlyInNative))
 		t.Logf("  Only in inotify: %d", len(onlyInInotify))
 		t.Log("")
 
 		// Show sample of paths only in each
 		sampleLimit := 20
-		if len(onlyInBlaxel) > 0 {
-			t.Logf("  Sample paths only in Blaxel (first %d):", min(sampleLimit, len(onlyInBlaxel)))
-			for i, p := range onlyInBlaxel {
+		if len(onlyInNative) > 0 {
+			t.Logf("  Sample paths only in sandbox API (first %d):", min(sampleLimit, len(onlyInNative)))
+			for i, p := range onlyInNative {
 				if i >= sampleLimit {
-					t.Logf("    ... and %d more", len(onlyInBlaxel)-sampleLimit)
+					t.Logf("    ... and %d more", len(onlyInNative)-sampleLimit)
 					break
 				}
 				events := make([]string, 0)
-				for evt := range blaxelPathToEvents[p] {
+				for evt := range nativePathToEvents[p] {
 					events = append(events, evt)
 				}
 				t.Logf("    - [%s] %s", strings.Join(events, ", "), p)
@@ -918,10 +918,10 @@ func TestFileSystemWatchRecursiveNpmInstall(t *testing.T) {
 		}
 
 		// Show event type breakdown for differences
-		blaxelOnlyEventTypes := make(map[string]int)
-		for _, p := range onlyInBlaxel {
-			for evt := range blaxelPathToEvents[p] {
-				blaxelOnlyEventTypes[evt]++
+		nativeOnlyEventTypes := make(map[string]int)
+		for _, p := range onlyInNative {
+			for evt := range nativePathToEvents[p] {
+				nativeOnlyEventTypes[evt]++
 			}
 		}
 		inotifyOnlyEventTypes := make(map[string]int)
@@ -933,9 +933,9 @@ func TestFileSystemWatchRecursiveNpmInstall(t *testing.T) {
 
 		t.Log("")
 		t.Log("--- Event Type Breakdown for Differences ---")
-		if len(blaxelOnlyEventTypes) > 0 {
-			t.Log("  Events only in Blaxel by type:")
-			for evt, count := range blaxelOnlyEventTypes {
+		if len(nativeOnlyEventTypes) > 0 {
+			t.Log("  Events only in sandbox API by type:")
+			for evt, count := range nativeOnlyEventTypes {
 				t.Logf("    %s: %d", evt, count)
 			}
 		}
@@ -947,13 +947,13 @@ func TestFileSystemWatchRecursiveNpmInstall(t *testing.T) {
 		}
 	}
 
-	// Assertions - Blaxel should capture significant activity
-	assert.Greater(t, len(blaxelEvents), 100, "Blaxel should capture at least 100 events")
+	// Assertions - sandbox API should capture significant activity
+	assert.Greater(t, len(nativeEvents), 100, "sandbox API should capture at least 100 events")
 
 	if inotifyAvailable {
-		// The key assertion: after our fix, Blaxel should capture everything that inotify captures
-		// onlyInInotify should be 0 - meaning no paths were missed by Blaxel
-		assert.Equal(t, 0, len(onlyInInotify), "Blaxel should capture all paths that inotify captures. Missing %d paths.", len(onlyInInotify))
+		// The key assertion: after our fix, sandbox API should capture everything that inotify captures
+		// onlyInInotify should be 0 - meaning no paths were missed by sandbox API
+		assert.Equal(t, 0, len(onlyInInotify), "sandbox API should capture all paths that inotify captures. Missing %d paths.", len(onlyInInotify))
 	}
 }
 

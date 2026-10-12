@@ -37,7 +37,7 @@ import (
 // @title           Sandbox API
 // @version         0.0.1
 // @description     API for manipulating filesystem, processes and network.
-// @host            sbx-{sandbox_id}-{workspace_id}.{region}.bl.run
+// @host            sbx-{sandbox_id}-{workspace_id}.{region}.b10.co
 // @schemes         https
 // @securityDefinitions.apikey BearerAuth
 // @in header

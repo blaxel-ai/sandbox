@@ -94,7 +94,7 @@ func (h *SystemHandler) HandleHealth(c *gin.Context) {
 // UpgradeRequest represents the request body for the upgrade endpoint
 type UpgradeRequest struct {
 	Version string `json:"version" example:"latest"`                                        // Version to upgrade to: "latest" (default), "develop", "main", or specific tag like "v1.0.0"
-	BaseURL string `json:"baseUrl" example:"https://github.com/blaxel-ai/sandbox/releases"` // Base URL for releases (useful for forks)
+	BaseURL string `json:"baseUrl" example:"https://github.com/basetenlabs/sandbox/releases"` // Base URL for releases (useful for forks)
 } // @name UpgradeRequest
 
 // defaultUpgradeVersion is the version used when an upgrade request omits one.
@@ -119,7 +119,7 @@ func resolveUpgradeVersion(requested string) string {
 // @Description The upgrade will: download the specified binary from GitHub releases, validate it, and restart.
 // @Description All running processes will be preserved across the upgrade.
 // @Description Available versions: "latest" (default, most recent release), "develop", "main", or specific tag like "v1.0.0"
-// @Description You can also specify a custom baseUrl for forks (defaults to https://github.com/blaxel-ai/sandbox/releases)
+// @Description You can also specify a custom baseUrl for forks (defaults to https://github.com/basetenlabs/sandbox/releases)
 // @Tags system
 // @Accept json
 // @Produce json
@@ -138,7 +138,7 @@ func (h *SystemHandler) HandleUpgrade(c *gin.Context) {
 	// Default base URL
 	baseURL := req.BaseURL
 	if baseURL == "" {
-		baseURL = "https://github.com/blaxel-ai/sandbox/releases"
+		baseURL = "https://github.com/basetenlabs/sandbox/releases"
 	}
 
 	// Save state before responding

@@ -101,7 +101,7 @@ func Init(disabled bool) func() {
 	logrus.Infof("")
 	logrus.Infof("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 	logrus.Infof("  Telemetry is ENABLED (anonymous — no PII collected)")
-	logrus.Infof("  This helps the Blaxel team detect and fix crashes faster.")
+	logrus.Infof("  This helps the Baseten team detect and fix crashes faster.")
 	logrus.Infof("  No personal data, file contents, or process output is ever sent.")
 	logrus.Infof("")
 	logrus.Infof("  To opt out, use any of the following:")

@@ -185,13 +185,13 @@ func TestParseMountPointsKeepsOnlyPointsBelowTheRoot(t *testing.T) {
 		"22 21 0:22 / /proc rw,nosuid - proc proc rw",
 		"23 21 0:23 / /uk rw,relatime - fuse uk rw",
 		"24 21 0:24 / /var/lib/kubelet/pods/x rw - tmpfs tmpfs rw",
-		"25 21 0:25 / /run/blaxel\\040data rw - tmpfs tmpfs rw",
+		"25 21 0:25 / /run/platform\\040data rw - tmpfs tmpfs rw",
 		"malformed line",
 	}, "\n"))
 
 	mounts := parseMountPoints(info, "/")
 
-	for _, point := range []string{"/proc", "/uk", "/var/lib/kubelet/pods/x", "/run/blaxel data"} {
+	for _, point := range []string{"/proc", "/uk", "/var/lib/kubelet/pods/x", "/run/platform data"} {
 		if !mounts[point] {
 			t.Errorf("expected %q to be pruned from the walk", point)
 		}

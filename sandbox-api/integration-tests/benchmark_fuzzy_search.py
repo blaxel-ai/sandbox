@@ -16,7 +16,7 @@ import requests
 
 # Configuration
 API_URL = os.getenv("API_BASE_URL", "http://localhost:8080")
-TEST_DIR = "/Users/mjoffre/Documents/blaxel/sandbox/hub"
+TEST_DIR = os.getenv("TEST_DIR", os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../hub"))
 QUERIES = ["app", "page", "component", "router", "server"]
 
 # Colors

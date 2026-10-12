@@ -23,8 +23,8 @@ func TestHandleWelcome(t *testing.T) {
 	}
 	want := map[string]string{
 		"apiReference":  "/swagger/doc.json",
-		"message":       "Welcome to your Blaxel Sandbox. Discover your capabilities here: /swagger/doc.json",
-		"documentation": "https://docs.blaxel.ai/Sandboxes/Overview",
+		"message":       "Welcome to your Baseten Sandbox. Discover your capabilities here: /swagger/doc.json",
+		"documentation": "https://docs.baseten.co/sandboxes/overview",
 		"description":   "This sandbox provides a full-featured environment for running code securely. Visit the documentation to learn how to manage processes, access the filesystem, and more.",
 	}
 	for key, value := range want {

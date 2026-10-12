@@ -44,9 +44,9 @@ RUN npm i -g typescript ts-node @types/node dotenv webpack webpack-cli
 # Install code-server
 RUN curl -fsSL https://code-server.dev/install.sh | sh
 
-# Create /blaxel directory and Next.js app for testing
-RUN mkdir -p /blaxel && \
-    npx create-next-app@latest /blaxel/app --use-npm --typescript --eslint --tailwind --src-dir --app --import-alias "@/*" --no-git --yes --no-turbopack
+# Create the Next.js app for testing
+RUN mkdir -p /app && \
+    npx create-next-app@latest /app --use-npm --typescript --eslint --tailwind --src-dir --app --import-alias "@/*" --no-git --yes --no-turbopack
 
 # Copy and build sandbox-api from local source
 COPY sandbox-api /home/user/sandbox-api

@@ -103,7 +103,7 @@ class ContextWebSocket:
             {
                 "header": {
                     "msg_id": msg_id,
-                    "username": "blaxel",
+                    "username": "sandbox",
                     "session": self.session_id,
                     "msg_type": "execute_request",
                     "version": "5.3",

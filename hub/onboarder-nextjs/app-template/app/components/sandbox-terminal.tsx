@@ -62,8 +62,8 @@ export function SandboxTerminal({
           <span className="chrome-dot chrome-red" />
           <span className="chrome-dot chrome-yellow" />
           <span className="chrome-dot chrome-green" />
-          <strong>sandbox@blaxel</strong>
-          <code>/blaxel/app</code>
+          <strong>sandbox@baseten</strong>
+          <code>/app</code>
         </div>
         <div className="terminal" aria-live="polite" ref={viewportRef}>
           {entries.map((entry) => (
@@ -80,7 +80,7 @@ export function SandboxTerminal({
                     }
                   />
                   <span className="prompt-user">sandbox</span>
-                  <span className="prompt-path">/blaxel/app</span>
+                  <span className="prompt-path">/app</span>
                   <span className="prompt-symbol">$</span>
                   <code>{entry.command}</code>
                 </div>
@@ -96,7 +96,7 @@ export function SandboxTerminal({
             >
               <span className="dot idle" />
               <span className="prompt-user">sandbox</span>
-              <span className="prompt-path">/blaxel/app</span>
+              <span className="prompt-path">/app</span>
               <span className="prompt-symbol">$</span>
               <input
                 aria-label="Type a command for your agent"

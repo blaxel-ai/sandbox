@@ -5,9 +5,9 @@ ARG GIT_COMMIT=unknown
 ARG SENTRY_DSN=""
 ARG SENTRY_ENVIRONMENT=""
 
-WORKDIR /blaxel/sandbox-api
+WORKDIR /src/sandbox-api
 
-COPY . /blaxel/sandbox-api
+COPY . /src/sandbox-api
 
 RUN set -xe; \
   BUILD_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ") && \

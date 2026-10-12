@@ -1,8 +1,8 @@
 FROM golang:1.25.0-bookworm as build
 
-WORKDIR /blaxel/sandbox-api
+WORKDIR /src/sandbox-api
 
-COPY sandbox-api/ /blaxel/sandbox-api/
+COPY sandbox-api/ /src/sandbox-api/
 
 RUN go build \
   -v \
@@ -13,10 +13,10 @@ RUN go build \
 
 FROM python:3.12-slim
 
-WORKDIR /blaxel
+WORKDIR /workspace
 
-COPY --from=build /blaxel/sandbox-api/sandbox-api /blaxel/sandbox-api
+COPY --from=build /src/sandbox-api/sandbox-api /usr/local/bin/sandbox-api
 
 EXPOSE 8080
 
-ENTRYPOINT ["/blaxel/sandbox-api"]
+ENTRYPOINT ["/usr/local/bin/sandbox-api"]

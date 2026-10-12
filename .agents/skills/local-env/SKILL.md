@@ -102,7 +102,7 @@ Runs `go test -v ./...` from within `sandbox-api/`. These are fast in-process te
 make docker-build
 ```
 
-Builds `blaxel/sandbox-api:latest`. To run it:
+Builds `sandbox-api:latest`. To run it:
 
 ```bash
 make docker-run

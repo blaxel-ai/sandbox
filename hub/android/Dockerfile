@@ -1,5 +1,5 @@
 ARG SANDBOX_VERSION=latest
-FROM ghcr.io/blaxel-ai/sandbox:${SANDBOX_VERSION} AS sandbox-api
+FROM ghcr.io/basetenlabs/sandbox:${SANDBOX_VERSION} AS sandbox-api
 FROM redroid/redroid@sha256:a6c464bbedcf1dcb67dbf91f329fbb19bee5b50631f0ca6bda6ed7c41b0e64e2 AS android
 
 FROM debian:trixie-slim
@@ -17,8 +17,8 @@ RUN prop=/opt/android/bundle/rootfs/system/system_ext/etc/build.prop \
     && sed -i 's/^ro.adb.secure=0$/ro.adb.secure=1/' "$prop"
 COPY hub/android/config.json /opt/android/config.json
 COPY hub/android/android.py /opt/android/android.py
-RUN mkdir -p /var/lib/android/data /var/log/android /run/android /blaxel \
+RUN mkdir -p /var/lib/android/data /var/log/android /run/android /workspace \
     && chmod +x /usr/local/bin/sandbox-api
-WORKDIR /blaxel
+WORKDIR /workspace
 EXPOSE 8080
 ENTRYPOINT ["/usr/local/bin/sandbox-api", "--command", "exec python3 /opt/android/android.py"]

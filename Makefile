@@ -10,10 +10,10 @@ api:
 	cd sandbox-api && SANDBOX_LOG_DIR=./tmp/log air
 
 docker-build:
-	docker build -t blaxel/sandbox-api .
+	docker build -t sandbox-api .
 
 docker-run:
-	docker run -p 8080:8080 -p 3000:3000 --rm --name sandbox-dev -v ./sandbox-api:/blaxel/sandbox-api -v ./tmp:/blaxel/tmp blaxel/sandbox-api:latest
+	docker run -p 8080:8080 -p 3000:3000 --rm --name sandbox-dev -v ./sandbox-api:/src/sandbox-api -v ./tmp:/src/tmp sandbox-api:latest
 
 test:
 	cd sandbox-api && go test -v ./...

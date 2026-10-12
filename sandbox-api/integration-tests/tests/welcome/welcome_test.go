@@ -19,8 +19,8 @@ func TestWelcomeDiscoversAPIReference(t *testing.T) {
 	var welcome map[string]string
 	require.NoError(t, common.ParseJSONResponse(resp, &welcome))
 	require.Equal(t, "/swagger/doc.json", welcome["apiReference"])
-	assert.Equal(t, "Welcome to your Blaxel Sandbox. Discover your capabilities here: /swagger/doc.json", welcome["message"])
-	assert.Equal(t, "https://docs.blaxel.ai/Sandboxes/Overview", welcome["documentation"])
+	assert.Equal(t, "Welcome to your Baseten Sandbox. Discover your capabilities here: /swagger/doc.json", welcome["message"])
+	assert.Equal(t, "https://docs.baseten.co/sandboxes/overview", welcome["documentation"])
 	assert.NotEmpty(t, welcome["description"])
 
 	referenceResp, err := common.MakeRequest(http.MethodGet, welcome["apiReference"], nil)

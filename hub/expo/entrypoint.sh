@@ -36,7 +36,7 @@ curl -s http://localhost:8080/process \
   -H "Content-Type: application/json" \
   -d '{
     "name": "dev-server",
-    "workingDir": "/blaxel/app",
+    "workingDir": "/app",
     "command": "npx expo start --web --port 8081",
     "waitForCompletion": false,
     "restartOnFailure": true,

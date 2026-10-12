@@ -3,7 +3,7 @@
 //
 // The command line is bounded, so the runtime moves everything that does not
 // fit into a file mounted from a secret and names it in BL_ENV_VAR_PATH. The
-// guest's init (the metamorph wrapper) reads that file before exec'ing the
+// guest's init wrapper reads that file before exec'ing the
 // workload, but may have loaded an older version before a restart.
 //
 // Reading the file here makes the API authoritative for the variables it

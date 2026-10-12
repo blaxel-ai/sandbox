@@ -4,7 +4,7 @@ export const runtime = 'nodejs';
 
 export async function GET() {
   return NextResponse.json({
-    app: 'blaxel-sandbox-lab',
+    app: 'baseten-sandbox-lab',
     cwd: process.cwd(),
     ok: true,
     timestamp: new Date().toISOString(),

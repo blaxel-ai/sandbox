@@ -1,6 +1,6 @@
-# Agent instructions — Blaxel Sandbox Lab
+# Agent instructions — Baseten Sandbox Lab
 
-You're working inside `/blaxel/app`, a running Next.js dev server (port 3000, already started). This app is a **template, not a finished product**. Treat everything on the page — layout, terminal, stats panel, agent launcher, docs cards — as scaffolding you're free to change, extend, or delete. There is no "correct" final state to preserve.
+You're working inside `/app`, a running Next.js dev server (port 3000, already started). This app is a **template, not a finished product**. Treat everything on the page — layout, terminal, stats panel, agent launcher, docs cards — as scaffolding you're free to change, extend, or delete. There is no "correct" final state to preserve.
 
 ## Orient fast
 

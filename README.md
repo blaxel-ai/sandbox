@@ -37,7 +37,7 @@ A development environment for TypeScript applications with Node.js runtime and e
 A comprehensive development environment for building React Native applications using the Expo framework. Includes Expo CLI, development server, and all necessary tools for cross-platform mobile development.
 
 ### Omnigent Host
-A managed-host runtime for Omnigent agent sessions. It combines Omnigent's prebuilt host environment with the Blaxel sandbox API for process execution, file transfer, streaming, and lifecycle control. The image stays hidden from general Hub discovery because Omnigent selects it automatically, but its `blaxel/omnigent-host:latest` reference is public across workspaces.
+A managed-host runtime for Omnigent agent sessions. It combines Omnigent's prebuilt host environment with the Baseten sandbox API for process execution, file transfer, streaming, and lifecycle control. The image stays hidden from general Hub discovery because Omnigent selects it automatically, but its image reference is public across workspaces.
 
 ## Prerequisites
 
@@ -49,7 +49,7 @@ A managed-host runtime for Omnigent agent sessions. It combines Omnigent's prebu
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/blaxel-ai/sandbox.git
+   git clone https://github.com/basetenlabs/sandbox.git
    cd sandbox
    ```
 
@@ -60,16 +60,11 @@ A managed-host runtime for Omnigent agent sessions. It combines Omnigent's prebu
 
 ## Usage
 
-### Blaxel SDK
+### Baseten SDK
 
-Languages:
- - [Python](https://github.com/blaxel-ai/sdk-python)
- - [Typescript](https://github.com/modelcontextprotocol/typescript-sdk)
-
-You can find sample on how to create/retrieve/remove a Sandbox at this url: https://docs.blaxel.ai/Sandboxes/Overview
-Sandbox operations:
-- [Process](https://docs.blaxel.ai/Sandboxes/Processes)
-- [Filesystem](https://docs.blaxel.ai/Sandboxes/Filesystem)
+Create, manage and delete sandboxes with the Baseten SDK (TypeScript, Python, Go), the Baseten CLI or the dashboard:
+- [Overview](https://docs.baseten.co/sandboxes/overview)
+- [Manage sandboxes](https://docs.baseten.co/sandboxes/manage) (processes, files, HTTP services)
 
 ### Accessing template environments
 
@@ -110,7 +105,7 @@ You can upgrade a running sandbox-api instance using the `/upgrade` endpoint:
 curl -X POST http://localhost:8080/upgrade
 ```
 
-This will automatically download the latest binary from [GitHub Releases](https://github.com/blaxel-ai/sandbox/releases), validate it, and restart the server. All running processes are preserved across the upgrade.
+This will automatically download the latest binary from [GitHub Releases](https://github.com/basetenlabs/sandbox/releases), validate it, and restart the server. All running processes are preserved across the upgrade.
 
 You can also specify a version using the `SANDBOX_UPGRADE_VERSION` environment variable (defaults to `latest`).
 
@@ -169,9 +164,8 @@ This project is licensed under the MIT License - see the [LICENSE](../LICENSE) f
 For support, please:
 
 - Open an issue on GitHub
-- Contact the Blaxel team at support@blaxel.ai
 - Join our community channels
 
 ---
 
-Built with ❤️ by [Blaxel](https://blaxel.ai)
+Built with ❤️ by [Baseten](https://www.baseten.co)

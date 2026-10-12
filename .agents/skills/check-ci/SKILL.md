@@ -18,7 +18,7 @@ When invoked, determine which branch to watch:
 ### Step 1: Find the latest "Build and Push Sandbox" run
 
 ```bash
-gh api "repos/blaxel-ai/sandbox/actions/runs?branch=<branch>&per_page=5" \
+gh api "repos/basetenlabs/sandbox/actions/runs?branch=<branch>&per_page=5" \
   --jq '.workflow_runs[] | select(.name == "Build and Push Sandbox") | {id: .id, status: .status, conclusion: .conclusion, url: .html_url, created_at: .created_at}' \
   | head -1
 ```

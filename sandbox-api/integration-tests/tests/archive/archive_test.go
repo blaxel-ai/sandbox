@@ -118,7 +118,7 @@ func TestArchiveExportFailureDoesNotLockTheSandbox(t *testing.T) {
 	// is frozen and the processes are stopped.
 	exportRequest := map[string]interface{}{
 		"url":         "http://127.0.0.1:1/never-reached",
-		"imageDevice": "/dev/blaxel-archive-does-not-exist",
+		"imageDevice": "/dev/sandbox-archive-does-not-exist",
 	}
 	resp, err = common.MakeRequestWithTimeout(http.MethodPost, "/archive/export", exportRequest, 90*time.Second)
 	require.NoError(t, err)

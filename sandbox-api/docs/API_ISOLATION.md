@@ -10,7 +10,7 @@ that answers refused connections with a TCP reset.
 ## Enabling it
 
 ```dockerfile
-RUN adduser -D -u 10001 -h /blaxel app
+RUN adduser -D -u 10001 -h /home/app app
 USER app
 
 ENV BL_SANDBOX_API_ISOLATION=true
@@ -24,11 +24,11 @@ covers. `--user` and `BL_SANDBOX_USER_ENABLED` take precedence.
 
 ## Rules
 
-The rules live in `table inet blaxel_sandbox_api` and apply to IPv4 and IPv6.
+The rules live in `table inet sandbox_api` and apply to IPv4 and IPv6.
 For the default port and an uplink named `eth0`:
 
 ```
-table inet blaxel_sandbox_api {
+table inet sandbox_api {
 	chain output {
 		type filter hook output priority filter; policy accept;
 		oifname "lo" tcp dport 8080 meta skuid != 0 reject with tcp reset

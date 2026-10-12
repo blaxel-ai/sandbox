@@ -83,20 +83,20 @@ func TestJSONLog_AuditLog(t *testing.T) {
 		},
 		{
 			name: "process exec with multi-word command",
-			msg:  "process_exec sub-id=user-123 rid=req-abc command=npm run dev working-dir=/blaxel/app",
+			msg:  "process_exec sub-id=user-123 rid=req-abc command=npm run dev working-dir=/app",
 			fields: logrus.Fields{
 				"source":      "audit",
 				"sub-id":      "user-123",
 				"rid":         "req-abc",
 				"action":      "process_exec",
 				"command":     "npm run dev",
-				"working-dir": "/blaxel/app",
+				"working-dir": "/app",
 			},
 			expected: map[string]string{
 				"source":      "audit",
 				"action":      "process_exec",
 				"command":     "npm run dev",
-				"working-dir": "/blaxel/app",
+				"working-dir": "/app",
 			},
 		},
 		{

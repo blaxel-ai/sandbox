@@ -43,7 +43,7 @@ func captureProcessLine(t *testing.T, streamType, line string) map[string]any {
 // severity and trace ids were unreachable to anything querying telemetry.
 func TestStructuredLineKeepsSeverityAndTrace(t *testing.T) {
 	line := `{"message":"error: failed to solve: \"/hub/astro/entrypoint.sh\": not found",` +
-		`"severity":"ERROR","labels":{"blaxel-workspace":"canary"},` +
+		`"severity":"ERROR","labels":{"workspace":"canary"},` +
 		`"trace_id":"7290becbf792fbfcb03821cdc75b3364","span_id":"83fbf516e463c3f8"}`
 
 	got := captureProcessLine(t, "stdout", line)
@@ -58,7 +58,7 @@ func TestStructuredLineKeepsSeverityAndTrace(t *testing.T) {
 		t.Errorf("trace_id/span_id = %v/%v, want them lifted to top level", got["trace_id"], got["span_id"])
 	}
 	labels, _ := got["labels"].(map[string]any)
-	if labels["blaxel-workspace"] != "canary" {
+	if labels["workspace"] != "canary" {
 		t.Errorf("labels = %v, want the line's labels preserved", got["labels"])
 	}
 	for key, want := range map[string]string{

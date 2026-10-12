@@ -1,6 +1,6 @@
 ---
 name: add-hub-template
-description: Add or update a Blaxel Sandbox Hub image/template under hub/. Use when adding a new hub image, sandbox image, runtime image, template.json, Dockerfile, hidden/internal image, or workflow-dispatch build option in the blaxel-ai/sandbox repository.
+description: Add or update a Sandbox Hub image/template under hub/. Use when adding a new hub image, sandbox image, runtime image, template.json, Dockerfile, hidden/internal image, or workflow-dispatch build option in the basetenlabs/sandbox repository.
 ---
 
 # Add a Sandbox Hub Image
@@ -39,20 +39,18 @@ Follow the existing multi-stage pattern:
 
 ```dockerfile
 ARG SANDBOX_VERSION=latest
-FROM ghcr.io/blaxel-ai/sandbox:${SANDBOX_VERSION} AS sandbox-api
+FROM ghcr.io/basetenlabs/sandbox:${SANDBOX_VERSION} AS sandbox-api
 
 FROM <runtime-base>
 
 RUN <install required runtime tools>
 
-WORKDIR /blaxel
+WORKDIR /workspace
 
 COPY --from=sandbox-api /sandbox-api /usr/local/bin/sandbox-api
 RUN chmod +x /usr/local/bin/sandbox-api
 
 EXPOSE 8080
-
-ENV HOME=/blaxel
 
 ENTRYPOINT ["/usr/local/bin/sandbox-api"]
 ```
@@ -61,6 +59,7 @@ Rules:
 
 - Always include the `ARG SANDBOX_VERSION=latest` stage unless the image has a specific reason not to.
 - Copy `/sandbox-api` from the sandbox-api stage into `/usr/local/bin/sandbox-api`.
+- Use `WORKDIR /workspace` for generic and agent images. Web framework images (`nextjs`, `astro`, `vite`, `expo`, ...) put the app at `/app` with `WORKDIR /app`. Do not set `ENV HOME`; keep the default (`/root`).
 - Expose `8080` for `sandbox-api`.
 - Only expose app/dev ports when they are intrinsic to that template. Do not expose dynamic app ports for platform-managed hidden images.
 - If an entrypoint script is needed, keep `sandbox-api` running as the control plane and test the real startup path.
@@ -77,8 +76,8 @@ Minimal shape:
   "categories": [],
   "description": "Short description.",
   "longDescription": "Longer description.",
-  "url": "https://github.com/blaxel-ai/sandbox",
-  "icon": "https://blaxel.ai/logo.png",
+  "url": "https://github.com/basetenlabs/sandbox",
+  "icon": "https://www.baseten.co/icon.png",
   "memory": 2048,
   "ports": [
     {
@@ -141,10 +140,10 @@ ruby -e 'require "yaml"; YAML.load_file(".github/workflows/build.yaml"); puts "y
 Build with an explicit platform:
 
 ```bash
-docker build --platform linux/amd64 -t blaxel/<name>:test -f hub/<name>/Dockerfile .
+docker build --platform linux/amd64 -t sandbox/<name>:test -f hub/<name>/Dockerfile .
 ```
 
-Prefer explicit `docker build --platform linux/amd64` over `docker compose build` on Apple Silicon. Some local compose providers ignore the service platform when pulling `ghcr.io/blaxel-ai/sandbox:latest` and fail on `arm64`.
+Prefer explicit `docker build --platform linux/amd64` over `docker compose build` on Apple Silicon. Some local compose providers ignore the service platform when pulling `ghcr.io/basetenlabs/sandbox:latest` and fail on `arm64`.
 
 If the image has a runner or entrypoint script, smoke-test it inside the built image with realistic env vars and mounted test input. Verify:
 

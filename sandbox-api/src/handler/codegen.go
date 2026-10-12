@@ -113,7 +113,7 @@ func (h *CodegenHandler) HandleFastApply(c *gin.Context) {
 	// Check if fastapply is enabled
 	if !codegen.IsEnabled() {
 		h.SendError(c, http.StatusBadRequest,
-			fmt.Errorf("codegen tools are not configured, follow this documentation to configure it: https://docs.blaxel.ai/Sandboxes/Codegen"))
+			fmt.Errorf("codegen tools are not configured: set RELACE_API_KEY or MORPH_API_KEY in the sandbox environment"))
 		return
 	}
 
@@ -252,7 +252,7 @@ func (h *CodegenHandler) HandleReranking(c *gin.Context) {
 	// Check if codegen tools are enabled (we need Relace for reranking)
 	if !codegen.IsEnabled() {
 		h.SendError(c, http.StatusBadRequest,
-			fmt.Errorf("codegen tools are not configured, follow this documentation to configure it: https://docs.blaxel.ai/Sandboxes/Codegen"))
+			fmt.Errorf("codegen tools are not configured: set RELACE_API_KEY or MORPH_API_KEY in the sandbox environment"))
 		return
 	}
 

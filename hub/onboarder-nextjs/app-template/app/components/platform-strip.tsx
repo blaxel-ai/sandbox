@@ -3,12 +3,12 @@ import { PLATFORM_PRIMITIVES } from '../lib/platform-links';
 
 export function PlatformStrip() {
   return (
-    <section className="platform-strip" aria-label="Blaxel platform primitives">
+    <section className="platform-strip" aria-label="Baseten platform">
       <div>
         <span className="launch-eyebrow">From sandbox to platform</span>
         <p>
-          Start with a sandbox. Add shared files, hosted tools, agents, jobs,
-          and observability when the workflow grows.
+          Start with a sandbox. Add hosted models, training, and observability
+          when the workflow grows.
         </p>
       </div>
       <div className="platform-chain">

@@ -93,9 +93,9 @@ test('an unknown route is a clean 404, not a server crash', async () => {
 })
 
 test('the image optimizer (sharp) serves a bundled PNG', async () => {
-  // public/logo_short.png is shipped with the template; /_next/image runs
+  // public/icon.png is shipped with the template; /_next/image runs
   // it through sharp, the library GHSA-rgj7-g3m4-5g8c is about.
-  const response = await fetch(base + '/_next/image?url=%2Flogo_short.png&w=64&q=75')
+  const response = await fetch(base + '/_next/image?url=%2Ficon.png&w=64&q=75')
   assert.equal(response.status, 200, `GET /_next/image -> ${response.status}\n${output.slice(-2000)}`)
   const type = response.headers.get('content-type') || ''
   assert.ok(type.startsWith('image/'), `unexpected content-type ${type}`)

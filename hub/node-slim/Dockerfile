@@ -1,5 +1,5 @@
 ARG SANDBOX_VERSION=latest
-FROM ghcr.io/blaxel-ai/sandbox:${SANDBOX_VERSION} AS sandbox-api
+FROM ghcr.io/basetenlabs/sandbox:${SANDBOX_VERSION} AS sandbox-api
 
 # Node 24 (current LTS), on Debian slim (glibc). Two reasons over node:23-alpine:
 # (1) glibc — heavy native modules (duckdb, canvas, ...) ship glibc node-pre-gyp
@@ -15,12 +15,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   ca-certificates \
   && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /blaxel
+WORKDIR /workspace
 
 COPY --from=sandbox-api /sandbox-api /usr/local/bin/sandbox-api
 
 EXPOSE 8080 3000
-
-ENV HOME=/blaxel
 
 ENTRYPOINT ["/usr/local/bin/sandbox-api"]
