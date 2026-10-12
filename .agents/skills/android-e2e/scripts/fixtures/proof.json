@@ -1,7 +1,0 @@
-{
-  "name": "android-e2e-proof",
-  "waitForCompletion": false,
-  "keepAlive": true,
-  "timeout": 60,
-  "commandFile": "proof.sh"
-}

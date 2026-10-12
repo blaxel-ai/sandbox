@@ -46,7 +46,7 @@ cd integration-tests && API_BASE_URL=http://localhost:8080 go test -v ./tests/<a
 ```
 
 `tests/network` needs a real sandbox network stack and fails on a bare host, so
-CI does not run it; run it inside a deployed sandbox (see the run-e2e skill).
+CI does not run it; run it inside a deployed sandbox.
 
 ## The two identity modes
 

@@ -131,6 +131,5 @@ func TestNewFeature(t *testing.T) {
 
 In addition to these Go-based integration tests, you can also test the API using:
 
-1. **Bruno**: The project includes Bruno API collections in the `.bruno` directory
-2. **Postman**: You can import the OpenAPI specification
-3. **Curl**: For manual testing of specific endpoints
+1. **Postman**: You can import the OpenAPI specification
+2. **Curl**: For manual testing of specific endpoints
