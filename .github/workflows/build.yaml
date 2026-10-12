@@ -45,8 +45,6 @@ env:
   IMAGE_NAME: blaxel-ai/sandbox
   TAG: ${{ github.sha }}
   BL_ENV: ${{ github.ref_name == 'develop' && 'dev' || 'prod' }}
-  DEV_IMAGE_BUCKET: controlplane-dev-build-images-eu-west-1-37df18
-  PROD_IMAGE_BUCKET: controlplane-prod-build-images-us-west-2-466b17
 
 jobs:
   check-changes:
@@ -376,8 +374,10 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  build-s3-hub:
-    runs-on: codebuild-sandbox-${{ github.run_id }}-${{ github.run_attempt }}
+  build-blaxel-hub:
+    # Builds the mk3 image with the in-sandbox builder: bl push imports the ghcr
+    # image into the blaxel workspace, which registers it as blaxel/<name>.
+    runs-on: ubuntu-latest
     environment: |-
       ${{
         github.ref_name == 'develop' && 'dev'
@@ -397,14 +397,23 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-      - name: Install jq
+      - name: Check build key
+        env:
+          BL_API_KEY: ${{ secrets.BL_BUILD_API_KEY }}
         run: |
-          if ! command -v jq &> /dev/null; then
-            echo "jq not found, installing..."
-            apt-get update && apt-get install -y jq || yum install -y jq
-          else
-            echo "jq is already installed"
+          if [[ -z "$BL_API_KEY" ]]; then
+            echo "BL_BUILD_API_KEY is not set for this environment"
+            exit 1
           fi
+      - name: Install Blaxel CLI and log in
+        # main at the merge of https://github.com/blaxel-ai/bl-action/pull/14: installs the
+        # latest published CLI release, version input. The v1 tag predates it.
+        uses: blaxel-ai/bl-action@de9d043c44da4ba07c4417c5abe0dcbe789524b2
+        with:
+          workspace: blaxel
+          apikey: ${{ secrets.BL_BUILD_API_KEY }}
+          # Pin with the BL_CLI_VERSION repo variable (e.g. v0.1.124, the first with --tag); latest published release otherwise.
+          version: ${{ vars.BL_CLI_VERSION }}
       - name: Set image tag
         id: image-tag
         run: |
@@ -419,23 +428,25 @@ jobs:
           fi
       - name: Build sandbox image
         env:
-          SANDBOX_NAME: ${{ matrix.sandbox }}
-          IMAGE_TAG: ${{ steps.image-tag.outputs.tag }}
-          BL_TYPE: sandbox
-          BL_ENV: ${{ env.BL_ENV }}
-          SRC_REGISTRY: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-${{ matrix.sandbox }}
-          BASE_IMAGE_TAG: ${{ steps.image-tag.outputs.tag }}
-          BUILD_ID: ${{ github.run_id }}-${{ github.run_attempt }}
-          LOG_LEVEL: debug
-          IMAGE_BUCKET_MK3: ${{ env.BL_ENV == 'prod' && env.PROD_IMAGE_BUCKET || env.DEV_IMAGE_BUCKET }}
-          DEPOT_PROJECT_ID: ${{ env.BL_ENV == 'prod' && secrets.DEPOT_PROJECT_ID_PROD || secrets.DEPOT_PROJECT_ID_DEV }}
-          BATCH_JOB_QUEUE: ${{ env.BL_ENV == 'prod' && (vars.BATCH_JOB_QUEUE_PROD || 'controlplane-prod-build') || (vars.BATCH_JOB_QUEUE_DEV || 'controlplane-dev-build') }}
-          BATCH_JOB_DEFINITION: ${{ env.BL_ENV == 'prod' && (vars.BATCH_JOB_DEFINITION_PROD || 'controlplane-prod-build') || (vars.BATCH_JOB_DEFINITION_DEV || 'controlplane-dev-build') }}
-          BATCH_REGION: ${{ env.BL_ENV == 'prod' && (vars.BATCH_REGION_PROD || 'us-west-2') || (vars.BATCH_REGION_DEV || 'eu-west-1') }}
-          DEPOT_TOKEN: ${{ env.BL_ENV == 'prod' && secrets.DEPOT_TOKEN_PROD || secrets.DEPOT_TOKEN_DEV }}
+          # The ref is unique per commit, so the build is never served from the
+          # cache of an older image pushed under a reused tag.
+          IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-${{ matrix.sandbox }}:${{ steps.image-tag.outputs.tag }}
+          TAG: ${{ steps.image-tag.outputs.tag }}
         run: |
-          chmod +x ./scripts/mk3-build.sh
-          ./scripts/mk3-build.sh
+          # Blaxel image tags: Docker charset, 32 characters at most. Keep the end,
+          # which holds the commit sha, so long branch names stay unique per commit.
+          BL_TAG=$(printf '%s' "$TAG" | tr -c 'A-Za-z0-9_.-' '-' | rev | cut -c1-32 | rev | sed 's/^[.-]*//')
+          # bl push streams the build logs and exits non-zero when the build fails.
+          set +e
+          bl push -y -w blaxel -t sandbox -n "${{ matrix.sandbox }}" --image "$IMAGE" --tag "$BL_TAG" --timeout 45m 2>&1 | tee push.log
+          status=${PIPESTATUS[0]}
+          set -e
+          # Tags are immutable: a rerun of the same commit finds its tag already built.
+          if [[ $status -ne 0 ]] && grep -q "409" push.log && grep -q "already exists" push.log; then
+            echo "::notice::blaxel/${{ matrix.sandbox }}:$BL_TAG already exists, nothing to rebuild"
+            exit 0
+          fi
+          exit $status
       - name: Publish sandbox
         env:
           SANDBOX_NAME: ${{ matrix.sandbox }}
