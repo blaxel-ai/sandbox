@@ -16,10 +16,10 @@ import (
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
 
-	"github.com/blaxel-ai/sandbox-api/docs"
-	"github.com/blaxel-ai/sandbox-api/src/handler"
-	"github.com/blaxel-ai/sandbox-api/src/handler/archive"
-	"github.com/blaxel-ai/sandbox-api/src/lib/audit"
+	"github.com/basetenlabs/sandbox/sandbox-api/docs"
+	"github.com/basetenlabs/sandbox/sandbox-api/src/handler"
+	"github.com/basetenlabs/sandbox/sandbox-api/src/handler/archive"
+	"github.com/basetenlabs/sandbox/sandbox-api/src/lib/audit"
 )
 
 // SetupRouter configures all the routes for the Sandbox API

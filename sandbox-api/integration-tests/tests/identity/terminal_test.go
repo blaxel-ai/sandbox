@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/blaxel-ai/sandbox-api/integration_tests/common"
+	"github.com/basetenlabs/sandbox/sandbox-api/integration_tests/common"
 	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/require"
 )

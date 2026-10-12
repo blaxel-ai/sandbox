@@ -15,11 +15,11 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/sirupsen/logrus"
 
-	"github.com/blaxel-ai/sandbox-api/src/handler/constants"
-	"github.com/blaxel-ai/sandbox-api/src/handler/process"
-	"github.com/blaxel-ai/sandbox-api/src/lib"
-	"github.com/blaxel-ai/sandbox-api/src/lib/audit"
-	"github.com/blaxel-ai/sandbox-api/src/lib/blaxel"
+	"github.com/basetenlabs/sandbox/sandbox-api/src/handler/constants"
+	"github.com/basetenlabs/sandbox/sandbox-api/src/handler/process"
+	"github.com/basetenlabs/sandbox/sandbox-api/src/lib"
+	"github.com/basetenlabs/sandbox/sandbox-api/src/lib/audit"
+	"github.com/basetenlabs/sandbox/sandbox-api/src/lib/scale"
 )
 
 // ErrKeepAliveDisabled is returned when a keepAlive process is requested on a
@@ -100,7 +100,7 @@ type ProcessKillRequest struct {
 
 // ExecuteProcess executes a process
 func (h *ProcessHandler) ExecuteProcess(command string, workingDir string, name string, env map[string]string, waitForCompletion bool, timeout int, waitForPorts []int, restartOnFailure bool, maxRestarts int, keepAlive bool, stdin bool, waitTimeout ...int) (ProcessResponse, error) {
-	if keepAlive && blaxel.KeepAliveDisabled() {
+	if keepAlive && scale.KeepAliveDisabled() {
 		return ProcessResponse{}, ErrKeepAliveDisabled
 	}
 	processInfo, err := h.processManager.ExecuteProcess(command, workingDir, name, env, waitForCompletion, timeout, waitForPorts, restartOnFailure, maxRestarts, keepAlive, stdin, waitTimeout...)
@@ -232,7 +232,7 @@ func (h *ProcessHandler) HandleExecuteCommand(c *gin.Context) {
 		return
 	}
 
-	if req.KeepAlive && blaxel.KeepAliveDisabled() {
+	if req.KeepAlive && scale.KeepAliveDisabled() {
 		h.SendError(c, http.StatusBadRequest, ErrKeepAliveDisabled)
 		return
 	}
@@ -318,7 +318,7 @@ func (h *ProcessHandler) handleExecuteCommandStream(c *gin.Context) {
 		return
 	}
 
-	if req.KeepAlive && blaxel.KeepAliveDisabled() {
+	if req.KeepAlive && scale.KeepAliveDisabled() {
 		h.SendError(c, http.StatusBadRequest, ErrKeepAliveDisabled)
 		return
 	}

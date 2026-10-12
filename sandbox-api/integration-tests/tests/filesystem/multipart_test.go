@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/blaxel-ai/sandbox-api/integration_tests/common"
-	"github.com/blaxel-ai/sandbox-api/src/handler"
-	"github.com/blaxel-ai/sandbox-api/src/handler/filesystem"
+	"github.com/basetenlabs/sandbox/sandbox-api/integration_tests/common"
+	"github.com/basetenlabs/sandbox/sandbox-api/src/handler"
+	"github.com/basetenlabs/sandbox/sandbox-api/src/handler/filesystem"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

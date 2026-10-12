@@ -17,8 +17,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/blaxel-ai/sandbox-api/src/handler/drive"
-	"github.com/blaxel-ai/sandbox-api/src/handler/process"
+	"github.com/basetenlabs/sandbox/sandbox-api/src/handler/drive"
+	"github.com/basetenlabs/sandbox/sandbox-api/src/handler/process"
 )
 
 // archiveMember is one entry to write into a test archive.

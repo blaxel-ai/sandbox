@@ -11,8 +11,8 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/sirupsen/logrus"
 
-	"github.com/blaxel-ai/sandbox-api/src/handler/terminal"
-	"github.com/blaxel-ai/sandbox-api/src/lib/audit"
+	"github.com/basetenlabs/sandbox/sandbox-api/src/handler/terminal"
+	"github.com/basetenlabs/sandbox/sandbox-api/src/lib/audit"
 )
 
 var (

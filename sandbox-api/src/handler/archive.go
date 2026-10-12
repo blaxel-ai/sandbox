@@ -7,7 +7,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/blaxel-ai/sandbox-api/src/handler/archive"
+	"github.com/basetenlabs/sandbox/sandbox-api/src/handler/archive"
 )
 
 // ArchiveHandler exports the sandbox's filesystem changes so the sandbox can be

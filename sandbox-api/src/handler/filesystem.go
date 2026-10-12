@@ -20,9 +20,9 @@ import (
 	"github.com/junegunn/fzf/src/util"
 	"github.com/sirupsen/logrus"
 
-	"github.com/blaxel-ai/sandbox-api/src/handler/filesystem"
-	"github.com/blaxel-ai/sandbox-api/src/lib"
-	"github.com/blaxel-ai/sandbox-api/src/lib/identity"
+	"github.com/basetenlabs/sandbox/sandbox-api/src/handler/filesystem"
+	"github.com/basetenlabs/sandbox/sandbox-api/src/lib"
+	"github.com/basetenlabs/sandbox/sandbox-api/src/lib/identity"
 )
 
 var json = jsoniter.ConfigCompatibleWithStandardLibrary

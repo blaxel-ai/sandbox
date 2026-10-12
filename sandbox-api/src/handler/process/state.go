@@ -18,8 +18,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/blaxel-ai/sandbox-api/src/handler/constants"
-	"github.com/blaxel-ai/sandbox-api/src/lib/blaxel"
+	"github.com/basetenlabs/sandbox/sandbox-api/src/handler/constants"
+	"github.com/basetenlabs/sandbox/sandbox-api/src/lib/scale"
 	"github.com/sirupsen/logrus"
 )
 
@@ -353,7 +353,7 @@ func (pm *ProcessManager) LoadState() error {
 			// process: startup resets the counter to 0, so without this the
 			// sandbox could hibernate under a still-running keepAlive workload.
 			if proc.KeepAlive {
-				if err := blaxel.ScaleDisable(); err != nil {
+				if err := scale.ScaleDisable(); err != nil {
 					logrus.WithError(err).WithFields(logrus.Fields{
 						"pid":  proc.PID,
 						"name": proc.Name,

@@ -1,4 +1,4 @@
-package blaxel
+package scale
 
 import (
 	"os"

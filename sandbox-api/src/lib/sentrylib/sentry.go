@@ -12,14 +12,14 @@ import (
 
 // DSN is injected at build time via:
 //
-//	-ldflags "-X github.com/blaxel-ai/sandbox-api/src/lib/sentrylib.DSN=<value>"
+//	-ldflags "-X github.com/basetenlabs/sandbox/sandbox-api/src/lib/sentrylib.DSN=<value>"
 //
 // It can be overridden at runtime by setting the SENTRY_DSN environment variable.
 var DSN = ""
 
 // Environment is injected at build time via:
 //
-//	-ldflags "-X github.com/blaxel-ai/sandbox-api/src/lib/sentrylib.Environment=<value>"
+//	-ldflags "-X github.com/basetenlabs/sandbox/sandbox-api/src/lib/sentrylib.Environment=<value>"
 //
 // Set to "prod" for main branch builds, "dev" for develop branch builds.
 // Falls back to BL_ENV at runtime if empty.

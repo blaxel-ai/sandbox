@@ -9,8 +9,8 @@ import (
 	"sync"
 	"syscall"
 
-	"github.com/blaxel-ai/sandbox-api/src/lib/identity"
-	"github.com/blaxel-ai/sandbox-api/src/lib/oom"
+	"github.com/basetenlabs/sandbox/sandbox-api/src/lib/identity"
+	"github.com/basetenlabs/sandbox/sandbox-api/src/lib/oom"
 	"github.com/creack/pty"
 )
 

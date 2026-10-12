@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/blaxel-ai/sandbox-api/src/lib/identity"
+	"github.com/basetenlabs/sandbox/sandbox-api/src/lib/identity"
 	"github.com/google/uuid"
 )
 

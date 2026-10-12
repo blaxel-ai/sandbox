@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/blaxel-ai/sandbox-api/src/handler/drive"
+	"github.com/basetenlabs/sandbox/sandbox-api/src/handler/drive"
 )
 
 func TestMountFailureStatus(t *testing.T) {

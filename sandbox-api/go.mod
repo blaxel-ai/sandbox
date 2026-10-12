@@ -1,4 +1,4 @@
-module github.com/blaxel-ai/sandbox-api
+module github.com/basetenlabs/sandbox/sandbox-api
 
 go 1.25.0
 

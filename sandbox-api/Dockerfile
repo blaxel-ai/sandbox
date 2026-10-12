@@ -15,11 +15,11 @@ RUN set -xe; \
   -v \
   -buildmode=pie \
   -ldflags "-linkmode external -extldflags -static-pie \
-    -X github.com/blaxel-ai/sandbox-api/src/handler.Version=${VERSION} \
-    -X github.com/blaxel-ai/sandbox-api/src/handler.GitCommit=${GIT_COMMIT} \
-    -X github.com/blaxel-ai/sandbox-api/src/handler.BuildTime=${BUILD_TIME} \
-    -X github.com/blaxel-ai/sandbox-api/src/lib/sentrylib.DSN=${SENTRY_DSN} \
-    -X github.com/blaxel-ai/sandbox-api/src/lib/sentrylib.Environment=${SENTRY_ENVIRONMENT}" \
+    -X github.com/basetenlabs/sandbox/sandbox-api/src/handler.Version=${VERSION} \
+    -X github.com/basetenlabs/sandbox/sandbox-api/src/handler.GitCommit=${GIT_COMMIT} \
+    -X github.com/basetenlabs/sandbox/sandbox-api/src/handler.BuildTime=${BUILD_TIME} \
+    -X github.com/basetenlabs/sandbox/sandbox-api/src/lib/sentrylib.DSN=${SENTRY_DSN} \
+    -X github.com/basetenlabs/sandbox/sandbox-api/src/lib/sentrylib.Environment=${SENTRY_ENVIRONMENT}" \
   -tags netgo \
   -o sandbox-api .
 

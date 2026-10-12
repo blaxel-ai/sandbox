@@ -7,7 +7,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/blaxel-ai/sandbox-api/src/handler/archive"
+	"github.com/basetenlabs/sandbox/sandbox-api/src/handler/archive"
 )
 
 type call struct {

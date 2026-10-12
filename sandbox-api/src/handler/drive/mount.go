@@ -14,7 +14,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/blaxel-ai/sandbox-api/src/lib/identity"
+	"github.com/basetenlabs/sandbox/sandbox-api/src/lib/identity"
 	"github.com/sirupsen/logrus"
 )
 

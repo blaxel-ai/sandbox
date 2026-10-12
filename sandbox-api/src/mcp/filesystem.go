@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/blaxel-ai/sandbox-api/src/handler/filesystem"
+	"github.com/basetenlabs/sandbox/sandbox-api/src/handler/filesystem"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 

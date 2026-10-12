@@ -5,7 +5,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/blaxel-ai/sandbox-api/src/handler/process"
+	"github.com/basetenlabs/sandbox/sandbox-api/src/handler/process"
 )
 
 func TestQuiesceLifecycle(t *testing.T) {
