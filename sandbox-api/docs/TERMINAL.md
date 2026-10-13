@@ -21,3 +21,34 @@ the PTY reader to finish before closing a PTY still held by a background child.
 The final WebSocket output queue and close frame share a five-second write
 deadline. A stalled client may therefore lose pending output and observe an
 abnormal transport closure instead of the normal close frame.
+
+# Terminal over HTTP streaming
+
+For clients that cannot open a WebSocket (for example behind a proxy that only
+forwards plain HTTP requests), the same sessions are available over two HTTP
+endpoints. Both take the same `sessionId` query parameter, and a session can be
+used from both transports at once.
+
+`GET /terminal/stream` opens (or reattaches to) the session, with the same
+`sessionId`, `cols`, `rows`, `shell` and `workingDir` query parameters as
+`/terminal/ws`. The response is `text/event-stream` (Server-Sent Events). Each
+`data:` line is a JSON message, with the same shape as the WebSocket messages:
+
+- `{"type":"output","data":"..."}`: terminal output. The buffered output is
+  replayed first, then live output follows.
+- `{"type":"exit","data":"Shell exited"}`: the shell ended. The server then
+  closes the stream.
+
+Comment lines (`: keepalive`) are sent every 15 seconds so that idle proxies
+keep the stream open. A client that stops reading for five seconds is
+disconnected. Closing the stream does not end the shell, just like a WebSocket
+disconnect.
+
+`POST /terminal/input` sends one JSON message to a live session:
+
+- `{"type":"input","data":"ls\r"}` writes keystrokes to the PTY.
+- `{"type":"resize","cols":120,"rows":40}` resizes it.
+
+It returns `204` on success, `404` if no live session has this `sessionId`
+(open the stream first), `400` for an invalid message, `413` for a body over
+1 MiB, and `409` if the shell can no longer take input.

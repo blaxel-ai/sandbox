@@ -442,21 +442,35 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-      - name: Install Blaxel CLI
+      - name: Check build key
+        id: build-key
         env:
-          # Pin with the BL_CLI_VERSION repo variable (e.g. v0.1.80); latest otherwise.
-          VERSION: ${{ vars.BL_CLI_VERSION || 'latest' }}
-          BINDIR: ${{ runner.temp }}/bin
-          BL_INSTALL_PATH: "false"
-          BL_INSTALL_COMPLETION: "false"
-          BL_INSTALL_SETUP: "false"
-          BL_INSTALL_LOGIN: "false"
-          BL_INSTALL_SKILLS: "false"
+          BL_API_KEY: ${{ matrix.workspace == 'baseten' && secrets.BL_BASETEN_BUILD_API_KEY || secrets.BL_BUILD_API_KEY }}
+          BL_WORKSPACE: ${{ matrix.workspace }}
         run: |
-          curl -fsSL https://raw.githubusercontent.com/blaxel-ai/toolkit/main/install.sh | sh
-          echo "$BINDIR" >> "$GITHUB_PATH"
-          "$BINDIR/bl" version
+          if [[ -z "$BL_API_KEY" ]]; then
+            # baseten is rolled out per environment: no key yet means not enabled here.
+            if [[ "$BL_WORKSPACE" == "baseten" ]]; then
+              echo "::warning::BL_BASETEN_BUILD_API_KEY is not set for this environment, skipping the baseten build"
+              echo "skip=true" >> $GITHUB_OUTPUT
+              exit 0
+            fi
+            echo "BL_BUILD_API_KEY is not set for this environment"
+            exit 1
+          fi
+          echo "skip=false" >> $GITHUB_OUTPUT
+      - name: Install Blaxel CLI and log in
+        if: steps.build-key.outputs.skip != 'true'
+        # main at the merge of https://github.com/blaxel-ai/bl-action/pull/14: installs the
+        # latest published CLI release, version input. The v1 tag predates it.
+        uses: blaxel-ai/bl-action@de9d043c44da4ba07c4417c5abe0dcbe789524b2
+        with:
+          workspace: ${{ matrix.workspace }}
+          apikey: ${{ matrix.workspace == 'baseten' && secrets.BL_BASETEN_BUILD_API_KEY || secrets.BL_BUILD_API_KEY }}
+          # Pin with the BL_CLI_VERSION repo variable (e.g. v0.1.124, the first with --tag); latest published release otherwise.
+          version: ${{ vars.BL_CLI_VERSION }}
       - name: Set image tag
+        if: steps.build-key.outputs.skip != 'true'
         id: image-tag
         run: |
           if [[ "${{ github.ref }}" == refs/tags/* ]]; then
@@ -469,25 +483,28 @@ jobs:
             echo "tag=${{ github.ref_name }}-${SHA_SHORT}" >> $GITHUB_OUTPUT
           fi
       - name: Build sandbox image
+        if: steps.build-key.outputs.skip != 'true'
         env:
-          BL_API_KEY: ${{ matrix.workspace == 'baseten' && secrets.BL_BASETEN_BUILD_API_KEY || secrets.BL_BUILD_API_KEY }}
           BL_WORKSPACE: ${{ matrix.workspace }}
-          BL_ENV: ${{ env.BL_ENV }}
           # The ref is unique per commit, so the build is never served from the
           # cache of an older image pushed under a reused tag.
           IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-${{ matrix.sandbox }}:${{ steps.image-tag.outputs.tag }}
+          TAG: ${{ steps.image-tag.outputs.tag }}
         run: |
-          if [[ -z "$BL_API_KEY" ]]; then
-            # baseten is rolled out per environment: no key yet means not enabled here.
-            if [[ "$BL_WORKSPACE" == "baseten" ]]; then
-              echo "::warning::BL_BASETEN_BUILD_API_KEY is not set for this environment, skipping the baseten build"
-              exit 0
-            fi
-            echo "BL_BUILD_API_KEY is not set for this environment"
-            exit 1
-          fi
+          # Blaxel image tags: Docker charset, 32 characters at most. Keep the end,
+          # which holds the commit sha, so long branch names stay unique per commit.
+          BL_TAG=$(printf '%s' "$TAG" | tr -c 'A-Za-z0-9_.-' '-' | rev | cut -c1-32 | rev | sed 's/^[.-]*//')
           # bl push streams the build logs and exits non-zero when the build fails.
-          bl push -y -w "$BL_WORKSPACE" -t sandbox -n "${{ matrix.sandbox }}" --image "$IMAGE" --timeout 45m
+          set +e
+          bl push -y -w "$BL_WORKSPACE" -t sandbox -n "${{ matrix.sandbox }}" --image "$IMAGE" --tag "$BL_TAG" --timeout 45m 2>&1 | tee push.log
+          status=${PIPESTATUS[0]}
+          set -e
+          # Tags are immutable: a rerun of the same commit finds its tag already built.
+          if [[ $status -ne 0 ]] && grep -q "409" push.log && grep -q "already exists" push.log; then
+            echo "::notice::$BL_WORKSPACE/${{ matrix.sandbox }}:$BL_TAG already exists, nothing to rebuild"
+            exit 0
+          fi
+          exit $status
       - name: Publish sandbox
         # Only the blaxel workspace backs the public hub store.
         if: matrix.workspace == 'blaxel'

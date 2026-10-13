@@ -120,7 +120,7 @@ func (pm *ProcessManager) waitForRun(p *ProcessInfo, cmd *exec.Cmd, callback fun
 	p.stdout.WriteString(restartMsg)
 	p.logs.WriteString(restartMsg)
 	if p.StdoutFile != "" {
-		if f, err := os.OpenFile(p.StdoutFile, os.O_APPEND|os.O_WRONLY, 0644); err == nil {
+		if f, err := openPrivateProcessLog(p.StdoutFile, os.O_APPEND|os.O_WRONLY); err == nil {
 			_, _ = f.WriteString(restartMsg)
 			_ = f.Close()
 		}
