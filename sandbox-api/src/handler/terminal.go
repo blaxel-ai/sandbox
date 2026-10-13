@@ -194,8 +194,8 @@ func (h *TerminalHandler) HandleTerminalWS(c *gin.Context) {
 		return
 	}
 
-	// Subscribe to terminal output
-	sub := ms.Subscribe()
+	// Subscribe to terminal output, with the history up to that point.
+	sub, buffered := ms.SubscribeWithReplay()
 
 	// Bound replay as well as subsequent output for unresponsive clients.
 	_ = conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
@@ -203,7 +203,6 @@ func (h *TerminalHandler) HandleTerminalWS(c *gin.Context) {
 	// Replay buffered output so the client sees the full terminal history.
 	// For a new session this is typically empty or just the initial prompt.
 	// For a reconnection this restores the terminal state.
-	buffered := ms.GetBuffer()
 	if len(buffered) > 0 {
 		_ = conn.WriteJSON(TerminalMessage{
 			Type: "output",

@@ -3,10 +3,12 @@ package handler
 import (
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
 	"github.com/sirupsen/logrus"
@@ -81,7 +83,7 @@ func (h *TerminalHandler) HandleTerminalStream(c *gin.Context) {
 		return
 	}
 
-	sub := ms.Subscribe()
+	sub, buffered := ms.SubscribeWithReplay()
 	defer func() {
 		ms.Unsubscribe(sub)
 		audit.LogEventDirect(id, "terminal_disconnect", logrus.Fields{
@@ -102,14 +104,31 @@ func (h *TerminalHandler) HandleTerminalStream(c *gin.Context) {
 
 	rc := http.NewResponseController(c.Writer)
 	write := func(frame string) bool {
-		_ = rc.SetWriteDeadline(time.Now().Add(terminalStreamWriteTimeout))
+		// Without a deadline a client that stops reading would pin this
+		// handler and its subscription forever: refuse to stream instead.
+		if err := rc.SetWriteDeadline(time.Now().Add(terminalStreamWriteTimeout)); err != nil {
+			logrus.Errorf("Terminal stream: cannot set write deadline: %v", err)
+			return false
+		}
 		if _, err := c.Writer.WriteString(frame); err != nil {
 			return false
 		}
 		c.Writer.Flush()
 		return true
 	}
-	send := func(msg TerminalMessage) bool {
+	var send func(TerminalMessage) bool
+	// PTY reads can split a UTF-8 character: hold the incomplete tail until
+	// the next chunk so JSON encoding does not turn it into U+FFFD.
+	var pending []byte
+	sendOutput := func(data []byte) bool {
+		data = append(pending, data...)
+		data, pending = splitIncompleteUTF8(data)
+		if len(data) == 0 {
+			return true
+		}
+		return send(TerminalMessage{Type: "output", Data: string(data)})
+	}
+	send = func(msg TerminalMessage) bool {
 		payload, err := json.Marshal(msg)
 		if err != nil {
 			return false
@@ -122,10 +141,8 @@ func (h *TerminalHandler) HandleTerminalStream(c *gin.Context) {
 	if !write(": connected\n\n") {
 		return
 	}
-	if buffered := ms.GetBuffer(); len(buffered) > 0 {
-		if !send(TerminalMessage{Type: "output", Data: string(buffered)}) {
-			return
-		}
+	if len(buffered) > 0 && !sendOutput(buffered) {
+		return
 	}
 
 	keepalive := time.NewTicker(terminalStreamKeepalive)
@@ -133,7 +150,7 @@ func (h *TerminalHandler) HandleTerminalStream(c *gin.Context) {
 	for {
 		select {
 		case data := <-sub.Ch:
-			if !send(TerminalMessage{Type: "output", Data: string(data)}) {
+			if !sendOutput(data) {
 				return
 			}
 		case <-keepalive.C:
@@ -151,6 +168,9 @@ func (h *TerminalHandler) HandleTerminalStream(c *gin.Context) {
 						return
 					}
 				default:
+					if len(pending) > 0 && !send(TerminalMessage{Type: "output", Data: string(pending)}) {
+						return
+					}
 					send(TerminalMessage{Type: "exit", Data: "Shell exited"})
 					return
 				}
@@ -169,14 +189,20 @@ func (h *TerminalHandler) HandleTerminalInput(c *gin.Context) {
 		return
 	}
 
-	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, terminalInputMaxBytes)
-	var msg TerminalMessage
-	if err := c.ShouldBindJSON(&msg); err != nil {
+	// Read the whole body so the size limit covers it all, not only the
+	// first JSON value.
+	body, err := io.ReadAll(http.MaxBytesReader(c.Writer, c.Request.Body, terminalInputMaxBytes))
+	if err != nil {
 		var tooLarge *http.MaxBytesError
 		if errors.As(err, &tooLarge) {
 			h.SendError(c, http.StatusRequestEntityTooLarge, fmt.Errorf("input is larger than %d bytes", terminalInputMaxBytes))
 			return
 		}
+		h.SendError(c, http.StatusBadRequest, fmt.Errorf("failed to read terminal message: %w", err))
+		return
+	}
+	var msg TerminalMessage
+	if err := json.Unmarshal(body, &msg); err != nil {
 		h.SendError(c, http.StatusBadRequest, fmt.Errorf("invalid terminal message: %w", err))
 		return
 	}
@@ -213,4 +239,18 @@ func (h *TerminalHandler) HandleTerminalInput(c *gin.Context) {
 		return
 	}
 	c.Status(http.StatusNoContent)
+}
+
+// splitIncompleteUTF8 returns b without a trailing incomplete UTF-8 sequence,
+// and that sequence.
+func splitIncompleteUTF8(b []byte) ([]byte, []byte) {
+	for i := 1; i <= utf8.UTFMax-1 && i <= len(b); i++ {
+		if utf8.RuneStart(b[len(b)-i]) {
+			if utf8.FullRune(b[len(b)-i:]) {
+				return b, nil
+			}
+			return b[:len(b)-i], b[len(b)-i:]
+		}
+	}
+	return b, nil
 }
