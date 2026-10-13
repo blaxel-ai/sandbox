@@ -164,7 +164,7 @@ func (h *TerminalHandler) HandleTerminalStream(c *gin.Context) {
 			for {
 				select {
 				case data := <-sub.Ch:
-					if !send(TerminalMessage{Type: "output", Data: string(data)}) {
+					if !sendOutput(data) {
 						return
 					}
 				default:
