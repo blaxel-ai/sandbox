@@ -1,7 +1,3 @@
-<p align="center">
-  <img src=".github/assets/blaxel-logo.png" alt="Blaxel" width="400"/>
-</p>
-
 # Sandboxes
 
 ## Overview

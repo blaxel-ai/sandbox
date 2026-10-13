@@ -1,7 +1,0 @@
-{
-  "name": "android-e2e-ready",
-  "commandFile": "ready.py",
-  "timeout": 360,
-  "waitForCompletion": false,
-  "keepAlive": true
-}
