@@ -72,14 +72,14 @@ func Init(disabled bool) func() {
 	}
 
 	err := sentry.Init(sentry.ClientOptions{
-		Dsn:                    dsn,
-		Environment:            env,
-		Release:                "sandbox-api@" + Version,
-		AttachStacktrace:       true,
-		EnableTracing:          true,
-		TracesSampleRate:       traceRate,
-		BeforeSend:             stripRequest,
-		BeforeSendTransaction:  stripRequest,
+		Dsn:                   dsn,
+		Environment:           env,
+		Release:               "sandbox-api@" + Version,
+		AttachStacktrace:      true,
+		EnableTracing:         true,
+		TracesSampleRate:      traceRate,
+		BeforeSend:            stripRequest,
+		BeforeSendTransaction: stripRequest,
 	})
 	if err != nil {
 		logrus.WithError(err).Warn("Sentry initialisation failed – continuing without Sentry")
@@ -174,4 +174,3 @@ func DistributionMetric(name string, value float64, unit string, attrs ...attrib
 	}
 	meter.Distribution(name, value, opts...)
 }
-

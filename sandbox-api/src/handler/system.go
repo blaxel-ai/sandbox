@@ -93,7 +93,7 @@ func (h *SystemHandler) HandleHealth(c *gin.Context) {
 
 // UpgradeRequest represents the request body for the upgrade endpoint
 type UpgradeRequest struct {
-	Version string `json:"version" example:"latest"`                                        // Version to upgrade to: "latest" (default), "develop", "main", or specific tag like "v1.0.0"
+	Version string `json:"version" example:"latest"`                                          // Version to upgrade to: "latest" (default), "develop", "main", or specific tag like "v1.0.0"
 	BaseURL string `json:"baseUrl" example:"https://github.com/basetenlabs/sandbox/releases"` // Base URL for releases (useful for forks)
 } // @name UpgradeRequest
 

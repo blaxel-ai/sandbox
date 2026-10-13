@@ -16,10 +16,10 @@ import (
 // Header names for identity context forwarded by the cluster-gateway.
 // X-Blaxel-* headers take priority over the generic X-Subject-* headers.
 const (
-	HeaderSubjectID        = "X-Blaxel-Subject-Id"
-	HeaderSubjectType      = "X-Blaxel-Subject-Type"
-	HeaderAuthMethod       = "X-Blaxel-Auth-Method"
-	HeaderRequestID        = "X-Request-Id"
+	HeaderSubjectID           = "X-Blaxel-Subject-Id"
+	HeaderSubjectType         = "X-Blaxel-Subject-Type"
+	HeaderAuthMethod          = "X-Blaxel-Auth-Method"
+	HeaderRequestID           = "X-Request-Id"
 	HeaderFallbackSubjectID   = "X-Subject-Id"
 	HeaderFallbackSubjectType = "X-Subject-Type"
 )

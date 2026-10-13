@@ -4,6 +4,7 @@ go 1.25.0
 
 require (
 	github.com/basetenlabs/sandbox/sandbox-api v0.0.0
+	github.com/gorilla/websocket v1.5.3
 	github.com/modelcontextprotocol/go-sdk v1.7.0
 	github.com/sirupsen/logrus v1.9.3
 	github.com/stretchr/testify v1.11.1
@@ -29,7 +30,6 @@ require (
 	github.com/google/jsonschema-go v0.4.3 // indirect
 	github.com/google/nftables v0.3.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
-	github.com/gorilla/websocket v1.5.3 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/junegunn/fzf v0.74.2 // indirect
 	github.com/junegunn/go-shellwords v0.0.0-20250127100254-2aa3b3277741 // indirect

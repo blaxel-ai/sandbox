@@ -1,4 +1,9 @@
-# Sandboxes
+# Baseten Sandbox
+
+[![Test](https://github.com/basetenlabs/sandbox/actions/workflows/test.yaml/badge.svg)](https://github.com/basetenlabs/sandbox/actions/workflows/test.yaml)
+[![License](https://img.shields.io/github/license/basetenlabs/sandbox)](LICENSE)
+
+The API that runs inside every [Baseten](https://baseten.co) sandbox, and the hub templates built on it. See the [sandbox docs](https://docs.baseten.co/sandboxes/overview).
 
 ## Overview
 

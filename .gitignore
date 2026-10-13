@@ -1,8 +1,9 @@
-.unikraft
 node_modules
 .next
 *.tsbuildinfo
 .env
+.env.*
+!.env.example
 tmp
 processes.db
 .DS_Store
