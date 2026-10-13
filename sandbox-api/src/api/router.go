@@ -191,6 +191,9 @@ func SetupRouter(disableRequestLogging bool, enableProcessingTime bool) *gin.Eng
 		r.HEAD("/terminal", head)
 		r.GET("/terminal/ws", terminalHandler.HandleTerminalWS)
 		r.HEAD("/terminal/ws", head)
+		r.GET("/terminal/stream", terminalHandler.HandleTerminalStream)
+		r.HEAD("/terminal/stream", head)
+		r.POST("/terminal/input", terminalHandler.HandleTerminalInput)
 	} else {
 		logrus.Info("Terminal endpoint disabled via DISABLE_TERMINAL environment variable")
 	}

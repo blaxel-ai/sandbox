@@ -324,6 +324,17 @@ func (sm *SessionManager) GetOrCreate(id string, shell string, workingDir string
 	return ms, true, nil
 }
 
+// Get returns the live session for the given ID, if any.
+func (sm *SessionManager) Get(id string) (*ManagedSession, bool) {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	ms, ok := sm.sessions[id]
+	if !ok || ms.IsDead() {
+		return nil, false
+	}
+	return ms, true
+}
+
 // Remove explicitly closes and removes a session.
 func (sm *SessionManager) Remove(id string) {
 	sm.mu.Lock()
