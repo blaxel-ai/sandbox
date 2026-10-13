@@ -20,8 +20,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/blaxel-ai/sandbox-api/src/handler/process"
-	"github.com/blaxel-ai/sandbox-api/src/lib/blaxel"
+	"github.com/basetenlabs/sandbox/sandbox-api/src/handler/process"
+	"github.com/basetenlabs/sandbox/sandbox-api/src/lib/scale"
 	"github.com/sirupsen/logrus"
 )
 
@@ -440,7 +440,7 @@ func Import(ctx context.Context, options ImportOptions) (_ *ImportResult, err er
 	// connection to answer, so it looks idle for as long as the download takes -
 	// long enough for the infrastructure to hibernate it in the middle of the
 	// restore.
-	defer blaxel.HoldAwake("the archive import")()
+	defer scale.HoldAwake("the archive import")()
 
 	// The download runs before anything is served, so a storage stall would hold
 	// up the boot: it covers reading the body too, which is where a stalled

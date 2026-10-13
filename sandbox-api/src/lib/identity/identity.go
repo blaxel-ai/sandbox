@@ -21,7 +21,7 @@ import (
 	"sync"
 	"syscall"
 
-	"github.com/blaxel-ai/sandbox-api/src/lib/isolation"
+	"github.com/basetenlabs/sandbox/sandbox-api/src/lib/isolation"
 	"github.com/sirupsen/logrus"
 )
 

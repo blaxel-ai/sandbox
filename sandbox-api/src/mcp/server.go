@@ -10,7 +10,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/sirupsen/logrus"
 
-	"github.com/blaxel-ai/sandbox-api/src/handler"
+	"github.com/basetenlabs/sandbox/sandbox-api/src/handler"
 )
 
 // Server represents the MCP server

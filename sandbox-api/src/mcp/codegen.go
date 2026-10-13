@@ -10,9 +10,9 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/blaxel-ai/sandbox-api/src/handler/filesystem"
-	"github.com/blaxel-ai/sandbox-api/src/lib"
-	"github.com/blaxel-ai/sandbox-api/src/lib/codegen"
+	"github.com/basetenlabs/sandbox/sandbox-api/src/handler/filesystem"
+	"github.com/basetenlabs/sandbox/sandbox-api/src/lib"
+	"github.com/basetenlabs/sandbox/sandbox-api/src/lib/codegen"
 	jsoniter "github.com/json-iterator/go"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/sirupsen/logrus"

@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/blaxel-ai/sandbox-api/src/handler"
+	"github.com/basetenlabs/sandbox/sandbox-api/src/handler"
 	protocol "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 

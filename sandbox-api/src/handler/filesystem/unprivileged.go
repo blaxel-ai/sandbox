@@ -5,7 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/blaxel-ai/sandbox-api/src/lib/identity"
+	"github.com/basetenlabs/sandbox/sandbox-api/src/lib/identity"
 )
 
 // Every exported filesystem operation runs through identity.Do, so the kernel

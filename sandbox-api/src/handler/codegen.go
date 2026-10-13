@@ -9,8 +9,8 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/blaxel-ai/sandbox-api/src/lib"
-	"github.com/blaxel-ai/sandbox-api/src/lib/codegen"
+	"github.com/basetenlabs/sandbox/sandbox-api/src/lib"
+	"github.com/basetenlabs/sandbox/sandbox-api/src/lib/codegen"
 	"github.com/gin-gonic/gin"
 	"github.com/sirupsen/logrus"
 )

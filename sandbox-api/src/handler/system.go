@@ -9,7 +9,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/blaxel-ai/sandbox-api/src/handler/process"
+	"github.com/basetenlabs/sandbox/sandbox-api/src/handler/process"
 )
 
 // Build information - set via ldflags at build time

@@ -14,21 +14,21 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/blaxel-ai/sandbox-api/src/api"
+	"github.com/basetenlabs/sandbox/sandbox-api/src/api"
 	"github.com/getsentry/sentry-go"
 
-	"github.com/blaxel-ai/sandbox-api/src/handler"
-	"github.com/blaxel-ai/sandbox-api/src/handler/archive"
-	"github.com/blaxel-ai/sandbox-api/src/handler/process"
-	"github.com/blaxel-ai/sandbox-api/src/lib/blaxel"
-	"github.com/blaxel-ai/sandbox-api/src/lib/envfile"
-	"github.com/blaxel-ai/sandbox-api/src/lib/identity"
-	"github.com/blaxel-ai/sandbox-api/src/lib/isolation"
-	"github.com/blaxel-ai/sandbox-api/src/lib/networking"
-	"github.com/blaxel-ai/sandbox-api/src/lib/oom"
-	"github.com/blaxel-ai/sandbox-api/src/lib/proxy"
-	"github.com/blaxel-ai/sandbox-api/src/lib/sentrylib"
-	"github.com/blaxel-ai/sandbox-api/src/mcp"
+	"github.com/basetenlabs/sandbox/sandbox-api/src/handler"
+	"github.com/basetenlabs/sandbox/sandbox-api/src/handler/archive"
+	"github.com/basetenlabs/sandbox/sandbox-api/src/handler/process"
+	"github.com/basetenlabs/sandbox/sandbox-api/src/lib/scale"
+	"github.com/basetenlabs/sandbox/sandbox-api/src/lib/envfile"
+	"github.com/basetenlabs/sandbox/sandbox-api/src/lib/identity"
+	"github.com/basetenlabs/sandbox/sandbox-api/src/lib/isolation"
+	"github.com/basetenlabs/sandbox/sandbox-api/src/lib/networking"
+	"github.com/basetenlabs/sandbox/sandbox-api/src/lib/oom"
+	"github.com/basetenlabs/sandbox/sandbox-api/src/lib/proxy"
+	"github.com/basetenlabs/sandbox/sandbox-api/src/lib/sentrylib"
+	"github.com/basetenlabs/sandbox/sandbox-api/src/mcp"
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
 	"github.com/sirupsen/logrus"
@@ -154,7 +154,7 @@ func main() {
 		// scale-to-zero hold of every adopted keepAlive process, and a
 		// concurrent reset would wipe those holds.
 		span := txn.StartChild("startup.scale_reset")
-		if err := blaxel.ScaleReset(); err != nil {
+		if err := scale.ScaleReset(); err != nil {
 			logrus.Warnf("Failed to reset scale-to-zero counter on startup: %v", err)
 		}
 		span.Finish()

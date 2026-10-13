@@ -117,7 +117,7 @@ import (
     "net/http"
     "testing"
 
-    "github.com/blaxel-ai/sandbox-api/integration_tests/common"
+    "github.com/basetenlabs/sandbox/sandbox-api/integration_tests/common"
     "github.com/stretchr/testify/assert"
     "github.com/stretchr/testify/require"
 )

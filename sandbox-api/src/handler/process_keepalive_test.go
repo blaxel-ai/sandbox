@@ -4,8 +4,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/blaxel-ai/sandbox-api/src/handler/process"
-	"github.com/blaxel-ai/sandbox-api/src/lib/blaxel"
+	"github.com/basetenlabs/sandbox/sandbox-api/src/handler/process"
+	"github.com/basetenlabs/sandbox/sandbox-api/src/lib/scale"
 )
 
 func useTempLogDir(t *testing.T) {
@@ -17,7 +17,7 @@ func useTempLogDir(t *testing.T) {
 
 func TestExecuteProcessKeepAliveDisabled(t *testing.T) {
 	useTempLogDir(t)
-	t.Setenv(blaxel.EnvDisableKeepAlive, "true")
+	t.Setenv(scale.EnvDisableKeepAlive, "true")
 	h := NewProcessHandler()
 
 	_, err := h.ExecuteProcess("echo keepalive", "", "", nil, true, 5, nil, false, 0, true, false)
@@ -37,7 +37,7 @@ func TestExecuteProcessKeepAliveDisabled(t *testing.T) {
 
 func TestExecuteProcessKeepAliveEnabledByDefault(t *testing.T) {
 	useTempLogDir(t)
-	t.Setenv(blaxel.EnvDisableKeepAlive, "")
+	t.Setenv(scale.EnvDisableKeepAlive, "")
 	h := NewProcessHandler()
 
 	resp, err := h.ExecuteProcess("echo keepalive", "", "", nil, true, 5, nil, false, 0, true, false)

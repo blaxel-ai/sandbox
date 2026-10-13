@@ -9,8 +9,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/sirupsen/logrus"
 
-	"github.com/blaxel-ai/sandbox-api/src/handler/network"
-	networking "github.com/blaxel-ai/sandbox-api/src/lib/networking"
+	"github.com/basetenlabs/sandbox/sandbox-api/src/handler/network"
+	networking "github.com/basetenlabs/sandbox/sandbox-api/src/lib/networking"
 )
 
 // NetworkHandler handles network operations

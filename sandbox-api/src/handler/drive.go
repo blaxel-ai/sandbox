@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/blaxel-ai/sandbox-api/src/handler/drive"
+	"github.com/basetenlabs/sandbox/sandbox-api/src/handler/drive"
 	"github.com/gin-gonic/gin"
 	"github.com/sirupsen/logrus"
 )

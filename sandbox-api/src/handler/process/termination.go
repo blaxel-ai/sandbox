@@ -9,8 +9,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/blaxel-ai/sandbox-api/src/handler/constants"
-	"github.com/blaxel-ai/sandbox-api/src/lib/blaxel"
+	"github.com/basetenlabs/sandbox/sandbox-api/src/handler/constants"
+	"github.com/basetenlabs/sandbox/sandbox-api/src/lib/scale"
 	"github.com/sirupsen/logrus"
 )
 
@@ -182,7 +182,7 @@ func (pm *ProcessManager) releaseKeepAlive(p *ProcessInfo) {
 	}
 	pm.mu.Unlock()
 	if held {
-		if err := blaxel.ScaleEnable(); err != nil {
+		if err := scale.ScaleEnable(); err != nil {
 			logrus.WithError(err).Warn("[KeepAlive] Failed to enable scale-to-zero after process exit")
 		}
 	}

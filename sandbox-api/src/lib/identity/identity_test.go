@@ -10,7 +10,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/blaxel-ai/sandbox-api/src/lib/isolation"
+	"github.com/basetenlabs/sandbox/sandbox-api/src/lib/isolation"
 )
 
 func currentUser(t *testing.T) *user.User {

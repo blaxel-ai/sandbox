@@ -1,9 +1,9 @@
-module github.com/blaxel-ai/sandbox-api/integration_tests
+module github.com/basetenlabs/sandbox/sandbox-api/integration_tests
 
 go 1.25.0
 
 require (
-	github.com/blaxel-ai/sandbox-api v0.0.0
+	github.com/basetenlabs/sandbox/sandbox-api v0.0.0
 	github.com/modelcontextprotocol/go-sdk v1.7.0
 	github.com/sirupsen/logrus v1.9.3
 	github.com/stretchr/testify v1.11.1
@@ -68,4 +68,4 @@ require (
 )
 
 // Use the local sandbox-api code
-replace github.com/blaxel-ai/sandbox-api => ../
+replace github.com/basetenlabs/sandbox/sandbox-api => ../

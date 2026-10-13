@@ -22,9 +22,9 @@ GIT_COMMIT=$(git rev-parse HEAD 2>/dev/null || echo "local")
 BUILD_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
 LDFLAGS="-s -w \
-  -X github.com/blaxel-ai/sandbox-api/src/handler.Version=${VERSION} \
-  -X github.com/blaxel-ai/sandbox-api/src/handler.GitCommit=${GIT_COMMIT} \
-  -X github.com/blaxel-ai/sandbox-api/src/handler.BuildTime=${BUILD_TIME}"
+  -X github.com/basetenlabs/sandbox/sandbox-api/src/handler.Version=${VERSION} \
+  -X github.com/basetenlabs/sandbox/sandbox-api/src/handler.GitCommit=${GIT_COMMIT} \
+  -X github.com/basetenlabs/sandbox/sandbox-api/src/handler.BuildTime=${BUILD_TIME}"
 
 # Build for linux/amd64
 echo "Building linux/amd64..."

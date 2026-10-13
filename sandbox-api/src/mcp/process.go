@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/blaxel-ai/sandbox-api/src/handler"
+	"github.com/basetenlabs/sandbox/sandbox-api/src/handler"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 

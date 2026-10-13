@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/blaxel-ai/sandbox-api/src/handler/network"
+	"github.com/basetenlabs/sandbox/sandbox-api/src/handler/network"
 )
 
 // exitedBeforePortsTailLines bounds how much of the process's output is quoted

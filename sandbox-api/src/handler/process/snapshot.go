@@ -3,7 +3,7 @@ package process
 import (
 	"time"
 
-	"github.com/blaxel-ai/sandbox-api/src/handler/constants"
+	"github.com/basetenlabs/sandbox/sandbox-api/src/handler/constants"
 )
 
 // ProcessSnapshot is detached response data. Lifecycle fields are copied under

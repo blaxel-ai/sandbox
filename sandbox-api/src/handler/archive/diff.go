@@ -12,8 +12,8 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/blaxel-ai/sandbox-api/src/handler/drive"
-	"github.com/blaxel-ai/sandbox-api/src/handler/process"
+	"github.com/basetenlabs/sandbox/sandbox-api/src/handler/drive"
+	"github.com/basetenlabs/sandbox/sandbox-api/src/handler/process"
 )
 
 // ChangeKind classifies a path with respect to the pristine image.

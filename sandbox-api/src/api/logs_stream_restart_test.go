@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/blaxel-ai/sandbox-api/src/handler/process"
+	"github.com/basetenlabs/sandbox/sandbox-api/src/handler/process"
 	"github.com/gin-gonic/gin"
 )
 

@@ -13,8 +13,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/blaxel-ai/sandbox-api/src/handler/process"
-	"github.com/blaxel-ai/sandbox-api/src/lib/blaxel"
+	"github.com/basetenlabs/sandbox/sandbox-api/src/handler/process"
+	"github.com/basetenlabs/sandbox/sandbox-api/src/lib/scale"
 	"github.com/sirupsen/logrus"
 )
 
@@ -287,7 +287,7 @@ func exportClaimed(ctx context.Context, options ExportOptions) (result *ExportRe
 		// either. A large archive takes longer than the idle deadline, so without
 		// this the VM is hibernated in the middle of the upload and the export
 		// dies with the sandbox.
-		defer blaxel.HoldAwake("the archive export")()
+		defer scale.HoldAwake("the archive export")()
 
 		// Frozen and claimed at once: a resume between the two would lift the
 		// freeze the export relies on, and the filesystem would be read while
