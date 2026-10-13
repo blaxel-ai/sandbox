@@ -13,7 +13,6 @@ Sandbox Hub is a collection of development environment templates for creating se
 - [Configuration](#configuration)
 - [Contributing](#contributing)
 - [License](#license)
-- [Support](#support)
 
 ## Templates
 
@@ -135,36 +134,11 @@ string, so both theme fields are always populated in published metadata.
 
 ## Contributing
 
-We welcome contributions to Sandbox Hub! Please follow these steps:
-
-1. Fork the repository
-2. Create a new branch (`git checkout -b feature/new-template`)
-3. Make your changes
-4. Commit your changes (`git commit -m 'Add new template'`)
-5. Push to the branch (`git push origin feature/new-template`)
-6. Open a Pull Request
-
-### Creating a New Template
-
-To create a new template:
-
-1. Create a new directory in the `hub` folder with your template name
-2. Add a `Dockerfile` that sets up the required environment
-3. Create a `template.json` file with the template configuration
-4. Add your template to docker-compose.yaml
-4. Test your template
-5. Submit a pull request with your new template
+See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, tests, hub templates and releases.
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](../LICENSE) file for details.
-
-## Support
-
-For support, please:
-
-- Open an issue on GitHub
-- Join our community channels
+This project is licensed under the MIT License, see [LICENSE](LICENSE).
 
 ---
 
