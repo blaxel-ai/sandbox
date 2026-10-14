@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	defaultScaleFile = "/uk/libukp/scale_to_zero_disable"
+	defaultScaleFile = "/bl/scale_to_zero_disable"
 
 	// EnvDisableKeepAlive disables the keepAlive feature for the whole sandbox
 	// when set to a truthy value at boot.
