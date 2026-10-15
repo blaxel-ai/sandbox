@@ -248,17 +248,20 @@ func main() {
 	// still use the API, the drive mounts and the egress tunnel while it shuts
 	// down. SIGUSR2 announces a standby: it goes to the processes that handle
 	// it, and nothing stops.
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM, syscall.SIGUSR2)
-
+	// Separate channels: a SIGTERM must never be dropped behind a pending SIGUSR2.
+	standbyCh := make(chan os.Signal, 1)
+	signal.Notify(standbyCh, syscall.SIGUSR2)
 	go func() {
-		var sig os.Signal
-		for sig = range sigCh {
-			if sig != syscall.SIGUSR2 {
-				break
-			}
+		for range standbyCh {
 			logrus.Infof("Received SIGUSR2, forwarded to %d processes", archive.ForwardToWorkload(syscall.SIGUSR2))
 		}
+	}()
+
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+
+	go func() {
+		sig := <-sigCh
 		logrus.Infof("Received signal %v, stopping the workload...", sig)
 		archive.TerminateWorkload()
 		logrus.Info("Workload stopped, shutting down...")
