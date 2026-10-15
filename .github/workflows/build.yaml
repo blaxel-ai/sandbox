@@ -275,9 +275,9 @@ jobs:
       HUB_ADMIN_USERNAME: ${{ secrets.HUB_ADMIN_USERNAME }}
       HUB_ADMIN_PASSWORD: ${{ secrets.HUB_ADMIN_PASSWORD }}
       HUB_WORKSPACE: ${{ vars.HUB_WORKSPACE }}
-    needs: [generate-matrix, sandbox-api]
-    # Run after sandbox-api completes (if it runs) or is skipped. Skip automatic main pushes, but allow manual dispatch for a selected sandbox.
-    if: always() && (github.ref_name != 'main' || (github.event_name == 'workflow_dispatch' && inputs.sandbox != '')) && needs.generate-matrix.outputs.sandboxes != '[]' && (needs.sandbox-api.result == 'success' || needs.sandbox-api.result == 'skipped')
+    needs: [check-changes, generate-matrix, sandbox-api]
+    # Run after sandbox-api is pushed, or when it had nothing to push. Skip automatic main pushes, but allow manual dispatch for a selected sandbox.
+    if: always() && (github.ref_name != 'main' || (github.event_name == 'workflow_dispatch' && inputs.sandbox != '')) && needs.generate-matrix.outputs.sandboxes != '[]' && (needs.sandbox-api.result == 'success' || needs.check-changes.outputs.sandbox-api-changed == 'false')
     strategy:
       fail-fast: false
       matrix:
