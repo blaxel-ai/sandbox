@@ -41,8 +41,9 @@ on:
           - xfce-vnc
 
 env:
-  REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
+  # The sandbox-api image is the only public one: hub templates are built from it by bl push.
+  REGISTRY: docker.io
+  IMAGE_NAME: baseten/sandbox
   TAG: ${{ github.sha }}
   HUB_ENV: ${{ github.ref_name == 'develop' && 'dev' || 'prod' }}
 
@@ -79,7 +80,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      packages: write
+      id-token: write
     if: needs.check-changes.outputs.sandbox-api-changed == 'true'
     steps:
       - name: Checkout repository
@@ -94,12 +95,12 @@ jobs:
           fi
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
 
-      - name: Log in to Container Registry
-        uses: docker/login-action@v3
+      - name: Sign in to Docker Hub with OIDC
+        uses: docker/login-action@abd2ef45e78c5afb21d64d4ca52ee8550d9572c7 # v4.5.1
         with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          username: baseten
+        env:
+          DOCKERHUB_OIDC_CONNECTIONID: fd8cfd93-1600-4e23-aca4-2972a3934b13
 
       - name: Extract metadata
         id: meta
@@ -146,7 +147,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      packages: write
+      id-token: write
     if: needs.check-changes.outputs.sandbox-api-changed == 'true'
     steps:
       - name: Download digests
@@ -156,12 +157,12 @@ jobs:
           pattern: digests-*
           merge-multiple: true
 
-      - name: Log in to Container Registry
-        uses: docker/login-action@v3
+      - name: Sign in to Docker Hub with OIDC
+        uses: docker/login-action@abd2ef45e78c5afb21d64d4ca52ee8550d9572c7 # v4.5.1
         with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          username: baseten
+        env:
+          DOCKERHUB_OIDC_CONNECTIONID: fd8cfd93-1600-4e23-aca4-2972a3934b13
 
       - name: Extract metadata
         id: meta
@@ -260,63 +261,9 @@ jobs:
             echo "sandboxes=$sandboxes_json" >> $GITHUB_OUTPUT
           fi
 
-  build-ghcr-hub:
-    runs-on: ubuntu-latest
-    needs:
-      - generate-matrix
-      - sandbox-api
-    # Run after sandbox-api completes (if it runs) or is skipped. Skip automatic main pushes, but allow manual dispatch for a selected sandbox.
-    if: always() && (github.ref_name != 'main' || (github.event_name == 'workflow_dispatch' && inputs.sandbox != '')) && needs.generate-matrix.outputs.sandboxes != '[]' && (needs.sandbox-api.result == 'success' || needs.sandbox-api.result == 'skipped')
-    strategy:
-      fail-fast: false
-      matrix:
-        sandbox: ${{ fromJson(needs.generate-matrix.outputs.sandboxes )}}
-    permissions:
-      contents: read
-      packages: write
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Log into registry ${{ env.REGISTRY }}
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Extract metadata
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-${{ matrix.sandbox }}
-          tags: |
-            type=ref,event=branch
-            type=sha,prefix={{branch}}-,enable=${{ !startsWith(github.ref, 'refs/tags/') }}
-            type=raw,value=develop,enable=${{ github.ref_name == 'develop' }}
-            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/') }}
-            type=semver,pattern={{version}}
-
-      - name: Build and push sandbox image
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: ./hub/${{ matrix.sandbox }}/Dockerfile
-          platforms: linux/amd64
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          build-args: |
-            SANDBOX_VERSION=${{ startsWith(github.ref, 'refs/tags/') && 'latest' || github.ref_name == 'develop' && 'develop' || 'latest' }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
   publish-hub:
-    # Builds the hub image with the in-sandbox builder: bl push imports the ghcr
-    # image into the HUB_WORKSPACE workspace, which registers it as <workspace>/<name>.
+    # Builds the hub image from its Dockerfile with the hub builder, in the
+    # HUB_WORKSPACE workspace, which registers it as <workspace>/<name>.
     runs-on: ubuntu-latest
     environment: |-
       ${{
@@ -328,9 +275,9 @@ jobs:
       HUB_ADMIN_USERNAME: ${{ secrets.HUB_ADMIN_USERNAME }}
       HUB_ADMIN_PASSWORD: ${{ secrets.HUB_ADMIN_PASSWORD }}
       HUB_WORKSPACE: ${{ vars.HUB_WORKSPACE }}
-    needs: [generate-matrix, build-ghcr-hub]
-    # Skip automatic main pushes, but allow manual dispatch for a selected sandbox.
-    if: always() && (github.ref_name != 'main' || (github.event_name == 'workflow_dispatch' && inputs.sandbox != '')) && needs.generate-matrix.outputs.sandboxes != '[]' && needs.build-ghcr-hub.result == 'success'
+    needs: [generate-matrix, sandbox-api]
+    # Run after sandbox-api completes (if it runs) or is skipped. Skip automatic main pushes, but allow manual dispatch for a selected sandbox.
+    if: always() && (github.ref_name != 'main' || (github.event_name == 'workflow_dispatch' && inputs.sandbox != '')) && needs.generate-matrix.outputs.sandboxes != '[]' && (needs.sandbox-api.result == 'success' || needs.sandbox-api.result == 'skipped')
     strategy:
       fail-fast: false
       matrix:
@@ -374,18 +321,24 @@ jobs:
           fi
       - name: Build sandbox image
         env:
-          # The ref is unique per commit, so the build is never served from the
-          # cache of an older image pushed under a reused tag.
-          IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-${{ matrix.sandbox }}:${{ steps.image-tag.outputs.tag }}
           TAG: ${{ steps.image-tag.outputs.tag }}
+          SANDBOX_VERSION: ${{ github.ref_name == 'develop' && 'develop' || 'latest' }}
           BL_ENV: ${{ env.HUB_ENV }}
         run: |
+          # Dockerfiles copy their files as hub/<name>/..., from the repo root.
+          # Upload only that folder, with the Dockerfile at the root of the context.
+          CONTEXT=$(mktemp -d)
+          mkdir -p "$CONTEXT/hub"
+          cp -R "hub/${{ matrix.sandbox }}" "$CONTEXT/hub/"
+          cp "hub/${{ matrix.sandbox }}/Dockerfile" "$CONTEXT/Dockerfile"
+          echo "SANDBOX_VERSION=$SANDBOX_VERSION" > "$CONTEXT/.env.build"
+          cd "$CONTEXT"
           # Hub image tags: Docker charset, 32 characters at most. Keep the end,
           # which holds the commit sha, so long branch names stay unique per commit.
           HUB_TAG=$(printf '%s' "$TAG" | tr -c 'A-Za-z0-9_.-' '-' | rev | cut -c1-32 | rev | sed 's/^[.-]*//')
           # bl push streams the build logs and exits non-zero when the build fails.
           set +e
-          bl push -y -w "$HUB_WORKSPACE" -t sandbox -n "${{ matrix.sandbox }}" --image "$IMAGE" --tag "$HUB_TAG" --timeout 45m 2>&1 | tee push.log
+          bl push -y -w "$HUB_WORKSPACE" -t sandbox -n "${{ matrix.sandbox }}" --tag "$HUB_TAG" --timeout 45m 2>&1 | tee push.log
           status=${PIPESTATUS[0]}
           set -e
           # Tags are immutable: a rerun of the same commit finds its tag already built.

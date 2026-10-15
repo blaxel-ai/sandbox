@@ -47,7 +47,7 @@ gh run watch <run_id> --exit-status
 
 This blocks until the run finishes and returns a non-zero exit code on failure.
 
-**The deployment is considered done as soon as any `build-ghcr-hub` job completes successfully.** You do not need to wait for the entire workflow to finish. If you see `build-ghcr-hub` jobs pass in the output, you can report success early.
+**The deployment is considered done as soon as any `publish-hub` job completes successfully.** You do not need to wait for the entire workflow to finish. If you see `publish-hub` jobs pass in the output, you can report success early.
 
 ### Step 3: Report result
 

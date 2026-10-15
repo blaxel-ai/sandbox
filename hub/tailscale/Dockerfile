@@ -1,5 +1,5 @@
 ARG SANDBOX_VERSION=latest
-FROM ghcr.io/basetenlabs/sandbox:${SANDBOX_VERSION} AS sandbox-api
+FROM docker.io/baseten/sandbox:${SANDBOX_VERSION} AS sandbox-api
 
 FROM tailscale/tailscale:stable
 
