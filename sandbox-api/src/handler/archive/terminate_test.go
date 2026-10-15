@@ -113,3 +113,56 @@ func TestTerminateWorkloadStopsChildrenLeftByAnExitedProcess(t *testing.T) {
 		t.Fatal("TerminateWorkload returned before the leftover child got SIGTERM and flushed")
 	}
 }
+
+func TestTerminateWorkloadStopsChildrenOfAnExitedLeaderStillRunning(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("SANDBOX_STATE_FILE", filepath.Join(dir, "process-state.json"))
+	marker := filepath.Join(dir, "term")
+	pidFile := filepath.Join(dir, "pid")
+
+	pm := process.GetProcessManager()
+	// The child keeps the leader's output open, so the manager is still draining
+	// it, and the process still reads as running, after the leader has exited.
+	command := `sh -c 'trap "sleep 0.3; echo flushed > ` + marker + `; exit 0" TERM; while :; do sleep 0.05; done' & echo $! > ` + pidFile + `; exit 1`
+	identifier, err := pm.StartProcessWithName(command, "", "drains-a-child", nil, true, 3, false, 0, false, func(*process.ProcessInfo) {})
+	if err != nil {
+		t.Fatalf("failed to start the workload: %v", err)
+	}
+	var child int
+	deadline := time.Now().Add(5 * time.Second)
+	for child == 0 {
+		if raw, err := os.ReadFile(pidFile); err == nil && strings.HasSuffix(string(raw), "\n") {
+			if child, err = strconv.Atoi(strings.TrimSpace(string(raw))); err != nil {
+				t.Fatalf("not a pid: %q", raw)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the leader never started its child")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Cleanup(func() { _ = syscall.Kill(child, syscall.SIGKILL) })
+	info, _ := pm.GetProcessByIdentifier(identifier)
+	select {
+	case <-info.Done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the leader never exited")
+	}
+	// Let the child install its trap.
+	time.Sleep(200 * time.Millisecond)
+	if info, _ := pm.GetProcessByIdentifier(identifier); info.Status != process.StatusRunning {
+		t.Fatalf("process status = %s, want running while its output is drained", info.Status)
+	}
+
+	done := make(chan struct{})
+	go func() { TerminateWorkload(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("TerminateWorkload is still waiting: the leftover child never got SIGTERM")
+	}
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatal("TerminateWorkload returned before the leftover child got SIGTERM and flushed")
+	}
+}

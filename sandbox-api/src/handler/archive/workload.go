@@ -122,8 +122,8 @@ func TerminateWorkload() {
 		}
 		candidate := stoppedProcess{identifier: info.PID, pid: info.ProcessPid, done: info.Done, group: true}
 		if info.Status == process.StatusRunning {
-			// StopProcess signals the whole group and keeps the manager from restarting it.
-			if err := pm.StopProcess(info.PID); err != nil {
+			// Signals the whole group and keeps the manager from restarting it.
+			if err := pm.StopProcessGroup(info.PID); err != nil {
 				logrus.WithError(err).WithField("process", info.PID).Warn("Failed to send SIGTERM to process")
 			}
 		} else {
