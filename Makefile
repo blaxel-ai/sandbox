@@ -52,10 +52,6 @@ build-custom-sandbox:
 run-custom-sandbox:
 	docker run -d -p 8080:8080 -p 8081:8081 -p 8082:8082 -p 8083:8083 --rm --name sandbox-dev custom-sandbox:latest
 
-mr_develop:
-	$(eval BRANCH_NAME := $(shell git rev-parse --abbrev-ref HEAD))
-	gh pr create --base develop --head $(BRANCH_NAME) --title "$(BRANCH_NAME)" --body "Merge request from $(BRANCH_NAME) to develop"
-
 tag:
 	git checkout main
 	git pull origin main

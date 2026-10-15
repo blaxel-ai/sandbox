@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - main
-      - develop
     tags:
       - 'v*'
     paths:
@@ -59,7 +58,7 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: 0
           SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
-          SENTRY_ENVIRONMENT: ${{ github.ref_name == 'develop' && 'dev' || 'prod' }}
+          SENTRY_ENVIRONMENT: prod
         run: |
           VERSION=${{ steps.version.outputs.version }}
           GIT_COMMIT=${{ github.sha }}
@@ -115,7 +114,7 @@ jobs:
           done
 
       - name: Delete existing branch release
-        if: github.ref_name == 'develop' || github.ref_name == 'main'
+        if: github.ref_name == 'main'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |

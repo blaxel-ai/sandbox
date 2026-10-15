@@ -52,7 +52,7 @@ CI ([build.yaml](.github/workflows/build.yaml)) pushes `sandbox-api` to `docker.
 
 ## Releasing
 
-Pushes to `main` and `develop` that touch `sandbox-api/` publish a prerelease named after the branch. For a versioned release, tag `main`:
+Pushes to `main` that touch `sandbox-api/` publish a prerelease named after the branch. For a versioned release, tag `main`:
 
 ```bash
 make tag 1.2.3   # pushes v1.2.3
