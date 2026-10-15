@@ -11,7 +11,6 @@ on:
   push:
     branches:
       - main
-      - develop
     paths:
       - 'sandbox-api/**'
       - '.github/workflows/test.yaml'

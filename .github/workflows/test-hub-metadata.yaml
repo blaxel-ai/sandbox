@@ -8,7 +8,7 @@ on:
       - 'scripts/test_publish_sandbox.py'
       - '.github/workflows/test-hub-metadata.yaml'
   push:
-    branches: [main, develop]
+    branches: [main]
     paths:
       - 'hub/**/template.json'
       - 'scripts/publish-sandbox.sh'
