@@ -21,7 +21,7 @@ func TestExportStreamsALargeFile(t *testing.T) {
 	const size = 512 << 20
 
 	root, lower := fakeSandbox(t)
-	big := filepath.Join(root, "blaxel/large.img")
+	big := filepath.Join(root, "workspace/large.img")
 	if err := os.MkdirAll(filepath.Dir(big), 0o755); err != nil {
 		t.Fatal(err)
 	}

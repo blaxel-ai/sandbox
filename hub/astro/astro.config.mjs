@@ -7,7 +7,7 @@ import { defineConfig } from 'astro/config';
 // Normalize those so probes can't crash the dev server with unhandled rejections.
 function normalizeIpv6Host() {
   return {
-    name: 'blaxel-normalize-ipv6-host',
+    name: 'normalize-ipv6-host',
     configureServer(server) {
       server.middlewares.use((req, _res, next) => {
         const host = req.headers.host;

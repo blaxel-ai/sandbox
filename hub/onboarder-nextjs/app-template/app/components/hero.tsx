@@ -16,9 +16,9 @@ export function Hero({
   return (
     <section className="intro-card">
       <div>
-        <img className="hero-watermark" src="/logo_short.png" alt="" />
+        <img className="hero-watermark" src="/logo_mark.svg" alt="" />
         <div className="eyebrow-row">
-          <p className="eyebrow">Blaxel Sandbox Lab</p>
+          <p className="eyebrow">Baseten Sandbox Lab</p>
           <span className="template-badge">editable template</span>
         </div>
         <h1>A disposable computer for your agent.</h1>

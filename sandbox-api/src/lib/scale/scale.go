@@ -49,7 +49,7 @@ func isScaleAvailable() bool {
 
 // GetScaleFile returns the path to the scale-to-zero control file
 func GetScaleFile() string {
-	if envPath := os.Getenv("BLAXEL_SCALE_FILE"); envPath != "" {
+	if envPath := os.Getenv("SANDBOX_SCALE_FILE"); envPath != "" {
 		return envPath
 	}
 	return defaultScaleFile

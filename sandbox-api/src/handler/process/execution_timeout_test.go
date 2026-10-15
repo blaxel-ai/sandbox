@@ -13,7 +13,7 @@ func TestExecutionTimeoutIndependentOfKeepAlive(t *testing.T) {
 		for _, synchronous := range []bool{false, true} {
 			t.Run(fmt.Sprintf("keepAlive=%t/synchronous=%t", keepAlive, synchronous), func(t *testing.T) {
 				pm := newStdinTestManager(t)
-				t.Setenv("BLAXEL_SCALE_FILE", filepath.Join(t.TempDir(), "scale"))
+				t.Setenv("SANDBOX_SCALE_FILE", filepath.Join(t.TempDir(), "scale"))
 				p, err := pm.ExecuteProcess("exec sleep 60", "", "", nil, synchronous, 1, nil, true, 3, keepAlive, false)
 				if p == nil {
 					t.Fatalf("start failed: %v", err)
@@ -41,7 +41,7 @@ func TestExecutionTimeoutAllowsCompletion(t *testing.T) {
 		for _, timeout := range []int{0, 5} {
 			t.Run(fmt.Sprintf("keepAlive=%t/timeout=%d", keepAlive, timeout), func(t *testing.T) {
 				pm := newStdinTestManager(t)
-				t.Setenv("BLAXEL_SCALE_FILE", filepath.Join(t.TempDir(), "scale"))
+				t.Setenv("SANDBOX_SCALE_FILE", filepath.Join(t.TempDir(), "scale"))
 				p, err := pm.ExecuteProcess("sleep 1.2; echo completed", "", "", nil, true, timeout, nil, false, 0, keepAlive, false)
 				if err != nil {
 					t.Fatal(err)
@@ -91,7 +91,7 @@ func TestRestartedProcessEnforcesExecutionTimeout(t *testing.T) {
 	for _, keepAlive := range []bool{false, true} {
 		t.Run(fmt.Sprintf("keepAlive=%t", keepAlive), func(t *testing.T) {
 			pm := newStdinTestManager(t)
-			t.Setenv("BLAXEL_SCALE_FILE", filepath.Join(t.TempDir(), "scale"))
+			t.Setenv("SANDBOX_SCALE_FILE", filepath.Join(t.TempDir(), "scale"))
 			pid, err := pm.StartProcess("if [ ! -f attempted ]; then touch attempted; exit 1; fi; exec sleep 30", t.TempDir(), nil, true, 3, keepAlive, 1, false, nil)
 			if err != nil {
 				t.Fatal(err)

@@ -1,4 +1,9 @@
-# Sandboxes
+# Baseten Sandbox
+
+[![Test](https://github.com/basetenlabs/sandbox/actions/workflows/test.yaml/badge.svg)](https://github.com/basetenlabs/sandbox/actions/workflows/test.yaml)
+[![License](https://img.shields.io/github/license/basetenlabs/sandbox)](LICENSE)
+
+The API that runs inside every [Baseten](https://baseten.co) sandbox, and the hub templates built on it. See the [sandbox docs](https://docs.baseten.co/sandboxes/overview).
 
 ## Overview
 
@@ -13,7 +18,6 @@ Sandbox Hub is a collection of development environment templates for creating se
 - [Configuration](#configuration)
 - [Contributing](#contributing)
 - [License](#license)
-- [Support](#support)
 
 ## Templates
 
@@ -37,7 +41,7 @@ A development environment for TypeScript applications with Node.js runtime and e
 A comprehensive development environment for building React Native applications using the Expo framework. Includes Expo CLI, development server, and all necessary tools for cross-platform mobile development.
 
 ### Omnigent Host
-A managed-host runtime for Omnigent agent sessions. It combines Omnigent's prebuilt host environment with the Blaxel sandbox API for process execution, file transfer, streaming, and lifecycle control. The image stays hidden from general Hub discovery because Omnigent selects it automatically, but its `blaxel/omnigent-host:latest` reference is public across workspaces.
+A managed-host runtime for Omnigent agent sessions. It combines Omnigent's prebuilt host environment with the Baseten sandbox API for process execution, file transfer, streaming, and lifecycle control. The image stays hidden from general Hub discovery because Omnigent selects it automatically, but its image reference is public across workspaces.
 
 ## Prerequisites
 
@@ -49,7 +53,7 @@ A managed-host runtime for Omnigent agent sessions. It combines Omnigent's prebu
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/blaxel-ai/sandbox.git
+   git clone https://github.com/basetenlabs/sandbox.git
    cd sandbox
    ```
 
@@ -60,16 +64,11 @@ A managed-host runtime for Omnigent agent sessions. It combines Omnigent's prebu
 
 ## Usage
 
-### Blaxel SDK
+### Baseten SDK
 
-Languages:
- - [Python](https://github.com/blaxel-ai/sdk-python)
- - [Typescript](https://github.com/modelcontextprotocol/typescript-sdk)
-
-You can find sample on how to create/retrieve/remove a Sandbox at this url: https://docs.blaxel.ai/Sandboxes/Overview
-Sandbox operations:
-- [Process](https://docs.blaxel.ai/Sandboxes/Processes)
-- [Filesystem](https://docs.blaxel.ai/Sandboxes/Filesystem)
+Create, manage and delete sandboxes with the Baseten SDK (TypeScript, Python, Go), the Baseten CLI or the dashboard:
+- [Overview](https://docs.baseten.co/sandboxes/overview)
+- [Manage sandboxes](https://docs.baseten.co/sandboxes/manage) (processes, files, HTTP services)
 
 ### Accessing template environments
 
@@ -110,7 +109,7 @@ You can upgrade a running sandbox-api instance using the `/upgrade` endpoint:
 curl -X POST http://localhost:8080/upgrade
 ```
 
-This will automatically download the latest binary from [GitHub Releases](https://github.com/blaxel-ai/sandbox/releases), validate it, and restart the server. All running processes are preserved across the upgrade.
+This will automatically download the latest binary from [GitHub Releases](https://github.com/basetenlabs/sandbox/releases), validate it, and restart the server. All running processes are preserved across the upgrade.
 
 You can also specify a version using the `SANDBOX_UPGRADE_VERSION` environment variable (defaults to `latest`).
 
@@ -140,38 +139,12 @@ string, so both theme fields are always populated in published metadata.
 
 ## Contributing
 
-We welcome contributions to Sandbox Hub! Please follow these steps:
-
-1. Fork the repository
-2. Create a new branch (`git checkout -b feature/new-template`)
-3. Make your changes
-4. Commit your changes (`git commit -m 'Add new template'`)
-5. Push to the branch (`git push origin feature/new-template`)
-6. Open a Pull Request
-
-### Creating a New Template
-
-To create a new template:
-
-1. Create a new directory in the `hub` folder with your template name
-2. Add a `Dockerfile` that sets up the required environment
-3. Create a `template.json` file with the template configuration
-4. Add your template to docker-compose.yaml
-4. Test your template
-5. Submit a pull request with your new template
+See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, tests, hub templates and releases.
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](../LICENSE) file for details.
-
-## Support
-
-For support, please:
-
-- Open an issue on GitHub
-- Contact the Blaxel team at support@blaxel.ai
-- Join our community channels
+This project is licensed under the MIT License, see [LICENSE](LICENSE).
 
 ---
 
-Built with ❤️ by [Blaxel](https://blaxel.ai)
+Built with ❤️ by [Baseten](https://www.baseten.co)

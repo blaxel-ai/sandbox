@@ -6,9 +6,9 @@
     "development"
   ],
   "description": "A sandbox image with Amp pre-installed for agentic coding workflows.",
-  "longDescription": "The Amp sandbox image provides a Blaxel sandbox runtime with Amp installed and available on PATH as `amp`. Use it to create SDK-managed sandboxes where Amp can inspect repositories, run commands, stream structured output, and continue threads after the sandbox resumes from standby.",
+  "longDescription": "The Amp sandbox image provides a Baseten sandbox runtime with Amp installed and available on PATH as `amp`. Use it to create SDK-managed sandboxes where Amp can inspect repositories, run commands, stream structured output, and continue threads after the sandbox resumes from standby.",
   "url": "https://ampcode.com/manual",
-  "icon": "https://blaxel.ai/logo.png",
+  "icon": "https://www.baseten.co/icon.png",
   "memory": 8192,
   "ports": [
     {

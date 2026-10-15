@@ -83,17 +83,17 @@ func (h *BaseHandler) BindJSON(c *gin.Context, obj interface{}) error {
 const sandboxAPIReference = "/swagger/doc.json"
 
 type WelcomeResponse struct {
-	Message       string `json:"message" example:"Welcome to your Blaxel Sandbox. Discover your capabilities here: /swagger/doc.json"`
+	Message       string `json:"message" example:"Welcome to your Baseten Sandbox. Discover your capabilities here: /swagger/doc.json"`
 	APIReference  string `json:"apiReference" example:"/swagger/doc.json"`
-	Documentation string `json:"documentation" example:"https://docs.blaxel.ai/Sandboxes/Overview"`
+	Documentation string `json:"documentation" example:"https://docs.baseten.co/sandboxes/overview"`
 	Description   string `json:"description" example:"This sandbox provides a full-featured environment for running code securely"`
 }
 
 func (h *BaseHandler) HandleWelcome(c *gin.Context) {
 	c.JSON(http.StatusOK, WelcomeResponse{
-		Message:       "Welcome to your Blaxel Sandbox. Discover your capabilities here: " + sandboxAPIReference,
+		Message:       "Welcome to your Baseten Sandbox. Discover your capabilities here: " + sandboxAPIReference,
 		APIReference:  sandboxAPIReference,
-		Documentation: "https://docs.blaxel.ai/Sandboxes/Overview",
+		Documentation: "https://docs.baseten.co/sandboxes/overview",
 		Description:   "This sandbox provides a full-featured environment for running code securely. Visit the documentation to learn how to manage processes, access the filesystem, and more.",
 	})
 }

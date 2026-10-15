@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	integrationBaseURL = "https://github.com/blaxel-ai/sandbox/releases"
+	integrationBaseURL = "https://github.com/basetenlabs/sandbox/releases"
 	// Use "develop" release which is continuously updated
 	integrationVersion = "develop"
 )

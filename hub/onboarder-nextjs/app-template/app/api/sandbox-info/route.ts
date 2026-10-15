@@ -34,15 +34,14 @@ export async function GET() {
   // panel never shows a number that undercuts its own "this is real" point.
   const rssBytes = memory.rss || memory.heapUsed + memory.external;
 
-  // Real Blaxel sandboxes set BL_NAME (the sandbox's actual name) but do not
+  // Real sandboxes set BL_NAME (the sandbox's actual name) but do not
   // give the container a meaningful kernel hostname — `hostname`/os.hostname()
-  // genuinely returns the literal string "(none)" there. Prefer BL_NAME (and
-  // its BLAXEL_* alias) so the panel shows a real identifier instead of that
-  // placeholder; only fall back to os.hostname() outside Blaxel (e.g. local
+  // genuinely returns the literal string "(none)" there. Prefer BL_NAME so the panel shows a real
+  // identifier instead of that placeholder; only fall back to os.hostname() outside a sandbox (e.g. local
   // dev/Docker), and never surface the literal "(none)" placeholder itself.
   const osHostname = os.hostname();
   const sandboxName =
-    firstEnv('BL_NAME', 'BLAXEL_NAME', 'BL_SANDBOX_NAME', 'BLAXEL_SANDBOX_NAME') ||
+    firstEnv('BL_NAME', 'BL_SANDBOX_NAME') ||
     (osHostname !== '(none)' ? osHostname : '');
   const hostname = sandboxName || (osHostname !== '(none)' ? osHostname : 'unavailable');
 
@@ -56,13 +55,13 @@ export async function GET() {
     pid: process.pid,
     platform: `${process.platform}/${process.arch}`,
     previewUrl,
-    region: firstEnv('BL_REGION', 'BLAXEL_REGION', 'REGION') || 'detected at runtime',
+    region: firstEnv('BL_REGION', 'REGION') || 'detected at runtime',
     requestCount,
     rssMemoryMb: bytesToMb(rssBytes),
     sandboxName: sandboxName || 'current sandbox',
     timestamp: new Date().toISOString(),
     totalMemoryMb: bytesToMb(os.totalmem()),
     uptimeSeconds: Math.round(process.uptime()),
-    workspace: firstEnv('BL_WORKSPACE', 'BLAXEL_WORKSPACE', 'WORKSPACE') || 'current workspace',
+    workspace: firstEnv('BL_WORKSPACE', 'WORKSPACE') || 'current workspace',
   });
 }

@@ -887,12 +887,12 @@ func writeFile(target, name string, mode os.FileMode, content io.Reader) (bool, 
 	}
 
 	// A name of its own, in the target's directory, rather than one derived
-	// from the target: an archive carrying both "app" and "app.blaxel-import"
+	// from the target: an archive carrying both "app" and "app.sandbox-import"
 	// would otherwise have the second member removed to stage the first, which
 	// is a member of the archive deleted by the import that was restoring it.
 	// CreateTemp opens with O_CREATE|O_EXCL, so it neither follows a symlink
 	// standing under the name it picked nor replaces anything.
-	file, err := os.CreateTemp(filepath.Dir(target), ".blaxel-import-*")
+	file, err := os.CreateTemp(filepath.Dir(target), ".sandbox-import-*")
 	if err != nil {
 		return changed, fmt.Errorf("failed to create %s: %w", name, err)
 	}

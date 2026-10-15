@@ -1,5 +1,5 @@
 ARG SANDBOX_VERSION=latest
-FROM ghcr.io/blaxel-ai/sandbox:${SANDBOX_VERSION} AS sandbox-api
+FROM ghcr.io/basetenlabs/sandbox:${SANDBOX_VERSION} AS sandbox-api
 
 # Use an official Python runtime as a parent image
 FROM python:3.12-slim

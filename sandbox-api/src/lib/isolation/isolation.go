@@ -28,7 +28,7 @@ const EnvEnabled = "BL_SANDBOX_API_ISOLATION"
 
 // TableName is the nftables table holding the rules, in the inet family so a
 // single set of rules covers IPv4 and IPv6.
-const TableName = "blaxel_sandbox_api"
+const TableName = "sandbox_api"
 
 // Enabled reports whether the environment opts into the isolation. Anything
 // unparseable counts as off, the same as unset.

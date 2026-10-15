@@ -31,7 +31,7 @@ export function SandboxLabPage() {
       command: '',
       id: 'welcome',
       output:
-        'Blaxel sandbox ready. Click a safe command, or type help to see what this public terminal can run.',
+        'Baseten sandbox ready. Click a safe command, or type help to see what this public terminal can run.',
       status: 'done',
     },
   ]);
@@ -289,7 +289,7 @@ export function SandboxLabPage() {
     <main className="shell">
       <header className="topbar">
         <div className="brand">
-          <img src="/logo_white.png" alt="Blaxel" />
+          <img src="/logo.svg" alt="Baseten" />
         </div>
         <div className="topbar-meta">
           <span className="status-pill"><span /> sandbox online</span>

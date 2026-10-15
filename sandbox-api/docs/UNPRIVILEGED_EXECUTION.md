@@ -6,8 +6,7 @@ mounts are FUSE mounts (`CAP_SYS_ADMIN`), the egress tunnel is WireGuard
 toggles scale-to-zero, and port probing inspects other processes.
 
 A Docker `USER` directive cannot express that split: the runtime applies it to
-PID 1, which de-privileges the API itself — that is why images built with
-`bl deploy --experimental` lose drive mounting.
+PID 1, which de-privileges the API itself, so drive mounting is lost.
 
 `BL_SANDBOX_USER` expresses it instead. The API stays privileged; everything it
 does *on behalf of the user* is dropped to an unprivileged identity.
@@ -15,7 +14,7 @@ does *on behalf of the user* is dropped to an unprivileged identity.
 ## Enabling it
 
 ```dockerfile
-RUN adduser -D -u 10001 -h /blaxel app
+RUN adduser -D -u 10001 -h /home/app app
 
 ENV BL_SANDBOX_USER_ENABLED=true
 ENV BL_SANDBOX_USER=app       # also accepts "10001", "app:app", "10001:10001"
@@ -36,13 +35,12 @@ workload identity applies:
 #!/bin/sh
 set -eu
 SANDBOX_USER="${BL_SANDBOX_USER:-app}"
-chown -R "$SANDBOX_USER" "${HOME:-/blaxel}"
+chown -R "$SANDBOX_USER" "${HOME:-/home/app}"
 exec /usr/local/bin/sandbox-api --user "$SANDBOX_USER" "$@"
 ```
 
-Do **not** add a `USER` directive unless the runtime is new enough to delegate
-it (blaxel-ai/metamorph#77, blaxel-ai/executionplane#449); on an older runtime
-it de-privileges PID 1, which is what this replaces.
+Do **not** add a `USER` directive unless the runtime delegates it to the
+sandbox API; otherwise it de-privileges PID 1, which is what this replaces.
 
 If the value cannot be resolved, or resolves to uid 0, the API refuses to start.
 Failing open would hand every workload the privileges the feature exists to

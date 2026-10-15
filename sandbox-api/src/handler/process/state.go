@@ -736,7 +736,7 @@ func ClearState() error {
 
 // Upgrade configuration
 const (
-	DefaultReleaseURL = "https://github.com/blaxel-ai/sandbox/releases"
+	DefaultReleaseURL = "https://github.com/basetenlabs/sandbox/releases"
 	ValidationPort    = 19999 // Port used for validating the new binary
 
 	// Download retry/timeout settings
@@ -745,7 +745,7 @@ const (
 	downloadMaxBackoff     = 30 * time.Second
 	downloadConnTimeout    = 10 * time.Second
 	downloadTotalTimeout   = 5 * time.Minute
-	downloadUserAgent      = "blaxel-sandbox-api/1.0"
+	downloadUserAgent      = "sandbox-api/1.0"
 )
 
 // UpgradeState represents the current state of an upgrade
@@ -827,7 +827,7 @@ func isDevMode() bool {
 
 // TriggerUpgrade initiates an upgrade of the sandbox-api process
 // It downloads the specified binary from GitHub releases, validates it, and restarts
-// Pre-built binaries are available at https://github.com/blaxel-ai/sandbox/releases
+// Pre-built binaries are available at https://github.com/basetenlabs/sandbox/releases
 // Available versions: "develop", "main", "latest", or specific tag like "v1.0.0"
 // baseURL can be customized for forks (e.g., https://github.com/your-org/sandbox/releases)
 func TriggerUpgrade(version, baseURL string) {
@@ -1005,7 +1005,7 @@ func retryableDownload(client *http.Client, url string) (*http.Response, error) 
 
 // downloadReleaseWithDetails downloads the sandbox-api binary from GitHub releases
 // version can be: "develop", "main", "latest", or a specific tag like "v1.0.0"
-// baseURL is the releases URL (e.g., https://github.com/blaxel-ai/sandbox/releases)
+// baseURL is the releases URL (e.g., https://github.com/basetenlabs/sandbox/releases)
 // Returns: binaryPath, downloadURL, bytesDownloaded, error
 func downloadReleaseWithDetails(version, baseURL string) (string, string, int64, error) {
 	logger := logrus.WithField("component", "upgrade")

@@ -26,12 +26,18 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.25'
+          go-version-file: sandbox-api/go.mod
           cache-dependency-path: sandbox-api/go.sum
 
-      - name: go vet
+      # One command per line: `set -e` ignores all but the last of an && chain.
+      - name: Lint
         working-directory: sandbox-api
-        run: go vet ./...
+        run: |
+          go mod tidy
+          (cd integration-tests && go mod tidy)
+          gofmt -w .
+          git diff --exit-code
+          go vet ./...
 
       - name: go test
         working-directory: sandbox-api
@@ -58,7 +64,7 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.25'
+          go-version-file: sandbox-api/go.mod
           cache-dependency-path: sandbox-api/go.sum
 
       - name: Build sandbox-api

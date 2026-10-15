@@ -1712,7 +1712,7 @@ paths:
 
         Available versions: "latest" (default, most recent release), "develop", "main", or specific tag like "v1.0.0"
 
-        You can also specify a custom baseUrl for forks (defaults to https://github.com/blaxel-ai/sandbox/releases)
+        You can also specify a custom baseUrl for forks (defaults to https://github.com/basetenlabs/sandbox/releases)
       requestBody:
         content:
           application/json:
@@ -1779,7 +1779,7 @@ paths:
       tags:
         - filesystem
 servers:
-  - url: https://sbx-{sandbox_id}-{workspace_id}.{region}.bl.run
+  - url: https://sbx-{sandbox_id}-{workspace_id}.{region}.b10.co
     variables:
       sandbox_id:
         default: unknown
@@ -2723,7 +2723,7 @@ components:
       properties:
         baseUrl:
           description: Base URL for releases (useful for forks)
-          example: https://github.com/blaxel-ai/sandbox/releases
+          example: https://github.com/basetenlabs/sandbox/releases
           type: string
         version:
           description: 'Version to upgrade to: "latest" (default), "develop", "main", or specific tag like "v1.0.0"'

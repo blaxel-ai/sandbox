@@ -115,7 +115,7 @@ var executablePath = os.Executable
 // os.Executable only reports the binary of the moment: after a hot upgrade that
 // is sandbox-api-upgraded, and the image's own path - the one the supervisor
 // execs on the next boot - would be left unprotected.
-var apiBinaryDirs = []string{"/usr/local/bin", "/blaxel"}
+var apiBinaryDirs = []string{"/usr/local/bin"}
 
 // apiBinaryNames are the names this API is exec'd under: the image's, and the
 // one a hot upgrade installs beside it.

@@ -24,4 +24,4 @@ Using git commands directly:
 
 ## Step 2: Confirm deployment
 
-Send a brief message confirming that the merge into `develop` succeeded and both the controlplane and infrastructure runs completed successfully, including the run URLs.
+Send a brief message confirming that the merge into `develop` succeeded and the deploy workflow runs completed successfully, including the run URLs.

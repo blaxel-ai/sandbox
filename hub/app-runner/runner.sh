@@ -11,7 +11,7 @@ START_COMMAND="${APP_RUNNER_START_COMMAND:-}"
 SETUP_SCRIPT_B64="${APP_RUNNER_SETUP_SCRIPT_B64:-}"
 
 case "$APP_ROOT" in
-  ""|"/"|"/bin"|"/etc"|"/usr"|"/var"|"/tmp"|"/blaxel")
+  ""|"/"|"/bin"|"/etc"|"/usr"|"/var"|"/tmp"|"/root")
     echo "Unsafe APP_RUNNER_WORKDIR: $APP_ROOT" >&2
     exit 1
     ;;

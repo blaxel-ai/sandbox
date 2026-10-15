@@ -1,6 +1,6 @@
-# Blaxel Sandbox Lab
+# Baseten Sandbox Lab
 
-This app is the `blaxel/onboarder-nextjs:latest` sandbox image, a platform-managed template used by the onboarder's first-sandbox flow (see `HELLO_WORLD_IMAGE` in controlplane). It is not the general-purpose `blaxel/nextjs` template — it's hidden from the template picker. It is intentionally Blaxel-native: it gives agents a safe runtime with files, processes, a live system fingerprint, and docs links into the broader Blaxel platform.
+This app is the `onboarder-nextjs` sandbox image, a platform-managed template used by the onboarding first-sandbox flow. It is not the general-purpose `nextjs` template, and it is hidden from the template picker. It gives agents a safe runtime with files, processes, a live system fingerprint, and docs links into the broader Baseten platform.
 
 Run locally inside the image with:
 
@@ -18,7 +18,7 @@ Agents opening this sandbox in Codex, Claude Code, or Cursor auto-load `AGENTS.m
 - Platform/use-case docs links live in `app/lib/platform-links.ts`.
 - Safe terminal commands live in `app/lib/sandbox-commands.ts`; the executable allowlist is enforced in `app/api/run-check/route.ts`.
 - The live system fingerprint lives in `app/components/sandbox-fingerprint.tsx`, polling `app/api/sandbox-info/route.ts`.
-- The demo artifact file is created by `scripts/create-artifact.mjs` under `/tmp/blaxel-sandbox-lab`.
+- The demo artifact file is created by `scripts/create-artifact.mjs` under `/tmp/baseten-sandbox-lab`.
 
 ## Useful terminal commands
 
@@ -46,7 +46,7 @@ npm run build
 
 ## Add your own proof
 
-A good Blaxel sandbox starter should show inspectable evidence, not just a transcript. The "Sandbox stats" panel is the primary "this is real" moment: it polls live process/OS facts (host, pid, uptime, memory, load average) every second, ticking smoothly between polls, because they only make sense for one continuously running process — a static export or a fresh serverless invocation can't produce them.
+A good sandbox starter should show inspectable evidence, not just a transcript. The "Sandbox stats" panel is the primary "this is real" moment: it polls live process/OS facts (host, pid, uptime, memory, load average) every second, ticking smoothly between polls, because they only make sense for one continuously running process — a static export or a fresh serverless invocation can't produce them.
 
 If you add a new capability demo:
 

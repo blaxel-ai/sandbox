@@ -36,7 +36,7 @@ curl -s http://localhost:8080/process \
   -H "Content-Type: application/json" \
   -d '{
     "name": "dev-server",
-    "workingDir": "/blaxel/app",
+    "workingDir": "/app",
     "command": "npm run dev",
     "waitForCompletion": false,
     "restartOnFailure": true,

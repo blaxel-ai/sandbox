@@ -1,36 +1,34 @@
 export const PLATFORM_PRIMITIVES = [
-  ['Sandbox', 'https://docs.blaxel.ai/Sandboxes/Overview'],
-  ['Drive', 'https://docs.blaxel.ai/Agent-drive/Overview'],
-  ['MCP', 'https://docs.blaxel.ai/Functions/Overview'],
-  ['Agent', 'https://docs.blaxel.ai/Agents/Overview'],
-  ['Jobs', 'https://docs.blaxel.ai/Jobs/Overview'],
-  ['Observability', 'https://docs.blaxel.ai/Observability/Overview'],
+  ['Sandbox', 'https://docs.baseten.co/sandboxes/overview'],
+  ['Model APIs', 'https://docs.baseten.co/inference/model-apis/overview'],
+  ['Training', 'https://docs.baseten.co/training/index'],
+  ['Observability', 'https://docs.baseten.co/observability/metrics'],
 ] as const;
 
 export const SANDBOX_USE_CASES = [
   {
-    href: 'https://docs.blaxel.ai/Sandboxes/Overview',
+    href: 'https://docs.baseten.co/sandboxes/overview',
     icon: 'terminal',
     text: 'Let agents install dependencies, edit files, and run checks away from developer laptops.',
     title: 'Agent coding workspaces',
   },
   {
-    href: 'https://docs.blaxel.ai/Sandboxes/Preview-url',
+    href: 'https://docs.baseten.co/sandboxes/manage#access-an-http-service',
     icon: 'globe',
     text: 'Recreate customer issues, run the app, and hand teammates a live URL instead of a transcript.',
     title: 'Live repros and previews',
   },
   {
-    href: 'https://docs.blaxel.ai/Sandboxes/MCP',
+    href: 'https://docs.baseten.co/sandboxes/manage#interact-with-a-running-sandbox',
     icon: 'shield',
     text: 'Expose filesystem, process, and app tools to agents through controlled sandbox interfaces.',
     title: 'Safe tool execution',
   },
   {
-    href: 'https://docs.blaxel.ai/Agent-drive/Overview',
+    href: 'https://docs.baseten.co/sandboxes/manage-images#create-a-custom-image',
     icon: 'database',
-    text: 'Keep context ephemeral by default, persistent with volumes, or shared through Agent Drive.',
-    title: 'Persistent shared memory',
+    text: 'Bake runtimes, tools, and starting files into a versioned image so every sandbox starts ready.',
+    title: 'Reusable custom images',
   },
 ] as const;
 

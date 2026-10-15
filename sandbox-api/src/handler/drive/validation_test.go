@@ -6,9 +6,9 @@ import (
 
 func TestValidateDriveName(t *testing.T) {
 	tests := []struct {
-		name     string
-		input    string
-		wantErr  bool
+		name    string
+		input   string
+		wantErr bool
 	}{
 		{"valid simple", "mydrive", false},
 		{"valid with hyphen", "my-drive", false},
@@ -52,9 +52,9 @@ func TestNormalizeMountPath(t *testing.T) {
 
 func TestValidateMountPath(t *testing.T) {
 	tests := []struct {
-		name     string
-		input    string
-		wantErr  bool
+		name    string
+		input   string
+		wantErr bool
 	}{
 		{"absolute path", "/mnt/data", false},
 		{"root", "/", false},

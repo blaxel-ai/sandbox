@@ -409,11 +409,11 @@ func TestRelaunchRefusesAWorkingDirectoryThatBelongsToThePlatform(t *testing.T) 
 	// put a directory of the archive's choosing inside the trees holding the
 	// credentials and metadata this VM was given.
 	cases := map[string]string{
-		"the injected secrets":               "/run/secrets/blaxel",
+		"the injected secrets":               "/run/secrets/platform",
 		"the platform's own tree":            "/bl/anything",
 		"this API's own state":               "/var/lib/blaxel/worker",
 		"a directory that is not absolute":   "relative/worker",
-		"a path climbing out of the sandbox": "/blaxel/../../etc/worker",
+		"a path climbing out of the sandbox": "/workspace/../../etc/worker",
 	}
 	for name, workingDir := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -428,7 +428,7 @@ func TestRelaunchRefusesAWorkingDirectoryThatBelongsToThePlatform(t *testing.T) 
 		"processes": map[string]any{
 			"proc-1": map[string]any{
 				"pid": "proc-1", "name": "worker", "command": "true",
-				"status": "running", "workingDir": "/run/secrets/blaxel",
+				"status": "running", "workingDir": "/run/secrets/platform",
 			},
 		},
 	})
@@ -439,7 +439,7 @@ func TestRelaunchRefusesAWorkingDirectoryThatBelongsToThePlatform(t *testing.T) 
 	if len(relaunched) != 0 || len(failed) != 1 {
 		t.Fatalf("the process should have been reported as failed, got %v and %v as failures", relaunched, failed)
 	}
-	if exists("/run/secrets/blaxel") {
+	if exists("/run/secrets/platform") {
 		t.Error("a working directory under a path that is never restored must not be created")
 	}
 }
@@ -739,13 +739,13 @@ func TestImportRefusesAHardlinkToAnExcludedPath(t *testing.T) {
 	}
 
 	body := buildArchive(t, Manifest{Version: ManifestVersion, Root: "/"}, nil, []archiveMember{
-		{name: "blaxel/stolen", link: "bl/token", hardlink: true, mode: 0o644},
+		{name: "workspace/stolen", link: "bl/token", hardlink: true, mode: 0o644},
 	})
 
 	if _, err := Import(context.Background(), ImportOptions{URL: serve(t, body), root: root, MarkerPath: filepath.Join(root, "marker.json")}); err == nil {
 		t.Fatal("expected a hardlink to an excluded path to be refused")
 	}
-	if _, err := os.Lstat(filepath.Join(root, "blaxel/stolen")); !os.IsNotExist(err) {
+	if _, err := os.Lstat(filepath.Join(root, "workspace/stolen")); !os.IsNotExist(err) {
 		t.Errorf("nothing should have been linked, got %v", err)
 	}
 }
@@ -761,7 +761,7 @@ func TestImportDoesNotWriteThroughASymlinkAtTheTemporaryPath(t *testing.T) {
 	if err := os.WriteFile(outside, []byte("untouched"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink(outside, filepath.Join(root, "srv/data.blaxel-import")); err != nil {
+	if err := os.Symlink(outside, filepath.Join(root, "srv/data.sandbox-import")); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1383,7 +1383,7 @@ func TestImportNeverReplacesAnAPIBinaryThisProcessIsNotRunning(t *testing.T) {
 			defer func() { executablePath = previous }()
 
 			members := []archiveMember{}
-			for _, path := range []string{"usr/local/bin/sandbox-api", "usr/local/bin/sandbox-api-upgraded", "blaxel/sandbox-api"} {
+			for _, path := range []string{"usr/local/bin/sandbox-api", "usr/local/bin/sandbox-api-upgraded"} {
 				live := filepath.Join(root, path)
 				if err := os.MkdirAll(filepath.Dir(live), 0o755); err != nil {
 					t.Fatal(err)
@@ -1502,7 +1502,7 @@ func TestImportKeepsAMemberNamedLikeTheStagingFile(t *testing.T) {
 	// removed a member the archive had already restored beside it.
 	root := t.TempDir()
 	body := buildArchive(t, Manifest{Version: ManifestVersion, Root: "/"}, nil, []archiveMember{
-		{name: "srv/app.blaxel-import", content: "restored", mode: 0o644},
+		{name: "srv/app.sandbox-import", content: "restored", mode: 0o644},
 		{name: "srv/app", content: "binary", mode: 0o755},
 	})
 
@@ -1513,7 +1513,7 @@ func TestImportKeepsAMemberNamedLikeTheStagingFile(t *testing.T) {
 	if result.Restored != 2 {
 		t.Errorf("expected both members to be restored, got %d", result.Restored)
 	}
-	if content, err := os.ReadFile(filepath.Join(root, "srv/app.blaxel-import")); err != nil || string(content) != "restored" {
+	if content, err := os.ReadFile(filepath.Join(root, "srv/app.sandbox-import")); err != nil || string(content) != "restored" {
 		t.Errorf("the member was removed to stage another one: %q, %v", content, err)
 	}
 	if content, err := os.ReadFile(filepath.Join(root, "srv/app")); err != nil || string(content) != "binary" {

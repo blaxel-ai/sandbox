@@ -20,13 +20,13 @@ import (
 	"github.com/basetenlabs/sandbox/sandbox-api/src/handler"
 	"github.com/basetenlabs/sandbox/sandbox-api/src/handler/archive"
 	"github.com/basetenlabs/sandbox/sandbox-api/src/handler/process"
-	"github.com/basetenlabs/sandbox/sandbox-api/src/lib/scale"
 	"github.com/basetenlabs/sandbox/sandbox-api/src/lib/envfile"
 	"github.com/basetenlabs/sandbox/sandbox-api/src/lib/identity"
 	"github.com/basetenlabs/sandbox/sandbox-api/src/lib/isolation"
 	"github.com/basetenlabs/sandbox/sandbox-api/src/lib/networking"
 	"github.com/basetenlabs/sandbox/sandbox-api/src/lib/oom"
 	"github.com/basetenlabs/sandbox/sandbox-api/src/lib/proxy"
+	"github.com/basetenlabs/sandbox/sandbox-api/src/lib/scale"
 	"github.com/basetenlabs/sandbox/sandbox-api/src/lib/sentrylib"
 	"github.com/basetenlabs/sandbox/sandbox-api/src/mcp"
 	"github.com/gin-gonic/gin"
@@ -37,7 +37,7 @@ import (
 // @title           Sandbox API
 // @version         0.0.1
 // @description     API for manipulating filesystem, processes and network.
-// @host            sbx-{sandbox_id}-{workspace_id}.{region}.bl.run
+// @host            sbx-{sandbox_id}-{workspace_id}.{region}.b10.co
 // @schemes         https
 // @securityDefinitions.apikey BearerAuth
 // @in header

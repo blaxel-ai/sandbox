@@ -8,7 +8,7 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /home/user
 
-COPY --from=ghcr.io/blaxel-ai/sandbox:develop /sandbox-api /usr/local/bin/sandbox-api
+COPY --from=ghcr.io/basetenlabs/sandbox:develop /sandbox-api /usr/local/bin/sandbox-api
 
 EXPOSE 8080 3000 8081
 ENTRYPOINT ["/usr/local/bin/sandbox-api"]

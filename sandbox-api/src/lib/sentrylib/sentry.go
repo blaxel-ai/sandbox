@@ -72,14 +72,14 @@ func Init(disabled bool) func() {
 	}
 
 	err := sentry.Init(sentry.ClientOptions{
-		Dsn:                    dsn,
-		Environment:            env,
-		Release:                "sandbox-api@" + Version,
-		AttachStacktrace:       true,
-		EnableTracing:          true,
-		TracesSampleRate:       traceRate,
-		BeforeSend:             stripRequest,
-		BeforeSendTransaction:  stripRequest,
+		Dsn:                   dsn,
+		Environment:           env,
+		Release:               "sandbox-api@" + Version,
+		AttachStacktrace:      true,
+		EnableTracing:         true,
+		TracesSampleRate:      traceRate,
+		BeforeSend:            stripRequest,
+		BeforeSendTransaction: stripRequest,
 	})
 	if err != nil {
 		logrus.WithError(err).Warn("Sentry initialisation failed – continuing without Sentry")
@@ -101,7 +101,7 @@ func Init(disabled bool) func() {
 	logrus.Infof("")
 	logrus.Infof("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 	logrus.Infof("  Telemetry is ENABLED (anonymous — no PII collected)")
-	logrus.Infof("  This helps the Blaxel team detect and fix crashes faster.")
+	logrus.Infof("  This helps the Baseten team detect and fix crashes faster.")
 	logrus.Infof("  No personal data, file contents, or process output is ever sent.")
 	logrus.Infof("")
 	logrus.Infof("  To opt out, use any of the following:")
@@ -174,4 +174,3 @@ func DistributionMetric(name string, value float64, unit string, attrs ...attrib
 	}
 	meter.Distribution(name, value, opts...)
 }
-

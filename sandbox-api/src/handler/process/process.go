@@ -18,9 +18,9 @@ import (
 	"time"
 
 	"github.com/basetenlabs/sandbox/sandbox-api/src/handler/constants"
-	"github.com/basetenlabs/sandbox/sandbox-api/src/lib/scale"
 	"github.com/basetenlabs/sandbox/sandbox-api/src/lib/identity"
 	"github.com/basetenlabs/sandbox/sandbox-api/src/lib/oom"
+	"github.com/basetenlabs/sandbox/sandbox-api/src/lib/scale"
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
 )

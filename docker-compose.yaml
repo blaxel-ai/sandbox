@@ -115,6 +115,6 @@ services:
       - "8080:8080"
       - "3010:3010"
     volumes:
-      - ./sandbox-api:/blaxel/sandbox-api
-      - ./tmp:/blaxel/tmp
+      - ./sandbox-api:/src/sandbox-api
+      - ./tmp:/src/tmp
     command: ["air"]

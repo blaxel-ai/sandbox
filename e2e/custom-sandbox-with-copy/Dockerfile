@@ -26,12 +26,12 @@ RUN npm i -g typescript ts-node @types/node dotenv webpack webpack-cli
 # Install code-server
 RUN curl -fsSL https://code-server.dev/install.sh | sh
 
-# Create /blaxel directory and Next.js app for testing
-RUN mkdir -p /blaxel && \
-    npx create-next-app@latest /blaxel/app --use-npm --typescript --eslint --tailwind --src-dir --app --import-alias "@/*" --no-git --yes --no-turbopack
+# Create the Next.js app for testing
+RUN mkdir -p /app && \
+    npx create-next-app@latest /app --use-npm --typescript --eslint --tailwind --src-dir --app --import-alias "@/*" --no-git --yes --no-turbopack
 
 # Copy sandbox-api binary from registry
-COPY --from=ghcr.io/blaxel-ai/sandbox:latest /sandbox-api /usr/local/bin/sandbox-api
+COPY --from=ghcr.io/basetenlabs/sandbox:latest /sandbox-api /usr/local/bin/sandbox-api
 
 # Copy entrypoint script
 COPY entrypoint.sh /home/user/entrypoint.sh

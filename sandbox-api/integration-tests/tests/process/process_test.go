@@ -492,7 +492,7 @@ func TestProcessKillWithChildProcesses(t *testing.T) {
 
 	// Check if prerequisites exist (Next.js app, npm, etc.)
 	if !checkNextJsPrerequisites(t) {
-		t.Skip("Skipping Next.js test: prerequisites not available (requires /blaxel/app with npm)")
+		t.Skip("Skipping Next.js test: prerequisites not available (requires /app with npm)")
 	}
 
 	// First run: Start Next.js, verify it binds to port 3000, then kill it
@@ -520,7 +520,7 @@ func checkNextJsPrerequisites(t *testing.T) bool {
 	// Try to execute a simple command to check if the working directory exists
 	checkRequest := map[string]interface{}{
 		"name":              "check-nextjs",
-		"command":           "test -d /blaxel/app && test -f /blaxel/app/package.json",
+		"command":           "test -d /app && test -f /app/package.json",
 		"workingDir":        "/",
 		"waitForCompletion": true,
 		"timeout":           5,
@@ -559,7 +559,7 @@ func runNextJsAndKill(t *testing.T, processName string) bool {
 		"name":              processName,
 		"command":           "npm run dev",
 		"env":               map[string]string{"PORT": "3000"},
-		"workingDir":        "/blaxel/app",
+		"workingDir":        "/app",
 		"waitForCompletion": false,
 	}
 

@@ -20,13 +20,13 @@ The sandbox management API starts immediately while Android boots in the backgro
 ```sh
 cat /run/android/status.json
 export ANDROID_SERIAL="$(cat /run/android/adb-address)"
-adb install /blaxel/app.apk
+adb install /workspace/app.apk
 adb shell am start -n com.example.app/.MainActivity
 adb shell input tap 360 640
 adb shell input text 'Hello%sAndroid'
 adb shell uiautomator dump /data/local/tmp/window.xml
-adb pull /data/local/tmp/window.xml /blaxel/window.xml
-adb exec-out screencap -p > /blaxel/screen.png
+adb pull /data/local/tmp/window.xml /workspace/window.xml
+adb exec-out screencap -p > /workspace/screen.png
 ```
 
 ADB is on a private veth subnet reachable only inside the sandbox. It is not published as a preview port. The launcher selects a free subnet and configures Android networking before starting `/init`. ADB requires the sandbox host key, generated at startup in the host ADB user directory (`$ANDROID_USER_HOME` when set, otherwise `$HOME/.android`); only its public key is installed inside Android. Standard host-side `adb` commands use that key automatically. Readiness verifies that a client without a key receives an authentication challenge.
@@ -53,7 +53,7 @@ Startup removes stale runtime state, interfaces and NAT rules from a previous la
 
 ```sh
 python3 -m unittest discover -s hub/android/tests -v
-docker build --platform linux/amd64 -f hub/android/Dockerfile -t blaxel/android:test .
+docker build --platform linux/amd64 -f hub/android/Dockerfile -t android:test .
 ```
 
 A regular local Docker VM may lack the required Binder kernel support. Full startup validation requires a sandbox with the Android kernel and root volume. The daemon-free prototype was exercised on amd64 with 1 GiB RAM: Markor installation, screen interaction, note creation and persistence after app restart. Arm64 runtime behavior has not been verified. The Hub workflow currently publishes amd64 images.

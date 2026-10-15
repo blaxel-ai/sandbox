@@ -481,7 +481,7 @@ func swaggerHandler() gin.HandlerFunc {
 		spec := *docs.SwaggerInfo // copy: ReadDoc mutates the spec it renders
 		spec.BasePath = "/"
 		spec.Host, spec.Schemes = "localhost:8080", []string{"http"}
-		if host := sandboxHost(os.Getenv("BL_ENV"), os.Getenv("BL_WORKSPACE"), os.Getenv("BL_WORKSPACE_ID"), os.Getenv("BL_NAME"), os.Getenv("BL_REGION")); host != "" {
+		if host := sandboxHost(os.Getenv("BL_ENV"), os.Getenv("BL_WORKSPACE_ID"), os.Getenv("BL_NAME"), os.Getenv("BL_REGION")); host != "" {
 			spec.Host, spec.Schemes = host, []string{"https"}
 		}
 		c.Data(http.StatusOK, "application/json; charset=utf-8", []byte(spec.ReadDoc()))
@@ -490,22 +490,17 @@ func swaggerHandler() gin.HandlerFunc {
 
 // sandboxHost returns the public hostname of this sandbox,
 // sbx-{name}-{workspace_id}.{region}.{domain}, or "" outside prod/dev or when
-// the identity is incomplete. Workspaces prefixed "baseten-" are served on b10.co.
-func sandboxHost(env, workspace, workspaceID, name, region string) string {
-	if workspace == "" || workspaceID == "" || name == "" || region == "" {
+// the identity is incomplete.
+func sandboxHost(env, workspaceID, name, region string) string {
+	if workspaceID == "" || name == "" || region == "" {
 		return ""
 	}
-	baseten := strings.HasPrefix(workspace, "baseten-")
 	var domain string
-	switch {
-	case env == "prod" && baseten:
+	switch env {
+	case "prod":
 		domain = "b10.co"
-	case env == "prod":
-		domain = "bl.run"
-	case env == "dev" && baseten:
+	case "dev":
 		domain = "dev.b10.co"
-	case env == "dev":
-		domain = "runv2.blaxel.dev"
 	default:
 		return ""
 	}

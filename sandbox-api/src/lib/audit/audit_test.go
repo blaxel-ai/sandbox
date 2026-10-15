@@ -204,10 +204,10 @@ func TestIdentityMiddleware_FallbackHeaders(t *testing.T) {
 	}
 }
 
-func TestIdentityMiddleware_BlaxelHeadersPriority(t *testing.T) {
+func TestIdentityMiddleware_PlatformHeadersPriority(t *testing.T) {
 	c, _ := setupTestContext(map[string]string{
-		HeaderSubjectID:           "blaxel-user",
-		HeaderSubjectType:         "blaxel-type",
+		HeaderSubjectID:           "platform-user",
+		HeaderSubjectType:         "platform-type",
 		HeaderFallbackSubjectID:   "fallback-user",
 		HeaderFallbackSubjectType: "fallback-type",
 	})
@@ -216,10 +216,10 @@ func TestIdentityMiddleware_BlaxelHeadersPriority(t *testing.T) {
 	handler(c)
 
 	id := GetIdentity(c)
-	if id.UserID != "blaxel-user" {
+	if id.UserID != "platform-user" {
 		t.Errorf("expected X-Blaxel-Subject-Id to take priority, got '%s'", id.UserID)
 	}
-	if id.SubjectType != "blaxel-type" {
+	if id.SubjectType != "platform-type" {
 		t.Errorf("expected X-Blaxel-Subject-Type to take priority, got '%s'", id.SubjectType)
 	}
 }
