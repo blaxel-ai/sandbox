@@ -43,12 +43,12 @@ Each template lives in `hub/<name>/` with a `Dockerfile` and a `template.json`:
 }
 ```
 
-- Start from `ghcr.io/basetenlabs/sandbox` and keep `sandbox-api` on port 8080.
+- Start from `docker.io/baseten/sandbox` and keep `sandbox-api` on port 8080.
 - Web app templates put the project in `/app`. Generic and agent templates work in `/workspace`.
 - `iconLight` and `iconDark` are optional; see [Configuration](README.md#configuration) for the fallback rules.
 - Add the template to `docker-compose.yaml` and check it builds and serves its ports locally.
 
-CI ([build.yaml](.github/workflows/build.yaml)) builds every changed `hub/<name>` image, pushes it to `ghcr.io/basetenlabs/sandbox-<name>:<tag>`, then publishes the template to the hub.
+CI ([build.yaml](.github/workflows/build.yaml)) pushes `sandbox-api` to `docker.io/baseten/sandbox`, then builds every changed `hub/<name>` template from its Dockerfile on the hub builder and publishes it. Only `docker.io/baseten/sandbox` is public; template images live in the hub.
 
 ## Releasing
 

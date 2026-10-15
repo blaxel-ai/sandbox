@@ -1,5 +1,5 @@
 ARG SANDBOX_VERSION=latest
-FROM ghcr.io/basetenlabs/sandbox:${SANDBOX_VERSION} AS sandbox-api
+FROM docker.io/baseten/sandbox:${SANDBOX_VERSION} AS sandbox-api
 FROM redroid/redroid@sha256:a6c464bbedcf1dcb67dbf91f329fbb19bee5b50631f0ca6bda6ed7c41b0e64e2 AS android
 
 FROM debian:trixie-slim
