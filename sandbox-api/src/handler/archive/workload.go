@@ -4,7 +4,9 @@ import (
 	"errors"
 	"sync"
 	"syscall"
+	"time"
 
+	"github.com/blaxel-ai/sandbox-api/src/handler/process"
 	"github.com/sirupsen/logrus"
 )
 
@@ -104,4 +106,32 @@ func stopStartupWorkload() (stoppedProcess, bool) {
 		logrus.WithError(err).WithField("pid", pid).Warn("[Archive] Failed to stop the startup command gracefully, it will be killed")
 	}
 	return candidate, true
+}
+
+// TerminateWorkload sends SIGTERM to every running process and to the startup
+// command, and returns once they have all exited. It has no deadline of its own:
+// the host bounds the shutdown, and kills the guest when its grace period ends.
+func TerminateWorkload() {
+	pm := process.GetProcessManager()
+	var stopping []stoppedProcess
+	for _, info := range pm.ListProcesses() {
+		if info.Status != process.StatusRunning {
+			continue
+		}
+		if err := pm.StopProcess(info.PID); err != nil {
+			if info.Status != process.StatusRunning {
+				continue
+			}
+			logrus.WithError(err).WithField("process", info.PID).Warn("Failed to send SIGTERM to process")
+		}
+		stopping = append(stopping, stoppedProcess{identifier: info.PID, pid: info.ProcessPid, done: info.Done})
+	}
+	if candidate, running := stopStartupWorkload(); running {
+		stopping = append(stopping, candidate)
+	}
+	for len(stopping) > 0 {
+		if stopping = waitForExit(stopping, time.Minute); len(stopping) > 0 {
+			logrus.WithField("processes", identifiers(stopping)).Info("Still waiting for the workload to exit")
+		}
+	}
 }

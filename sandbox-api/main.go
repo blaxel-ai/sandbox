@@ -24,6 +24,7 @@ import (
 	"github.com/blaxel-ai/sandbox-api/src/lib/envfile"
 	"github.com/blaxel-ai/sandbox-api/src/lib/identity"
 	"github.com/blaxel-ai/sandbox-api/src/lib/isolation"
+	"github.com/blaxel-ai/sandbox-api/src/lib/lifecycle"
 	"github.com/blaxel-ai/sandbox-api/src/lib/networking"
 	"github.com/blaxel-ai/sandbox-api/src/lib/oom"
 	"github.com/blaxel-ai/sandbox-api/src/lib/proxy"
@@ -244,13 +245,24 @@ func main() {
 
 	server := newHTTPServer(serverAddr, router)
 
-	// Set up signal handling for graceful shutdown
+	// SIGTERM stops the workload first and waits for it to exit, so it can
+	// still use the API, the drive mounts and the egress tunnel while it shuts
+	// down. SIGUSR2 announces a standby: it goes to the processes that handle
+	// it, and nothing stops.
 	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM, syscall.SIGUSR2)
 
 	go func() {
-		sig := <-sigCh
-		logrus.Infof("Received signal %v, shutting down...", sig)
+		var sig os.Signal
+		for sig = range sigCh {
+			if sig != syscall.SIGUSR2 {
+				break
+			}
+			logrus.Infof("Received SIGUSR2, forwarded to %d processes", lifecycle.Forward(syscall.SIGUSR2))
+		}
+		logrus.Infof("Received signal %v, stopping the workload...", sig)
+		archive.TerminateWorkload()
+		logrus.Info("Workload stopped, shutting down...")
 
 		// Shutdown HTTP server gracefully with a timeout
 		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
