@@ -39,7 +39,7 @@ Follow the existing multi-stage pattern:
 
 ```dockerfile
 ARG SANDBOX_VERSION=latest
-FROM ghcr.io/basetenlabs/sandbox:${SANDBOX_VERSION} AS sandbox-api
+FROM docker.io/baseten/sandbox:${SANDBOX_VERSION} AS sandbox-api
 
 FROM <runtime-base>
 
@@ -143,7 +143,7 @@ Build with an explicit platform:
 docker build --platform linux/amd64 -t sandbox/<name>:test -f hub/<name>/Dockerfile .
 ```
 
-Prefer explicit `docker build --platform linux/amd64` over `docker compose build` on Apple Silicon. Some local compose providers ignore the service platform when pulling `ghcr.io/basetenlabs/sandbox:latest` and fail on `arm64`.
+Prefer explicit `docker build --platform linux/amd64` over `docker compose build` on Apple Silicon. Some local compose providers ignore the service platform when pulling `docker.io/baseten/sandbox:latest` and fail on `arm64`.
 
 If the image has a runner or entrypoint script, smoke-test it inside the built image with realistic env vars and mounted test input. Verify:
 

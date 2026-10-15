@@ -1,5 +1,5 @@
 ARG SANDBOX_VERSION=latest
-FROM ghcr.io/basetenlabs/sandbox:${SANDBOX_VERSION} AS sandbox-api
+FROM docker.io/baseten/sandbox:${SANDBOX_VERSION} AS sandbox-api
 
 # Node 24 (current LTS), on Debian slim (glibc). Two reasons over node:23-alpine:
 # (1) glibc — heavy native modules (duckdb, canvas, ...) ship glibc node-pre-gyp

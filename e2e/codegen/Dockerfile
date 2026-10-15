@@ -8,6 +8,6 @@ RUN apk update && apk add --no-cache \
 
 WORKDIR /app
 
-COPY --from=ghcr.io/basetenlabs/sandbox:develop /sandbox-api /usr/local/bin/sandbox-api
+COPY --from=docker.io/baseten/sandbox:develop /sandbox-api /usr/local/bin/sandbox-api
 
 ENTRYPOINT ["/usr/local/bin/sandbox-api"]
