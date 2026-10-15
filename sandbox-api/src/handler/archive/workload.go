@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/blaxel-ai/sandbox-api/src/handler/process"
+	"github.com/blaxel-ai/sandbox-api/src/lib/lifecycle"
 	"github.com/sirupsen/logrus"
 )
 
@@ -108,23 +109,31 @@ func stopStartupWorkload() (stoppedProcess, bool) {
 	return candidate, true
 }
 
-// TerminateWorkload sends SIGTERM to every running process and to the startup
-// command, and returns once they have all exited. It has no deadline of its own:
-// the host bounds the shutdown, and kills the guest when its grace period ends.
+// TerminateWorkload sends SIGTERM to every process (and the rest of its process
+// group) and to the startup command, and returns once they have all exited. It
+// has no deadline of its own: the host bounds the shutdown, and kills the guest
+// when its grace period ends.
 func TerminateWorkload() {
 	pm := process.GetProcessManager()
 	var stopping []stoppedProcess
 	for _, info := range pm.ListProcesses() {
-		if info.Status != process.StatusRunning {
+		if info.ProcessPid <= 0 {
 			continue
 		}
-		if err := pm.StopProcess(info.PID); err != nil {
-			if info.Status != process.StatusRunning {
+		candidate := stoppedProcess{identifier: info.PID, pid: info.ProcessPid, done: info.Done, group: true}
+		if info.Status == process.StatusRunning {
+			// StopProcess signals the whole group and keeps the manager from restarting it.
+			if err := pm.StopProcess(info.PID); err != nil {
+				logrus.WithError(err).WithField("process", info.PID).Warn("Failed to send SIGTERM to process")
+			}
+		} else {
+			// The leader has exited, but children it started may still be running.
+			if !lifecycle.GroupAlive(info.ProcessPid) {
 				continue
 			}
-			logrus.WithError(err).WithField("process", info.PID).Warn("Failed to send SIGTERM to process")
+			_ = syscall.Kill(-info.ProcessPid, syscall.SIGTERM)
 		}
-		stopping = append(stopping, stoppedProcess{identifier: info.PID, pid: info.ProcessPid, done: info.Done})
+		stopping = append(stopping, candidate)
 	}
 	if candidate, running := stopStartupWorkload(); running {
 		stopping = append(stopping, candidate)
@@ -134,4 +143,17 @@ func TerminateWorkload() {
 			logrus.WithField("processes", identifiers(stopping)).Info("Still waiting for the workload to exit")
 		}
 	}
+}
+
+// ForwardToWorkload sends sig to the workload processes that handle it, and
+// returns how many were signalled. The running processes are passed as roots
+// since those adopted after a restart are no longer descendants of this one.
+func ForwardToWorkload(sig syscall.Signal) int {
+	var roots []int
+	for _, info := range process.GetProcessManager().ListProcesses() {
+		if info.Status == process.StatusRunning && info.ProcessPid > 0 {
+			roots = append(roots, info.ProcessPid)
+		}
+	}
+	return lifecycle.Forward(sig, roots...)
 }

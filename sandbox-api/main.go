@@ -24,7 +24,6 @@ import (
 	"github.com/blaxel-ai/sandbox-api/src/lib/envfile"
 	"github.com/blaxel-ai/sandbox-api/src/lib/identity"
 	"github.com/blaxel-ai/sandbox-api/src/lib/isolation"
-	"github.com/blaxel-ai/sandbox-api/src/lib/lifecycle"
 	"github.com/blaxel-ai/sandbox-api/src/lib/networking"
 	"github.com/blaxel-ai/sandbox-api/src/lib/oom"
 	"github.com/blaxel-ai/sandbox-api/src/lib/proxy"
@@ -258,7 +257,7 @@ func main() {
 			if sig != syscall.SIGUSR2 {
 				break
 			}
-			logrus.Infof("Received SIGUSR2, forwarded to %d processes", lifecycle.Forward(syscall.SIGUSR2))
+			logrus.Infof("Received SIGUSR2, forwarded to %d processes", archive.ForwardToWorkload(syscall.SIGUSR2))
 		}
 		logrus.Infof("Received signal %v, stopping the workload...", sig)
 		archive.TerminateWorkload()
