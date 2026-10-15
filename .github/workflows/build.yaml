@@ -322,7 +322,8 @@ jobs:
       - name: Build sandbox image
         env:
           TAG: ${{ steps.image-tag.outputs.tag }}
-          SANDBOX_VERSION: ${{ github.ref_name == 'develop' && 'develop' || 'latest' }}
+          # Build from the sandbox-api image pushed for this ref: latest only exists for v* tags.
+          SANDBOX_VERSION: ${{ startsWith(github.ref, 'refs/tags/') && 'latest' || github.ref_name }}
           BL_ENV: ${{ env.HUB_ENV }}
         run: |
           # Dockerfiles copy their files as hub/<name>/..., from the repo root.
