@@ -349,17 +349,9 @@ func (pm *ProcessManager) LoadState() error {
 			// We don't need to keep a file handle open for tailing since
 			// the child process writes directly to the log file
 
-			// Re-take the scale-to-zero hold the previous run held for this
-			// process: startup resets the counter to 0, so without this the
-			// sandbox could hibernate under a still-running keepAlive workload.
-			if proc.KeepAlive {
-				if err := blaxel.ScaleDisable(); err != nil {
-					logrus.WithError(err).WithFields(logrus.Fields{
-						"pid":  proc.PID,
-						"name": proc.Name,
-					}).Warn("[KeepAlive] Failed to disable scale-to-zero for adopted process")
-				}
-			}
+			// Without the hold the sandbox could hibernate under a
+			// still-running keepAlive workload.
+			retakeKeepAlive(proc)
 			proc.stopTimeout = make(chan struct{})
 			pm.startExecutionTimeoutLocked(proc)
 
@@ -386,13 +378,29 @@ func (pm *ProcessManager) LoadState() error {
 			proc.ExitCode = -1 // Unknown exit code
 			deadCount++
 
-			// Close the Done and TailDone channels since process is no longer running
-			pm.finishRestoredProcess(proc)
+			// A run that died while no API was watching it gets the restart
+			// waitForRun would have given it. endAdoptedRun waits for pm.mu, so
+			// it runs once every entry is installed.
+			restart := shouldRestart(proc)
+			if restart {
+				proc.Status = StatusRunning
+				proc.CompletedAt = nil
+				proc.runExited = true
+				retakeKeepAlive(proc)
+				if proc.SupportsStructuredLogs() {
+					go pm.tailLogFiles(proc)
+				}
+				go pm.endAdoptedRun(proc)
+			} else {
+				// Close the Done and TailDone channels since process is no longer running
+				pm.finishRestoredProcess(proc)
+			}
 
 			logrus.WithFields(logrus.Fields{
 				"pid":     proc.PID,
 				"name":    proc.Name,
 				"command": proc.Command,
+				"restart": restart,
 			}).Warn("Process died during restart")
 		} else {
 			// Process was already completed/failed/stopped - just restore state
@@ -473,11 +481,13 @@ func isProcessRunning(pid int) bool {
 	return true
 }
 
-// reapZombieProcess attempts to reap a zombie process and get its exit code
-// Returns the exit code if available, or 0 if we couldn't determine it
-func reapZombieProcess(pid int) int {
+// reapZombieProcess attempts to reap a zombie process and get its exit code.
+// known is false when the exit code cannot be determined, which is the case
+// for a process that is not our child: one reparented when the API that
+// started it was killed.
+func reapZombieProcess(pid int) (exitCode int, known bool) {
 	if pid <= 0 {
-		return 0
+		return 0, false
 	}
 
 	// Try to wait on the process to reap it
@@ -491,7 +501,7 @@ func reapZombieProcess(pid int) int {
 			"pid":   pid,
 			"error": err,
 		}).Debug("Could not reap process (not our child)")
-		return 0
+		return 0, false
 	}
 
 	if wpid == pid {
@@ -507,10 +517,10 @@ func reapZombieProcess(pid int) int {
 			"pid":      pid,
 			"exitCode": exitCode,
 		}).Debug("Successfully reaped zombie process")
-		return exitCode
+		return exitCode, true
 	}
 
-	return 0
+	return 0, false
 }
 
 // readLogsSince safely reads log content from a file starting at a given offset.
@@ -675,28 +685,7 @@ func (pm *ProcessManager) monitorAdoptedProcess(proc *ProcessInfo) {
 			}
 
 			if !isRunning {
-				// Reap before publishing the terminal tuple, just as for a new child.
-				exitCode := reapZombieProcess(proc.ProcessPid)
-				now := time.Now()
-				pm.mu.Lock()
-				proc.runExited = true
-				proc.CompletedAt = &now
-				proc.ExitCode = exitCode
-				proc.Status = StatusCompleted
-				if exitCode != 0 {
-					proc.Status = StatusFailed
-				}
-				if proc.terminationRequested != "" {
-					proc.Status = proc.terminationRequested
-				}
-				pm.mu.Unlock()
-				close(proc.Done)
-				if proc.SupportsStructuredLogs() {
-					<-proc.TailDone
-				} else {
-					close(proc.TailDone)
-				}
-				pm.finishProcess(proc, nil)
+				pm.endAdoptedRun(proc)
 
 				logrus.WithFields(logrus.Fields{
 					"pid":         proc.PID,
@@ -721,6 +710,60 @@ func (pm *ProcessManager) monitorAdoptedProcess(proc *ProcessInfo) {
 			}).Info("Adopted process monitoring stopped (Done channel closed)")
 			return
 		}
+	}
+}
+
+// endAdoptedRun publishes the exit of a process this instance did not spawn,
+// and restarts it as waitForRun would. An exit code that cannot be reaped is
+// unknown, and counts as a failure unless the process was stopped through the API.
+func (pm *ProcessManager) endAdoptedRun(proc *ProcessInfo) {
+	// Reap before publishing the terminal tuple, just as for a new child.
+	exitCode, known := reapZombieProcess(proc.ProcessPid)
+	if !known {
+		exitCode = -1
+	}
+	pm.mu.Lock()
+	proc.runExited = true
+	pm.mu.Unlock()
+	close(proc.Done)
+	if proc.SupportsStructuredLogs() {
+		<-proc.TailDone
+	} else {
+		close(proc.TailDone)
+	}
+	now := time.Now()
+	pm.mu.Lock()
+	proc.CompletedAt = &now
+	proc.ExitCode = exitCode
+	proc.Status = StatusCompleted
+	if exitCode != 0 {
+		proc.Status = StatusFailed
+	}
+	if proc.terminationRequested != "" {
+		proc.Status = proc.terminationRequested
+	}
+	restart := shouldRestart(proc)
+	if restart {
+		proc.Status = StatusRunning
+	}
+	if proc.stopTimeout != nil {
+		proc.stopTimeoutOnce.Do(func() { close(proc.stopTimeout) })
+	}
+	pm.mu.Unlock()
+	pm.restartOrFinish(proc, restart, nil)
+}
+
+// retakeKeepAlive re-takes the scale-to-zero hold the previous run held for
+// this process: startup resets the counter to 0.
+func retakeKeepAlive(proc *ProcessInfo) {
+	if !proc.KeepAlive {
+		return
+	}
+	if err := blaxel.ScaleDisable(); err != nil {
+		logrus.WithError(err).WithFields(logrus.Fields{
+			"pid":  proc.PID,
+			"name": proc.Name,
+		}).Warn("[KeepAlive] Failed to disable scale-to-zero for adopted process")
 	}
 }
 
