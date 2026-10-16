@@ -970,7 +970,7 @@ const docTemplate = `{
         },
         "/filesystem/tree/{path}": {
             "get": {
-                "description": "Get a recursive directory tree structure starting from the specified path",
+                "description": "List a directory. Without query parameters, ` + "`" + `files` + "`" + ` and ` + "`" + `subdirectories` + "`" + ` hold its direct children.\n\nWith ` + "`" + `recursive=true` + "`" + `, they hold every file and directory below the path (flat, with full paths). With ` + "`" + `content=true` + "`" + `, each regular file (or symlink to one) also carries its ` + "`" + `content` + "`" + ` as UTF-8 text, like a JSON file read; other entries have no ` + "`" + `content` + "`" + `. ` + "`" + `patterns` + "`" + `, ` + "`" + `excludeDirs` + "`" + ` and ` + "`" + `excludeHidden` + "`" + ` select entries the same way as find, but nothing is excluded by default.\n\nThe response is all or nothing: when more than ` + "`" + `maxFiles` + "`" + ` files match, or ` + "`" + `content=true` + "`" + ` and they hold more than ` + "`" + `maxBytes` + "`" + ` bytes, the request fails with 422 before any content is read.",
                 "consumes": [
                     "application/json"
                 ],
@@ -988,6 +988,48 @@ const docTemplate = `{
                         "name": "path",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "List every file and directory below the path, not only its direct children (default: false)",
+                        "name": "recursive",
+                        "in": "query"
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "Include the content of each regular file, as UTF-8 text (default: false)",
+                        "name": "content",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Comma-separated glob patterns matched against file names (e.g., *.json,*.md). Directories are not filtered.",
+                        "name": "patterns",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Comma-separated directory names to skip with everything below them (default: none)",
+                        "name": "excludeDirs",
+                        "in": "query"
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "Skip files and directories whose name starts with a dot (default: false)",
+                        "name": "excludeHidden",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Fail with 422 when more files match (default: 10000 with recursive or content, otherwise unlimited; at most 100000)",
+                        "name": "maxFiles",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "With content=true, fail with 422 when the matching files hold more bytes (default: 33554432, 32 MiB; at most 268435456, 256 MiB)",
+                        "name": "maxBytes",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -1004,7 +1046,7 @@ const docTemplate = `{
                         }
                     },
                     "422": {
-                        "description": "Unprocessable entity",
+                        "description": "Unprocessable entity, including a maxFiles or maxBytes limit",
                         "schema": {
                             "$ref": "#/definitions/ErrorResponse"
                         }
@@ -2309,6 +2351,10 @@ const docTemplate = `{
                 "path": {
                     "type": "string"
                 },
+                "recursive": {
+                    "description": "Recursive is true when files and subdirectories hold every level below\npath (tree read with recursive=true). Older APIs ignore that parameter\nand omit this field, so clients can tell a one-level listing apart.",
+                    "type": "boolean"
+                },
                 "subdirectories": {
                     "description": "@name Subdirectories",
                     "type": "array",
@@ -2588,6 +2634,10 @@ const docTemplate = `{
                 "size"
             ],
             "properties": {
+                "content": {
+                    "description": "Content is set only by a tree read with content=true, for regular files.",
+                    "type": "string"
+                },
                 "group": {
                     "type": "string"
                 },

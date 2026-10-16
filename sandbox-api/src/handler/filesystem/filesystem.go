@@ -42,6 +42,8 @@ type File struct {
 	LastModified time.Time `json:"lastModified" binding:"required"`
 	Owner        string    `json:"owner" binding:"required"`
 	Group        string    `json:"group" binding:"required"`
+	// Content is set only by a tree read with content=true, for regular files.
+	Content *string `json:"content,omitempty"`
 } // @name File
 
 // baseName is the last element of a file path, or "" when there is none.
