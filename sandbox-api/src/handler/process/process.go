@@ -198,6 +198,17 @@ var restartsSuspended atomic.Bool
 // flight, and every restart that starts after it observes the flag.
 var restartGate sync.RWMutex
 
+// validationInstance marks the binary an upgrade starts to vet itself. It
+// adopts the processes of the instance being upgraded, which still watches
+// them and restarts them itself, so restarting them here too would run two.
+var validationInstance atomic.Bool
+
+// SetValidationInstance makes this instance leave every restart to the
+// instance that is being upgraded.
+func SetValidationInstance() {
+	validationInstance.Store(true)
+}
+
 // SuspendRestarts stops failed processes from being restarted, and returns the
 // function that allows restarts again. It waits for the restarts already
 // spawning, so its caller can then list every process that is running.
@@ -252,7 +263,7 @@ func (p *ProcessInfo) markFinished() {
 }
 
 func shouldRestart(p *ProcessInfo) bool {
-	if restartsSuspended.Load() {
+	if restartsSuspended.Load() || validationInstance.Load() {
 		return false
 	}
 	return p.terminationRequested == "" && p.Status == StatusFailed && p.RestartOnFailure &&
