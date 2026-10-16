@@ -11,6 +11,7 @@ import (
 
 	"github.com/blaxel-ai/sandbox-api/src/handler/constants"
 	"github.com/blaxel-ai/sandbox-api/src/lib/blaxel"
+	"github.com/blaxel-ai/sandbox-api/src/lib/lifecycle"
 	"github.com/sirupsen/logrus"
 )
 
@@ -32,6 +33,23 @@ func (pm *ProcessManager) signalProcess(identifier string, signal syscall.Signal
 	pm.mu.Lock()
 	defer pm.mu.Unlock()
 	return pm.signalProcessLocked(identifier, signal, status)
+}
+
+// StopProcessGroup is StopProcess, and also sends SIGTERM to the rest of the
+// process group when the leader has already exited (log drain, restart
+// backoff), since StopProcess no longer signals anything then.
+func (pm *ProcessManager) StopProcessGroup(identifier string) error {
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+	p := pm.lookupProcessLocked(identifier)
+	leaderExited := p != nil && p.Status == StatusRunning && p.runExited
+	if err := pm.signalProcessLocked(identifier, syscall.SIGTERM, StatusStopped); err != nil {
+		return err
+	}
+	if leaderExited && p.ProcessPid > 0 && lifecycle.GroupAlive(p.ProcessPid) {
+		_ = syscall.Kill(-p.ProcessPid, syscall.SIGTERM)
+	}
+	return nil
 }
 
 // signalProcessLocked requires pm.mu to be held.
