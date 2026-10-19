@@ -1,6 +1,8 @@
 package drive
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -38,6 +40,10 @@ var ErrMountPathBusy = errors.New("mount path already in use")
 // for this drive, so the mount cannot succeed however often it is retried.
 var ErrDriveAccessDenied = errors.New("drive access denied")
 
+// ErrInsufficientStorage indicates the sandbox ran out of local disk space,
+// which blfs needs for its cache, so the mount cannot start until space is freed.
+var ErrInsufficientStorage = errors.New("not enough disk space in the sandbox")
+
 // driveAccessDeniedMarkers are the filer refusals blfs prints when the drive is
 // not accessible to this sandbox. They surface as a plain gRPC error on stderr,
 // which is the only signal available: blfs exits with the generic status 2 for
@@ -56,7 +62,18 @@ func classifyBlfsFailure(output string) error {
 			return ErrDriveAccessDenied
 		}
 	}
+	if strings.Contains(output, "no space left on device") {
+		return ErrInsufficientStorage
+	}
 	return nil
+}
+
+// blfsCacheDir is the cache root a blfs mount at mountPath is given, unique per
+// mount path so a failed mount's leftovers can be removed without touching
+// another mount's cache.
+func blfsCacheDir(mountPath string) string {
+	sum := sha256.Sum256([]byte(filepath.Clean(mountPath)))
+	return filepath.Join(os.TempDir(), "blfs-cache", hex.EncodeToString(sum[:8]))
 }
 
 // outputTail retains the last blfsOutputTailBytes bytes of a process' output so
@@ -343,6 +360,16 @@ func MountDrive(driveName, mountPath, drivePath string, readOnly bool, uidMap, g
 	// Build the filer path: /buckets/{infrastructureId}{drivePath}
 	filerPath := fmt.Sprintf("/buckets/%s%s", infrastructureId, drivePath)
 
+	// blfs only clears its cache when it unmounts cleanly. A process that dies
+	// during startup leaves it behind, in /tmp, which lives in guest memory:
+	// remove it on every failed attempt so retries cannot fill the disk.
+	cacheDir := blfsCacheDir(mountPath)
+	defer func() {
+		if err != nil {
+			_ = os.RemoveAll(cacheDir)
+		}
+	}()
+
 	// Build blfs mount command
 	args := []string{
 		"mount",
@@ -354,6 +381,7 @@ func MountDrive(driveName, mountPath, drivePath string, readOnly bool, uidMap, g
 		fmt.Sprintf("-dir=%s", mountPath),
 		"-volumeServerAccess=filerProxy",
 		"-dirAutoCreate=true",
+		fmt.Sprintf("-cacheDir=%s", cacheDir),
 	}
 
 	// It's causing inconsistency issues on F_APPEND with the cache, so we're adding an environment variable to disable it

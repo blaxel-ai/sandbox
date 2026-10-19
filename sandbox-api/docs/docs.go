@@ -344,6 +344,12 @@ const docTemplate = `{
                         "schema": {
                             "$ref": "#/definitions/ErrorResponse"
                         }
+                    },
+                    "507": {
+                        "description": "Insufficient Storage",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
                     }
                 }
             }
@@ -381,6 +387,12 @@ const docTemplate = `{
                     },
                     "400": {
                         "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
                         "schema": {
                             "$ref": "#/definitions/ErrorResponse"
                         }

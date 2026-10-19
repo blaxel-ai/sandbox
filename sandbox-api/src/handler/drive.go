@@ -74,9 +74,20 @@ func mountFailureStatus(err error) int {
 		return http.StatusConflict
 	case errors.Is(err, drive.ErrDriveAccessDenied):
 		return http.StatusForbidden
+	case errors.Is(err, drive.ErrInsufficientStorage):
+		return http.StatusInsufficientStorage
 	default:
 		return http.StatusInternalServerError
 	}
+}
+
+// unmountFailureStatus maps an unmount failure to its HTTP status: a path with
+// nothing mounted is the caller's mistake, anything else is a server fault.
+func unmountFailureStatus(err error) int {
+	if errors.Is(err, drive.ErrNotMounted) {
+		return http.StatusNotFound
+	}
+	return http.StatusInternalServerError
 }
 
 // AttachDrive godoc
@@ -91,6 +102,7 @@ func mountFailureStatus(err error) int {
 // @Failure      403 {object} ErrorResponse
 // @Failure      409 {object} ErrorResponse
 // @Failure      500 {object} ErrorResponse
+// @Failure      507 {object} ErrorResponse
 // @Security     BearerAuth
 // @Router       /drives/mount [post]
 func (h *DriveHandler) AttachDrive(c *gin.Context) {
@@ -182,6 +194,7 @@ func (h *DriveHandler) AttachDrive(c *gin.Context) {
 // @Param        mountPath path string true "Mount path to detach (must start with /, e.g. /mnt/test)"
 // @Success      200 {object} DriveUnmountResponse
 // @Failure      400 {object} ErrorResponse
+// @Failure      404 {object} ErrorResponse
 // @Failure      500 {object} ErrorResponse
 // @Security     BearerAuth
 // @Router       /drives/mount/{mountPath} [delete]
@@ -202,8 +215,14 @@ func (h *DriveHandler) DetachDrive(c *gin.Context) {
 	// Unmount the drive
 	err := drive.UnmountDrive(mountPath)
 	if err != nil {
-		logrus.WithError(err).WithField("mount_path", mountPath).Error("Failed to unmount drive")
-		c.JSON(http.StatusInternalServerError, ErrorResponse{
+		status := unmountFailureStatus(err)
+		entry := logrus.WithError(err).WithField("mount_path", mountPath)
+		if status == http.StatusNotFound {
+			entry.Warn("No drive mounted at path")
+		} else {
+			entry.Error("Failed to unmount drive")
+		}
+		c.JSON(status, ErrorResponse{
 			Error: fmt.Sprintf("Failed to unmount drive: %v", err),
 		})
 		return

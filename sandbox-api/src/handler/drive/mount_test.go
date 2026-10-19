@@ -120,6 +120,11 @@ func TestClassifyBlfsFailure(t *testing.T) {
 			want:   ErrDriveAccessDenied,
 		},
 		{
+			name:   "cache cannot be created",
+			output: `E1019 20:56:21.211421 on_disk_cache_layer.go:29 failed to add cache /tmp/6e1289c6/c1_3_0 : loading leveldb /tmp/6e1289c6/c1_3_0.ldb error: write /tmp/6e1289c6/c1_3_0.ldb/MANIFEST-000000: no space left on device`,
+			want:   ErrInsufficientStorage,
+		},
+		{
 			name:   "unrelated startup failure",
 			output: "failed to talk to filer 172.16.199.182:49200: context deadline exceeded",
 			want:   nil,
@@ -412,5 +417,20 @@ func TestFormatFilerServerAddress(t *testing.T) {
 				t.Fatalf("formatFilerServerAddress(%q) = %q, want %q", tt.address, got, tt.want)
 			}
 		})
+	}
+}
+
+// TestBlfsCacheDirPerMountPath: each mount path gets its own cache root, so
+// removing a failed mount's cache never touches another mount's.
+func TestBlfsCacheDirPerMountPath(t *testing.T) {
+	a := blfsCacheDir("/drive/a")
+	if a != blfsCacheDir("/drive/a/") {
+		t.Fatalf("blfsCacheDir differs for the same path with a trailing slash")
+	}
+	if a == blfsCacheDir("/drive/b") || a == blfsCacheDir("/drive") {
+		t.Fatalf("blfsCacheDir(%q) collides with another mount path", "/drive/a")
+	}
+	if filepath.Dir(a) != filepath.Join(os.TempDir(), "blfs-cache") {
+		t.Fatalf("blfsCacheDir(%q) = %q, want it under the blfs-cache root", "/drive/a", a)
 	}
 }
