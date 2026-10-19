@@ -3,6 +3,7 @@ package drive
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -485,4 +486,63 @@ func mustStat(t *testing.T, path string) os.FileInfo {
 		t.Fatal(err)
 	}
 	return info
+}
+
+// TestOpenMountTargetRefusesSymlinks covers a symlink as the mount point and
+// as one of its parents: either would let the mount land outside the path
+// that was validated, on / for instance.
+func TestOpenMountTargetRefusesSymlinks(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "dir", "mount")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("/", filepath.Join(root, "to-root")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(root, "dir"), filepath.Join(root, "to-dir")); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, path := range []string{filepath.Join(root, "to-root"), filepath.Join(root, "to-dir", "mount")} {
+		if f, err := openMountTarget(path); !errors.Is(err, ErrMountPathSymlink) {
+			if f != nil {
+				f.Close()
+			}
+			t.Errorf("openMountTarget(%q) err = %v, want ErrMountPathSymlink", path, err)
+		}
+	}
+}
+
+// TestOpenMountTargetPinsDirectory checks the descriptor keeps pointing at the
+// opened directory once the path is swapped for a symlink.
+func TestOpenMountTargetPinsDirectory(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "mount")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	f, err := openMountTarget(dir + "/")
+	if err != nil {
+		t.Fatalf("openMountTarget(%q): %v", dir, err)
+	}
+	defer f.Close()
+
+	if err := os.Rename(dir, dir+".moved"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("/", dir); err != nil {
+		t.Fatal(err)
+	}
+	want, err := os.Stat(dir + ".moved")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.Stat(fmt.Sprintf("/proc/self/fd/%d", f.Fd()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !os.SameFile(got, want) {
+		t.Fatalf("descriptor follows the swapped path instead of the opened directory")
+	}
 }

@@ -22,6 +22,11 @@ func TestMountFailureStatus(t *testing.T) {
 			want: http.StatusForbidden,
 		},
 		{
+			name: "mount path through a symlink",
+			err:  fmt.Errorf("failed to open mount directory: %w: /mnt/link", drive.ErrMountPathSymlink),
+			want: http.StatusBadRequest,
+		},
+		{
 			name: "mount path taken",
 			err:  fmt.Errorf("%w: /mnt/and", drive.ErrMountPathBusy),
 			want: http.StatusConflict,

@@ -71,6 +71,8 @@ type DriveListResponse struct {
 // filer refuses, or a target already taken, are the caller's to fix.
 func mountFailureStatus(err error) int {
 	switch {
+	case errors.Is(err, drive.ErrMountPathSymlink):
+		return http.StatusBadRequest
 	case errors.Is(err, drive.ErrMountPathBusy):
 		return http.StatusConflict
 	case errors.Is(err, drive.ErrDriveAccessDenied):
