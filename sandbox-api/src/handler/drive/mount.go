@@ -469,7 +469,9 @@ func MountDrive(driveName, mountPath, drivePath string, readOnly bool, uidMap, g
 		"-cacheSymlink=true",
 		fmt.Sprintf("-auth.tokenFile=%s", getAuthTokenPath()),
 		fmt.Sprintf("-filer.path=%s", filerPath),
-		// fd 3 in blfs is target (cmd.ExtraFiles below).
+		// fd 3 in blfs is target (cmd.ExtraFiles below). fusermount refuses
+		// a /proc/self/fd path, so a mount that falls back to it fails rather
+		// than landing elsewhere: blfs runs as root and mounts directly.
 		"-dir=/proc/self/fd/3",
 		"-volumeServerAccess=filerProxy",
 		"-dirAutoCreate=true",
