@@ -311,6 +311,9 @@ func MountDrive(driveName, mountPath, drivePath string, readOnly bool, uidMap, g
 	if err := ValidateMountPath(mountPath); err != nil {
 		return "", "", fmt.Errorf("invalid mount path: %w", err)
 	}
+	if err := validateMountTarget(mountPath); err != nil {
+		return "", "", fmt.Errorf("invalid mount path: %w", err)
+	}
 
 	drivePath = normalizeDrivePath(drivePath)
 
