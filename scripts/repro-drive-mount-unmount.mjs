@@ -107,9 +107,10 @@ async function mountScenario() {
   const driveName = `repro-drive-${RUN}`;
   log(`creating drive ${driveName}`);
   const drive = await DriveInstance.createIfNotExists({ name: driveName, region: REGION, labels: LABELS });
-  const sandbox = await createSandbox(`repro-mount-${RUN}`);
+  let sandbox;
   let bug = false;
   try {
+    sandbox = await createSandbox(`repro-mount-${RUN}`);
     log(`before mounts: ${await rootDisk(sandbox)}`);
     for (let i = 1; i <= MAX_MOUNTS; i++) {
       const mountPath = `/mnt/d${i}`;
@@ -125,8 +126,10 @@ async function mountScenario() {
     }
   } finally {
     if (!KEEP) {
-      await SandboxInstance.delete(sandbox.metadata.name).catch(() => {});
-      await sleep(5000);
+      if (sandbox) {
+        await SandboxInstance.delete(sandbox.metadata.name).catch(() => {});
+        await sleep(5000);
+      }
       await drive.delete().catch((e) => log(`drive delete: ${e.message}`));
     }
   }
