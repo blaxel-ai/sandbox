@@ -18,6 +18,7 @@ import (
 
 	"github.com/blaxel-ai/sandbox-api/src/lib/identity"
 	"github.com/sirupsen/logrus"
+	"golang.org/x/sys/unix"
 )
 
 const (
@@ -43,6 +44,10 @@ var ErrDriveAccessDenied = errors.New("drive access denied")
 // ErrInsufficientStorage indicates the sandbox ran out of local disk space,
 // which blfs needs for its cache, so the mount cannot start until space is freed.
 var ErrInsufficientStorage = errors.New("not enough disk space in the sandbox")
+
+// ErrMountPathSymlink indicates a component of the mount path is a symlink.
+// The path checks only hold for the path as written, so it is refused.
+var ErrMountPathSymlink = errors.New("mount path must not go through a symlink")
 
 // driveAccessDeniedMarkers are the filer refusals blfs prints when the drive is
 // not accessible to this sandbox. They surface as a plain gRPC error on stderr,
@@ -225,6 +230,31 @@ func chownMountPoint(mountPath string, uid, gid int) error {
 	return dir.Chown(uid, gid)
 }
 
+// openMountTarget opens mountPath one component at a time without following
+// symlinks. blfs then mounts through this descriptor rather than the path, so
+// the directory mounted on is the one the path checks were made for, even if
+// the workload swaps a component for a symlink to / in the meantime.
+func openMountTarget(mountPath string) (*os.File, error) {
+	fd, err := unix.Open("/", unix.O_PATH|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return nil, err
+	}
+	for _, name := range strings.Split(strings.Trim(filepath.Clean(mountPath), "/"), "/") {
+		// O_PATH|O_NOFOLLOW opens a symlink itself, and O_DIRECTORY then
+		// refuses it with ENOTDIR.
+		next, err := unix.Openat(fd, name, unix.O_PATH|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+		_ = unix.Close(fd)
+		if errors.Is(err, unix.ENOTDIR) {
+			return nil, fmt.Errorf("%w: %s", ErrMountPathSymlink, mountPath)
+		}
+		if err != nil {
+			return nil, err
+		}
+		fd = next
+	}
+	return os.NewFile(uintptr(fd), mountPath), nil
+}
+
 // existingMount returns the blfs mount currently backing mountPath, or nil if
 // none is managed there.
 func existingMount(mountPath string) (*MountInfo, error) {
@@ -392,6 +422,12 @@ func MountDrive(driveName, mountPath, drivePath string, readOnly bool, uidMap, g
 		}
 	}
 
+	target, err := openMountTarget(mountPath)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to open mount directory: %w", err)
+	}
+	defer target.Close()
+
 	// Build the filer path: /buckets/{infrastructureId}{drivePath}
 	filerPath := fmt.Sprintf("/buckets/%s%s", infrastructureId, drivePath)
 
@@ -433,10 +469,16 @@ func MountDrive(driveName, mountPath, drivePath string, readOnly bool, uidMap, g
 		"-cacheSymlink=true",
 		fmt.Sprintf("-auth.tokenFile=%s", getAuthTokenPath()),
 		fmt.Sprintf("-filer.path=%s", filerPath),
-		fmt.Sprintf("-dir=%s", mountPath),
+		// fd 3 in blfs is target (cmd.ExtraFiles below). fusermount refuses
+		// a /proc/self/fd path, so a mount that falls back to it fails rather
+		// than landing elsewhere: blfs runs as root and mounts directly.
+		"-dir=/proc/self/fd/3",
 		"-volumeServerAccess=filerProxy",
 		"-dirAutoCreate=true",
 		fmt.Sprintf("-cacheDir=%s", cacheDir),
+		// blfs names its socket after -dir by default, which is the same
+		// for every mount now.
+		fmt.Sprintf("-localSocket=%s", filepath.Join(cacheDir, "blfs.sock")),
 	}
 
 	// It's causing inconsistency issues on F_APPEND with the cache, so we're adding an environment variable to disable it
@@ -484,6 +526,7 @@ func MountDrive(driveName, mountPath, drivePath string, readOnly bool, uidMap, g
 
 	// Start the blfs mount process in the background
 	cmd := exec.Command(BlfsPath, args...)
+	cmd.ExtraFiles = []*os.File{target}
 	output := &outputTail{}
 	cmd.Stdout = output.tee(os.Stdout)
 	cmd.Stderr = output.tee(os.Stderr)

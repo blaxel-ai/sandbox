@@ -57,7 +57,8 @@ func TestValidateMountPath(t *testing.T) {
 		wantErr  bool
 	}{
 		{"absolute path", "/mnt/data", false},
-		{"root", "/", false},
+		{"root", "/", true},
+		{"root alias", "/.", true},
 		{"nested", "/foo/bar/baz", false},
 		{"path traversal", "/mnt/../etc", true},
 		{"empty", "", true},
