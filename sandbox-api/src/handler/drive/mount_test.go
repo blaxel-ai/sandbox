@@ -459,6 +459,18 @@ func TestPrepareBlfsCacheRoot(t *testing.T) {
 		t.Fatalf("prepareBlfsCacheRoot accepted a symlink")
 	}
 
+	parent := filepath.Join(dir, "real")
+	if err := os.Mkdir(parent, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "linked")
+	if err := os.Symlink(parent, link); err != nil {
+		t.Fatal(err)
+	}
+	if err := prepareBlfsCacheRoot(dir, filepath.Join(link, "blfs")); err == nil {
+		t.Fatalf("prepareBlfsCacheRoot accepted a path through a symlinked parent")
+	}
+
 	if shm, err := os.Stat("/dev/shm"); err == nil && !os.SameFile(shm, mustStat(t, dir)) && shm.Sys().(*syscall.Stat_t).Dev != mustStat(t, dir).Sys().(*syscall.Stat_t).Dev {
 		if err := prepareBlfsCacheRoot("/dev/shm", root); err == nil {
 			t.Fatalf("prepareBlfsCacheRoot accepted a directory on another filesystem")

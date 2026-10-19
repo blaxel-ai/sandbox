@@ -68,18 +68,21 @@ func classifyBlfsFailure(output string) error {
 	return nil
 }
 
-// blfsCacheRoot holds the blfs caches. It must stay out of reach of the
-// workload: blfs runs as root and trusts what it finds there, and it keeps
-// not-yet-uploaded writes in it.
-const blfsCacheRoot = "/var/cache/blfs"
+// BlfsCacheRoot holds the blfs caches. It must stay out of reach of the
+// workload and of archives: blfs runs as root and trusts what it finds there,
+// and it keeps not-yet-uploaded writes in it.
+const BlfsCacheRoot = "/var/cache/blfs"
 
 // prepareBlfsCacheRoot creates root for this process only and refuses one the
-// workload could have planted beforehand (a symlink or a directory it owns) or
-// one that sits on another filesystem than anchor, such as a drive mounted
-// over one of its parents.
+// workload could have planted beforehand (a symlink anywhere on the path or a
+// directory it owns) or one that sits on another filesystem than anchor, such
+// as a drive mounted over one of its parents.
 func prepareBlfsCacheRoot(anchor, root string) error {
 	if err := os.MkdirAll(root, 0o700); err != nil {
 		return err
+	}
+	if resolved, err := filepath.EvalSymlinks(root); err != nil || resolved != filepath.Clean(root) {
+		return fmt.Errorf("%s goes through a symlink", root)
 	}
 	anchorInfo, err := os.Stat(anchor)
 	if err != nil {
@@ -392,15 +395,23 @@ func MountDrive(driveName, mountPath, drivePath string, readOnly bool, uidMap, g
 	// blfs only clears its cache when it unmounts cleanly. A process that dies
 	// during startup leaves it behind, on the root tmpfs, which lives in guest
 	// memory: remove it on every failed attempt so retries cannot fill the disk.
-	if err := prepareBlfsCacheRoot("/", blfsCacheRoot); err != nil {
+	if err := prepareBlfsCacheRoot("/", BlfsCacheRoot); err != nil {
 		return "", "", fmt.Errorf("failed to prepare the blfs cache directory: %w", err)
 	}
-	cacheDir := blfsCacheDir(blfsCacheRoot, mountPath)
+	cacheDir := blfsCacheDir(BlfsCacheRoot, mountPath)
 	defer func() {
 		if err != nil {
 			_ = os.RemoveAll(cacheDir)
 		}
 	}()
+	// Nothing is mounted at mountPath and its lock is held, so no blfs owns
+	// this directory: start from an empty one rather than trusting leftovers.
+	if err := os.RemoveAll(cacheDir); err != nil {
+		return "", "", fmt.Errorf("failed to clear the blfs cache directory: %w", err)
+	}
+	if err := os.Mkdir(cacheDir, 0o700); err != nil {
+		return "", "", fmt.Errorf("failed to create the blfs cache directory: %w", err)
+	}
 
 	// Build blfs mount command.
 	// -logtostderr keeps glog from writing log files to /tmp: they pile up and,
