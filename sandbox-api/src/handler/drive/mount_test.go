@@ -423,14 +423,38 @@ func TestFormatFilerServerAddress(t *testing.T) {
 // TestBlfsCacheDirPerMountPath: each mount path gets its own cache root, so
 // removing a failed mount's cache never touches another mount's.
 func TestBlfsCacheDirPerMountPath(t *testing.T) {
-	a := blfsCacheDir("/drive/a")
-	if a != blfsCacheDir("/drive/a/") {
+	root := "/cache"
+	a := blfsCacheDir(root, "/drive/a")
+	if a != blfsCacheDir(root, "/drive/a/") {
 		t.Fatalf("blfsCacheDir differs for the same path with a trailing slash")
 	}
-	if a == blfsCacheDir("/drive/b") || a == blfsCacheDir("/drive") {
+	if a == blfsCacheDir(root, "/drive/b") || a == blfsCacheDir(root, "/drive") {
 		t.Fatalf("blfsCacheDir(%q) collides with another mount path", "/drive/a")
 	}
-	if filepath.Dir(a) != filepath.Join(os.TempDir(), "blfs-cache") {
-		t.Fatalf("blfsCacheDir(%q) = %q, want it under the blfs-cache root", "/drive/a", a)
+	if filepath.Dir(a) != root {
+		t.Fatalf("blfsCacheDir(%q) = %q, want it under %q", "/drive/a", a, root)
+	}
+}
+
+func TestPrepareBlfsCacheRoot(t *testing.T) {
+	dir := t.TempDir()
+
+	root := filepath.Join(dir, "cache")
+	if err := os.MkdirAll(root, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	if err := prepareBlfsCacheRoot(root); err != nil {
+		t.Fatalf("prepareBlfsCacheRoot(%q) = %v, want nil", root, err)
+	}
+	if info, err := os.Stat(root); err != nil || info.Mode().Perm() != 0o700 {
+		t.Fatalf("cache root mode = %v (%v), want 0700", info.Mode().Perm(), err)
+	}
+
+	planted := filepath.Join(dir, "planted")
+	if err := os.Symlink(t.TempDir(), planted); err != nil {
+		t.Fatal(err)
+	}
+	if err := prepareBlfsCacheRoot(planted); err == nil {
+		t.Fatalf("prepareBlfsCacheRoot accepted a symlink")
 	}
 }

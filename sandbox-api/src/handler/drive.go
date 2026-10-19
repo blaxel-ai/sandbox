@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"syscall"
 
 	"github.com/blaxel-ai/sandbox-api/src/handler/drive"
 	"github.com/gin-gonic/gin"
@@ -74,7 +75,7 @@ func mountFailureStatus(err error) int {
 		return http.StatusConflict
 	case errors.Is(err, drive.ErrDriveAccessDenied):
 		return http.StatusForbidden
-	case errors.Is(err, drive.ErrInsufficientStorage):
+	case errors.Is(err, drive.ErrInsufficientStorage), errors.Is(err, syscall.ENOSPC):
 		return http.StatusInsufficientStorage
 	default:
 		return http.StatusInternalServerError

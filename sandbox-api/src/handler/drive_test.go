@@ -3,6 +3,8 @@ package handler
 import (
 	"fmt"
 	"net/http"
+	"os"
+	"syscall"
 	"testing"
 
 	"github.com/blaxel-ai/sandbox-api/src/handler/drive"
@@ -27,6 +29,11 @@ func TestMountFailureStatus(t *testing.T) {
 		{
 			name: "sandbox disk full",
 			err:  fmt.Errorf("failed to mount drive drive-1: %w", drive.ErrInsufficientStorage),
+			want: http.StatusInsufficientStorage,
+		},
+		{
+			name: "sandbox disk full before blfs starts",
+			err:  fmt.Errorf("failed to create mount directory: %w", &os.PathError{Op: "mkdir", Path: "/drive", Err: syscall.ENOSPC}),
 			want: http.StatusInsufficientStorage,
 		},
 		{

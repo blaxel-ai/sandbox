@@ -68,12 +68,34 @@ func classifyBlfsFailure(output string) error {
 	return nil
 }
 
-// blfsCacheDir is the cache root a blfs mount at mountPath is given, unique per
-// mount path so a failed mount's leftovers can be removed without touching
-// another mount's cache.
-func blfsCacheDir(mountPath string) string {
+// blfsCacheRoot holds the blfs caches. It must stay out of reach of the
+// workload: blfs runs as root and trusts what it finds there, and it keeps
+// not-yet-uploaded writes in it.
+const blfsCacheRoot = "/var/cache/blfs"
+
+// prepareBlfsCacheRoot creates root for this process only and refuses one the
+// workload could have planted beforehand (a symlink or a directory it owns).
+func prepareBlfsCacheRoot(root string) error {
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		return err
+	}
+	info, err := os.Lstat(root)
+	if err != nil {
+		return err
+	}
+	st, ok := info.Sys().(*syscall.Stat_t)
+	if !info.IsDir() || !ok || int(st.Uid) != os.Geteuid() {
+		return fmt.Errorf("%s is not a directory owned by the API", root)
+	}
+	return os.Chmod(root, 0o700)
+}
+
+// blfsCacheDir is the cache directory a blfs mount at mountPath is given,
+// unique per mount path so a failed mount's leftovers can be removed without
+// touching another mount's cache.
+func blfsCacheDir(root, mountPath string) string {
 	sum := sha256.Sum256([]byte(filepath.Clean(mountPath)))
-	return filepath.Join(os.TempDir(), "blfs-cache", hex.EncodeToString(sum[:8]))
+	return filepath.Join(root, hex.EncodeToString(sum[:8]))
 }
 
 // outputTail retains the last blfsOutputTailBytes bytes of a process' output so
@@ -361,18 +383,30 @@ func MountDrive(driveName, mountPath, drivePath string, readOnly bool, uidMap, g
 	filerPath := fmt.Sprintf("/buckets/%s%s", infrastructureId, drivePath)
 
 	// blfs only clears its cache when it unmounts cleanly. A process that dies
-	// during startup leaves it behind, in /tmp, which lives in guest memory:
-	// remove it on every failed attempt so retries cannot fill the disk.
-	cacheDir := blfsCacheDir(mountPath)
+	// during startup leaves it behind, on the root tmpfs, which lives in guest
+	// memory: remove it on every failed attempt so retries cannot fill the disk.
+	if err := prepareBlfsCacheRoot(blfsCacheRoot); err != nil {
+		return "", "", fmt.Errorf("failed to prepare the blfs cache directory: %w", err)
+	}
+	cacheDir := blfsCacheDir(blfsCacheRoot, mountPath)
 	defer func() {
 		if err != nil {
 			_ = os.RemoveAll(cacheDir)
 		}
 	}()
 
-	// Build blfs mount command
+	// Build blfs mount command.
+	// -logtostderr keeps glog from writing log files to /tmp: they pile up and,
+	// once /tmp is full, glog kills blfs on its next log line. Output already
+	// reaches stderr, which sandbox-api forwards.
+	// -cacheCapacityMB=0 drops the on-disk chunk cache: blfs preallocates its
+	// full size (128 MB by default) for every mount, and the sandbox disk is a
+	// tmpfs, so it only duplicated the kernel page cache in guest memory and
+	// filled the disk once a sandbox mounted a few drives.
 	args := []string{
+		"-logtostderr=true",
 		"mount",
+		"-cacheCapacityMB=0",
 		fmt.Sprintf("-filer=%s", formatFilerServerAddress(filerAddress)),
 		"-asyncDio=true",
 		"-cacheSymlink=true",
