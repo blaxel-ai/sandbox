@@ -90,8 +90,8 @@ func TestValidateMountTarget(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if err := validateMountTarget(tt.input); (err != nil) != tt.wantErr {
-				t.Errorf("validateMountTarget(%q) err = %v, wantErr %v", tt.input, err, tt.wantErr)
+			if err := ValidateMountTarget(tt.input); (err != nil) != tt.wantErr {
+				t.Errorf("ValidateMountTarget(%q) err = %v, wantErr %v", tt.input, err, tt.wantErr)
 			}
 		})
 	}

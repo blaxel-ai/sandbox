@@ -53,10 +53,10 @@ func ValidateMountPath(mountPath string) error {
 	return nil
 }
 
-// validateMountTarget refuses mounting a drive at, inside or above the blfs
+// ValidateMountTarget refuses mounting a drive at, inside or above the blfs
 // cache root: that would put the cache on the drive instead of the sandbox
 // disk. Unmount does not apply it, so such a mount can still be removed.
-func validateMountTarget(mountPath string) error {
+func ValidateMountTarget(mountPath string) error {
 	clean := filepath.Clean(mountPath)
 	if clean == BlfsCacheRoot || strings.HasPrefix(clean, BlfsCacheRoot+"/") || strings.HasPrefix(BlfsCacheRoot, strings.TrimSuffix(clean, "/")+"/") {
 		return fmt.Errorf("mount path must not contain or be inside %s", BlfsCacheRoot)
