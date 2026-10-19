@@ -50,6 +50,9 @@ func ValidateMountPath(mountPath string) error {
 	if strings.Contains(mountPath, "..") {
 		return fmt.Errorf("mount path must not contain '..'")
 	}
+	if filepath.Clean(mountPath) == "/" {
+		return fmt.Errorf("mount path must not be the sandbox root")
+	}
 	return nil
 }
 
