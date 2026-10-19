@@ -15,6 +15,7 @@ import (
 
 	"github.com/blaxel-ai/sandbox-api/src/handler/process"
 	"github.com/blaxel-ai/sandbox-api/src/lib/blaxel"
+	"github.com/blaxel-ai/sandbox-api/src/lib/lifecycle"
 	"github.com/sirupsen/logrus"
 )
 
@@ -609,6 +610,9 @@ type stoppedProcess struct {
 	identifier string
 	pid        int
 	done       chan struct{}
+	// group also waits for the rest of the process group (pid is its leader),
+	// such as children left behind by a leader that has exited.
+	group bool
 	// kill sends SIGKILL, through the process manager for a process it owns and
 	// directly otherwise.
 	kill func() error
@@ -621,6 +625,9 @@ type stoppedProcess struct {
 // owns the process; the signal probe covers a process it adopted and does not
 // wait on.
 func (p stoppedProcess) exited() bool {
+	if p.group && lifecycle.GroupAlive(p.pid) {
+		return false
+	}
 	if p.done != nil {
 		select {
 		case <-p.done:
