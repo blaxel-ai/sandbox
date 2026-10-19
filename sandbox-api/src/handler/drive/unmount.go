@@ -1,6 +1,7 @@
 package drive
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -12,6 +13,10 @@ import (
 const (
 	unmountTimeout = 10 * time.Second
 )
+
+// ErrNotMounted indicates nothing is mounted at the requested path, so there is
+// nothing to unmount.
+var ErrNotMounted = errors.New("no drive mounted at this path")
 
 // UnmountDrive unmounts a drive from the specified mount path. It serializes on
 // the mount path so it cannot race a concurrent mount targeting the same path.
@@ -34,14 +39,14 @@ func unmountDriveLocked(mountPath string) error {
 	// Check if the path exists
 	if _, err := os.Stat(mountPath); err != nil {
 		if os.IsNotExist(err) {
-			return fmt.Errorf("mount path does not exist: %s", mountPath)
+			return fmt.Errorf("%w: %s does not exist", ErrNotMounted, mountPath)
 		}
 		return fmt.Errorf("failed to stat mount path: %w", err)
 	}
 
 	// Check if it's actually mounted
 	if !isMountPoint(mountPath) {
-		return fmt.Errorf("path is not a mount point: %s", mountPath)
+		return fmt.Errorf("%w: %s is not a mount point", ErrNotMounted, mountPath)
 	}
 
 	logrus.WithField("mount_path", mountPath).Debug("Unmounting drive")
