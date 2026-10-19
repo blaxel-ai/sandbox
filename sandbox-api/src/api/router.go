@@ -481,11 +481,24 @@ func swaggerHandler() gin.HandlerFunc {
 		spec := *docs.SwaggerInfo // copy: ReadDoc mutates the spec it renders
 		spec.BasePath = "/"
 		spec.Host, spec.Schemes = "localhost:8080", []string{"http"}
-		if host := sandboxHost(os.Getenv("BL_ENV"), os.Getenv("BL_WORKSPACE"), os.Getenv("BL_WORKSPACE_ID"), os.Getenv("BL_NAME"), os.Getenv("BL_REGION")); host != "" {
+		if host := publicHost(); host != "" {
 			spec.Host, spec.Schemes = host, []string{"https"}
 		}
 		c.Data(http.StatusOK, "application/json; charset=utf-8", []byte(spec.ReadDoc()))
 	}
+}
+
+// publicHost returns the public hostname of this sandbox, from the URL the
+// control plane injects: BASETEN_SANDBOX_URL on Baseten workspaces, BL_URL
+// everywhere. Sandboxes created before those variables existed fall back to
+// rebuilding it with sandboxHost.
+func publicHost() string {
+	for _, key := range []string{"BASETEN_SANDBOX_URL", "BL_URL"} {
+		if parsed, err := url.Parse(os.Getenv(key)); err == nil && parsed.Host != "" {
+			return parsed.Host
+		}
+	}
+	return sandboxHost(os.Getenv("BL_ENV"), os.Getenv("BL_WORKSPACE"), os.Getenv("BL_WORKSPACE_ID"), os.Getenv("BL_NAME"), os.Getenv("BL_REGION"))
 }
 
 // sandboxHost returns the public hostname of this sandbox,

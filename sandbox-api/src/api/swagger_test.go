@@ -27,6 +27,27 @@ func TestSandboxHost(t *testing.T) {
 	}
 }
 
+func TestPublicHostPrefersInjectedURL(t *testing.T) {
+	t.Setenv("BL_ENV", "prod")
+	t.Setenv("BL_WORKSPACE", "baseten-q84x4yw")
+	t.Setenv("BL_WORKSPACE_ID", "WS1")
+	t.Setenv("BL_NAME", "box")
+	t.Setenv("BL_REGION", "us-pdx-1")
+	if got := publicHost(); got != "sbx-box-ws1.us-pdx-1.b10.co" {
+		t.Fatalf("fallback: got %q", got)
+	}
+
+	t.Setenv("BL_URL", "https://sbx-box-ws1.us-pdx-1.bl.run")
+	if got := publicHost(); got != "sbx-box-ws1.us-pdx-1.bl.run" {
+		t.Fatalf("BL_URL: got %q", got)
+	}
+
+	t.Setenv("BASETEN_SANDBOX_URL", "https://sbx-box-ws1.us-pdx-1.b10.co")
+	if got := publicHost(); got != "sbx-box-ws1.us-pdx-1.b10.co" {
+		t.Fatalf("BASETEN_SANDBOX_URL must win over BL_URL: got %q", got)
+	}
+}
+
 // doc.json must follow the environment at request time, not at startup.
 func TestSwaggerDocFollowsEnvironment(t *testing.T) {
 	gin.SetMode(gin.TestMode)
