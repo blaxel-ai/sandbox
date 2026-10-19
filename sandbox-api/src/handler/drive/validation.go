@@ -2,6 +2,7 @@ package drive
 
 import (
 	"fmt"
+	"path/filepath"
 	"regexp"
 	"strings"
 )
@@ -48,6 +49,9 @@ func ValidateMountPath(mountPath string) error {
 	}
 	if strings.Contains(mountPath, "..") {
 		return fmt.Errorf("mount path must not contain '..'")
+	}
+	if clean := filepath.Clean(mountPath); clean == BlfsCacheRoot || strings.HasPrefix(clean, BlfsCacheRoot+"/") {
+		return fmt.Errorf("mount path must not be inside %s", BlfsCacheRoot)
 	}
 	return nil
 }

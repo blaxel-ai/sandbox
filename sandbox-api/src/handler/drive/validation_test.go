@@ -15,6 +15,10 @@ func TestValidateDriveName(t *testing.T) {
 		{"valid with underscore", "my_drive", false},
 		{"valid alphanumeric", "drive123", false},
 		{"empty", "", true},
+		{"blfs cache root", "/var/cache/blfs", true},
+		{"inside blfs cache root", "/var/cache/blfs/0123456789abcdef", true},
+		{"inside blfs cache root, unclean", "/var/cache//blfs/x/", true},
+		{"beside blfs cache root", "/var/cache/blfs2", false},
 		{"slash injection", "my/drive", true},
 		{"path traversal", "../etc", true},
 		{"space", "my drive", true},
@@ -61,6 +65,10 @@ func TestValidateMountPath(t *testing.T) {
 		{"nested", "/foo/bar/baz", false},
 		{"path traversal", "/mnt/../etc", true},
 		{"empty", "", true},
+		{"blfs cache root", "/var/cache/blfs", true},
+		{"inside blfs cache root", "/var/cache/blfs/0123456789abcdef", true},
+		{"inside blfs cache root, unclean", "/var/cache//blfs/x/", true},
+		{"beside blfs cache root", "/var/cache/blfs2", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
