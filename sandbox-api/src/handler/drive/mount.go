@@ -74,9 +74,15 @@ func classifyBlfsFailure(output string) error {
 const blfsCacheRoot = "/var/cache/blfs"
 
 // prepareBlfsCacheRoot creates root for this process only and refuses one the
-// workload could have planted beforehand (a symlink or a directory it owns).
-func prepareBlfsCacheRoot(root string) error {
+// workload could have planted beforehand (a symlink or a directory it owns) or
+// one that sits on another filesystem than anchor, such as a drive mounted
+// over one of its parents.
+func prepareBlfsCacheRoot(anchor, root string) error {
 	if err := os.MkdirAll(root, 0o700); err != nil {
+		return err
+	}
+	anchorInfo, err := os.Stat(anchor)
+	if err != nil {
 		return err
 	}
 	info, err := os.Lstat(root)
@@ -84,8 +90,9 @@ func prepareBlfsCacheRoot(root string) error {
 		return err
 	}
 	st, ok := info.Sys().(*syscall.Stat_t)
-	if !info.IsDir() || !ok || int(st.Uid) != os.Geteuid() {
-		return fmt.Errorf("%s is not a directory owned by the API", root)
+	anchorSt, anchorOk := anchorInfo.Sys().(*syscall.Stat_t)
+	if !info.IsDir() || !ok || !anchorOk || int(st.Uid) != os.Geteuid() || st.Dev != anchorSt.Dev {
+		return fmt.Errorf("%s is not a directory owned by the API on the root filesystem", root)
 	}
 	return os.Chmod(root, 0o700)
 }
@@ -385,7 +392,7 @@ func MountDrive(driveName, mountPath, drivePath string, readOnly bool, uidMap, g
 	// blfs only clears its cache when it unmounts cleanly. A process that dies
 	// during startup leaves it behind, on the root tmpfs, which lives in guest
 	// memory: remove it on every failed attempt so retries cannot fill the disk.
-	if err := prepareBlfsCacheRoot(blfsCacheRoot); err != nil {
+	if err := prepareBlfsCacheRoot("/", blfsCacheRoot); err != nil {
 		return "", "", fmt.Errorf("failed to prepare the blfs cache directory: %w", err)
 	}
 	cacheDir := blfsCacheDir(blfsCacheRoot, mountPath)

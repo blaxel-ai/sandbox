@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 )
 
@@ -443,7 +444,7 @@ func TestPrepareBlfsCacheRoot(t *testing.T) {
 	if err := os.MkdirAll(root, 0o777); err != nil {
 		t.Fatal(err)
 	}
-	if err := prepareBlfsCacheRoot(root); err != nil {
+	if err := prepareBlfsCacheRoot(dir, root); err != nil {
 		t.Fatalf("prepareBlfsCacheRoot(%q) = %v, want nil", root, err)
 	}
 	if info, err := os.Stat(root); err != nil || info.Mode().Perm() != 0o700 {
@@ -454,7 +455,22 @@ func TestPrepareBlfsCacheRoot(t *testing.T) {
 	if err := os.Symlink(t.TempDir(), planted); err != nil {
 		t.Fatal(err)
 	}
-	if err := prepareBlfsCacheRoot(planted); err == nil {
+	if err := prepareBlfsCacheRoot(dir, planted); err == nil {
 		t.Fatalf("prepareBlfsCacheRoot accepted a symlink")
 	}
+
+	if shm, err := os.Stat("/dev/shm"); err == nil && !os.SameFile(shm, mustStat(t, dir)) && shm.Sys().(*syscall.Stat_t).Dev != mustStat(t, dir).Sys().(*syscall.Stat_t).Dev {
+		if err := prepareBlfsCacheRoot("/dev/shm", root); err == nil {
+			t.Fatalf("prepareBlfsCacheRoot accepted a directory on another filesystem")
+		}
+	}
+}
+
+func mustStat(t *testing.T, path string) os.FileInfo {
+	t.Helper()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return info
 }
