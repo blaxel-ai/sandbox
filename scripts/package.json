@@ -1,0 +1,8 @@
+{
+  "name": "sandbox-scripts",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@blaxel/core": "^0.3.31"
+  }
+}
