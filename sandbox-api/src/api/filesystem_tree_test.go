@@ -130,6 +130,27 @@ func TestTreeRecursiveIncludesEverythingByDefault(t *testing.T) {
 	}
 }
 
+func TestTreeFollowsASymlinkedRoot(t *testing.T) {
+	root := writeTreeFixture(t)
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(root, link); err != nil {
+		t.Fatal(err)
+	}
+	code, dir, body := getTree(t, link, "recursive=true&content=true&patterns=*.json&excludeDirs=node_modules&excludeHidden=true")
+	if code != http.StatusOK {
+		t.Fatalf("HTTP %d: %s", code, body)
+	}
+	got := treeContents(t, dir)
+	if len(got) != 3 || got["a.json"] != `{"a":1}` || got["nested/deeper/c.json"] != `{"c":3}` {
+		t.Fatalf("files = %v", got)
+	}
+	for _, file := range dir.Files {
+		if !strings.HasPrefix(file.Path, link+"/") {
+			t.Fatalf("file path %q is not under the requested root %q", file.Path, link)
+		}
+	}
+}
+
 func TestTreeLimitsFailWithoutPartialResult(t *testing.T) {
 	root := writeTreeFixture(t)
 	for _, query := range []string{

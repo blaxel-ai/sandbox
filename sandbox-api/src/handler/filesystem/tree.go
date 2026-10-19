@@ -68,11 +68,17 @@ func (f *Filesystem) readTree(path string, opts TreeOptions) (*Directory, error)
 	var contentPaths []string
 	var totalBytes int64
 
-	err = filepath.WalkDir(absRoot, func(absPath string, entry fs.DirEntry, err error) error {
+	// WalkDir lists a symlinked root as the link itself; walk the directory it
+	// points at, like the plain listing's os.ReadDir does.
+	walkRoot := absRoot
+	if resolved, err := filepath.EvalSymlinks(absRoot); err == nil {
+		walkRoot = resolved
+	}
+	err = filepath.WalkDir(walkRoot, func(absPath string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		if absPath == absRoot {
+		if absPath == walkRoot {
 			return nil
 		}
 		name := entry.Name()
@@ -82,7 +88,7 @@ func (f *Filesystem) readTree(path string, opts TreeOptions) (*Directory, error)
 			}
 			return nil
 		}
-		rel, err := filepath.Rel(absRoot, absPath)
+		rel, err := filepath.Rel(walkRoot, absPath)
 		if err != nil {
 			return err
 		}
