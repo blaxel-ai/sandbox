@@ -57,7 +57,7 @@ func TestValidateMountPath(t *testing.T) {
 		wantErr  bool
 	}{
 		{"absolute path", "/mnt/data", false},
-		{"root", "/", false},
+		{"root", "/", true},
 		{"nested", "/foo/bar/baz", false},
 		{"path traversal", "/mnt/../etc", true},
 		{"empty", "", true},
@@ -65,6 +65,9 @@ func TestValidateMountPath(t *testing.T) {
 		{"inside blfs cache root", "/var/cache/blfs/0123456789abcdef", true},
 		{"inside blfs cache root, unclean", "/var/cache//blfs/x/", true},
 		{"beside blfs cache root", "/var/cache/blfs2", false},
+		{"above blfs cache root", "/var/cache", true},
+		{"above blfs cache root, trailing slash", "/var/", true},
+		{"sibling of blfs cache parent", "/var/data", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
