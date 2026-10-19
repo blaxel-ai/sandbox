@@ -33,6 +33,8 @@ const LABELS = { purpose: "repro-drive-373" };
 const log = (...a) => console.log(new Date().toISOString().slice(11, 19), ...a);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+const describe = (h) => `${h.version} (commit ${h.gitCommit}, built ${h.buildTime})`;
+
 async function health(sandbox) {
   const res = await fetch(`${sandbox.metadata.url}/health`, { headers: settings.headers });
   return res.ok ? res.json() : {};
@@ -54,7 +56,7 @@ async function upgrade(sandbox) {
     if (i === 59) throw new Error(`upgrade did not complete, health: ${JSON.stringify(h)}`);
   }
   await sandbox.process.exec({ command: "pkill -f 'http.server 8765'; rm -rf /tmp/upgrade", waitForCompletion: true });
-  log(`sandbox-api now ${(await health(sandbox)).version}`);
+  log(`sandbox-api now ${describe(await health(sandbox))}`);
 }
 
 async function createSandbox(name) {
@@ -62,7 +64,7 @@ async function createSandbox(name) {
   const sandbox = await SandboxInstance.create({ name, image: IMAGE, memory: MEMORY, region: REGION, labels: LABELS });
   try {
     await sandbox.wait();
-    log(`sandbox-api ${(await health(sandbox)).version}`);
+    log(`sandbox-api ${describe(await health(sandbox))}`);
     if (BINARY) await upgrade(sandbox);
   } catch (err) {
     if (!KEEP) await SandboxInstance.delete(name).catch(() => {});
