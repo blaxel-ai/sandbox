@@ -421,9 +421,6 @@ func MountDrive(driveName, mountPath, drivePath string, readOnly bool, uidMap, g
 	if err := prepareBlfsCacheRoot("/", BlfsCacheRoot); err != nil {
 		return "", "", fmt.Errorf("failed to prepare the blfs cache directory: %w", err)
 	}
-	if err := checkMountResources(BlfsCacheRoot); err != nil {
-		return "", "", err
-	}
 	cacheDir := blfsCacheDir(BlfsCacheRoot, mountPath)
 	defer func() {
 		if err != nil {
@@ -438,6 +435,13 @@ func MountDrive(driveName, mountPath, drivePath string, readOnly bool, uidMap, g
 	if err := os.Mkdir(cacheDir, 0o700); err != nil {
 		return "", "", fmt.Errorf("failed to create the blfs cache directory: %w", err)
 	}
+	// Checked once this path's leftover cache is gone, so it cannot block its
+	// own remount.
+	release, err := reserveMountResources(BlfsCacheRoot)
+	if err != nil {
+		return "", "", err
+	}
+	defer release()
 
 	// Build blfs mount command.
 	// -logtostderr keeps glog from writing log files to /tmp: they pile up and,
@@ -699,4 +703,28 @@ func parseMemAvailableMB(meminfo []byte) (uint64, error) {
 		}
 	}
 	return 0, errors.New("MemAvailable not found in /proc/meminfo")
+}
+
+var (
+	reservedMountsMu sync.Mutex
+	reservedMountsMB uint64
+)
+
+// reserveMountResources checks the sandbox can hold one more blfs cache, net
+// of the mounts still starting: mounts at different paths run in parallel and
+// would otherwise all pass the check before any of them has allocated its
+// cache. The caller releases the reservation once blfs is up or has failed,
+// by which point the cache shows in free space and memory.
+func reserveMountResources(cacheRoot string) (func(), error) {
+	reservedMountsMu.Lock()
+	defer reservedMountsMu.Unlock()
+	if err := checkMountResources(cacheRoot, reservedMountsMB); err != nil {
+		return nil, err
+	}
+	reservedMountsMB += blfsCacheCapacityMB
+	return func() {
+		reservedMountsMu.Lock()
+		reservedMountsMB -= blfsCacheCapacityMB
+		reservedMountsMu.Unlock()
+	}, nil
 }

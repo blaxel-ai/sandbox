@@ -39,13 +39,13 @@ func openMountTarget(mountPath string) (*os.File, error) {
 // is a tmpfs, so the read cache blfs fallocates up front is taken from guest
 // memory: starting blfs without room for it gets the VM OOM-killed mid-request
 // instead of failing this mount.
-func checkMountResources(cacheRoot string) error {
+func checkMountResources(cacheRoot string, reservedMB uint64) error {
 	var st unix.Statfs_t
 	if err := unix.Statfs(cacheRoot, &st); err != nil {
 		return fmt.Errorf("failed to check free space for the blfs cache: %w", err)
 	}
-	if free := st.Bavail * uint64(st.Bsize) >> 20; free < blfsCacheCapacityMB {
-		return fmt.Errorf("%w: %d MB free, the drive cache needs %d MB", ErrInsufficientStorage, free, blfsCacheCapacityMB)
+	if free := st.Bavail * uint64(st.Bsize) >> 20; free < reservedMB+blfsCacheCapacityMB {
+		return fmt.Errorf("%w: %d MB free, the drive cache needs %d MB", ErrInsufficientStorage, free, reservedMB+blfsCacheCapacityMB)
 	}
 	meminfo, err := os.ReadFile("/proc/meminfo")
 	if err != nil {
@@ -55,7 +55,7 @@ func checkMountResources(cacheRoot string) error {
 	if err != nil {
 		return fmt.Errorf("failed to check available memory: %w", err)
 	}
-	if need := uint64(blfsCacheCapacityMB + blfsMemoryHeadroomMB); avail < need {
+	if need := reservedMB + blfsCacheCapacityMB + blfsMemoryHeadroomMB; avail < need {
 		return fmt.Errorf("%w: %d MB available, a drive mount needs %d MB", ErrInsufficientMemory, avail, need)
 	}
 	return nil

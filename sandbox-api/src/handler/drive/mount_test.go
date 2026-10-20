@@ -556,3 +556,16 @@ func TestParseMemAvailableMB(t *testing.T) {
 		t.Fatal("parseMemAvailableMB without MemAvailable: want an error")
 	}
 }
+
+func TestReserveMountResourcesCountsMountsStillStarting(t *testing.T) {
+	release, err := reserveMountResources("/")
+	if err != nil {
+		t.Skipf("host too small for one mount: %v", err)
+	}
+	release()
+	reservedMountsMB = 1 << 40
+	defer func() { reservedMountsMB = 0 }()
+	if _, err := reserveMountResources("/"); !errors.Is(err, ErrInsufficientStorage) && !errors.Is(err, ErrInsufficientMemory) {
+		t.Fatalf("reserveMountResources with every byte reserved = %v, want a 507 error", err)
+	}
+}
