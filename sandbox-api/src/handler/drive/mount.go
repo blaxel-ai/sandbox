@@ -708,7 +708,7 @@ func parseMemAvailableMB(meminfo []byte) (uint64, error) {
 
 var (
 	reservedMountsMu sync.Mutex
-	reservedMountsMB uint64
+	startingMounts   uint64
 )
 
 // blfsMountMemoryMB is what one mount takes from guest memory: its cache sits
@@ -723,13 +723,13 @@ const blfsMountMemoryMB = blfsCacheCapacityMB + blfsProcessMB
 func reserveMountResources(cacheRoot string) (func(), error) {
 	reservedMountsMu.Lock()
 	defer reservedMountsMu.Unlock()
-	if err := checkMountResources(cacheRoot, reservedMountsMB); err != nil {
+	if err := checkMountResources(cacheRoot, startingMounts); err != nil {
 		return nil, err
 	}
-	reservedMountsMB += blfsMountMemoryMB
+	startingMounts++
 	return func() {
 		reservedMountsMu.Lock()
-		reservedMountsMB -= blfsMountMemoryMB
+		startingMounts--
 		reservedMountsMu.Unlock()
 	}, nil
 }
