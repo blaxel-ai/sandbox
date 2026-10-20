@@ -153,7 +153,8 @@ jobs:
     permissions:
       contents: read
       packages: write
-    if: needs.check-changes.outputs.sandbox-api-changed == 'true'
+    # arm64 is opt-in like the hub images: a push or an amd64-only dispatch skips it.
+    if: needs.check-changes.outputs.sandbox-api-changed == 'true' && contains(inputs.architectures, 'arm64')
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -220,7 +221,8 @@ jobs:
     permissions:
       contents: read
       packages: write
-    if: needs.check-changes.outputs.sandbox-api-changed == 'true'
+    # always(): a skipped arm64 build must not skip the amd64 manifest.
+    if: always() && needs.check-changes.outputs.sandbox-api-changed == 'true' && needs.sandbox-api-build.result == 'success' && needs.sandbox-api-build-arm64.result != 'failure' && needs.sandbox-api-build-arm64.result != 'cancelled'
     steps:
       - name: Download digests
         uses: actions/download-artifact@v4
