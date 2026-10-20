@@ -2,6 +2,8 @@ module github.com/blaxel-ai/sandbox-api
 
 go 1.25.0
 
+toolchain go1.27.3
+
 require (
 	github.com/creack/pty v1.1.24
 	github.com/fsnotify/fsnotify v1.10.1
