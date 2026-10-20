@@ -57,7 +57,15 @@ deploy-custom-sandbox:
 	cp -r sandbox-api e2e/custom-sandbox
 	cd e2e/custom-sandbox && bl deploy && rm -rf sandbox-api
 
-deploy-simple-custom-sandbox:
+DOCKER ?= docker
+
+# Build the virtio_ring_resync kernel module (see sandbox-api/kmod/README.md) and
+# drop it where sandbox-api embeds it, so a plain `go build` ships it.
+build-kmod:
+	cd sandbox-api && $(DOCKER) build --platform linux/amd64 --target kmod -t sandbox-api-kmod .
+	cd sandbox-api && $(DOCKER) run --rm --platform linux/amd64 sandbox-api-kmod tar -C /out -c . | tar -x -C src/lib/networking/kmod
+
+deploy-simple-custom-sandbox: build-kmod
 	cd sandbox-api && GOOS=linux GOARCH=amd64 go build -o ../e2e/simple-custom-sandbox/sandbox-api
 	cd e2e/simple-custom-sandbox && bl deploy && rm sandbox-api
 
@@ -89,7 +97,7 @@ e2e:
 	echo "Number of FD after test"
 	@docker exec sandbox-dev ls /proc/$$(docker exec sandbox-dev pgrep -f sandbox-api)/fd | wc -l
 
-.PHONY: e2e
+.PHONY: e2e build-kmod
 
 mr_develop:
 	$(eval BRANCH_NAME := $(shell git rev-parse --abbrev-ref HEAD))
