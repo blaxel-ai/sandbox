@@ -82,6 +82,9 @@ var DefaultExcludes = []string{
 	// serving. It is the image's, like this API's own binary: an archive that
 	// could replace it would choose the code the next mount executes.
 	strings.TrimPrefix(drive.BlfsPath, "/"),
+	// The cache blfs keeps, as root, for each mount: it holds drive data and
+	// not-yet-uploaded writes that blfs trusts on the next mount.
+	strings.TrimPrefix(drive.BlfsCacheRoot, "/"),
 	// The dynamic loader's configuration, which decides what every binary this
 	// API execs as root loads before its own code. Excluding the binaries alone
 	// would leave "replace the code blfs runs" available as a preload entry or

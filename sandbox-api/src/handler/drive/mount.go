@@ -1,6 +1,8 @@
 package drive
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -22,9 +24,16 @@ const (
 	// BlfsPath is the binary the drive mount runs, as root. It is exported so
 	// the paths this API executes with privileges can be named where they have
 	// to be protected from being replaced.
-	BlfsPath     = "/usr/local/bin/blfs"
-	pollInterval = 100 * time.Millisecond
-	mountTimeout = 30 * time.Second
+	BlfsPath = "/usr/local/bin/blfs"
+	// blfsCacheCapacityMB is blfs's read cache, which it fallocates in full
+	// when the mount starts (blfs's own default).
+	blfsCacheCapacityMB = 128
+	// blfsProcessMB is the memory of one blfs process, measured at about 40 MB.
+	blfsProcessMB = 48
+	// blfsMemoryHeadroomMB is left to the workload once the mount is up.
+	blfsMemoryHeadroomMB = 80
+	pollInterval         = 100 * time.Millisecond
+	mountTimeout         = 30 * time.Second
 	// blfsOutputTailBytes bounds how much of the blfs output is kept to explain
 	// why a mount failed.
 	blfsOutputTailBytes = 8 << 10
@@ -37,6 +46,18 @@ var ErrMountPathBusy = errors.New("mount path already in use")
 // ErrDriveAccessDenied indicates the filer refused the sandbox's credentials
 // for this drive, so the mount cannot succeed however often it is retried.
 var ErrDriveAccessDenied = errors.New("drive access denied")
+
+// ErrInsufficientStorage indicates the sandbox ran out of local disk space,
+// which blfs needs for its cache, so the mount cannot start until space is freed.
+var ErrInsufficientStorage = errors.New("not enough disk space in the sandbox")
+
+// ErrInsufficientMemory indicates the sandbox has no memory left for another
+// blfs process and its cache, so the mount is refused rather than started.
+var ErrInsufficientMemory = errors.New("not enough memory in the sandbox")
+
+// ErrMountPathSymlink indicates a component of the mount path is a symlink.
+// The path checks only hold for the path as written, so it is refused.
+var ErrMountPathSymlink = errors.New("mount path must not go through a symlink")
 
 // driveAccessDeniedMarkers are the filer refusals blfs prints when the drive is
 // not accessible to this sandbox. They surface as a plain gRPC error on stderr,
@@ -56,7 +77,50 @@ func classifyBlfsFailure(output string) error {
 			return ErrDriveAccessDenied
 		}
 	}
+	if strings.Contains(output, "no space left on device") {
+		return ErrInsufficientStorage
+	}
 	return nil
+}
+
+// BlfsCacheRoot holds the blfs caches. It must stay out of reach of the
+// workload and of archives: blfs runs as root and trusts what it finds there,
+// and it keeps not-yet-uploaded writes in it.
+const BlfsCacheRoot = "/var/cache/blfs"
+
+// prepareBlfsCacheRoot creates root for this process only and refuses one the
+// workload could have planted beforehand (a symlink anywhere on the path or a
+// directory it owns) or one that sits on another filesystem than anchor, such
+// as a drive mounted over one of its parents.
+func prepareBlfsCacheRoot(anchor, root string) error {
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		return err
+	}
+	if resolved, err := filepath.EvalSymlinks(root); err != nil || resolved != filepath.Clean(root) {
+		return fmt.Errorf("%s goes through a symlink", root)
+	}
+	anchorInfo, err := os.Stat(anchor)
+	if err != nil {
+		return err
+	}
+	info, err := os.Lstat(root)
+	if err != nil {
+		return err
+	}
+	st, ok := info.Sys().(*syscall.Stat_t)
+	anchorSt, anchorOk := anchorInfo.Sys().(*syscall.Stat_t)
+	if !info.IsDir() || !ok || !anchorOk || int(st.Uid) != os.Geteuid() || st.Dev != anchorSt.Dev {
+		return fmt.Errorf("%s is not a directory owned by the API on the root filesystem", root)
+	}
+	return os.Chmod(root, 0o700)
+}
+
+// blfsCacheDir is the cache directory a blfs mount at mountPath is given,
+// unique per mount path so a failed mount's leftovers can be removed without
+// touching another mount's cache.
+func blfsCacheDir(root, mountPath string) string {
+	sum := sha256.Sum256([]byte(filepath.Clean(mountPath)))
+	return filepath.Join(root, hex.EncodeToString(sum[:8]))
 }
 
 // outputTail retains the last blfsOutputTailBytes bytes of a process' output so
@@ -262,6 +326,9 @@ func MountDrive(driveName, mountPath, drivePath string, readOnly bool, uidMap, g
 	if err := ValidateMountPath(mountPath); err != nil {
 		return "", "", fmt.Errorf("invalid mount path: %w", err)
 	}
+	if err := ValidateMountTarget(mountPath); err != nil {
+		return "", "", fmt.Errorf("invalid mount path: %w", err)
+	}
 
 	drivePath = normalizeDrivePath(drivePath)
 
@@ -340,20 +407,66 @@ func MountDrive(driveName, mountPath, drivePath string, readOnly bool, uidMap, g
 		}
 	}
 
+	target, err := openMountTarget(mountPath)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to open mount directory: %w", err)
+	}
+	defer target.Close()
+
 	// Build the filer path: /buckets/{infrastructureId}{drivePath}
 	filerPath := fmt.Sprintf("/buckets/%s%s", infrastructureId, drivePath)
 
-	// Build blfs mount command
+	// blfs only clears its cache when it unmounts cleanly. A process that dies
+	// during startup leaves it behind, on the root tmpfs, which lives in guest
+	// memory: remove it on every failed attempt so retries cannot fill the disk.
+	if err := prepareBlfsCacheRoot("/", BlfsCacheRoot); err != nil {
+		return "", "", fmt.Errorf("failed to prepare the blfs cache directory: %w", err)
+	}
+	cacheDir := blfsCacheDir(BlfsCacheRoot, mountPath)
+	defer func() {
+		if err != nil {
+			_ = os.RemoveAll(cacheDir)
+		}
+	}()
+	// Nothing is mounted at mountPath and its lock is held, so no blfs owns
+	// this directory: start from an empty one rather than trusting leftovers.
+	if err := os.RemoveAll(cacheDir); err != nil {
+		return "", "", fmt.Errorf("failed to clear the blfs cache directory: %w", err)
+	}
+	if err := os.Mkdir(cacheDir, 0o700); err != nil {
+		return "", "", fmt.Errorf("failed to create the blfs cache directory: %w", err)
+	}
+	// Checked once this path's leftover cache is gone, so it cannot block its
+	// own remount.
+	release, err := reserveMountResources(BlfsCacheRoot)
+	if err != nil {
+		return "", "", err
+	}
+	defer release()
+
+	// Build blfs mount command.
+	// -logtostderr keeps glog from writing log files to /tmp: they pile up and,
+	// once /tmp is full, glog kills blfs on its next log line. Output already
+	// reaches stderr, which sandbox-api forwards.
 	args := []string{
+		"-logtostderr=true",
 		"mount",
+		fmt.Sprintf("-cacheCapacityMB=%d", blfsCacheCapacityMB),
 		fmt.Sprintf("-filer=%s", formatFilerServerAddress(filerAddress)),
 		"-asyncDio=true",
 		"-cacheSymlink=true",
 		fmt.Sprintf("-auth.tokenFile=%s", getAuthTokenPath()),
 		fmt.Sprintf("-filer.path=%s", filerPath),
-		fmt.Sprintf("-dir=%s", mountPath),
+		// fd 3 in blfs is target (cmd.ExtraFiles below). fusermount refuses
+		// a /proc/self/fd path, so a mount that falls back to it fails rather
+		// than landing elsewhere: blfs runs as root and mounts directly.
+		"-dir=/proc/self/fd/3",
 		"-volumeServerAccess=filerProxy",
 		"-dirAutoCreate=true",
+		fmt.Sprintf("-cacheDir=%s", cacheDir),
+		// blfs names its socket after -dir by default, which is the same
+		// for every mount now.
+		fmt.Sprintf("-localSocket=%s", filepath.Join(cacheDir, "blfs.sock")),
 	}
 
 	// It's causing inconsistency issues on F_APPEND with the cache, so we're adding an environment variable to disable it
@@ -401,6 +514,7 @@ func MountDrive(driveName, mountPath, drivePath string, readOnly bool, uidMap, g
 
 	// Start the blfs mount process in the background
 	cmd := exec.Command(BlfsPath, args...)
+	cmd.ExtraFiles = []*os.File{target}
 	output := &outputTail{}
 	cmd.Stdout = output.tee(os.Stdout)
 	cmd.Stderr = output.tee(os.Stderr)
@@ -575,4 +689,47 @@ func mustReadAll(file *os.File) []byte {
 func CheckBlfsAvailable() bool {
 	_, err := os.Stat(BlfsPath)
 	return err == nil
+}
+
+// parseMemAvailableMB returns MemAvailable from /proc/meminfo content, in MB.
+func parseMemAvailableMB(meminfo []byte) (uint64, error) {
+	for _, line := range strings.Split(string(meminfo), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) >= 2 && fields[0] == "MemAvailable:" {
+			kb, err := strconv.ParseUint(fields[1], 10, 64)
+			if err != nil {
+				return 0, fmt.Errorf("invalid MemAvailable %q: %w", fields[1], err)
+			}
+			return kb >> 10, nil
+		}
+	}
+	return 0, errors.New("MemAvailable not found in /proc/meminfo")
+}
+
+var (
+	reservedMountsMu sync.Mutex
+	startingMounts   uint64
+)
+
+// blfsMountMemoryMB is what one mount takes from guest memory: its cache sits
+// on the root tmpfs, plus the blfs process.
+const blfsMountMemoryMB = blfsCacheCapacityMB + blfsProcessMB
+
+// reserveMountResources checks the sandbox can hold one more mount, net of the
+// mounts still starting: mounts at different paths run in parallel and would
+// otherwise all pass the check before any blfs has allocated its cache. The
+// caller releases the reservation once blfs is up or has failed, by which
+// point its usage shows in free space and memory.
+func reserveMountResources(cacheRoot string) (func(), error) {
+	reservedMountsMu.Lock()
+	defer reservedMountsMu.Unlock()
+	if err := checkMountResources(cacheRoot, startingMounts); err != nil {
+		return nil, err
+	}
+	startingMounts++
+	return func() {
+		reservedMountsMu.Lock()
+		startingMounts--
+		reservedMountsMu.Unlock()
+	}, nil
 }

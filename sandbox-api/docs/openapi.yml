@@ -313,6 +313,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "507":
+          description: Insufficient Storage
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
       security:
         - BearerAuth: []
       summary: Attach a drive to a local path
@@ -337,6 +343,12 @@ paths:
                 $ref: "#/components/schemas/DriveUnmountResponse"
         "400":
           description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Not Found
           content:
             application/json:
               schema:

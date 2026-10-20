@@ -3,11 +3,13 @@ package drive
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 )
 
@@ -118,6 +120,11 @@ func TestClassifyBlfsFailure(t *testing.T) {
 			name:   "grpc permission denied alone",
 			output: "rpc error: code = PermissionDenied desc = something else",
 			want:   ErrDriveAccessDenied,
+		},
+		{
+			name:   "cache cannot be created",
+			output: `E1019 20:56:21.211421 on_disk_cache_layer.go:29 failed to add cache /tmp/6e1289c6/c1_3_0 : loading leveldb /tmp/6e1289c6/c1_3_0.ldb error: write /tmp/6e1289c6/c1_3_0.ldb/MANIFEST-000000: no space left on device`,
+			want:   ErrInsufficientStorage,
 		},
 		{
 			name:   "unrelated startup failure",
@@ -412,5 +419,153 @@ func TestFormatFilerServerAddress(t *testing.T) {
 				t.Fatalf("formatFilerServerAddress(%q) = %q, want %q", tt.address, got, tt.want)
 			}
 		})
+	}
+}
+
+// TestBlfsCacheDirPerMountPath: each mount path gets its own cache root, so
+// removing a failed mount's cache never touches another mount's.
+func TestBlfsCacheDirPerMountPath(t *testing.T) {
+	root := "/cache"
+	a := blfsCacheDir(root, "/drive/a")
+	if a != blfsCacheDir(root, "/drive/a/") {
+		t.Fatalf("blfsCacheDir differs for the same path with a trailing slash")
+	}
+	if a == blfsCacheDir(root, "/drive/b") || a == blfsCacheDir(root, "/drive") {
+		t.Fatalf("blfsCacheDir(%q) collides with another mount path", "/drive/a")
+	}
+	if filepath.Dir(a) != root {
+		t.Fatalf("blfsCacheDir(%q) = %q, want it under %q", "/drive/a", a, root)
+	}
+}
+
+func TestPrepareBlfsCacheRoot(t *testing.T) {
+	dir := t.TempDir()
+
+	root := filepath.Join(dir, "cache")
+	if err := os.MkdirAll(root, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	if err := prepareBlfsCacheRoot(dir, root); err != nil {
+		t.Fatalf("prepareBlfsCacheRoot(%q) = %v, want nil", root, err)
+	}
+	if info, err := os.Stat(root); err != nil || info.Mode().Perm() != 0o700 {
+		t.Fatalf("cache root mode = %v (%v), want 0700", info.Mode().Perm(), err)
+	}
+
+	planted := filepath.Join(dir, "planted")
+	if err := os.Symlink(t.TempDir(), planted); err != nil {
+		t.Fatal(err)
+	}
+	if err := prepareBlfsCacheRoot(dir, planted); err == nil {
+		t.Fatalf("prepareBlfsCacheRoot accepted a symlink")
+	}
+
+	parent := filepath.Join(dir, "real")
+	if err := os.Mkdir(parent, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "linked")
+	if err := os.Symlink(parent, link); err != nil {
+		t.Fatal(err)
+	}
+	if err := prepareBlfsCacheRoot(dir, filepath.Join(link, "blfs")); err == nil {
+		t.Fatalf("prepareBlfsCacheRoot accepted a path through a symlinked parent")
+	}
+
+	if shm, err := os.Stat("/dev/shm"); err == nil && !os.SameFile(shm, mustStat(t, dir)) && shm.Sys().(*syscall.Stat_t).Dev != mustStat(t, dir).Sys().(*syscall.Stat_t).Dev {
+		if err := prepareBlfsCacheRoot("/dev/shm", root); err == nil {
+			t.Fatalf("prepareBlfsCacheRoot accepted a directory on another filesystem")
+		}
+	}
+}
+
+func mustStat(t *testing.T, path string) os.FileInfo {
+	t.Helper()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return info
+}
+
+// TestOpenMountTargetRefusesSymlinks covers a symlink as the mount point and
+// as one of its parents: either would let the mount land outside the path
+// that was validated, on / for instance.
+func TestOpenMountTargetRefusesSymlinks(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "dir", "mount")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("/", filepath.Join(root, "to-root")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(root, "dir"), filepath.Join(root, "to-dir")); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, path := range []string{filepath.Join(root, "to-root"), filepath.Join(root, "to-dir", "mount")} {
+		if f, err := openMountTarget(path); !errors.Is(err, ErrMountPathSymlink) {
+			if f != nil {
+				f.Close()
+			}
+			t.Errorf("openMountTarget(%q) err = %v, want ErrMountPathSymlink", path, err)
+		}
+	}
+}
+
+// TestOpenMountTargetPinsDirectory checks the descriptor keeps pointing at the
+// opened directory once the path is swapped for a symlink.
+func TestOpenMountTargetPinsDirectory(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "mount")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	f, err := openMountTarget(dir + "/")
+	if err != nil {
+		t.Fatalf("openMountTarget(%q): %v", dir, err)
+	}
+	defer f.Close()
+
+	if err := os.Rename(dir, dir+".moved"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("/", dir); err != nil {
+		t.Fatal(err)
+	}
+	want, err := os.Stat(dir + ".moved")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.Stat(fmt.Sprintf("/proc/self/fd/%d", f.Fd()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !os.SameFile(got, want) {
+		t.Fatalf("descriptor follows the swapped path instead of the opened directory")
+	}
+}
+
+func TestParseMemAvailableMB(t *testing.T) {
+	got, err := parseMemAvailableMB([]byte("MemTotal:        2014712 kB\nMemFree:          120000 kB\nMemAvailable:     137216 kB\n"))
+	if err != nil || got != 134 {
+		t.Fatalf("parseMemAvailableMB = %d, %v, want 134", got, err)
+	}
+	if _, err := parseMemAvailableMB([]byte("MemTotal: 1 kB\n")); err == nil {
+		t.Fatal("parseMemAvailableMB without MemAvailable: want an error")
+	}
+}
+
+func TestReserveMountResourcesCountsMountsStillStarting(t *testing.T) {
+	release, err := reserveMountResources("/")
+	if err != nil {
+		t.Skipf("host too small for one mount: %v", err)
+	}
+	release()
+	startingMounts = 1 << 30
+	defer func() { startingMounts = 0 }()
+	if _, err := reserveMountResources("/"); !errors.Is(err, ErrInsufficientStorage) && !errors.Is(err, ErrInsufficientMemory) {
+		t.Fatalf("reserveMountResources with every byte reserved = %v, want a 507 error", err)
 	}
 }
