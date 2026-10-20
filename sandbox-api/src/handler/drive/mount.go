@@ -18,16 +18,21 @@ import (
 
 	"github.com/blaxel-ai/sandbox-api/src/lib/identity"
 	"github.com/sirupsen/logrus"
-	"golang.org/x/sys/unix"
 )
 
 const (
 	// BlfsPath is the binary the drive mount runs, as root. It is exported so
 	// the paths this API executes with privileges can be named where they have
 	// to be protected from being replaced.
-	BlfsPath     = "/usr/local/bin/blfs"
-	pollInterval = 100 * time.Millisecond
-	mountTimeout = 30 * time.Second
+	BlfsPath = "/usr/local/bin/blfs"
+	// blfsCacheCapacityMB is blfs's read cache, which it fallocates in full
+	// when the mount starts (blfs's own default).
+	blfsCacheCapacityMB = 128
+	// blfsMemoryHeadroomMB covers the blfs process itself, about 40 MB per
+	// mount, and leaves the workload some memory to run with.
+	blfsMemoryHeadroomMB = 128
+	pollInterval         = 100 * time.Millisecond
+	mountTimeout         = 30 * time.Second
 	// blfsOutputTailBytes bounds how much of the blfs output is kept to explain
 	// why a mount failed.
 	blfsOutputTailBytes = 8 << 10
@@ -44,6 +49,10 @@ var ErrDriveAccessDenied = errors.New("drive access denied")
 // ErrInsufficientStorage indicates the sandbox ran out of local disk space,
 // which blfs needs for its cache, so the mount cannot start until space is freed.
 var ErrInsufficientStorage = errors.New("not enough disk space in the sandbox")
+
+// ErrInsufficientMemory indicates the sandbox has no memory left for another
+// blfs process and its cache, so the mount is refused rather than started.
+var ErrInsufficientMemory = errors.New("not enough memory in the sandbox")
 
 // ErrMountPathSymlink indicates a component of the mount path is a symlink.
 // The path checks only hold for the path as written, so it is refused.
@@ -230,31 +239,6 @@ func chownMountPoint(mountPath string, uid, gid int) error {
 	return dir.Chown(uid, gid)
 }
 
-// openMountTarget opens mountPath one component at a time without following
-// symlinks. blfs then mounts through this descriptor rather than the path, so
-// the directory mounted on is the one the path checks were made for, even if
-// the workload swaps a component for a symlink to / in the meantime.
-func openMountTarget(mountPath string) (*os.File, error) {
-	fd, err := unix.Open("/", unix.O_PATH|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
-	if err != nil {
-		return nil, err
-	}
-	for _, name := range strings.Split(strings.Trim(filepath.Clean(mountPath), "/"), "/") {
-		// O_PATH|O_NOFOLLOW opens a symlink itself, and O_DIRECTORY then
-		// refuses it with ENOTDIR.
-		next, err := unix.Openat(fd, name, unix.O_PATH|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
-		_ = unix.Close(fd)
-		if errors.Is(err, unix.ENOTDIR) {
-			return nil, fmt.Errorf("%w: %s", ErrMountPathSymlink, mountPath)
-		}
-		if err != nil {
-			return nil, err
-		}
-		fd = next
-	}
-	return os.NewFile(uintptr(fd), mountPath), nil
-}
-
 // existingMount returns the blfs mount currently backing mountPath, or nil if
 // none is managed there.
 func existingMount(mountPath string) (*MountInfo, error) {
@@ -437,6 +421,9 @@ func MountDrive(driveName, mountPath, drivePath string, readOnly bool, uidMap, g
 	if err := prepareBlfsCacheRoot("/", BlfsCacheRoot); err != nil {
 		return "", "", fmt.Errorf("failed to prepare the blfs cache directory: %w", err)
 	}
+	if err := checkMountResources(BlfsCacheRoot); err != nil {
+		return "", "", err
+	}
 	cacheDir := blfsCacheDir(BlfsCacheRoot, mountPath)
 	defer func() {
 		if err != nil {
@@ -456,14 +443,10 @@ func MountDrive(driveName, mountPath, drivePath string, readOnly bool, uidMap, g
 	// -logtostderr keeps glog from writing log files to /tmp: they pile up and,
 	// once /tmp is full, glog kills blfs on its next log line. Output already
 	// reaches stderr, which sandbox-api forwards.
-	// -cacheCapacityMB=0 drops the on-disk chunk cache: blfs preallocates its
-	// full size (128 MB by default) for every mount, and the sandbox disk is a
-	// tmpfs, so it only duplicated the kernel page cache in guest memory and
-	// filled the disk once a sandbox mounted a few drives.
 	args := []string{
 		"-logtostderr=true",
 		"mount",
-		"-cacheCapacityMB=0",
+		fmt.Sprintf("-cacheCapacityMB=%d", blfsCacheCapacityMB),
 		fmt.Sprintf("-filer=%s", formatFilerServerAddress(filerAddress)),
 		"-asyncDio=true",
 		"-cacheSymlink=true",
@@ -701,4 +684,19 @@ func mustReadAll(file *os.File) []byte {
 func CheckBlfsAvailable() bool {
 	_, err := os.Stat(BlfsPath)
 	return err == nil
+}
+
+// parseMemAvailableMB returns MemAvailable from /proc/meminfo content, in MB.
+func parseMemAvailableMB(meminfo []byte) (uint64, error) {
+	for _, line := range strings.Split(string(meminfo), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) >= 2 && fields[0] == "MemAvailable:" {
+			kb, err := strconv.ParseUint(fields[1], 10, 64)
+			if err != nil {
+				return 0, fmt.Errorf("invalid MemAvailable %q: %w", fields[1], err)
+			}
+			return kb >> 10, nil
+		}
+	}
+	return 0, errors.New("MemAvailable not found in /proc/meminfo")
 }

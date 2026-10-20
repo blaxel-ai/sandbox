@@ -77,7 +77,7 @@ func mountFailureStatus(err error) int {
 		return http.StatusConflict
 	case errors.Is(err, drive.ErrDriveAccessDenied):
 		return http.StatusForbidden
-	case errors.Is(err, drive.ErrInsufficientStorage), errors.Is(err, syscall.ENOSPC):
+	case errors.Is(err, drive.ErrInsufficientStorage), errors.Is(err, drive.ErrInsufficientMemory), errors.Is(err, syscall.ENOSPC):
 		return http.StatusInsufficientStorage
 	default:
 		return http.StatusInternalServerError

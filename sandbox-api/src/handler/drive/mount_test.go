@@ -546,3 +546,13 @@ func TestOpenMountTargetPinsDirectory(t *testing.T) {
 		t.Fatalf("descriptor follows the swapped path instead of the opened directory")
 	}
 }
+
+func TestParseMemAvailableMB(t *testing.T) {
+	got, err := parseMemAvailableMB([]byte("MemTotal:        2014712 kB\nMemFree:          120000 kB\nMemAvailable:     137216 kB\n"))
+	if err != nil || got != 134 {
+		t.Fatalf("parseMemAvailableMB = %d, %v, want 134", got, err)
+	}
+	if _, err := parseMemAvailableMB([]byte("MemTotal: 1 kB\n")); err == nil {
+		t.Fatal("parseMemAvailableMB without MemAvailable: want an error")
+	}
+}
