@@ -28,9 +28,10 @@ const (
 	// blfsCacheCapacityMB is blfs's read cache, which it fallocates in full
 	// when the mount starts (blfs's own default).
 	blfsCacheCapacityMB = 128
-	// blfsMemoryHeadroomMB covers the blfs process itself, about 40 MB per
-	// mount, and leaves the workload some memory to run with.
-	blfsMemoryHeadroomMB = 128
+	// blfsProcessMB is the memory of one blfs process, measured at about 40 MB.
+	blfsProcessMB = 48
+	// blfsMemoryHeadroomMB is left to the workload once the mount is up.
+	blfsMemoryHeadroomMB = 80
 	pollInterval         = 100 * time.Millisecond
 	mountTimeout         = 30 * time.Second
 	// blfsOutputTailBytes bounds how much of the blfs output is kept to explain
@@ -710,21 +711,25 @@ var (
 	reservedMountsMB uint64
 )
 
-// reserveMountResources checks the sandbox can hold one more blfs cache, net
-// of the mounts still starting: mounts at different paths run in parallel and
-// would otherwise all pass the check before any of them has allocated its
-// cache. The caller releases the reservation once blfs is up or has failed,
-// by which point the cache shows in free space and memory.
+// blfsMountMemoryMB is what one mount takes from guest memory: its cache sits
+// on the root tmpfs, plus the blfs process.
+const blfsMountMemoryMB = blfsCacheCapacityMB + blfsProcessMB
+
+// reserveMountResources checks the sandbox can hold one more mount, net of the
+// mounts still starting: mounts at different paths run in parallel and would
+// otherwise all pass the check before any blfs has allocated its cache. The
+// caller releases the reservation once blfs is up or has failed, by which
+// point its usage shows in free space and memory.
 func reserveMountResources(cacheRoot string) (func(), error) {
 	reservedMountsMu.Lock()
 	defer reservedMountsMu.Unlock()
 	if err := checkMountResources(cacheRoot, reservedMountsMB); err != nil {
 		return nil, err
 	}
-	reservedMountsMB += blfsCacheCapacityMB
+	reservedMountsMB += blfsMountMemoryMB
 	return func() {
 		reservedMountsMu.Lock()
-		reservedMountsMB -= blfsCacheCapacityMB
+		reservedMountsMB -= blfsMountMemoryMB
 		reservedMountsMu.Unlock()
 	}, nil
 }
