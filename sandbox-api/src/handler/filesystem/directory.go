@@ -21,6 +21,10 @@ type Directory struct {
 	Name           string          `json:"name" binding:"required"`
 	Files          []*File         `json:"files" binding:"required"`
 	Subdirectories []*Subdirectory `json:"subdirectories" binding:"required"` // @name Subdirectories
+	// Recursive is true when files and subdirectories hold every level below
+	// path (tree read with recursive=true). Older APIs ignore that parameter
+	// and omit this field, so clients can tell a one-level listing apart.
+	Recursive bool `json:"recursive,omitempty"`
 } // @name Directory
 
 func NewDirectory(path string) *Directory {
