@@ -22,6 +22,11 @@ func TestMountFailureStatus(t *testing.T) {
 			want: http.StatusForbidden,
 		},
 		{
+			name: "not enough memory for blfs",
+			err:  fmt.Errorf("%w: 134 MB available, a drive mount needs 256 MB", drive.ErrInsufficientMemory),
+			want: http.StatusInsufficientStorage,
+		},
+		{
 			name: "mount path through a symlink",
 			err:  fmt.Errorf("failed to open mount directory: %w: /mnt/link", drive.ErrMountPathSymlink),
 			want: http.StatusBadRequest,

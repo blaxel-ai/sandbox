@@ -5,8 +5,8 @@
 //   mount:   mount the same drive at /mnt/d1, /mnt/d2, ... and watch `df /`.
 //            Bug: every blfs mount preallocates a 128 MB cache on the root
 //            tmpfs (guest RAM), so a small sandbox fills up after a few mounts
-//            and the next one fails with 5xx (500, or 504 when the VM dies). Fixed: / barely moves, all mounts
-//            succeed (or a full disk gives 507).
+//            and the next one fails with 5xx (500, or 504 when the VM dies).
+//            Fixed: the mount that runs out of space gets a 507.
 //
 // Usage (from scripts/, after `npm i`):
 //   BL_ENV=dev BL_WORKSPACE=... BL_API_KEY=... node repro-drive-mount-unmount.mjs
@@ -83,9 +83,12 @@ async function status(promise) {
 }
 
 async function rootDisk(sandbox) {
-  const r = await sandbox.process.exec({ command: "df -m / | tail -1", waitForCompletion: true });
-  const [, size, used, avail, pct] = r.logs.trim().split(/\s+/);
-  return `/ ${used}/${size} MB used (${pct}), ${avail} MB free`;
+  const r = await sandbox.process.exec({
+    command: "df -m / | tail -1; awk '/MemAvailable/ {print int($2/1024)}' /proc/meminfo",
+    waitForCompletion: true,
+  });
+  const [, size, used, avail, pct, , mem] = r.logs.trim().split(/\s+/);
+  return `/ ${used}/${size} MB used (${pct}), ${avail} MB free, ${mem} MB memory available`;
 }
 
 async function unmountScenario() {
@@ -121,7 +124,7 @@ async function mountScenario() {
         log(`mount #${i} ${mountPath} -> ${res.status} ${res.message}`);
         log(`after failure: ${await rootDisk(sandbox)}`);
         bug = res.status >= 500 && res.status !== 507;
-        if (!bug) log("mount: disk full reported as 507");
+        if (!bug) log("mount: out of space or memory reported as 507");
         break;
       }
       log(`mount #${i} ${mountPath} -> 200, ${await rootDisk(sandbox)}`);
