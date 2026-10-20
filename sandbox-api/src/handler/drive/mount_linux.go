@@ -55,7 +55,7 @@ func checkMountResources(cacheRoot string, reservedMB uint64) error {
 	if err != nil {
 		return fmt.Errorf("failed to check available memory: %w", err)
 	}
-	if need := reservedMB + blfsCacheCapacityMB + blfsMemoryHeadroomMB; avail < need {
+	if need := reservedMB + blfsMountMemoryMB + blfsMemoryHeadroomMB; avail < need {
 		return fmt.Errorf("%w: %d MB available, a drive mount needs %d MB", ErrInsufficientMemory, avail, need)
 	}
 	return nil
