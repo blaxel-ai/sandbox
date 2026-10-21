@@ -20,6 +20,7 @@ import (
 
 	"github.com/blaxel-ai/sandbox-api/src/handler/constants"
 	"github.com/blaxel-ai/sandbox-api/src/lib/blaxel"
+	"github.com/blaxel-ai/sandbox-api/src/lib/lifecycle"
 	"github.com/sirupsen/logrus"
 )
 
@@ -367,6 +368,7 @@ func (pm *ProcessManager) LoadState() error {
 			if proc.SupportsStructuredLogs() {
 				go pm.tailLogFiles(proc)
 			}
+			lifecycle.AdoptChild(proc.ProcessPid)
 			go pm.monitorAdoptedProcess(proc)
 
 			logrus.WithFields(logrus.Fields{
@@ -677,6 +679,7 @@ func (pm *ProcessManager) monitorAdoptedProcess(proc *ProcessInfo) {
 			if !isRunning {
 				// Reap before publishing the terminal tuple, just as for a new child.
 				exitCode := reapZombieProcess(proc.ProcessPid)
+				lifecycle.ForgetChild(proc.ProcessPid)
 				now := time.Now()
 				pm.mu.Lock()
 				proc.runExited = true

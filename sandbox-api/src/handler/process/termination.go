@@ -92,7 +92,7 @@ func (pm *ProcessManager) signalProcessLocked(identifier string, signal syscall.
 
 // waitForRun is the sole completion path for child processes, including restarts.
 func (pm *ProcessManager) waitForRun(p *ProcessInfo, cmd *exec.Cmd, callback func(*ProcessInfo)) {
-	err := cmd.Wait()
+	err := lifecycle.WaitChild(cmd)
 	if cmd.Process != nil {
 		_ = cmd.Process.Release()
 	}

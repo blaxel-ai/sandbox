@@ -24,6 +24,7 @@ import (
 	"github.com/blaxel-ai/sandbox-api/src/lib/envfile"
 	"github.com/blaxel-ai/sandbox-api/src/lib/identity"
 	"github.com/blaxel-ai/sandbox-api/src/lib/isolation"
+	"github.com/blaxel-ai/sandbox-api/src/lib/lifecycle"
 	"github.com/blaxel-ai/sandbox-api/src/lib/networking"
 	"github.com/blaxel-ai/sandbox-api/src/lib/oom"
 	"github.com/blaxel-ai/sandbox-api/src/lib/proxy"
@@ -168,6 +169,8 @@ func main() {
 
 	wg.Wait()
 	txn.Finish()
+	// After LoadState, so the processes it adopted are collected by it, not here.
+	lifecycle.ReapOrphans()
 	sentrylib.DistributionMetric("sandbox.startup_duration", float64(time.Since(startupStart).Milliseconds()), sentry.UnitMillisecond)
 
 	gin.SetMode(gin.ReleaseMode)
@@ -381,14 +384,16 @@ func startBackgroundCommand(ctx context.Context, command string) error {
 	cmd.Stderr = logrus.StandardLogger().Out
 	cmd.Dir = "/"
 	cmd.Env = identity.Get().DecorateEnv(os.Environ())
-	cmd.SysProcAttr = &syscall.SysProcAttr{Credential: identity.Get().Credential()}
+	// A group of its own, like every workload: its orphans are then told apart
+	// from the helpers sandbox-api runs itself (see lifecycle.ReapOrphans).
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Credential: identity.Get().Credential()}
 
 	// Started before the goroutine, so the workload is known to be running by
 	// the time this returns and the server starts accepting calls: an export
 	// arriving right after boot has to stop it, and a registration done inside
 	// the goroutine could still be pending then, leaving the one process most
 	// likely to be writing running while the filesystem is read.
-	if err := cmd.Start(); err != nil {
+	if err := lifecycle.StartChild(cmd); err != nil {
 		return err
 	}
 	pid := cmd.Process.Pid
@@ -407,7 +412,7 @@ func startBackgroundCommand(ctx context.Context, command string) error {
 	go func() {
 		defer archive.UnregisterStartupWorkload(pid)
 
-		if err := cmd.Wait(); err != nil {
+		if err := lifecycle.WaitChild(cmd); err != nil {
 			select {
 			case <-ctx.Done():
 				logrus.Infof("Command was cancelled")
