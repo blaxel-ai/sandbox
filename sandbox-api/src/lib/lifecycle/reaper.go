@@ -22,19 +22,40 @@ import (
 // through StartChild, which hides it until WaitChild has it, while the helpers
 // we run ourselves (ss, fusermount, the upgrade candidate) share our group and
 // are never touched.
-var children = struct {
-	sync.Mutex
-	pids map[int]struct{}
-}{pids: map[int]struct{}{}}
+var children struct {
+	// Held shared by StartChild around the start and registration of a child,
+	// so starts run in parallel, and exclusively by the reaper while it
+	// collects: a PID it saw as a zombie is then either registered, or an
+	// orphan.
+	start sync.RWMutex
+	mu    sync.Mutex
+	pids  map[int]struct{}
+}
+
+func register(pid int) {
+	children.mu.Lock()
+	defer children.mu.Unlock()
+	if children.pids == nil {
+		children.pids = map[int]struct{}{}
+	}
+	children.pids[pid] = struct{}{}
+}
+
+func registered(pid int) bool {
+	children.mu.Lock()
+	defer children.mu.Unlock()
+	_, ok := children.pids[pid]
+	return ok
+}
 
 // StartChild starts cmd and keeps its exit status for WaitChild.
 func StartChild(cmd *exec.Cmd) error {
-	children.Lock()
-	defer children.Unlock()
+	children.start.RLock()
+	defer children.start.RUnlock()
 	if err := cmd.Start(); err != nil {
 		return err
 	}
-	children.pids[cmd.Process.Pid] = struct{}{}
+	register(cmd.Process.Pid)
 	return nil
 }
 
@@ -48,15 +69,13 @@ func WaitChild(cmd *exec.Cmd) error {
 // AdoptChild keeps the exit status of a child the caller collects by PID: one
 // left by the previous binary, which has no exec.Cmd for it.
 func AdoptChild(pid int) {
-	children.Lock()
-	defer children.Unlock()
-	children.pids[pid] = struct{}{}
+	register(pid)
 }
 
 // ForgetChild releases a PID once its status has been collected.
 func ForgetChild(pid int) {
-	children.Lock()
-	defer children.Unlock()
+	children.mu.Lock()
+	defer children.mu.Unlock()
 	delete(children.pids, pid)
 }
 
@@ -78,25 +97,41 @@ func ReapOrphans() {
 }
 
 func reapOrphans() {
-	children.Lock()
-	defer children.Unlock()
+	// Scan without the lock: a zombie keeps its PID until collected, so the
+	// candidates are still the same processes when the lock is taken, and an
+	// empty scan - the usual case - costs starters nothing.
 	entries, err := os.ReadDir(procDir)
 	if err != nil {
 		return
 	}
-	self, group := strconv.Itoa(os.Getpid()), strconv.Itoa(syscall.Getpgrp())
+	var zombies []int
 	for _, entry := range entries {
 		pid, err := strconv.Atoi(entry.Name())
-		if err != nil {
+		if err != nil || registered(pid) {
 			continue
 		}
-		if _, ours := children.pids[pid]; ours {
-			continue
+		if isOrphanZombie(pid) {
+			zombies = append(zombies, pid)
 		}
-		fields, ok := statFields(pid)
-		if !ok || fields[0] != "Z" || fields[1] != self || fields[2] == group {
+	}
+	if len(zombies) == 0 {
+		return
+	}
+	children.start.Lock()
+	defer children.start.Unlock()
+	for _, pid := range zombies {
+		// Re-check: a tracked child collected since the scan may have freed
+		// the PID to a helper of ours.
+		if registered(pid) || !isOrphanZombie(pid) {
 			continue
 		}
 		_, _ = syscall.Wait4(pid, nil, syscall.WNOHANG, nil)
 	}
+}
+
+// isOrphanZombie reports whether pid is a zombie child of ours outside our
+// own process group.
+func isOrphanZombie(pid int) bool {
+	fields, ok := statFields(pid)
+	return ok && fields[0] == "Z" && fields[1] == strconv.Itoa(os.Getpid()) && fields[2] != strconv.Itoa(syscall.Getpgrp())
 }
