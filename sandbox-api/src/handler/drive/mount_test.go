@@ -2,9 +2,11 @@ package drive
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -411,6 +413,11 @@ func TestFormatFilerServerAddress(t *testing.T) {
 			address: "2600:1f14:c75:3900::301",
 			want:    "2600:1f14:c75:3900::301:49200.49201",
 		},
+		{
+			name:    "service name",
+			address: filerServiceName,
+			want:    filerServiceName + ":49200.49201",
+		},
 	}
 
 	for _, tt := range tests {
@@ -420,6 +427,63 @@ func TestFormatFilerServerAddress(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestGetFilerAddressPrefersTheServiceName: on mk3.1 the name resolves and is
+// what blfs dials.
+func TestGetFilerAddressPrefersTheServiceName(t *testing.T) {
+	stubFilerLookup(t, func(context.Context) error { return nil })
+	t.Setenv("BL_DRIVE_FILER", "attacker.example")
+
+	got, err := getFilerAddress()
+	if err != nil {
+		t.Fatalf("getFilerAddress: %v", err)
+	}
+	if got != filerServiceName {
+		t.Fatalf("getFilerAddress() = %q, want %q", got, filerServiceName)
+	}
+}
+
+// TestGetFilerAddressFallsBackWhenTheNameDoesNotResolve: mk3.0 has no service
+// zone, and a lookup that fails or times out must not fail the mount, because
+// the resolv.conf address is still a working filer address there and on mk3.1.
+func TestGetFilerAddressFallsBackWhenTheNameDoesNotResolve(t *testing.T) {
+	resolvConf, err := os.ReadFile("/etc/resolv.conf")
+	if err != nil {
+		t.Skipf("no /etc/resolv.conf to fall back to: %v", err)
+	}
+	want, err := parseFilerAddress(resolvConf)
+	if err != nil {
+		t.Skipf("host resolv.conf has no usable nameserver: %v", err)
+	}
+
+	for name, lookup := range map[string]func(context.Context) error{
+		"no such host": func(context.Context) error {
+			return &net.DNSError{Err: "no such host", Name: filerServiceName, IsNotFound: true}
+		},
+		"timeout": func(ctx context.Context) error {
+			<-ctx.Done()
+			return ctx.Err()
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			stubFilerLookup(t, lookup)
+			got, err := getFilerAddress()
+			if err != nil {
+				t.Fatalf("getFilerAddress: %v", err)
+			}
+			if got != want {
+				t.Fatalf("getFilerAddress() = %q, want the resolv.conf address %q", got, want)
+			}
+		})
+	}
+}
+
+func stubFilerLookup(t *testing.T, lookup func(context.Context) error) {
+	t.Helper()
+	original := lookupFilerService
+	lookupFilerService = lookup
+	t.Cleanup(func() { lookupFilerService = original })
 }
 
 // TestBlfsCacheDirPerMountPath: each mount path gets its own cache root, so
