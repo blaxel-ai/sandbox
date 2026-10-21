@@ -96,6 +96,9 @@ func main() {
 	if *shortPort != 8080 {
 		portValue = *shortPort
 	}
+	if portValue == process.ValidationPort {
+		process.SetValidationInstance()
+	}
 
 	// Before anything of the workload runs, so no process of it ever sees the
 	// API reachable. Failing to install the rules is fatal: the option was
