@@ -2,6 +2,7 @@ package api
 
 import (
 	"fmt"
+	"net/http"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -43,6 +44,12 @@ func (w *processingTimeWriter) WriteHeaderNow() {
 func (w *processingTimeWriter) Flush() {
 	w.writeServerTimingHeader()
 	w.ResponseWriter.Flush()
+}
+
+// Unwrap lets http.ResponseController reach the connection (write deadlines
+// on streaming responses).
+func (w *processingTimeWriter) Unwrap() http.ResponseWriter {
+	return w.ResponseWriter
 }
 
 func processingTimeMiddleware() gin.HandlerFunc {
