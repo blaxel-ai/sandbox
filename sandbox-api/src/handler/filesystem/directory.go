@@ -6,6 +6,7 @@ import (
 	iofs "io/fs"
 	"os"
 	"path/filepath"
+	"syscall"
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/sirupsen/logrus"
@@ -125,7 +126,8 @@ func (fs *Filesystem) CreateOrUpdateTree(rootPath string, files map[string]strin
 
 // WatchDirectory watches a specific directory for changes.
 // The callback is called with the event when a change occurs.
-func (fs *Filesystem) WatchDirectory(path string, callback func(event fsnotify.Event)) (func(), error) {
+// onError (may be nil) receives watcher errors such as fsnotify.ErrEventOverflow (events were dropped).
+func (fs *Filesystem) WatchDirectory(path string, callback func(event fsnotify.Event), onError func(error)) (func(), error) {
 	absPath, err := fs.GetAbsolutePath(path)
 	if err != nil {
 		return nil, err
@@ -159,6 +161,9 @@ func (fs *Filesystem) WatchDirectory(path string, callback func(event fsnotify.E
 					return
 				}
 				logrus.Error("error:", err)
+				if onError != nil {
+					onError(err)
+				}
 			}
 		}
 	}()
@@ -175,7 +180,8 @@ func (fs *Filesystem) WatchDirectory(path string, callback func(event fsnotify.E
 // This handles the race condition where files may be created in a new directory
 // before the watch is established on that directory.
 // Directories for which skip returns true are never registered nor walked (skip may be nil).
-func (fs *Filesystem) WatchDirectoryRecursive(path string, skip func(path string) bool, callback func(event fsnotify.Event)) (func(), error) {
+// onError (may be nil) receives watcher errors such as fsnotify.ErrEventOverflow (events were dropped).
+func (fs *Filesystem) WatchDirectoryRecursive(path string, skip func(path string) bool, callback func(event fsnotify.Event), onError func(error)) (func(), error) {
 	absPath, err := fs.GetAbsolutePath(path)
 	if err != nil {
 		return nil, err
@@ -199,6 +205,9 @@ func (fs *Filesystem) WatchDirectoryRecursive(path string, skip func(path string
 
 	addDir := func(dir string) error {
 		if err := watcher.Add(dir); err != nil && !skippable(err) {
+			if errors.Is(err, syscall.ENOSPC) {
+				return fmt.Errorf("inotify watch limit reached while watching %s (one watch per directory, shared by all open watches): watch a narrower path or ignore large folders like node_modules: %w", dir, err)
+			}
 			return err
 		}
 		return nil
@@ -287,6 +296,9 @@ func (fs *Filesystem) WatchDirectoryRecursive(path string, skip func(path string
 					return
 				}
 				logrus.Error("error:", err)
+				if onError != nil {
+					onError(err)
+				}
 			}
 		}
 	}()

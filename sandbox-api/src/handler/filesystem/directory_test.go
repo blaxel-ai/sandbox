@@ -1,8 +1,12 @@
 package filesystem
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -28,7 +32,7 @@ func TestWatchDirectoryRecursiveReportsChangesWithoutInitialSnapshot(t *testing.
 		case events <- event:
 		case <-done:
 		}
-	})
+	}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -149,7 +153,7 @@ func TestWatchDirectoryRecursiveSkipsIgnoredDirectories(t *testing.T) {
 		case events <- event:
 		case <-done:
 		}
-	})
+	}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -187,5 +191,50 @@ func TestWatchDirectoryRecursiveSkipsIgnoredDirectories(t *testing.T) {
 		case <-timeout:
 			t.Fatal("timed out waiting for the marker event")
 		}
+	}
+}
+
+func TestWatchDirectoryRecursiveReportsQueueOverflow(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("inotify queue overflow is Linux-only")
+	}
+	raw, err := os.ReadFile("/proc/sys/fs/inotify/max_queued_events")
+	if err != nil {
+		t.Skip(err)
+	}
+	limit, err := strconv.Atoi(strings.TrimSpace(string(raw)))
+	if err != nil || limit > 100000 {
+		t.Skipf("max_queued_events=%q too large to overflow quickly", raw)
+	}
+
+	root := t.TempDir()
+	unblock := make(chan struct{})
+	overflow := make(chan struct{}, 1)
+	stop, err := NewFilesystem(root).WatchDirectoryRecursive(root, nil, func(fsnotify.Event) {
+		<-unblock // a slow consumer: the kernel queue fills up behind it
+	}, func(err error) {
+		if errors.Is(err, fsnotify.ErrEventOverflow) {
+			select {
+			case overflow <- struct{}{}:
+			default:
+			}
+		}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(stop)
+
+	for i := 0; i < limit+1000; i++ {
+		if err := os.WriteFile(filepath.Join(root, fmt.Sprintf("f%d", i)), nil, 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	close(unblock)
+
+	select {
+	case <-overflow:
+	case <-time.After(10 * time.Second):
+		t.Fatal("expected ErrEventOverflow to reach onError")
 	}
 }

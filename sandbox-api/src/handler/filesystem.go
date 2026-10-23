@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -1292,7 +1293,7 @@ func (h *FileSystemHandler) HandleListMultipartUploads(c *gin.Context) {
 // @Summary Stream file modification events in a directory
 // @Description Streams change events for a directory until the client disconnects.
 // @Description
-// @Description The body is JSON lines (sent with `Content-Type: text/plain`): one event object per line, e.g. `{"op":"WRITE","name":"main.go","path":"/app/src","error":null}`. `op` is the fsnotify operation (CREATE, WRITE, REMOVE, RENAME or CHMOD, several can be joined with `|`), `name` the base name of the changed entry, `path` the directory containing it, and `error` is always null. A `[keepalive]` line (not JSON) is sent every 30 seconds. The response starts once the watch is registered, and the stream ends when the watched directory is removed or renamed.
+// @Description The body is JSON lines (sent with `Content-Type: text/plain`): one event object per line, e.g. `{"op":"WRITE","name":"main.go","path":"/app/src","error":null}`. `op` is the fsnotify operation (CREATE, WRITE, REMOVE, RENAME or CHMOD, several can be joined with `|`), `name` the base name of the changed entry, `path` the directory containing it, and `error` is always null. A `[keepalive]` line (not JSON) is sent every 30 seconds. The response starts once the watch is registered, and the stream ends when the watched directory is removed or renamed, or when events were dropped because the kernel queue overflowed (reopen and resync).
 // @Description Only the directory's direct entries are watched. To also watch every subdirectory, including ones created later, end the path with `/**`. The stream reports subsequent changes without an initial snapshot. When a new directory is detected, synthetic CREATE events are emitted for entries already present inside it to cover changes before its watch was registered.
 // @Tags filesystem
 // @Produce plain
@@ -1363,15 +1364,23 @@ func (h *FileSystemHandler) HandleWatchDirectory(c *gin.Context) {
 		flusher.Flush()
 		return nil
 	}
-	// Removing or renaming the watched directory kills the watcher: end the
-	// stream instead of sending keepalives on a watch that will never fire again.
+	// End the stream, rather than keep sending keepalives, when the watch can no
+	// longer be trusted: the watched directory was removed or renamed (the watcher
+	// is dead), or the kernel queue overflowed (events were dropped). The client
+	// sees a clean close and can reopen and resync.
 	absRoot, _ := h.fs.GetAbsolutePath(path)
-	rootGone := make(chan struct{})
-	var rootGoneOnce sync.Once
+	ended := make(chan struct{})
+	var endOnce sync.Once
+	end := func() { endOnce.Do(func() { close(ended) }) }
+	onWatchError := func(err error) {
+		if errors.Is(err, fsnotify.ErrEventOverflow) {
+			end()
+		}
+	}
 	onEvent := func(event fsnotify.Event) {
 		defer func() { _ = recover() }()
 		if event.Name == absRoot && event.Op&(fsnotify.Remove|fsnotify.Rename) != 0 {
-			defer rootGoneOnce.Do(func() { close(rootGone) }) // after the event is written
+			defer end() // after the event is written
 		}
 		if shouldIgnore(event.Name) {
 			return
@@ -1394,9 +1403,9 @@ func (h *FileSystemHandler) HandleWatchDirectory(c *gin.Context) {
 	writeMu.Lock()
 	var stop func()
 	if recursive {
-		stop, err = h.fs.WatchDirectoryRecursive(path, shouldIgnore, onEvent)
+		stop, err = h.fs.WatchDirectoryRecursive(path, shouldIgnore, onEvent, onWatchError)
 	} else {
-		stop, err = h.fs.WatchDirectory(path, onEvent)
+		stop, err = h.fs.WatchDirectory(path, onEvent, onWatchError)
 	}
 	if err != nil {
 		writeMu.Unlock()
@@ -1421,7 +1430,7 @@ func (h *FileSystemHandler) HandleWatchDirectory(c *gin.Context) {
 		select {
 		case <-ctx.Done():
 			return
-		case <-rootGone:
+		case <-ended:
 			return
 		case <-keepaliveTicker.C:
 			if err := writeLine([]byte("[keepalive]\n")); err != nil {
