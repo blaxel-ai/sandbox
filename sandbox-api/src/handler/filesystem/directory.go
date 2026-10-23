@@ -190,23 +190,25 @@ func (fs *Filesystem) WatchDirectoryRecursive(path string, skip func(path string
 		return skip != nil && dir != absPath && skip(dir)
 	}
 
-	// Helper to add a directory to the watcher. A directory removed before we
-	// reach it (e.g. a package manager's temp dir) or unreadable is skipped;
-	// other errors (e.g. inotify watch limit) still fail the watch.
+	// A directory removed before we reach it (e.g. a package manager's temp
+	// dir) or unreadable is skipped. Any other error (I/O, inotify watch
+	// limit...) still fails the watch rather than silently missing a subtree.
+	skippable := func(err error) bool {
+		return errors.Is(err, iofs.ErrNotExist) || errors.Is(err, iofs.ErrPermission)
+	}
+
 	addDir := func(dir string) error {
-		if err := watcher.Add(dir); err != nil && !errors.Is(err, iofs.ErrNotExist) && !errors.Is(err, iofs.ErrPermission) {
+		if err := watcher.Add(dir); err != nil && !skippable(err) {
 			return err
 		}
 		return nil
 	}
 
-	// Helper to add all subdirectories. WalkDir avoids a stat per file, and
-	// errors below the root (entry vanished or unreadable mid-walk) skip that
-	// entry instead of failing the whole watch.
+	// Helper to add all subdirectories. WalkDir avoids a stat per file.
 	addDirs := func(root string) error {
 		return filepath.WalkDir(root, func(p string, d iofs.DirEntry, err error) error {
 			if err != nil {
-				if p == root {
+				if p == root || !skippable(err) {
 					return err
 				}
 				return nil
