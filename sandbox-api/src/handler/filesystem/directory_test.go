@@ -3,6 +3,7 @@ package filesystem
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -22,7 +23,7 @@ func TestWatchDirectoryRecursiveReportsChangesWithoutInitialSnapshot(t *testing.
 
 	events := make(chan fsnotify.Event, 32)
 	done := make(chan struct{})
-	stop, err := NewFilesystem(root).WatchDirectoryRecursive(root, func(event fsnotify.Event) {
+	stop, err := NewFilesystem(root).WatchDirectoryRecursive(root, nil, func(event fsnotify.Event) {
 		select {
 		case events <- event:
 		case <-done:
@@ -122,5 +123,69 @@ func TestDirectoryMethods(t *testing.T) {
 
 	if dir.IsEmpty() {
 		t.Errorf("Expected directory not to be empty")
+	}
+}
+
+func TestWatchDirectoryRecursiveSkipsIgnoredDirectories(t *testing.T) {
+	root := t.TempDir()
+	for _, dir := range []string{"node_modules/pkg", "src", "locked"} {
+		if err := os.MkdirAll(filepath.Join(root, dir), 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// An unreadable subdirectory must not fail the whole watch.
+	if os.Geteuid() != 0 {
+		if err := os.Chmod(filepath.Join(root, "locked"), 0); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.Chmod(filepath.Join(root, "locked"), 0755) })
+	}
+
+	events := make(chan fsnotify.Event, 64)
+	done := make(chan struct{})
+	skip := func(p string) bool { return strings.Contains(p, "node_modules") }
+	stop, err := NewFilesystem(root).WatchDirectoryRecursive(root, skip, func(event fsnotify.Event) {
+		select {
+		case events <- event:
+		case <-done:
+		}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		close(done)
+		stop()
+	})
+
+	// Neither the existing ignored tree nor one created later gets a watch.
+	if err := os.WriteFile(filepath.Join(root, "node_modules/pkg/index.js"), nil, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "src/node_modules/dep"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(100 * time.Millisecond)
+	if err := os.WriteFile(filepath.Join(root, "src/node_modules/dep/index.js"), nil, 0644); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(root, "src/marker.txt")
+	if err := os.WriteFile(marker, nil, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	timeout := time.After(5 * time.Second)
+	for {
+		select {
+		case event := <-events:
+			if strings.Contains(event.Name, "node_modules/") {
+				t.Fatalf("got event inside an ignored directory: %v", event)
+			}
+			if event.Name == marker {
+				return
+			}
+		case <-timeout:
+			t.Fatal("timed out waiting for the marker event")
+		}
 	}
 }
