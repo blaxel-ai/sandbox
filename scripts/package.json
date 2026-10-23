@@ -4,5 +4,11 @@
   "type": "module",
   "dependencies": {
     "@blaxel/core": "^0.3.31"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  },
+  "overrides": {
+    "js-yaml": "4.3.2"
   }
 }

@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -1292,11 +1293,11 @@ func (h *FileSystemHandler) HandleListMultipartUploads(c *gin.Context) {
 // @Summary Stream file modification events in a directory
 // @Description Streams change events for a directory until the client disconnects.
 // @Description
-// @Description The body is JSON lines (sent with `Content-Type: text/plain`): one event object per line, e.g. `{"op":"WRITE","name":"main.go","path":"/app/src","error":null}`. `op` is the fsnotify operation (CREATE, WRITE, REMOVE, RENAME or CHMOD, several can be joined with `|`), `name` the base name of the changed entry, `path` the directory containing it, and `error` is always null. A `[keepalive]` line (not JSON) is sent every 30 seconds.
+// @Description The body is JSON lines (sent with `Content-Type: text/plain`): one event object per line, e.g. `{"op":"WRITE","name":"main.go","path":"/app/src","error":null}`. `op` is the fsnotify operation (CREATE, WRITE, REMOVE, RENAME or CHMOD, several can be joined with `|`), `name` the base name of the changed entry, `path` the directory containing it, and `error` is always null. A `[keepalive]` line (not JSON) is sent every 30 seconds. The response starts once the watch is registered, and the stream ends when the watched directory is removed or renamed, or when events were dropped because the kernel queue overflowed (reopen and resync).
 // @Description Only the directory's direct entries are watched. To also watch every subdirectory, including ones created later, end the path with `/**`. The stream reports subsequent changes without an initial snapshot. When a new directory is detected, synthetic CREATE events are emitted for entries already present inside it to cover changes before its watch was registered.
 // @Tags filesystem
 // @Produce plain
-// @Param ignore query string false "Comma-separated substrings; events whose full path contains one are skipped"
+// @Param ignore query string false "Comma-separated substrings; events whose full path contains one are skipped, and matching directories are not watched at all"
 // @Param path path string true "Directory path to watch (append /** to watch subdirectories)"
 // @Success 200 {string} string "JSON lines stream of change events"
 // @Failure 400 {object} ErrorResponse "Invalid path"
@@ -1346,95 +1347,97 @@ func (h *FileSystemHandler) HandleWatchDirectory(c *gin.Context) {
 		return
 	}
 
-	c.Writer.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	c.Writer.Header().Set("Transfer-Encoding", "chunked")
-	c.Writer.Header().Set("X-Accel-Buffering", "no")
-	c.Writer.WriteHeader(http.StatusOK)
 	flusher, ok := c.Writer.(http.Flusher)
 	if !ok {
 		h.SendError(c, http.StatusInternalServerError, fmt.Errorf("streaming not supported"))
 		return
 	}
 
-	ctx := c.Request.Context()
-	done := make(chan struct{})
+	// The event callback and the keepalive goroutine both write to the response.
+	var writeMu sync.Mutex
+	writeLine := func(line []byte) error {
+		writeMu.Lock()
+		defer writeMu.Unlock()
+		if _, err := c.Writer.Write(line); err != nil {
+			return err
+		}
+		flusher.Flush()
+		return nil
+	}
+	// End the stream, rather than keep sending keepalives, when the watch can no
+	// longer be trusted: the watched directory was removed or renamed (the watcher
+	// is dead), or the kernel queue overflowed (events were dropped). The client
+	// sees a clean close and can reopen and resync.
+	absRoot, _ := h.fs.GetAbsolutePath(path)
+	ended := make(chan struct{})
+	var endOnce sync.Once
+	end := func() { endOnce.Do(func() { close(ended) }) }
+	onWatchError := func(err error) {
+		if errors.Is(err, fsnotify.ErrEventOverflow) {
+			end()
+		}
+	}
+	onEvent := func(event fsnotify.Event) {
+		defer func() { _ = recover() }()
+		if event.Name == absRoot && event.Op&(fsnotify.Remove|fsnotify.Rename) != 0 {
+			defer end() // after the event is written
+		}
+		if shouldIgnore(event.Name) {
+			return
+		}
+		i := strings.LastIndex(event.Name, "/")
+		msg, err := json.Marshal(FileEvent{
+			Op:    event.Op.String(),
+			Name:  event.Name[i+1:],
+			Path:  event.Name[:max(i, 0)],
+			Error: nil,
+		})
+		if err != nil {
+			logrus.Error("Error marshalling file event:", err)
+			return
+		}
+		_ = writeLine(append(msg, '\n'))
+	}
 
+	// Hold the write lock until the 200 is flushed so no event goes out first.
+	writeMu.Lock()
 	var stop func()
 	if recursive {
-		stop, err = h.fs.WatchDirectoryRecursive(path, func(event fsnotify.Event) {
-			defer func() { _ = recover() }()
-			if shouldIgnore(event.Name) {
-				return
-			}
-			msg := FileEvent{
-				Op:    event.Op.String(),
-				Name:  strings.Split(event.Name, "/")[len(strings.Split(event.Name, "/"))-1],
-				Path:  strings.Join(strings.Split(event.Name, "/")[:len(strings.Split(event.Name, "/"))-1], "/"),
-				Error: nil,
-			}
-			json, err := json.Marshal(msg)
-			if err != nil {
-				logrus.Error("Error marshalling file event:", err)
-				h.SendError(c, http.StatusInternalServerError, err)
-				return
-			}
-			if _, err := c.Writer.Write([]byte(string(json) + "\n")); err != nil {
-				return
-			}
-			flusher.Flush()
-		})
+		stop, err = h.fs.WatchDirectoryRecursive(path, shouldIgnore, onEvent, onWatchError)
 	} else {
-		stop, err = h.fs.WatchDirectory(path, func(event fsnotify.Event) {
-			defer func() { _ = recover() }()
-			if shouldIgnore(event.Name) {
-				return
-			}
-			msg := FileEvent{
-				Op:    event.Op.String(),
-				Name:  strings.Split(event.Name, "/")[len(strings.Split(event.Name, "/"))-1],
-				Path:  strings.Join(strings.Split(event.Name, "/")[:len(strings.Split(event.Name, "/"))-1], "/"),
-				Error: nil,
-			}
-			json, err := json.Marshal(msg)
-			if err != nil {
-				logrus.Error("Error marshalling file event:", err)
-				h.SendError(c, http.StatusInternalServerError, err)
-				return
-			}
-			if _, err := c.Writer.Write([]byte(string(json) + "\n")); err != nil {
-				return
-			}
-			flusher.Flush()
-		})
+		stop, err = h.fs.WatchDirectory(path, onEvent, onWatchError)
 	}
 	if err != nil {
+		writeMu.Unlock()
 		h.SendError(c, http.StatusInternalServerError, err)
 		return
 	}
 	defer stop() // Ensures watcher is removed when handler exits
 
+	// Headers go out once the watch is registered: a 200 means events from now on are reported.
+	c.Writer.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	c.Writer.Header().Set("Transfer-Encoding", "chunked")
+	c.Writer.Header().Set("X-Accel-Buffering", "no")
+	c.Writer.WriteHeader(http.StatusOK)
+	flusher.Flush()
+	writeMu.Unlock()
+
+	ctx := c.Request.Context()
 	// Keepalive ticker to prevent idle timeouts while watching
 	keepaliveTicker := time.NewTicker(30 * time.Second)
 	defer keepaliveTicker.Stop()
-
-	go func() {
-		for {
-			select {
-			case <-ctx.Done():
-				close(done)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ended:
+			return
+		case <-keepaliveTicker.C:
+			if err := writeLine([]byte("[keepalive]\n")); err != nil {
 				return
-			case <-keepaliveTicker.C:
-				// Send a keepalive line
-				if _, err := c.Writer.Write([]byte("[keepalive]\n")); err != nil {
-					close(done)
-					return
-				}
-				flusher.Flush()
 			}
 		}
-	}()
-
-	<-done
+	}
 }
 
 // HandleFind
