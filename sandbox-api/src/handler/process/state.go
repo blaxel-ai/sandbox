@@ -568,7 +568,7 @@ func readLogsSince(filePath string, offset int) ([]byte, int) {
 	}
 
 	// Read remaining content
-	content, err := io.ReadAll(file)
+	content, err := io.ReadAll(io.LimitReader(retainedReader{file}, int64(maxInMemoryLogBytes)))
 	if err != nil {
 		return nil, offset
 	}

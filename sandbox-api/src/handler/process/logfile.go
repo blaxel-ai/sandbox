@@ -1,6 +1,7 @@
 package process
 
 import (
+	"errors"
 	"io"
 	"os"
 	"strconv"
@@ -132,9 +133,9 @@ var memTotalBytes = sync.OnceValue(func() int64 {
 // keep growing and later reads would find a hole where the new head should be.
 // Instead the head is punched out, which frees the tmpfs pages while leaving
 // every offset in the file where the workload expects it. The punched range
-// reads back as zero bytes, so it must always stay behind what readers ask for
-// - hence the tail is kept whole and only the head, rounded down to a page
-// boundary, is released.
+// reads back as zero bytes. Publish the released boundary under the same lock
+// readers use, so a reader overtaken by retention reports a gap instead. Only
+// whole pages are released. The tail stays available.
 func capLogFile(path string, processes int) {
 	max := perFileBudget(processes)
 	if path == "" || max == 0 {
@@ -146,6 +147,10 @@ func capLogFile(path string, processes int) {
 		return
 	}
 	defer file.Close()
+	if err := lockLogFile(file, true); err != nil {
+		return
+	}
+	defer unlockLogFile(file)
 
 	stat, err := file.Stat()
 	if err != nil {
@@ -159,6 +164,24 @@ func capLogFile(path string, processes int) {
 		return
 	}
 
+	// Publish the boundary before releasing pages so readers skip released bytes.
+	// Readers may report a gap even if an interrupted or failed punch left bytes
+	// allocated.
+	previous, err := retainedHead(file)
+	if err != nil {
+		return
+	}
+	if head < previous {
+		head = previous
+	}
+	// Publish even an unchanged boundary again. A previous metadata sync may have
+	// failed after rename. Never punch until publication reports success.
+	if err := recordRetainedHead(file, head); err != nil {
+		logrus.WithError(err).WithField("file", path).Warn("Cannot safely cap process log: retention metadata is unavailable")
+		return
+	}
+	// Retry punching even when the boundary is unchanged. An earlier punch may
+	// have failed or the API may have stopped before releasing the pages.
 	if err := punchHole(file, head); err != nil {
 		logrus.WithError(err).WithField("file", path).
 			Debug("Failed to release the head of an oversized process log file")
@@ -216,15 +239,25 @@ func openLogTail(path string, max int64) (file *os.File, truncated bool, err err
 		return nil, false, err
 	}
 
-	if max <= 0 || stat.Size() <= max {
-		return file, false, nil
-	}
-
-	if _, err := file.Seek(stat.Size()-max, io.SeekStart); err != nil {
+	if err := lockLogFile(file, false); err != nil {
 		file.Close()
 		return nil, false, err
 	}
-	return file, true, nil
+	defer unlockLogFile(file)
+	head, err := retainedHead(file)
+	if err != nil {
+		file.Close()
+		return nil, false, err
+	}
+	start := head
+	if max > 0 && stat.Size()-max > start {
+		start = stat.Size() - max
+	}
+	if _, err := file.Seek(start, io.SeekStart); err != nil {
+		file.Close()
+		return nil, false, err
+	}
+	return file, start > 0, nil
 }
 
 // readLogTail returns the last max bytes of a log file, skipping any head that
@@ -245,17 +278,19 @@ func readLogTail(path string, max int64) (string, bool) {
 	// reallocating, so it can hold twice the tail at once, and this path is what
 	// a poller calls on every process.
 	content, err := readAtMost(file, max)
+	if errors.Is(err, errLogRetentionGap) {
+		return truncationMarker, true
+	}
 	if err != nil {
 		return "", false
 	}
 
-	// A file whose head was released reads back as zeros; a file we seeked past
-	// is missing its head. Either way say so rather than handing back a tail
-	// that looks like the whole output.
+	// A tail read from a later offset is incomplete. Preserve literal zero bytes
+	// in retained output. The boundary identifies lost data, not the content.
 	if truncated {
 		return truncationMarker + string(content), true
 	}
-	return string(trimReleasedHead(content)), true
+	return string(content), true
 }
 
 // backlogReader reads file up to the absolute offset end, so a replay stops
@@ -268,7 +303,7 @@ func backlogReader(file *os.File, end int64) io.Reader {
 	if end <= offset {
 		return io.LimitReader(file, 0)
 	}
-	return io.LimitReader(file, end-offset)
+	return io.LimitReader(retainedReader{file}, end-offset)
 }
 
 // readAtMost reads the rest of file, up to max bytes, into a single buffer.
@@ -291,21 +326,9 @@ func readAtMost(file *os.File, max int64) ([]byte, error) {
 	}
 
 	buf := make([]byte, left)
-	n, err := io.ReadFull(file, buf)
+	n, err := io.ReadFull(retainedReader{file}, buf)
 	if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
 		return nil, err
 	}
 	return buf[:n], nil
-}
-
-// trimReleasedHead drops the zero bytes a punched-out head reads back as.
-func trimReleasedHead(content []byte) []byte {
-	head := 0
-	for head < len(content) && content[head] == 0 {
-		head++
-	}
-	if head == 0 {
-		return content
-	}
-	return append([]byte(truncationMarker), content[head:]...)
 }
