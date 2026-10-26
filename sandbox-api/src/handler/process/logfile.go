@@ -1,7 +1,6 @@
 package process
 
 import (
-	"errors"
 	"io"
 	"os"
 	"strconv"
@@ -277,17 +276,14 @@ func readLogTail(path string, max int64) (string, bool) {
 	// Read into one buffer of the size that is left to read: io.ReadAll grows by
 	// reallocating, so it can hold twice the tail at once, and this path is what
 	// a poller calls on every process.
-	content, err := readAtMost(file, max)
-	if errors.Is(err, errLogRetentionGap) {
-		return truncationMarker, true
-	}
+	content, skipped, err := readAtMost(file, max)
 	if err != nil {
 		return "", false
 	}
 
 	// A tail read from a later offset is incomplete. Preserve literal zero bytes
 	// in retained output. The boundary identifies lost data, not the content.
-	if truncated {
+	if truncated || skipped {
 		return truncationMarker + string(content), true
 	}
 	return string(content), true
@@ -307,14 +303,32 @@ func backlogReader(file *os.File, end int64) io.Reader {
 }
 
 // readAtMost reads the rest of file, up to max bytes, into a single buffer.
-func readAtMost(file *os.File, max int64) ([]byte, error) {
-	stat, err := file.Stat()
+// It keeps retention locked from checking the boundary through reading the tail.
+// skipped reports output released since the caller positioned the descriptor.
+func readAtMost(file *os.File, max int64) ([]byte, bool, error) {
+	if err := lockLogFile(file, false); err != nil {
+		return nil, false, err
+	}
+	defer unlockLogFile(file)
+
+	head, err := retainedHead(file)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	offset, err := file.Seek(0, io.SeekCurrent)
 	if err != nil {
-		return nil, err
+		return nil, false, err
+	}
+	skipped := offset < head
+	if skipped {
+		if _, err := file.Seek(head, io.SeekStart); err != nil {
+			return nil, false, err
+		}
+		offset = head
+	}
+	stat, err := file.Stat()
+	if err != nil {
+		return nil, false, err
 	}
 
 	left := stat.Size() - offset
@@ -326,9 +340,9 @@ func readAtMost(file *os.File, max int64) ([]byte, error) {
 	}
 
 	buf := make([]byte, left)
-	n, err := io.ReadFull(retainedReader{file}, buf)
+	n, err := io.ReadFull(file, buf)
 	if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
-		return nil, err
+		return nil, false, err
 	}
-	return buf[:n], nil
+	return buf[:n], skipped, nil
 }

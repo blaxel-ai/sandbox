@@ -180,3 +180,46 @@ func TestNewLogPreservesIntentionalSparseNULs(t *testing.T) {
 		t.Fatal("new log confused intentional sparse bytes with retention")
 	}
 }
+
+// Schedule retention between opening a tail and reading it. The released prefix
+// must become a gap without discarding the suffix that remains on disk.
+func TestLogTailRetainedAfterOpen(t *testing.T) {
+	for _, storage := range []string{"xattr", "sidecar"} {
+		t.Run(storage, func(t *testing.T) {
+			if storage == "sidecar" {
+				withoutLogXattrs(t)
+			}
+			t.Setenv("SANDBOX_MAX_LOG_FILE_BYTES", "65536")
+			data := bytes.Repeat([]byte{'x', 0, '\n', 255}, 256*1024)
+			path := filepath.Join(t.TempDir(), "stdout")
+			if err := os.WriteFile(path, data, 0600); err != nil {
+				t.Fatal(err)
+			}
+			file, truncated, err := openLogTail(path, int64(len(data)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer file.Close()
+			if truncated {
+				t.Fatal("fresh output was reported as truncated")
+			}
+
+			capLogFile(path, 1)
+			got, skipped, err := readAtMost(file, int64(len(data)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !skipped {
+				t.Error("retention was not reported")
+			}
+			want := data[len(data)-65536:]
+			if !bytes.Equal(got, want) {
+				t.Fatalf("retained tail changed: got %d bytes, want %d", len(got), len(want))
+			}
+			fresh, ok := readLogTail(path, int64(len(data)))
+			if !ok || fresh != truncationMarker+string(want) {
+				t.Fatal("tail response lost retained output or its truncation marker")
+			}
+		})
+	}
+}
