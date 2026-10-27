@@ -4,6 +4,11 @@
 query parameter selects the session and defaults to `default`. Reconnecting
 with the same ID reuses a live shell and replays its buffered output.
 
+The `term` query parameter sets the shell's `TERM` when a session is created.
+When it is absent or empty, the shell runs with `TERM=xterm-256color`. It has
+no effect on reconnect: an existing session keeps the `TERM` it was created
+with.
+
 When the shell exits, the server sends remaining queued output and closes the
 WebSocket with code `1000` and reason `Shell exited`. This applies to `exit`,
 EOF at the shell prompt, and nonzero shell exit statuses. The close code

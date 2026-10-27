@@ -165,6 +165,11 @@ func (h *TerminalHandler) HandleTerminalWS(c *gin.Context) {
 	workingDir := c.Query("workingDir")
 	sessionId := c.DefaultQuery("sessionId", "default")
 
+	var env map[string]string
+	if term := strings.TrimSpace(c.Query("term")); term != "" {
+		env = map[string]string{"TERM": term}
+	}
+
 	// Capture identity before WebSocket upgrade (headers available only on HTTP request)
 	id := audit.GetIdentity(c)
 
@@ -183,7 +188,7 @@ func (h *TerminalHandler) HandleTerminalWS(c *gin.Context) {
 
 	// Get or reconnect to a persistent terminal session
 	manager := terminal.GetSessionManager()
-	ms, isNew, err := manager.GetOrCreate(sessionId, shell, workingDir, nil, cols, rows)
+	ms, isNew, err := manager.GetOrCreate(sessionId, shell, workingDir, env, cols, rows)
 	if err != nil {
 		logrus.Errorf("Failed to create terminal session: %v", err)
 		_ = conn.WriteJSON(TerminalMessage{
