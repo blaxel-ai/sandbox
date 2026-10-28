@@ -1,6 +1,7 @@
 package process
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -829,7 +830,7 @@ func isDevMode() bool {
 // It downloads the specified binary from GitHub releases, validates it, and restarts
 // Pre-built binaries are available at https://github.com/blaxel-ai/sandbox/releases
 // Available versions: "develop", "main", "latest", or specific tag like "v1.0.0"
-// baseURL is chosen by the handler (the project releases unless SANDBOX_UPGRADE_BASE_URL is set), never by the API caller
+// baseURL is the build's release source (handler.UpgradeReleaseURL), never chosen by the API caller
 func TriggerUpgrade(version, baseURL string) {
 	logger := logrus.WithField("component", "upgrade")
 
@@ -1088,6 +1089,12 @@ func validateNewBinary(binaryPath string) error {
 	logger := logrus.WithField("component", "upgrade")
 	logger.Info("Validating new binary before replacement...")
 
+	// Never start a build that predates pinned upgrade sources: it would accept a
+	// caller-chosen baseUrl again, first while validating and then after the exec.
+	if err := requireUpgradeSourceMarker(binaryPath); err != nil {
+		return err
+	}
+
 	// Re-save process state right before starting validation binary.
 	// The original SaveState was called in HandleUpgrade before download started,
 	// so the state file may be stale if processes completed during download.
@@ -1339,6 +1346,41 @@ func validateBinaryFormat(binaryPath string) error {
 	}
 
 	return nil
+}
+
+// upgradeSourceMarker is compiled into every build whose upgrades only download
+// from the build's release source. Upgrades refuse binaries without it, so a
+// sandbox cannot be rolled back to a release that accepted a custom baseUrl.
+const upgradeSourceMarker = "blaxel-sandbox-api:pinned-upgrade-source:v1"
+
+// requireUpgradeSourceMarker checks that the binary contains upgradeSourceMarker.
+// It streams the file so the check doesn't hold the whole binary in memory.
+func requireUpgradeSourceMarker(binaryPath string) error {
+	file, err := os.Open(binaryPath)
+	if err != nil {
+		return fmt.Errorf("cannot open binary: %w", err)
+	}
+	defer file.Close()
+
+	marker := []byte(upgradeSourceMarker)
+	overlap := len(marker) - 1
+	buf := make([]byte, overlap+1<<20)
+	kept := 0
+	for {
+		n, err := io.ReadFull(file, buf[kept:])
+		end := kept + n
+		if bytes.Contains(buf[:end], marker) {
+			return nil
+		}
+		if err == io.EOF || err == io.ErrUnexpectedEOF {
+			return fmt.Errorf("binary predates pinned upgrade sources; refusing to run it")
+		}
+		if err != nil {
+			return fmt.Errorf("cannot read binary: %w", err)
+		}
+		// Keep the tail so a marker split across reads is still found
+		kept = copy(buf, buf[end-overlap:end])
+	}
 }
 
 // UpgradedBinaryName is the file a hot upgrade installs next to the running

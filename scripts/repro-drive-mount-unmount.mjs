@@ -14,7 +14,9 @@
 //   SCENARIO=unmount|mount|both  (default both)
 //   SANDBOX_API_BINARY=<path>    linux/amd64 sandbox-api build to upgrade the
 //                                sandbox to before running (the patched run);
-//                                unset = stock image (the unpatched run)
+//                                unset = stock image (the unpatched run).
+//                                Needs an IMAGE whose sandbox-api was built with
+//                                -X .../src/handler.UpgradeReleaseURL=http://localhost:8765
 //   IMAGE (blaxel/base-image:latest)  REGION (BL_REGION or us-was-1)
 //   MEMORY in MB (2048)  MAX_MOUNTS (16)  KEEP=1 keeps sandboxes and drive
 import { readFile } from "node:fs/promises";
@@ -29,7 +31,6 @@ const MAX_MOUNTS = Number(process.env.MAX_MOUNTS || 16);
 const KEEP = process.env.KEEP === "1";
 const RUN = `${Date.now().toString(36)}`;
 const LABELS = { purpose: "repro-drive-373" };
-const UPGRADE_BASE_URL = "http://localhost:8765";
 
 const log = (...a) => console.log(new Date().toISOString().slice(11, 19), ...a);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -41,8 +42,8 @@ async function health(sandbox) {
   return res.ok ? res.json() : {};
 }
 
-// Serves the binary from inside the sandbox; the sandbox was created with
-// SANDBOX_UPGRADE_BASE_URL pointing /upgrade at this server.
+// Serves the binary from inside the sandbox, where IMAGE's sandbox-api
+// downloads upgrades from (see SANDBOX_API_BINARY above).
 async function upgrade(sandbox) {
   const version = "develop";
   const before = (await health(sandbox)).upgradeCount ?? 0;
@@ -63,8 +64,7 @@ async function upgrade(sandbox) {
 
 async function createSandbox(name) {
   log(`creating sandbox ${name} (${IMAGE}, ${MEMORY} MB, ${REGION})`);
-  const envs = BINARY ? [{ name: "SANDBOX_UPGRADE_BASE_URL", value: UPGRADE_BASE_URL }] : undefined;
-  const sandbox = await SandboxInstance.create({ name, image: IMAGE, memory: MEMORY, region: REGION, labels: LABELS, envs });
+  const sandbox = await SandboxInstance.create({ name, image: IMAGE, memory: MEMORY, region: REGION, labels: LABELS });
   try {
     await sandbox.wait();
     log(`sandbox-api ${describe(await health(sandbox))}`);

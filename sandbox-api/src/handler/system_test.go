@@ -68,14 +68,3 @@ func TestValidUpgradeVersion(t *testing.T) {
 		}
 	}
 }
-
-func TestUpgradeBaseURL(t *testing.T) {
-	t.Setenv("SANDBOX_UPGRADE_BASE_URL", "")
-	if got := upgradeBaseURL(); got != upgradeReleaseURL {
-		t.Errorf("expected %q, got %q", upgradeReleaseURL, got)
-	}
-	t.Setenv("SANDBOX_UPGRADE_BASE_URL", "http://localhost:8765")
-	if got := upgradeBaseURL(); got != "http://localhost:8765" {
-		t.Errorf("expected the operator source, got %q", got)
-	}
-}

@@ -1767,6 +1767,8 @@ paths:
         Available versions: "latest" (default, most recent release), "develop", "main", or specific tag like "v1.0.0"
 
         Binaries are downloaded from https://github.com/blaxel-ai/sandbox/releases; requests with a baseUrl are rejected.
+
+        Releases that still accepted a baseUrl are refused, and the refusal is reported in the health endpoint's lastUpgrade.
       requestBody:
         content:
           application/json:

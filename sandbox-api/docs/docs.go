@@ -2090,7 +2090,7 @@ const docTemplate = `{
         },
         "/upgrade": {
             "post": {
-                "description": "Triggers an upgrade of the sandbox-api process. Returns 200 immediately before upgrading.\nThe upgrade will: download the specified binary from GitHub releases, validate it, and restart.\nAll running processes will be preserved across the upgrade.\nAvailable versions: \"latest\" (default, most recent release), \"develop\", \"main\", or specific tag like \"v1.0.0\"\nBinaries are downloaded from https://github.com/blaxel-ai/sandbox/releases; requests with a baseUrl are rejected.",
+                "description": "Triggers an upgrade of the sandbox-api process. Returns 200 immediately before upgrading.\nThe upgrade will: download the specified binary from GitHub releases, validate it, and restart.\nAll running processes will be preserved across the upgrade.\nAvailable versions: \"latest\" (default, most recent release), \"develop\", \"main\", or specific tag like \"v1.0.0\"\nBinaries are downloaded from https://github.com/blaxel-ai/sandbox/releases; requests with a baseUrl are rejected.\nReleases that still accepted a baseUrl are refused, and the refusal is reported in the health endpoint's lastUpgrade.",
                 "consumes": [
                     "application/json"
                 ],

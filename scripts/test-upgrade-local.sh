@@ -24,7 +24,8 @@ BUILD_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 LDFLAGS="-s -w \
   -X github.com/blaxel-ai/sandbox-api/src/handler.Version=${VERSION} \
   -X github.com/blaxel-ai/sandbox-api/src/handler.GitCommit=${GIT_COMMIT} \
-  -X github.com/blaxel-ai/sandbox-api/src/handler.BuildTime=${BUILD_TIME}"
+  -X github.com/blaxel-ai/sandbox-api/src/handler.BuildTime=${BUILD_TIME} \
+  -X github.com/blaxel-ai/sandbox-api/src/handler.UpgradeReleaseURL=http://host.docker.internal:9999"
 
 # Build for linux/amd64
 echo "Building linux/amd64..."
@@ -43,8 +44,9 @@ echo "    Binaries available at:"
 echo "    - http://host.docker.internal:9999/download/develop/sandbox-api-linux-amd64"
 echo "    - http://host.docker.internal:9999/download/develop/sandbox-api-linux-arm64"
 echo ""
-echo "    To test upgrade, start the sandbox container with"
-echo "    -e SANDBOX_UPGRADE_BASE_URL=http://host.docker.internal:9999, then use:"
+echo "    Upgrades only download from the release URL built into sandbox-api."
+echo "    To test upgrade, run a sandbox whose sandbox-api is one of these builds"
+echo "    (they download from http://host.docker.internal:9999), then use:"
 echo '    curl -X POST http://localhost:8080/upgrade -H "Content-Type: application/json" -d '"'"'{"version": "develop"}'"'"
 echo ""
 echo "Press Ctrl+C to stop the server"
