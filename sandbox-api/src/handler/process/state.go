@@ -829,7 +829,7 @@ func isDevMode() bool {
 // It downloads the specified binary from GitHub releases, validates it, and restarts
 // Pre-built binaries are available at https://github.com/blaxel-ai/sandbox/releases
 // Available versions: "develop", "main", "latest", or specific tag like "v1.0.0"
-// baseURL can be customized for forks (e.g., https://github.com/your-org/sandbox/releases)
+// baseURL is chosen by the handler (the project releases unless SANDBOX_UPGRADE_BASE_URL is set), never by the API caller
 func TriggerUpgrade(version, baseURL string) {
 	logger := logrus.WithField("component", "upgrade")
 

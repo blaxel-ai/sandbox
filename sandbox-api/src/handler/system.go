@@ -100,6 +100,16 @@ type UpgradeRequest struct {
 
 const upgradeReleaseURL = "https://github.com/blaxel-ai/sandbox/releases"
 
+// upgradeBaseURL returns where upgrades download binaries from. Only whoever
+// starts sandbox-api can change it, through SANDBOX_UPGRADE_BASE_URL (e.g. a
+// locally served build when testing an upgrade); API callers cannot.
+func upgradeBaseURL() string {
+	if baseURL := os.Getenv("SANDBOX_UPGRADE_BASE_URL"); baseURL != "" {
+		return baseURL
+	}
+	return upgradeReleaseURL
+}
+
 var upgradeTag = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?$`)
 
 func validUpgradeVersion(version string) bool {
@@ -128,12 +138,13 @@ func resolveUpgradeVersion(requested string) string {
 // @Description The upgrade will: download the specified binary from GitHub releases, validate it, and restart.
 // @Description All running processes will be preserved across the upgrade.
 // @Description Available versions: "latest" (default, most recent release), "develop", "main", or specific tag like "v1.0.0"
-// @Description Binaries are downloaded only from https://github.com/blaxel-ai/sandbox/releases; custom baseUrl values are rejected.
+// @Description Binaries are downloaded from https://github.com/blaxel-ai/sandbox/releases; requests with a baseUrl are rejected.
 // @Tags system
 // @Accept json
 // @Produce json
 // @Param request body UpgradeRequest false "Upgrade options"
 // @Success 200 {object} SuccessResponse "Upgrade initiated"
+// @Failure 400 {object} ErrorResponse "Invalid version or baseUrl"
 // @Failure 500 {object} ErrorResponse "Internal server error"
 // @Router /upgrade [post]
 func (h *SystemHandler) HandleUpgrade(c *gin.Context) {
@@ -143,6 +154,7 @@ func (h *SystemHandler) HandleUpgrade(c *gin.Context) {
 
 	// Reject arbitrary binary sources and paths before saving state or starting an upgrade.
 	version := resolveUpgradeVersion(req.Version)
+	baseURL := upgradeBaseURL()
 	if req.BaseURL != "" || !validUpgradeVersion(version) {
 		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "invalid upgrade version or custom baseUrl"})
 		return
@@ -158,7 +170,7 @@ func (h *SystemHandler) HandleUpgrade(c *gin.Context) {
 	h.SendJSON(c, http.StatusOK, gin.H{
 		"message": "Upgrade initiated. Process state saved. The server will upgrade shortly.",
 		"version": version,
-		"baseUrl": upgradeReleaseURL,
+		"baseUrl": baseURL,
 	})
 
 	// Flush the response to ensure the client receives it
@@ -170,6 +182,6 @@ func (h *SystemHandler) HandleUpgrade(c *gin.Context) {
 	// This gives time for the response to be sent
 	go func() {
 		time.Sleep(500 * time.Millisecond)
-		process.TriggerUpgrade(version, upgradeReleaseURL)
+		process.TriggerUpgrade(version, baseURL)
 	}()
 }
