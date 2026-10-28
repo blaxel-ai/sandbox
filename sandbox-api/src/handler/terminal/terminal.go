@@ -79,7 +79,8 @@ func NewTerminalSession(shell string, workingDir string, env map[string]string, 
 		}
 		if idx > 0 {
 			key := envVar[:idx]
-			if !envOverrides[key] {
+			// The daemon's own TERM (linux in the image) never leaks into a client pty.
+			if !envOverrides[key] && key != "TERM" {
 				finalEnv = append(finalEnv, envVar)
 			}
 		}
