@@ -57,7 +57,8 @@ func TestValidateMountPath(t *testing.T) {
 		wantErr  bool
 	}{
 		{"absolute path", "/mnt/data", false},
-		{"root", "/", false},
+		{"root", "/", true},
+		{"root alias", "/.", true},
 		{"nested", "/foo/bar/baz", false},
 		{"path traversal", "/mnt/../etc", true},
 		{"empty", "", true},
@@ -67,6 +68,31 @@ func TestValidateMountPath(t *testing.T) {
 			err := ValidateMountPath(tt.input)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("ValidateMountPath(%q) err = %v, wantErr %v", tt.input, err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestValidateMountTarget(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		wantErr bool
+	}{
+		{"regular path", "/mnt/data", false},
+		{"root", "/", true},
+		{"blfs cache root", "/var/cache/blfs", true},
+		{"inside blfs cache root", "/var/cache/blfs/0123456789abcdef", true},
+		{"inside blfs cache root, unclean", "/var/cache//blfs/x/", true},
+		{"beside blfs cache root", "/var/cache/blfs2", false},
+		{"above blfs cache root", "/var/cache", true},
+		{"above blfs cache root, trailing slash", "/var/", true},
+		{"sibling of blfs cache parent", "/var/data", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := ValidateMountTarget(tt.input); (err != nil) != tt.wantErr {
+				t.Errorf("ValidateMountTarget(%q) err = %v, wantErr %v", tt.input, err, tt.wantErr)
 			}
 		})
 	}

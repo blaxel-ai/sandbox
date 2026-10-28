@@ -26,7 +26,7 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.25'
+          go-version: '1.27.3'
           cache-dependency-path: sandbox-api/go.sum
 
       - name: go vet
@@ -58,7 +58,7 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.25'
+          go-version: '1.27.3'
           cache-dependency-path: sandbox-api/go.sum
 
       - name: Build sandbox-api
@@ -95,7 +95,7 @@ jobs:
           API_BASE_URL: http://localhost:8080
         # tests/network is excluded: it drives port monitoring against a real
         # sandbox network stack, which a bare runner does not have.
-        run: go test -v . ./tests/codegen/... ./tests/filesystem/... ./tests/identity/... ./tests/mcp/... ./tests/process/... ./tests/welcome/...
+        run: go test -v . ./tests/codegen/... ./tests/drive/... ./tests/filesystem/... ./tests/identity/... ./tests/mcp/... ./tests/process/... ./tests/welcome/...
 
       - name: Run isolation tests
         if: matrix.mode == 'isolation'

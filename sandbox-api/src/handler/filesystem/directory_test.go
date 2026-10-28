@@ -1,8 +1,13 @@
 package filesystem
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -22,12 +27,12 @@ func TestWatchDirectoryRecursiveReportsChangesWithoutInitialSnapshot(t *testing.
 
 	events := make(chan fsnotify.Event, 32)
 	done := make(chan struct{})
-	stop, err := NewFilesystem(root).WatchDirectoryRecursive(root, func(event fsnotify.Event) {
+	stop, err := NewFilesystem(root).WatchDirectoryRecursive(root, nil, func(event fsnotify.Event) {
 		select {
 		case events <- event:
 		case <-done:
 		}
-	})
+	}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,5 +127,114 @@ func TestDirectoryMethods(t *testing.T) {
 
 	if dir.IsEmpty() {
 		t.Errorf("Expected directory not to be empty")
+	}
+}
+
+func TestWatchDirectoryRecursiveSkipsIgnoredDirectories(t *testing.T) {
+	root := t.TempDir()
+	for _, dir := range []string{"node_modules/pkg", "src", "locked"} {
+		if err := os.MkdirAll(filepath.Join(root, dir), 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// An unreadable subdirectory must not fail the whole watch.
+	if os.Geteuid() != 0 {
+		if err := os.Chmod(filepath.Join(root, "locked"), 0); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.Chmod(filepath.Join(root, "locked"), 0755) })
+	}
+
+	events := make(chan fsnotify.Event, 64)
+	done := make(chan struct{})
+	skip := func(p string) bool { return strings.Contains(p, "node_modules") }
+	stop, err := NewFilesystem(root).WatchDirectoryRecursive(root, skip, func(event fsnotify.Event) {
+		select {
+		case events <- event:
+		case <-done:
+		}
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		close(done)
+		stop()
+	})
+
+	// Neither the existing ignored tree nor one created later gets a watch.
+	if err := os.WriteFile(filepath.Join(root, "node_modules/pkg/index.js"), nil, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "src/node_modules/dep"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(100 * time.Millisecond)
+	if err := os.WriteFile(filepath.Join(root, "src/node_modules/dep/index.js"), nil, 0644); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(root, "src/marker.txt")
+	if err := os.WriteFile(marker, nil, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	timeout := time.After(5 * time.Second)
+	for {
+		select {
+		case event := <-events:
+			if strings.Contains(event.Name, "node_modules/") {
+				t.Fatalf("got event inside an ignored directory: %v", event)
+			}
+			if event.Name == marker {
+				return
+			}
+		case <-timeout:
+			t.Fatal("timed out waiting for the marker event")
+		}
+	}
+}
+
+func TestWatchDirectoryRecursiveReportsQueueOverflow(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("inotify queue overflow is Linux-only")
+	}
+	raw, err := os.ReadFile("/proc/sys/fs/inotify/max_queued_events")
+	if err != nil {
+		t.Skip(err)
+	}
+	limit, err := strconv.Atoi(strings.TrimSpace(string(raw)))
+	if err != nil || limit > 100000 {
+		t.Skipf("max_queued_events=%q too large to overflow quickly", raw)
+	}
+
+	root := t.TempDir()
+	unblock := make(chan struct{})
+	overflow := make(chan struct{}, 1)
+	stop, err := NewFilesystem(root).WatchDirectoryRecursive(root, nil, func(fsnotify.Event) {
+		<-unblock // a slow consumer: the kernel queue fills up behind it
+	}, func(err error) {
+		if errors.Is(err, fsnotify.ErrEventOverflow) {
+			select {
+			case overflow <- struct{}{}:
+			default:
+			}
+		}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(stop)
+
+	for i := 0; i < limit+1000; i++ {
+		if err := os.WriteFile(filepath.Join(root, fmt.Sprintf("f%d", i)), nil, 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	close(unblock)
+
+	select {
+	case <-overflow:
+	case <-time.After(10 * time.Second):
+		t.Fatal("expected ErrEventOverflow to reach onError")
 	}
 }

@@ -1,9 +1,12 @@
 package filesystem
 
 import (
+	"errors"
 	"fmt"
+	iofs "io/fs"
 	"os"
 	"path/filepath"
+	"syscall"
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/sirupsen/logrus"
@@ -21,6 +24,10 @@ type Directory struct {
 	Name           string          `json:"name" binding:"required"`
 	Files          []*File         `json:"files" binding:"required"`
 	Subdirectories []*Subdirectory `json:"subdirectories" binding:"required"` // @name Subdirectories
+	// Recursive is true when files and subdirectories hold every level below
+	// path (tree read with recursive=true). Older APIs ignore that parameter
+	// and omit this field, so clients can tell a one-level listing apart.
+	Recursive bool `json:"recursive,omitempty"`
 } // @name Directory
 
 func NewDirectory(path string) *Directory {
@@ -119,7 +126,8 @@ func (fs *Filesystem) CreateOrUpdateTree(rootPath string, files map[string]strin
 
 // WatchDirectory watches a specific directory for changes.
 // The callback is called with the event when a change occurs.
-func (fs *Filesystem) WatchDirectory(path string, callback func(event fsnotify.Event)) (func(), error) {
+// onError (may be nil) receives watcher errors such as fsnotify.ErrEventOverflow (events were dropped).
+func (fs *Filesystem) WatchDirectory(path string, callback func(event fsnotify.Event), onError func(error)) (func(), error) {
 	absPath, err := fs.GetAbsolutePath(path)
 	if err != nil {
 		return nil, err
@@ -153,6 +161,9 @@ func (fs *Filesystem) WatchDirectory(path string, callback func(event fsnotify.E
 					return
 				}
 				logrus.Error("error:", err)
+				if onError != nil {
+					onError(err)
+				}
 			}
 		}
 	}()
@@ -168,7 +179,9 @@ func (fs *Filesystem) WatchDirectory(path string, callback func(event fsnotify.E
 // The callback is called with the event when a change occurs.
 // This handles the race condition where files may be created in a new directory
 // before the watch is established on that directory.
-func (fs *Filesystem) WatchDirectoryRecursive(path string, callback func(event fsnotify.Event)) (func(), error) {
+// Directories for which skip returns true are never registered nor walked (skip may be nil).
+// onError (may be nil) receives watcher errors such as fsnotify.ErrEventOverflow (events were dropped).
+func (fs *Filesystem) WatchDirectoryRecursive(path string, skip func(path string) bool, callback func(event fsnotify.Event), onError func(error)) (func(), error) {
 	absPath, err := fs.GetAbsolutePath(path)
 	if err != nil {
 		return nil, err
@@ -179,21 +192,43 @@ func (fs *Filesystem) WatchDirectoryRecursive(path string, callback func(event f
 		return nil, err
 	}
 
-	// Helper to add a directory to the watcher
-	addDir := func(dir string) error {
-		return watcher.Add(dir)
+	skipped := func(dir string) bool {
+		return skip != nil && dir != absPath && skip(dir)
 	}
 
-	// Helper to add all subdirectories
+	// A directory removed before we reach it (e.g. a package manager's temp
+	// dir) or unreadable is skipped. Any other error (I/O, inotify watch
+	// limit...) still fails the watch rather than silently missing a subtree.
+	skippable := func(err error) bool {
+		return errors.Is(err, iofs.ErrNotExist) || errors.Is(err, iofs.ErrPermission)
+	}
+
+	addDir := func(dir string) error {
+		if err := watcher.Add(dir); err != nil && !skippable(err) {
+			if errors.Is(err, syscall.ENOSPC) {
+				return fmt.Errorf("inotify watch limit reached while watching %s (one watch per directory, shared by all open watches): watch a narrower path or ignore large folders like node_modules: %w", dir, err)
+			}
+			return err
+		}
+		return nil
+	}
+
+	// Helper to add all subdirectories. WalkDir avoids a stat per file.
 	addDirs := func(root string) error {
-		return filepath.Walk(root, func(p string, info os.FileInfo, err error) error {
+		return filepath.WalkDir(root, func(p string, d iofs.DirEntry, err error) error {
 			if err != nil {
-				return err
+				if p == root || !skippable(err) {
+					return err
+				}
+				return nil
 			}
-			if info.IsDir() {
-				return addDir(p)
+			if !d.IsDir() {
+				return nil
 			}
-			return nil
+			if skipped(p) {
+				return filepath.SkipDir
+			}
+			return addDir(p)
 		})
 	}
 
@@ -217,9 +252,9 @@ func (fs *Filesystem) WatchDirectoryRecursive(path string, callback func(event f
 			callback(syntheticEvent)
 
 			// If it's a directory, recursively process it
-			if entry.IsDir() {
+			if entry.IsDir() && !skipped(fullPath) {
 				// Add watch to the subdirectory
-				if err := addDir(fullPath); err == nil {
+				if err := watcher.Add(fullPath); err == nil {
 					// Emit events for files in the subdirectory
 					emitExistingFiles(fullPath)
 				}
@@ -245,9 +280,9 @@ func (fs *Filesystem) WatchDirectoryRecursive(path string, callback func(event f
 				// If a new directory is created, add it (and its subdirs) and emit events for existing files
 				if event.Op&fsnotify.Create != 0 {
 					info, err := os.Stat(event.Name)
-					if err == nil && info.IsDir() {
+					if err == nil && info.IsDir() && !skipped(event.Name) {
 						// Add watch to the new directory first
-						if err := addDir(event.Name); err == nil {
+						if err := watcher.Add(event.Name); err == nil {
 							// Emit synthetic events for any files already in the directory
 							// This handles the race condition where files are written
 							// between directory creation and watch establishment
@@ -261,6 +296,9 @@ func (fs *Filesystem) WatchDirectoryRecursive(path string, callback func(event f
 					return
 				}
 				logrus.Error("error:", err)
+				if onError != nil {
+					onError(err)
+				}
 			}
 		}
 	}()

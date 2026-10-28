@@ -295,6 +295,42 @@ func TestFileSystemWatch(t *testing.T) {
 	<-done
 }
 
+// TestFileSystemWatchAttachAndRootRemoval checks the response starts as soon as the
+// watch is registered (no event needed) and the stream ends once the watched directory is removed.
+func TestFileSystemWatchAttachAndRootRemoval(t *testing.T) {
+	t.Parallel()
+
+	dir := fmt.Sprintf("/tmp/test-watch-root-removal-%d", time.Now().UnixNano())
+	var successResp handler.SuccessResponse
+	resp, err := common.MakeRequestAndParse(http.MethodPut, common.EncodeFilesystemPath(dir+"/node_modules/pkg"), map[string]interface{}{"isDirectory": true}, &successResp)
+	require.NoError(t, err)
+	resp.Body.Close()
+
+	start := time.Now()
+	resp, err = common.MakeRequest("GET", common.EncodeWatchPath(dir+"/**")+"?ignore=node_modules", nil)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Less(t, time.Since(start), 5*time.Second, "headers should be sent once the watch is attached, not on the first event")
+
+	ended := make(chan string, 1)
+	go func() {
+		body, _ := io.ReadAll(resp.Body)
+		ended <- string(body)
+	}()
+
+	resp2, err := common.MakeRequestAndParse(http.MethodDelete, common.EncodeFilesystemPath(dir)+"?recursive=true", nil, &successResp)
+	require.NoError(t, err)
+	resp2.Body.Close()
+
+	select {
+	case body := <-ended:
+		assert.Contains(t, body, `"op":"REMOVE"`)
+	case <-time.After(10 * time.Second):
+		t.Fatal("stream did not end after the watched directory was removed")
+	}
+}
+
 // TestFileSystemWatchRecursive tests recursive streaming watch endpoint for file modifications in subdirectories
 func TestFileSystemWatchRecursive(t *testing.T) {
 	dir := fmt.Sprintf("/tmp/test-watch-recursive-%d", time.Now().UnixNano())
