@@ -70,8 +70,10 @@ jobs:
             const { owner, repo } = context.repo;
             const expectedSha = process.env.EXPECTED_SHA;
             // release.yaml only runs on pushes touching sandbox-api/.
-            const workflows = ['build.yaml'];
-            if (process.env.API_CHANGED === 'true') workflows.push('release.yaml');
+            // diff_only: build.yaml rebuilds sandbox-api only when the merge touched it,
+            // so a hub-only PR does not depend on an unrelated API build.
+            const workflows = [['build.yaml', { diff_only: 'true' }]];
+            if (process.env.API_CHANGED === 'true') workflows.push(['release.yaml', {}]);
             const sleep = (ms) => new Promise(r => setTimeout(r, ms));
             const listRuns = async (workflow_id) => (await github.rest.actions.listWorkflowRuns({
               owner, repo, workflow_id, branch: 'develop', event: 'workflow_dispatch', per_page: 20
@@ -87,9 +89,9 @@ jobs:
             };
 
             const runs = [];
-            for (const workflow_id of workflows) {
+            for (const [workflow_id, inputs] of workflows) {
               const before = new Set((await listRuns(workflow_id)).map(r => r.id));
-              await github.rest.actions.createWorkflowDispatch({ owner, repo, workflow_id, ref: 'develop' });
+              await github.rest.actions.createWorkflowDispatch({ owner, repo, workflow_id, ref: 'develop', inputs });
               let run = null;
               for (let i = 0; i < 12 && !run; i++) {
                 await sleep(10000);

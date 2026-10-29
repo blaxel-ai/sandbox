@@ -9,6 +9,10 @@ on:
       - 'v*'
   workflow_dispatch:
     inputs:
+      diff_only:
+        description: "Rebuild sandbox-api only if HEAD^..HEAD touched it, like a push (deploy-to-dev label)"
+        type: boolean
+        default: false
       sandbox:
         description: "Sandbox to import"
         type: choice
@@ -60,7 +64,7 @@ jobs:
       - name: Check for changes
         id: changes
         run: |
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ inputs.diff_only }}" != "true" ]]; then
             echo "sandbox-api=true" >> $GITHUB_OUTPUT
           elif [[ "${{ github.ref }}" == refs/tags/* ]]; then
             echo "sandbox-api=true" >> $GITHUB_OUTPUT
