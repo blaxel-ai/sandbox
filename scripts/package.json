@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "dependencies": {
-    "@blaxel/core": "^0.3.31"
+    "@blaxel/core": "^0.3.32"
   },
   "scripts": {
     "test": "node --test test/*.test.mjs"
