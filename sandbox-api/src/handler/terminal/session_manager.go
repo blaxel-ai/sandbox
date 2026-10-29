@@ -123,8 +123,7 @@ func (ms *ManagedSession) readLoop() {
 		if n > 0 {
 			data := make([]byte, n)
 			copy(data, buf[:n])
-			ms.appendBuffer(data)
-			ms.broadcast(data)
+			ms.publish(data)
 		}
 		if err != nil {
 			return
@@ -143,9 +142,11 @@ func (ms *ManagedSession) markDead() {
 	})
 }
 
-// appendBuffer adds data to the ring buffer. No-op if the session is already dead,
-// guaranteeing the buffer is immutable once dead == true.
-func (ms *ManagedSession) appendBuffer(data []byte) {
+// publish appends data to the ring buffer and broadcasts it while holding
+// bufMu, so SubscribeWithReplay sees each chunk either in its snapshot or on
+// its channel, never both. broadcast never blocks, so the lock stays short.
+// No-op if the session is already dead: the buffer is immutable once dead == true.
+func (ms *ManagedSession) publish(data []byte) {
 	ms.bufMu.Lock()
 	if ms.dead {
 		ms.bufMu.Unlock()
@@ -170,6 +171,7 @@ func (ms *ManagedSession) appendBuffer(data []byte) {
 		}
 		ms.buffer = ms.buffer[cutPoint:]
 	}
+	ms.broadcast(data)
 	ms.bufMu.Unlock()
 
 	// Update activity outside bufMu to avoid nested locks.
@@ -185,6 +187,10 @@ func (ms *ManagedSession) appendBuffer(data []byte) {
 func (ms *ManagedSession) GetBuffer() []byte {
 	ms.bufMu.Lock()
 	defer ms.bufMu.Unlock()
+	return ms.bufferLocked()
+}
+
+func (ms *ManagedSession) bufferLocked() []byte {
 	if len(ms.buffer) == 0 {
 		return nil
 	}
@@ -222,6 +228,14 @@ func (ms *ManagedSession) Subscribe() *Subscriber {
 	ms.subscribers[sub] = struct{}{}
 	ms.subMu.Unlock()
 	return sub
+}
+
+// SubscribeWithReplay registers a subscriber and returns the buffered output
+// up to that point: the output is replayed exactly once, without gaps.
+func (ms *ManagedSession) SubscribeWithReplay() (*Subscriber, []byte) {
+	ms.bufMu.Lock()
+	defer ms.bufMu.Unlock()
+	return ms.Subscribe(), ms.bufferLocked()
 }
 
 // Unsubscribe removes a subscriber and signals it to stop.
@@ -322,6 +336,17 @@ func (sm *SessionManager) GetOrCreate(id string, shell string, workingDir string
 	sm.sessions[id] = ms
 	logrus.Infof("Created new terminal session: %s", id)
 	return ms, true, nil
+}
+
+// Get returns the live session for the given ID, if any.
+func (sm *SessionManager) Get(id string) (*ManagedSession, bool) {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	ms, ok := sm.sessions[id]
+	if !ok || ms.IsDead() {
+		return nil, false
+	}
+	return ms, true
 }
 
 // Remove explicitly closes and removes a session.
