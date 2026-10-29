@@ -1,7 +1,9 @@
 package blaxel
 
 import (
+	"errors"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -16,6 +18,15 @@ const (
 	// EnvDisableKeepAlive disables the keepAlive feature for the whole sandbox
 	// when set to a truthy value at boot.
 	EnvDisableKeepAlive = "BL_DISABLE_KEEPALIVE"
+
+	// EnvStandbyNowFile is the path of the host file that forces a standby
+	// when anything is written to it.
+	EnvStandbyNowFile = "BLAXEL_STANDBY_NOW_FILE"
+)
+
+var (
+	ErrStandbyUnsupported = errors.New("standby is not supported in this environment")
+	ErrHeldAwake          = errors.New("the sandbox is held awake by a keepAlive process or an archive operation")
 )
 
 // KeepAliveDisabled reports whether the keepAlive feature is disabled for
@@ -206,4 +217,30 @@ func GetCounter() (int, error) {
 	}
 
 	return -1, nil
+}
+
+// CheckStandby reports whether the sandbox can be put in standby right now and
+// returns the file to write to for it.
+func CheckStandby() (string, error) {
+	path := os.Getenv(EnvStandbyNowFile)
+	if path == "" {
+		return "", ErrStandbyUnsupported
+	}
+	if _, err := os.Stat(filepath.Dir(path)); err != nil {
+		return "", ErrStandbyUnsupported
+	}
+	if counter, _ := GetCounter(); counter > 0 {
+		return "", ErrHeldAwake
+	}
+	return path, nil
+}
+
+// RequestStandby asks the host to put the sandbox in standby now. The host
+// pauses the VM as soon as the write lands, cutting in-flight requests.
+func RequestStandby() error {
+	path, err := CheckStandby()
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, []byte("1"), 0644)
 }

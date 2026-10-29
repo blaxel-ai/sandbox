@@ -1755,6 +1755,36 @@ paths:
       summary: Write to a process's stdin
       tags:
         - process
+  /standby:
+    post:
+      description: >-
+        Asks the host to put the sandbox in standby right away instead of waiting for it to be idle.
+
+        Returns 202 before the standby happens; the connection is closed and the sandbox pauses shortly after.
+
+        Refused while a keepAlive process or an archive operation holds the sandbox awake.
+      responses:
+        "202":
+          description: Standby requested
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "409":
+          description: The sandbox is held awake
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "501":
+          description: Standby is not supported in this environment
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+      summary: Put the sandbox in standby
+      tags:
+        - system
   /upgrade:
     post:
       description: >-
