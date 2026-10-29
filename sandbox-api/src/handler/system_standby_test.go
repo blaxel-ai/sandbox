@@ -50,6 +50,7 @@ func TestHandleStandbyRefuses(t *testing.T) {
 		want int
 	}{
 		{blaxel.ErrHeldAwake, http.StatusConflict},
+		{blaxel.ErrCounterUnknown, http.StatusServiceUnavailable},
 		{blaxel.ErrStandbyUnsupported, http.StatusNotImplemented},
 	} {
 		w, requested := performStandby(t, tt.err)

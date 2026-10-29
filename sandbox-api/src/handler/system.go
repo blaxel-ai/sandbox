@@ -189,6 +189,7 @@ var standbyDelay = 100 * time.Millisecond
 // @Success 202 {object} SuccessResponse "Standby requested"
 // @Failure 409 {object} ErrorResponse "The sandbox is held awake"
 // @Failure 501 {object} ErrorResponse "Standby is not supported in this environment"
+// @Failure 503 {object} ErrorResponse "The keep-awake state could not be read"
 // @Router /standby [post]
 func (h *SystemHandler) HandleStandby(c *gin.Context) {
 	if _, err := checkStandby(); err != nil {
@@ -198,6 +199,8 @@ func (h *SystemHandler) HandleStandby(c *gin.Context) {
 			status = http.StatusNotImplemented
 		case blaxel.ErrHeldAwake:
 			status = http.StatusConflict
+		case blaxel.ErrCounterUnknown:
+			status = http.StatusServiceUnavailable
 		}
 		h.SendError(c, status, err)
 		return

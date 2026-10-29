@@ -3,7 +3,6 @@ package blaxel
 import (
 	"errors"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -27,6 +26,7 @@ const (
 var (
 	ErrStandbyUnsupported = errors.New("standby is not supported in this environment")
 	ErrHeldAwake          = errors.New("the sandbox is held awake by a keepAlive process or an archive operation")
+	ErrCounterUnknown     = errors.New("could not read the scale-to-zero counter")
 )
 
 // KeepAliveDisabled reports whether the keepAlive feature is disabled for
@@ -226,10 +226,17 @@ func CheckStandby() (string, error) {
 	if path == "" {
 		return "", ErrStandbyUnsupported
 	}
-	if _, err := os.Stat(filepath.Dir(path)); err != nil {
+	// The host serves the file itself: a missing one means nothing would
+	// receive the request.
+	if _, err := os.Stat(path); err != nil {
 		return "", ErrStandbyUnsupported
 	}
-	if counter, _ := GetCounter(); counter > 0 {
+	// Fail closed: an unreadable counter may hide a hold.
+	counter, err := GetCounter()
+	if err != nil || counter < 0 {
+		return "", ErrCounterUnknown
+	}
+	if counter > 0 {
 		return "", ErrHeldAwake
 	}
 	return path, nil
@@ -242,5 +249,14 @@ func RequestStandby() error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, []byte("1"), 0644)
+	// No O_CREATE: never stand in for the host's file with a plain one.
+	f, err := os.OpenFile(path, os.O_WRONLY, 0)
+	if err != nil {
+		return err
+	}
+	_, err = f.WriteString("1")
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	return err
 }

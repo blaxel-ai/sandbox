@@ -87,20 +87,28 @@ func TestRequestStandby(t *testing.T) {
 	if err := RequestStandby(); err != ErrStandbyUnsupported {
 		t.Errorf("without %s: err = %v, want ErrStandbyUnsupported", EnvStandbyNowFile, err)
 	}
-	t.Setenv(EnvStandbyNowFile, filepath.Join(dir, "missing", "standby_now"))
-	if err := RequestStandby(); err != ErrStandbyUnsupported {
-		t.Errorf("with a missing dir: err = %v, want ErrStandbyUnsupported", err)
-	}
-
+	// The host serves the file: when it is absent, nothing is created in its place.
 	t.Setenv(EnvStandbyNowFile, standbyFile)
-	if err := os.WriteFile(scaleFile, []byte("=1"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := RequestStandby(); err != ErrHeldAwake {
-		t.Errorf("held awake: err = %v, want ErrHeldAwake", err)
+	if err := RequestStandby(); err != ErrStandbyUnsupported {
+		t.Errorf("with a missing file: err = %v, want ErrStandbyUnsupported", err)
 	}
 	if _, err := os.Stat(standbyFile); !os.IsNotExist(err) {
-		t.Errorf("held awake: standby file written (%v)", err)
+		t.Errorf("missing file: standby file created (%v)", err)
+	}
+
+	if err := os.WriteFile(standbyFile, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for counter, want := range map[string]error{"=1": ErrHeldAwake, "garbage": ErrCounterUnknown} {
+		if err := os.WriteFile(scaleFile, []byte(counter), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := RequestStandby(); err != want {
+			t.Errorf("counter %q: err = %v, want %v", counter, err, want)
+		}
+		if content, _ := os.ReadFile(standbyFile); len(content) != 0 {
+			t.Errorf("counter %q: standby file written (%q)", counter, content)
+		}
 	}
 
 	if err := os.WriteFile(scaleFile, []byte("=0"), 0o644); err != nil {
