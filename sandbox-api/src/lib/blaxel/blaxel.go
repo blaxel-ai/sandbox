@@ -1,6 +1,7 @@
 package blaxel
 
 import (
+	"errors"
 	"os"
 	"strconv"
 	"strings"
@@ -16,6 +17,16 @@ const (
 	// EnvDisableKeepAlive disables the keepAlive feature for the whole sandbox
 	// when set to a truthy value at boot.
 	EnvDisableKeepAlive = "BL_DISABLE_KEEPALIVE"
+
+	// EnvStandbyNowFile is the path of the host file that forces a standby
+	// when anything is written to it.
+	EnvStandbyNowFile = "BLAXEL_STANDBY_NOW_FILE"
+)
+
+var (
+	ErrStandbyUnsupported = errors.New("standby is not supported in this environment")
+	ErrHeldAwake          = errors.New("the sandbox is held awake by a keepAlive process or an archive operation")
+	ErrCounterUnknown     = errors.New("could not read the scale-to-zero counter")
 )
 
 // KeepAliveDisabled reports whether the keepAlive feature is disabled for
@@ -206,4 +217,46 @@ func GetCounter() (int, error) {
 	}
 
 	return -1, nil
+}
+
+// CheckStandby reports whether the sandbox can be put in standby right now and
+// returns the file to write to for it.
+func CheckStandby() (string, error) {
+	path := os.Getenv(EnvStandbyNowFile)
+	if path == "" {
+		return "", ErrStandbyUnsupported
+	}
+	// The host serves the file itself: a missing one means nothing would
+	// receive the request.
+	if _, err := os.Stat(path); err != nil {
+		return "", ErrStandbyUnsupported
+	}
+	// Fail closed: an unreadable counter may hide a hold.
+	counter, err := GetCounter()
+	if err != nil || counter < 0 {
+		return "", ErrCounterUnknown
+	}
+	if counter > 0 {
+		return "", ErrHeldAwake
+	}
+	return path, nil
+}
+
+// RequestStandby asks the host to put the sandbox in standby now. The host
+// pauses the VM as soon as the write lands, cutting in-flight requests.
+func RequestStandby() error {
+	path, err := CheckStandby()
+	if err != nil {
+		return err
+	}
+	// No O_CREATE: never stand in for the host's file with a plain one.
+	f, err := os.OpenFile(path, os.O_WRONLY, 0)
+	if err != nil {
+		return err
+	}
+	_, err = f.WriteString("1")
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	return err
 }

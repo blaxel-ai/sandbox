@@ -10,6 +10,8 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/blaxel-ai/sandbox-api/src/handler/process"
+	"github.com/blaxel-ai/sandbox-api/src/lib/blaxel"
+	"github.com/sirupsen/logrus"
 )
 
 // Build information - set via ldflags at build time
@@ -164,5 +166,53 @@ func (h *SystemHandler) HandleUpgrade(c *gin.Context) {
 	go func() {
 		time.Sleep(500 * time.Millisecond)
 		process.TriggerUpgrade(version, baseURL)
+	}()
+}
+
+// Swapped in tests: the scale-to-zero availability is cached per process.
+var (
+	checkStandby   = blaxel.CheckStandby
+	requestStandby = blaxel.RequestStandby
+)
+
+// standbyDelay lets the response and the connection close leave the VM before
+// the host pauses it.
+var standbyDelay = 100 * time.Millisecond
+
+// HandleStandby handles POST requests to /standby
+// @Summary Put the sandbox in standby
+// @Description Asks the host to put the sandbox in standby right away instead of waiting for it to be idle.
+// @Description Returns 202 before the standby happens; the connection is closed and the sandbox pauses shortly after.
+// @Description Refused while a keepAlive process or an archive operation holds the sandbox awake.
+// @Tags system
+// @Produce json
+// @Success 202 {object} SuccessResponse "Standby requested"
+// @Failure 409 {object} ErrorResponse "The sandbox is held awake"
+// @Failure 501 {object} ErrorResponse "Standby is not supported in this environment"
+// @Failure 503 {object} ErrorResponse "The keep-awake state could not be read"
+// @Router /standby [post]
+func (h *SystemHandler) HandleStandby(c *gin.Context) {
+	if _, err := checkStandby(); err != nil {
+		status := http.StatusInternalServerError
+		switch err {
+		case blaxel.ErrStandbyUnsupported:
+			status = http.StatusNotImplemented
+		case blaxel.ErrHeldAwake:
+			status = http.StatusConflict
+		case blaxel.ErrCounterUnknown:
+			status = http.StatusServiceUnavailable
+		}
+		h.SendError(c, status, err)
+		return
+	}
+
+	c.Header("Connection", "close")
+	h.SendJSON(c, http.StatusAccepted, SuccessResponse{Message: "Standby requested"})
+
+	go func() {
+		time.Sleep(standbyDelay)
+		if err := requestStandby(); err != nil {
+			logrus.WithError(err).Warn("[Standby] Failed to request standby")
+		}
 	}()
 }

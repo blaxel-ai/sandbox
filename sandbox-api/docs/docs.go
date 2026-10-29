@@ -2140,6 +2140,44 @@ const docTemplate = `{
                 }
             }
         },
+        "/standby": {
+            "post": {
+                "description": "Asks the host to put the sandbox in standby right away instead of waiting for it to be idle.\nReturns 202 before the standby happens; the connection is closed and the sandbox pauses shortly after.\nRefused while a keepAlive process or an archive operation holds the sandbox awake.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "system"
+                ],
+                "summary": "Put the sandbox in standby",
+                "responses": {
+                    "202": {
+                        "description": "Standby requested",
+                        "schema": {
+                            "$ref": "#/definitions/SuccessResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "The sandbox is held awake",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "501": {
+                        "description": "Standby is not supported in this environment",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "The keep-awake state could not be read",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/upgrade": {
             "post": {
                 "description": "Triggers an upgrade of the sandbox-api process. Returns 200 immediately before upgrading.\nThe upgrade will: download the specified binary from GitHub releases, validate it, and restart.\nAll running processes will be preserved across the upgrade.\nAvailable versions: \"latest\" (default, most recent release), \"develop\", \"main\", or specific tag like \"v1.0.0\"\nYou can also specify a custom baseUrl for forks (defaults to https://github.com/blaxel-ai/sandbox/releases)",
