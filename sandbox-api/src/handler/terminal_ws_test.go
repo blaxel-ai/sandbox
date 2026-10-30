@@ -53,9 +53,10 @@ func TestTerminalWS_SlowClientGetsAllOutput(t *testing.T) {
 
 	var want strings.Builder
 	for i := 1; i <= last; i++ {
-		fmt.Fprintf(&want, "%d\r\n", i)
+		fmt.Fprintf(&want, "%d\n", i)
 	}
-	if !strings.Contains(out.String(), want.String()) {
+	// The PTY may add carriage returns of its own: compare lines only.
+	if got := strings.ReplaceAll(out.String(), "\r", ""); !strings.Contains(got, want.String()) {
 		t.Fatalf("output lost: got %d bytes, want the %d bytes of seq", out.Len(), want.Len())
 	}
 }

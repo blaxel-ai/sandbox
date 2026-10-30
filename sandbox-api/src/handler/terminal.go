@@ -50,7 +50,9 @@ func NewTerminalHandler() *TerminalHandler {
 
 // terminalOutputDroppedReason is sent, as an "error" message and as the close
 // reason, to a client that fell so far behind that output was dropped for it.
-// Reconnecting with the same sessionId replays the buffered output.
+// Reconnecting with the same sessionId replays the buffered output, which
+// holds only the last 100 KiB: enough to restore the screen, not to recover
+// everything that was missed.
 const terminalOutputDroppedReason = "output dropped: client too slow, reconnect to resync"
 
 // TerminalMessage represents a message to/from the terminal
@@ -257,9 +259,14 @@ func (h *TerminalHandler) HandleTerminalWS(c *gin.Context) {
 			return conn.WriteJSON(TerminalMessage{Type: "output", Data: string(data)})
 		}
 		// drainAndClose writes the queued output, then closes the connection
-		// with code and reason.
+		// with code and reason. On shell exit the queue and the close frame
+		// share one deadline. When output was dropped, each queued write gets
+		// its own, so that a client on a slow link still receives the warning.
 		drainAndClose := func(code int, reason string) {
-			closeDeadline = time.Now().Add(5 * time.Second)
+			dropped := code != websocket.CloseNormalClosure
+			if !dropped {
+				closeDeadline = time.Now().Add(5 * time.Second)
+			}
 			for {
 				select {
 				case data := <-sub.Ch:
@@ -267,7 +274,8 @@ func (h *TerminalHandler) HandleTerminalWS(c *gin.Context) {
 						return
 					}
 				default:
-					if code != websocket.CloseNormalClosure {
+					if dropped {
+						closeDeadline = time.Now().Add(5 * time.Second)
 						_ = conn.SetWriteDeadline(closeDeadline)
 						if err := conn.WriteJSON(TerminalMessage{Type: "error", Data: reason}); err != nil {
 							return
@@ -291,6 +299,14 @@ func (h *TerminalHandler) HandleTerminalWS(c *gin.Context) {
 			case <-done:
 				return
 			case <-ms.Done():
+				// A subscriber is dropped before Done, never after: if both
+				// are ready, the client must still learn that output is missing.
+				select {
+				case <-sub.Dropped():
+					drainAndClose(websocket.CloseTryAgainLater, terminalOutputDroppedReason)
+					return
+				default:
+				}
 				// No more output is published after Done. Drain queued output
 				// before signalling normal session completion.
 				drainAndClose(websocket.CloseNormalClosure, "Shell exited")

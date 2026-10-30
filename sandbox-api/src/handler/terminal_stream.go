@@ -178,6 +178,14 @@ func (h *TerminalHandler) HandleTerminalStream(c *gin.Context) {
 		case <-c.Request.Context().Done():
 			return
 		case <-ms.Done():
+			// A subscriber is dropped before Done, never after: if both are
+			// ready, the client must still learn that output is missing.
+			select {
+			case <-sub.Dropped():
+				drainAndSend(TerminalMessage{Type: "error", Data: terminalOutputDroppedReason})
+				return
+			default:
+			}
 			// No more output is published after Done: drain what is queued.
 			drainAndSend(TerminalMessage{Type: "exit", Data: "Shell exited"})
 			return
