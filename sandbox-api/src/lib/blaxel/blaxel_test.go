@@ -74,3 +74,50 @@ func TestHoldAwakeDoesNotReleaseAHoldItFailedToTake(t *testing.T) {
 		t.Errorf("expected no scale file to be written, got %v", err)
 	}
 }
+
+func TestRequestStandby(t *testing.T) {
+	dir := t.TempDir()
+	scaleFile := filepath.Join(dir, "scale_to_zero_disable")
+	standbyFile := filepath.Join(dir, "standby_now")
+	t.Setenv("BLAXEL_SCALE_FILE", scaleFile)
+	scaleAvailableChecked, scaleAvailable = true, true
+	t.Cleanup(func() { scaleAvailableChecked, scaleAvailable = false, false })
+
+	t.Setenv(EnvStandbyNowFile, "")
+	if err := RequestStandby(); err != ErrStandbyUnsupported {
+		t.Errorf("without %s: err = %v, want ErrStandbyUnsupported", EnvStandbyNowFile, err)
+	}
+	// The host serves the file: when it is absent, nothing is created in its place.
+	t.Setenv(EnvStandbyNowFile, standbyFile)
+	if err := RequestStandby(); err != ErrStandbyUnsupported {
+		t.Errorf("with a missing file: err = %v, want ErrStandbyUnsupported", err)
+	}
+	if _, err := os.Stat(standbyFile); !os.IsNotExist(err) {
+		t.Errorf("missing file: standby file created (%v)", err)
+	}
+
+	if err := os.WriteFile(standbyFile, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for counter, want := range map[string]error{"=1": ErrHeldAwake, "garbage": ErrCounterUnknown} {
+		if err := os.WriteFile(scaleFile, []byte(counter), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := RequestStandby(); err != want {
+			t.Errorf("counter %q: err = %v, want %v", counter, err, want)
+		}
+		if content, _ := os.ReadFile(standbyFile); len(content) != 0 {
+			t.Errorf("counter %q: standby file written (%q)", counter, content)
+		}
+	}
+
+	if err := os.WriteFile(scaleFile, []byte("=0"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := RequestStandby(); err != nil {
+		t.Fatalf("RequestStandby() = %v", err)
+	}
+	if content, err := os.ReadFile(standbyFile); err != nil || string(content) != "1" {
+		t.Errorf("standby file = %q (%v), want \"1\"", content, err)
+	}
+}
