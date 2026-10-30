@@ -1,0 +1,179 @@
+name: Merge to develop
+
+# Adding the `deploy-to-dev` label to a PR merges its branch into develop and
+# runs the develop builds. Mirrors controlplane's merge-to-develop.yml.
+#
+# pull_request_target runs this file from main with write permissions: never
+# check out or run PR code here, only `git merge` it.
+
+on:
+  pull_request_target:
+    types: [labeled]
+
+permissions: {}
+
+jobs:
+  merge-to-develop:
+    # Same-repo branches only: a fork's branch is not on origin.
+    if: >-
+      github.event.label.name == 'deploy-to-dev' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 200
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: write
+    steps:
+      # Triage can add labels; only someone who could push to develop themselves
+      # may deploy through it.
+      - name: Check sender can push
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SENDER: ${{ github.event.sender.login }}
+        run: |
+          perm=$(gh api "repos/$GITHUB_REPOSITORY/collaborators/$SENDER/permission" --jq .permission)
+          case "$perm" in
+            admin|write) ;;
+            *) echo "::error::$SENDER has '$perm' access, write is required"; exit 1 ;;
+          esac
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: develop
+          fetch-depth: 0
+
+      - name: Merge branch into develop
+        id: merge
+        env:
+          # The labeled commit, not the branch tip: a push after labeling is not deployed.
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BRANCH: ${{ github.event.pull_request.head.ref }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          # --no-ff: build.yaml and release.yaml pick what to rebuild from HEAD^..HEAD,
+          # so HEAD^ must be the previous develop.
+          git fetch origin "$HEAD_SHA"
+          if git merge --no-ff -m "Merge branch '$BRANCH' into develop" "$HEAD_SHA"; then
+            echo "result=success" >> "$GITHUB_OUTPUT"
+            echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+            if git diff --quiet HEAD^ HEAD -- sandbox-api/; then
+              echo "api_changed=false" >> "$GITHUB_OUTPUT"
+            else
+              echo "api_changed=true" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            git merge --abort
+            echo "result=conflict" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Push to develop
+        if: steps.merge.outputs.result == 'success'
+        run: git push origin develop
+
+      # A GITHUB_TOKEN push does not trigger other workflows, so dispatch the
+      # develop builds that a push would have run and wait for them.
+      - name: Run develop builds
+        if: steps.merge.outputs.result == 'success'
+        id: ci
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
+        env:
+          EXPECTED_SHA: ${{ steps.merge.outputs.sha }}
+          API_CHANGED: ${{ steps.merge.outputs.api_changed }}
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const expectedSha = process.env.EXPECTED_SHA;
+            // release.yaml only runs on pushes touching sandbox-api/.
+            // diff_only: build.yaml rebuilds sandbox-api only when the merge touched it,
+            // so a hub-only PR does not depend on an unrelated API build.
+            const workflows = [['build.yaml', { diff_only: 'true' }]];
+            if (process.env.API_CHANGED === 'true') workflows.push(['release.yaml', {}]);
+            const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+            const listRuns = async (workflow_id) => (await github.rest.actions.listWorkflowRuns({
+              owner, repo, workflow_id, branch: 'develop', event: 'workflow_dispatch', per_page: 20
+            })).data.workflow_runs;
+            // A dispatch runs on develop's head at dispatch time, which may already
+            // include a newer merge on top of ours.
+            const containsMergeSha = async (sha) => {
+              if (sha === expectedSha) return true;
+              const { data } = await github.rest.repos.compareCommitsWithBasehead({
+                owner, repo, basehead: `${expectedSha}...${sha}`
+              });
+              return data.status === 'ahead' || data.status === 'identical';
+            };
+
+            const runs = [];
+            for (const [workflow_id, inputs] of workflows) {
+              const before = new Set((await listRuns(workflow_id)).map(r => r.id));
+              await github.rest.actions.createWorkflowDispatch({ owner, repo, workflow_id, ref: 'develop', inputs });
+              let run = null;
+              for (let i = 0; i < 12 && !run; i++) {
+                await sleep(10000);
+                for (const r of await listRuns(workflow_id)) {
+                  if (!before.has(r.id) && await containsMergeSha(r.head_sha)) { run = r; break; }
+                }
+              }
+              if (!run) {
+                core.error(`No ${workflow_id} run found on develop containing ${expectedSha}`);
+                return core.setOutput('conclusion', 'missing');
+              }
+              core.info(`${workflow_id}: ${run.html_url}`);
+              runs.push(run);
+            }
+            core.setOutput('runs', runs.map(r => `- [${r.name}](${r.html_url})`).join('\n'));
+
+            const deadline = Date.now() + 180 * 60 * 1000;
+            for (const { id } of runs) {
+              let run;
+              do {
+                if (Date.now() > deadline) return core.setOutput('conclusion', 'timeout');
+                await sleep(30000);
+                run = (await github.rest.actions.getWorkflowRun({ owner, repo, run_id: id })).data;
+              } while (run.status !== 'completed');
+              core.info(`${run.name} (${id}) concluded ${run.conclusion}`);
+              if (run.conclusion !== 'success') return core.setOutput('conclusion', 'failure');
+            }
+            core.setOutput('conclusion', 'success');
+
+      - name: Report on the PR
+        if: always() && steps.merge.outcome != 'skipped'
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
+        env:
+          MERGE_RESULT: ${{ steps.merge.outputs.result }}
+          MERGE_SHA: ${{ steps.merge.outputs.sha }}
+          CI_CONCLUSION: ${{ steps.ci.outputs.conclusion }}
+          CI_RUNS: ${{ steps.ci.outputs.runs }}
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const issue_number = context.issue.number;
+            const branch = context.payload.pull_request.head.ref;
+            const { MERGE_RESULT, MERGE_SHA, CI_CONCLUSION, CI_RUNS } = process.env;
+            const runsUrl = `https://github.com/${owner}/${repo}/actions?query=branch%3Adevelop`;
+            const runs = CI_RUNS ? `\n\n${CI_RUNS}` : '';
+            const merged = `Merged \`${branch}\` into \`develop\` (\`${MERGE_SHA}\`)`;
+
+            let body, label = 'develop-ci-failed';
+            if (MERGE_RESULT === 'conflict') {
+              body = `❌ Could not merge \`${branch}\` into \`develop\`: **merge conflicts**. Resolve them and add the label again.`;
+              label = null;
+            } else if (CI_CONCLUSION === 'success') {
+              body = `✅ ${merged}; develop builds passed.${runs}`;
+              label = 'on-develop';
+            } else if (CI_CONCLUSION === 'failure') {
+              body = `❌ ${merged}, but a develop build **failed**.${runs}`;
+            } else if (CI_CONCLUSION === 'timeout') {
+              body = `⏱️ ${merged}, but the develop builds did not finish within 180 minutes.${runs}`;
+            } else if (CI_CONCLUSION === 'missing') {
+              body = `❌ ${merged}, but no dispatched develop build was found. Check [develop CI](${runsUrl}).`;
+            } else {
+              body = `❌ Merge to \`develop\` failed before the builds ran (for instance, this token cannot push changes to \`.github/workflows/\`). See [the run](https://github.com/${owner}/${repo}/actions/runs/${context.runId}).`;
+              label = null;
+            }
+
+            try { await github.rest.issues.removeLabel({ owner, repo, issue_number, name: 'deploy-to-dev' }); } catch {}
+            if (label) await github.rest.issues.addLabels({ owner, repo, issue_number, labels: [label] });
+            await github.rest.issues.createComment({ owner, repo, issue_number, body });
+            if (CI_CONCLUSION !== 'success') core.setFailed(body);

@@ -9,6 +9,8 @@ on:
       - 'v*'
     paths:
       - 'sandbox-api/**'
+  # Dispatched on develop by merge-to-develop.yml (deploy-to-dev label).
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -45,12 +47,7 @@ jobs:
 
       - name: Set version
         id: version
-        run: |
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            echo "version=${{ inputs.version }}" >> $GITHUB_OUTPUT
-          else
-            echo "version=${{ github.ref_name }}" >> $GITHUB_OUTPUT
-          fi
+        run: echo "version=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
 
       - name: Build binary
         working-directory: sandbox-api
@@ -89,12 +86,7 @@ jobs:
 
       - name: Set version
         id: version
-        run: |
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            echo "version=${{ inputs.version }}" >> $GITHUB_OUTPUT
-          else
-            echo "version=${{ github.ref_name }}" >> $GITHUB_OUTPUT
-          fi
+        run: echo "version=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
 
       - name: Download all artifacts
         uses: actions/download-artifact@v4
