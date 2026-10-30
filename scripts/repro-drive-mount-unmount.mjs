@@ -14,7 +14,9 @@
 //   SCENARIO=unmount|mount|both  (default both)
 //   SANDBOX_API_BINARY=<path>    linux/amd64 sandbox-api build to upgrade the
 //                                sandbox to before running (the patched run);
-//                                unset = stock image (the unpatched run)
+//                                unset = stock image (the unpatched run).
+//                                Needs an IMAGE whose sandbox-api was built with
+//                                -X .../src/handler.UpgradeReleaseURL=http://localhost:8765
 //   IMAGE (blaxel/base-image:latest)  REGION (BL_REGION or us-was-1)
 //   MEMORY in MB (2048)  MAX_MOUNTS (16)  KEEP=1 keeps sandboxes and drive
 import { readFile } from "node:fs/promises";
@@ -40,15 +42,16 @@ async function health(sandbox) {
   return res.ok ? res.json() : {};
 }
 
-// Serves the binary from inside the sandbox and points /upgrade at it.
+// Serves the binary from inside the sandbox, where IMAGE's sandbox-api
+// downloads upgrades from (see SANDBOX_API_BINARY above).
 async function upgrade(sandbox) {
-  const version = `repro-${RUN}`;
+  const version = "develop";
   const before = (await health(sandbox)).upgradeCount ?? 0;
   log(`upgrading sandbox-api to ${BINARY}`);
   await sandbox.fs.writeBinary(`/tmp/upgrade/download/${version}/sandbox-api-linux-amd64`, await readFile(BINARY));
   await sandbox.process.exec({ name: "upgrade-server", command: "python3 -m http.server 8765 --directory /tmp/upgrade" });
   await sleep(1000);
-  await sandbox.system.upgrade({ version, baseUrl: "http://localhost:8765" });
+  await sandbox.system.upgrade({ version });
   for (let i = 0; i < 60; i++) {
     await sleep(1000);
     const h = await health(sandbox).catch(() => ({}));
