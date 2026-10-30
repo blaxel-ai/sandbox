@@ -16,11 +16,27 @@ dead. After an unexpected transport failure, clients may reconnect with the
 same ID to recover the existing live shell. A client disconnect alone does not
 terminate that shell; sessions without clients expire after ten minutes idle.
 
-Output draining is bounded: after the shell exits, the server allows 250 ms for
-the PTY reader to finish before closing a PTY still held by a background child.
-The final WebSocket output queue and close frame share a five-second write
-deadline. A stalled client may therefore lose pending output and observe an
-abnormal transport closure instead of the normal close frame.
+Output draining is bounded: after the shell exits, the server closes a PTY
+still held by a background child once no output has been read for 250 ms.
+Output still being delivered to a slow client extends this, up to 30 seconds.
+Every WebSocket write, including the remaining output and the close frame,
+must complete within five seconds. A client that keeps reading gets all of it,
+however far behind it is; a client that stops reading for five seconds is
+disconnected, and observes an abnormal transport closure instead of the normal
+close frame.
+
+## Slow clients
+
+Output is never dropped silently. While a client is attached, the server reads
+the PTY no faster than that client consumes output, so a slow client throttles
+the shell (and every other client of the same session) instead of losing data.
+
+A client that reads nothing for 15 seconds is dropped. It first receives the
+output queued for it, without gaps, then `{"type":"error","data":"output
+dropped: client too slow, reconnect to resync"}` and a close with code `1013`
+and the same reason. It should reconnect with the same `sessionId`. The replay
+holds only the last 100 KiB of output: enough to restore the terminal screen,
+not to recover everything the client missed.
 
 # Terminal over HTTP streaming
 
@@ -38,6 +54,9 @@ used from both transports at once.
   replayed first, then live output follows.
 - `{"type":"exit","data":"Shell exited"}`: the shell ended. The server then
   closes the stream.
+- `{"type":"error","data":"output dropped: ..."}`: the client fell too far
+  behind and output was dropped for it (see Slow clients). The server then
+  closes the stream; reopen it to resync.
 
 Comment lines (`: keepalive`) are sent every 15 seconds so that idle proxies
 keep the stream open. A client that stops reading for five seconds is
