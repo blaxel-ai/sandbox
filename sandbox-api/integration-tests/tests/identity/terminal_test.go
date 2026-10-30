@@ -1,10 +1,8 @@
 package tests
 
 import (
-	"context"
 	"errors"
 	"fmt"
-	"net"
 	"net/url"
 	"strings"
 	"testing"
@@ -16,26 +14,6 @@ import (
 )
 
 func connectTerminal(t *testing.T, session string) *websocket.Conn {
-	t.Helper()
-	return dialTerminal(t, websocket.DefaultDialer, session)
-}
-
-// connectSlowTerminal connects with a tiny socket receive buffer, so that the
-// client behaves like one on a slow link as soon as it stops reading.
-func connectSlowTerminal(t *testing.T, session string) *websocket.Conn {
-	t.Helper()
-	dialer := *websocket.DefaultDialer
-	dialer.NetDialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
-		conn, err := (&net.Dialer{}).DialContext(ctx, network, addr)
-		if err == nil {
-			err = conn.(*net.TCPConn).SetReadBuffer(4096)
-		}
-		return conn, err
-	}
-	return dialTerminal(t, &dialer, session)
-}
-
-func dialTerminal(t *testing.T, dialer *websocket.Dialer, session string) *websocket.Conn {
 	t.Helper()
 	u, err := url.Parse(common.BaseURL)
 	require.NoError(t, err)
@@ -50,7 +28,7 @@ func dialTerminal(t *testing.T, dialer *websocket.Dialer, session string) *webso
 	q.Set("shell", "/bin/sh")
 	q.Set("workingDir", "/tmp")
 	u.RawQuery = q.Encode()
-	conn, _, err := dialer.Dial(u.String(), nil)
+	conn, _, err := websocket.DefaultDialer.Dial(u.String(), nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { conn.Close() })
 	require.NoError(t, conn.SetReadDeadline(time.Now().Add(10*time.Second)))
@@ -178,7 +156,7 @@ func readTerminalSlowly(t *testing.T, conn *websocket.Conn) string {
 // lose blocks of output mid-stream (the customer's `seq` reproduction).
 func TestTerminalSlowClientGetsAllOutput(t *testing.T) {
 	const n = 1000000 // 6.9 MB: more than the socket buffers (up to 4 MB) and the 64-slot queue
-	conn := connectSlowTerminal(t, fmt.Sprintf("terminal-slow-%d", time.Now().UnixNano()))
+	conn := connectTerminal(t, fmt.Sprintf("terminal-slow-%d", time.Now().UnixNano()))
 	sendTerminalInput(t, conn, "stty -echo; printf 'ready-%s\\n' marker\n")
 	readTerminalUntil(t, conn, "ready-marker")
 	sendTerminalInput(t, conn, fmt.Sprintf("seq 1 %d\nexit\n", n))
@@ -194,7 +172,7 @@ func TestTerminalSlowAndFastClientsGetAllOutput(t *testing.T) {
 	fast := connectTerminal(t, session)
 	sendTerminalInput(t, fast, "stty -echo; printf 'ready-%s\\n' marker\n")
 	readTerminalUntil(t, fast, "ready-marker")
-	slow := connectSlowTerminal(t, session)
+	slow := connectTerminal(t, session)
 	readTerminalUntil(t, slow, "ready-marker")
 	sendTerminalInput(t, fast, fmt.Sprintf("seq 1 %d\nexit\n", n))
 
