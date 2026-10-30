@@ -64,9 +64,9 @@ func (fs *Filesystem) WriteFile(path string, content []byte, perm os.FileMode) e
 	})
 }
 
-func (fs *Filesystem) WriteFileFromReader(path string, r io.Reader, perm os.FileMode) error {
+func (fs *Filesystem) WriteFileFromReader(path string, r io.Reader, perm os.FileMode, options ...WriteOptions) error {
 	return identity.Do(func() error {
-		return fs.writeFileFromReader(path, r, perm)
+		return fs.writeFileFromReader(path, r, perm, options...)
 	})
 }
 
@@ -117,9 +117,9 @@ func (fs *Filesystem) DeleteDirectory(path string, recursive bool) error {
 	})
 }
 
-func (fs *Filesystem) CopyFile(src, dst string) error {
+func (fs *Filesystem) CopyFile(src, dst string, options ...WriteOptions) error {
 	return identity.Do(func() error {
-		return fs.copyFile(src, dst)
+		return fs.copyFile(src, dst, options...)
 	})
 }
 
