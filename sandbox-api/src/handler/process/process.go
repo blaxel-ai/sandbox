@@ -20,6 +20,7 @@ import (
 	"github.com/blaxel-ai/sandbox-api/src/handler/constants"
 	"github.com/blaxel-ai/sandbox-api/src/lib/blaxel"
 	"github.com/blaxel-ai/sandbox-api/src/lib/identity"
+	"github.com/blaxel-ai/sandbox-api/src/lib/lifecycle"
 	"github.com/blaxel-ai/sandbox-api/src/lib/oom"
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
@@ -477,7 +478,7 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 	// child may inherit a directory it cannot chdir into.
 	process.EffectiveWorkingDir = effectiveWorkingDir(workingDir)
 	// Start the process
-	if err := cmd.Start(); err != nil {
+	if err := lifecycle.StartChild(cmd); err != nil {
 		return "", err
 	}
 
@@ -946,7 +947,7 @@ func (pm *ProcessManager) restartProcess(oldProcess *ProcessInfo, callback func(
 		stderrFile.Close()
 		return "", fmt.Errorf("restart canceled by explicit termination")
 	}
-	if err := cmd.Start(); err != nil {
+	if err := lifecycle.StartChild(cmd); err != nil {
 		pm.mu.Unlock()
 		stdoutFile.Close()
 		stderrFile.Close()
