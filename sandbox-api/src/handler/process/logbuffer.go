@@ -100,6 +100,15 @@ func (b *logBuffer) resume(offset int) {
 	}
 }
 
+// skipTo discards a stale tail and advances the absolute cursor across missing
+// bytes. Return the skipped count so combined output can advance by the same amount.
+func (b *logBuffer) skipTo(offset int) int {
+	skipped := max(0, offset-b.written)
+	b.buf = nil
+	b.resume(offset)
+	return skipped
+}
+
 // restore seeds the buffer from a saved state: tail is what is left of the
 // output, written is how much the stream had produced in total, so the log file
 // is re-read from where the previous run left off rather than from the tail.
