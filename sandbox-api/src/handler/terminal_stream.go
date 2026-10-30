@@ -145,6 +145,24 @@ func (h *TerminalHandler) HandleTerminalStream(c *gin.Context) {
 		return
 	}
 
+	// drainAndSend writes the queued output, then the final message.
+	drainAndSend := func(last TerminalMessage) {
+		for {
+			select {
+			case data := <-sub.Ch:
+				if !sendOutput(data) {
+					return
+				}
+			default:
+				if len(pending) > 0 && !send(TerminalMessage{Type: "output", Data: string(pending)}) {
+					return
+				}
+				send(last)
+				return
+			}
+		}
+	}
+
 	keepalive := time.NewTicker(terminalStreamKeepalive)
 	defer keepalive.Stop()
 	for {
@@ -161,20 +179,13 @@ func (h *TerminalHandler) HandleTerminalStream(c *gin.Context) {
 			return
 		case <-ms.Done():
 			// No more output is published after Done: drain what is queued.
-			for {
-				select {
-				case data := <-sub.Ch:
-					if !sendOutput(data) {
-						return
-					}
-				default:
-					if len(pending) > 0 && !send(TerminalMessage{Type: "output", Data: string(pending)}) {
-						return
-					}
-					send(TerminalMessage{Type: "exit", Data: "Shell exited"})
-					return
-				}
-			}
+			drainAndSend(TerminalMessage{Type: "exit", Data: "Shell exited"})
+			return
+		case <-sub.Dropped():
+			// Output after what is queued will not reach this client: say so,
+			// so that it reconnects and resyncs from the replay.
+			drainAndSend(TerminalMessage{Type: "error", Data: terminalOutputDroppedReason})
+			return
 		}
 	}
 }

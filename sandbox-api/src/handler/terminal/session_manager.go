@@ -2,6 +2,7 @@ package terminal
 
 import (
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/sirupsen/logrus"
@@ -21,18 +22,46 @@ const (
 	// sessionIdleTimeout is how long a session with no connected clients stays alive.
 	sessionIdleTimeout = 10 * time.Minute
 
-	// Bound draining when a child keeps the PTY slave open after the shell exits.
-	shellDrainTimeout = 250 * time.Millisecond
+	// After the shell exits, the session ends once no output has been read for
+	// shellDrainTimeout, so that a child keeping the PTY slave open does not
+	// keep it alive. Output still being delivered to slow clients extends the
+	// drain, up to shellDrainMaxTimeout.
+	shellDrainTimeout    = 250 * time.Millisecond
+	shellDrainMaxTimeout = 30 * time.Second
 
 	// ansiReset resets all terminal text attributes. Prepended to buffer replays
 	// to avoid inheriting stale formatting from truncated escape sequences.
 	ansiReset = "\x1b[0m"
 )
 
+// subscriberLagTimeout is how long the PTY reader waits on a subscriber whose
+// channel is full before dropping it. Until then the reader blocks, so the
+// shell is throttled to the pace of its clients instead of losing output.
+// Longer than the handlers' write timeouts, so it only catches a client
+// that is stuck, not one on a slow link. A variable for tests.
+var subscriberLagTimeout = 15 * time.Second
+
 // Subscriber represents a connected WebSocket client receiving terminal output.
 type Subscriber struct {
-	Ch   chan []byte
-	done chan struct{}
+	Ch       chan []byte
+	done     chan struct{}
+	doneOnce sync.Once
+
+	// dropped is closed when the session stopped delivering to this
+	// subscriber because it did not keep up. Ch then holds the last output it
+	// will get, without gaps; the client must reconnect to resync.
+	dropped     chan struct{}
+	droppedOnce sync.Once
+}
+
+// Dropped returns a channel that is closed when output stopped being
+// delivered to this subscriber because it fell too far behind.
+func (sub *Subscriber) Dropped() <-chan struct{} {
+	return sub.dropped
+}
+
+func (sub *Subscriber) close() {
+	sub.doneOnce.Do(func() { close(sub.done) })
 }
 
 // ManagedSession wraps a TerminalSession with output buffering and lifecycle management.
@@ -62,6 +91,10 @@ type ManagedSession struct {
 	// Separate from bufMu to avoid nested locks.
 	activityMu   sync.Mutex
 	lastActivity time.Time
+
+	// Progress of readLoop, for draining after the shell exits.
+	delivering atomic.Bool
+	published  atomic.Uint64
 }
 
 func newManagedSession(id string, session *TerminalSession) *ManagedSession {
@@ -95,11 +128,21 @@ func (ms *ManagedSession) watchShellExit() {
 		logrus.Infof("Shell process exited for session %s, closing session", ms.ID)
 		// Let readLoop publish the shell's final output before ending the session.
 		// A background child may keep the PTY open indefinitely.
-		timer := time.NewTimer(shellDrainTimeout)
-		defer timer.Stop()
-		select {
-		case <-timer.C:
-		case <-ms.doneCh:
+		ticker := time.NewTicker(shellDrainTimeout)
+		defer ticker.Stop()
+		deadline := time.Now().Add(shellDrainMaxTimeout)
+		published := ms.published.Load()
+		for {
+			select {
+			case <-ticker.C:
+			case <-ms.doneCh:
+				return
+			}
+			n := ms.published.Load()
+			if (n == published && !ms.delivering.Load()) || time.Now().After(deadline) {
+				return
+			}
+			published = n
 		}
 	case <-ms.doneCh:
 	}
@@ -142,11 +185,18 @@ func (ms *ManagedSession) markDead() {
 	})
 }
 
-// publish appends data to the ring buffer and broadcasts it while holding
-// bufMu, so SubscribeWithReplay sees each chunk either in its snapshot or on
-// its channel, never both. broadcast never blocks, so the lock stays short.
+// publish appends data to the ring buffer and takes the list of subscribers
+// to deliver it to while holding bufMu, so SubscribeWithReplay sees each chunk
+// either in its snapshot or on its channel, never both. Delivery happens after
+// the lock is released, because it waits for slow subscribers.
 // No-op if the session is already dead: the buffer is immutable once dead == true.
 func (ms *ManagedSession) publish(data []byte) {
+	ms.delivering.Store(true)
+	defer func() {
+		ms.published.Add(1)
+		ms.delivering.Store(false)
+	}()
+
 	ms.bufMu.Lock()
 	if ms.dead {
 		ms.bufMu.Unlock()
@@ -171,8 +221,10 @@ func (ms *ManagedSession) publish(data []byte) {
 		}
 		ms.buffer = ms.buffer[cutPoint:]
 	}
-	ms.broadcast(data)
+	subs := ms.subscriberList()
 	ms.bufMu.Unlock()
+
+	ms.broadcast(subs, data)
 
 	// Update activity outside bufMu to avoid nested locks.
 	ms.activityMu.Lock()
@@ -201,28 +253,66 @@ func (ms *ManagedSession) bufferLocked() []byte {
 	return result
 }
 
-func (ms *ManagedSession) broadcast(data []byte) {
+func (ms *ManagedSession) subscriberList() []*Subscriber {
 	ms.subMu.RLock()
 	defer ms.subMu.RUnlock()
+	subs := make([]*Subscriber, 0, len(ms.subscribers))
 	for sub := range ms.subscribers {
+		subs = append(subs, sub)
+	}
+	return subs
+}
+
+// broadcast delivers data to every subscriber, waiting while a subscriber's
+// channel is full. The PTY is not read meanwhile, so the kernel buffer fills
+// and the shell blocks on write: output is throttled, never lost. A
+// subscriber that stays full for subscriberLagTimeout is dropped and told so.
+func (ms *ManagedSession) broadcast(subs []*Subscriber, data []byte) {
+	for _, sub := range subs {
+		select {
+		case sub.Ch <- data:
+			continue
+		case <-sub.done:
+			continue
+		case <-sub.dropped:
+			continue
+		case <-ms.doneCh:
+			return
+		default:
+		}
+
+		timer := time.NewTimer(subscriberLagTimeout)
 		select {
 		case sub.Ch <- data:
 		case <-sub.done:
-			// Subscriber is closing, skip
+		case <-sub.dropped:
 		case <-ms.doneCh:
-			// Session is dead, stop broadcasting
+			timer.Stop()
 			return
-		default:
-			// Channel full, drop data for this slow subscriber
+		case <-timer.C:
+			logrus.Warnf("Terminal session %s: subscriber did not read output for %v, dropping it", ms.ID, subscriberLagTimeout)
+			ms.drop(sub)
 		}
+		timer.Stop()
 	}
 }
 
+// drop stops delivering output to sub and signals it through Dropped.
+func (ms *ManagedSession) drop(sub *Subscriber) {
+	ms.subMu.Lock()
+	delete(ms.subscribers, sub)
+	ms.subMu.Unlock()
+	sub.droppedOnce.Do(func() { close(sub.dropped) })
+}
+
 // Subscribe registers a new subscriber to receive terminal output.
+// While a subscriber is attached, the session reads the PTY no faster than
+// the subscriber consumes Ch.
 func (ms *ManagedSession) Subscribe() *Subscriber {
 	sub := &Subscriber{
-		Ch:   make(chan []byte, subscriberChanSize),
-		done: make(chan struct{}),
+		Ch:      make(chan []byte, subscriberChanSize),
+		done:    make(chan struct{}),
+		dropped: make(chan struct{}),
 	}
 	ms.subMu.Lock()
 	ms.subscribers[sub] = struct{}{}
@@ -244,12 +334,8 @@ func (ms *ManagedSession) Unsubscribe(sub *Subscriber) {
 	delete(ms.subscribers, sub)
 	ms.subMu.Unlock()
 
-	// Signal subscriber goroutine to stop (idempotent via select).
-	select {
-	case <-sub.done:
-	default:
-		close(sub.done)
-	}
+	// Signal subscriber goroutine to stop, and release a broadcast waiting on it.
+	sub.close()
 
 	ms.activityMu.Lock()
 	ms.lastActivity = time.Now()
