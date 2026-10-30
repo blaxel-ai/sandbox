@@ -25,6 +25,19 @@ jobs:
       pull-requests: write
       actions: write
     steps:
+      # Triage can add labels; only someone who could push to develop themselves
+      # may deploy through it.
+      - name: Check sender can push
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SENDER: ${{ github.event.sender.login }}
+        run: |
+          perm=$(gh api "repos/$GITHUB_REPOSITORY/collaborators/$SENDER/permission" --jq .permission)
+          case "$perm" in
+            admin|write) ;;
+            *) echo "::error::$SENDER has '$perm' access, write is required"; exit 1 ;;
+          esac
+
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: develop
@@ -33,13 +46,16 @@ jobs:
       - name: Merge branch into develop
         id: merge
         env:
+          # The labeled commit, not the branch tip: a push after labeling is not deployed.
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           BRANCH: ${{ github.event.pull_request.head.ref }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           # --no-ff: build.yaml and release.yaml pick what to rebuild from HEAD^..HEAD,
           # so HEAD^ must be the previous develop.
-          if git merge --no-ff --no-edit "origin/$BRANCH"; then
+          git fetch origin "$HEAD_SHA"
+          if git merge --no-ff -m "Merge branch '$BRANCH' into develop" "$HEAD_SHA"; then
             echo "result=success" >> "$GITHUB_OUTPUT"
             echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
             if git diff --quiet HEAD^ HEAD -- sandbox-api/; then
