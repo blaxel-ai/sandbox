@@ -48,6 +48,13 @@ func NewTerminalHandler() *TerminalHandler {
 	}
 }
 
+// terminalOutputDroppedReason is sent, as an "error" message and as the close
+// reason, to a client that fell so far behind that output was dropped for it.
+// Reconnecting with the same sessionId replays the buffered output, which
+// holds only the last 100 KiB: enough to restore the screen, not to recover
+// everything that was missed.
+const terminalOutputDroppedReason = "output dropped: client too slow, reconnect to resync"
+
 // TerminalMessage represents a message to/from the terminal
 type TerminalMessage struct {
 	Type string `json:"type"` // "input", "output", "resize"
@@ -199,8 +206,8 @@ func (h *TerminalHandler) HandleTerminalWS(c *gin.Context) {
 		return
 	}
 
-	// Subscribe to terminal output
-	sub := ms.Subscribe()
+	// Subscribe to terminal output, with the history up to that point.
+	sub, buffered := ms.SubscribeWithReplay()
 
 	// Bound replay as well as subsequent output for unresponsive clients.
 	_ = conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
@@ -208,7 +215,6 @@ func (h *TerminalHandler) HandleTerminalWS(c *gin.Context) {
 	// Replay buffered output so the client sees the full terminal history.
 	// For a new session this is typically empty or just the initial prompt.
 	// For a reconnection this restores the terminal state.
-	buffered := ms.GetBuffer()
 	if len(buffered) > 0 {
 		_ = conn.WriteJSON(TerminalMessage{
 			Type: "output",
@@ -257,6 +263,35 @@ func (h *TerminalHandler) HandleTerminalWS(c *gin.Context) {
 			}
 			return conn.WriteJSON(TerminalMessage{Type: "output", Data: string(data)})
 		}
+		// drainAndClose writes the queued output, then closes the connection
+		// with code and reason. On shell exit the queue and the close frame
+		// share one deadline. When output was dropped, each queued write gets
+		// its own, so that a client on a slow link still receives the warning.
+		drainAndClose := func(code int, reason string) {
+			dropped := code != websocket.CloseNormalClosure
+			if !dropped {
+				closeDeadline = time.Now().Add(5 * time.Second)
+			}
+			for {
+				select {
+				case data := <-sub.Ch:
+					if err := writeOutput(data); err != nil {
+						return
+					}
+				default:
+					if dropped {
+						closeDeadline = time.Now().Add(5 * time.Second)
+						_ = conn.SetWriteDeadline(closeDeadline)
+						if err := conn.WriteJSON(TerminalMessage{Type: "error", Data: reason}); err != nil {
+							return
+						}
+					}
+					_ = conn.WriteControl(websocket.CloseMessage,
+						websocket.FormatCloseMessage(code, reason), closeDeadline)
+					return
+				}
+			}
+		}
 		for {
 			select {
 			case data, ok := <-sub.Ch:
@@ -269,22 +304,23 @@ func (h *TerminalHandler) HandleTerminalWS(c *gin.Context) {
 			case <-done:
 				return
 			case <-ms.Done():
-				closeDeadline = time.Now().Add(5 * time.Second)
+				// A subscriber is dropped before Done, never after: if both
+				// are ready, the client must still learn that output is missing.
+				select {
+				case <-sub.Dropped():
+					drainAndClose(websocket.CloseTryAgainLater, terminalOutputDroppedReason)
+					return
+				default:
+				}
 				// No more output is published after Done. Drain queued output
 				// before signalling normal session completion.
-				for {
-					select {
-					case data := <-sub.Ch:
-						if err := writeOutput(data); err != nil {
-							return
-						}
-					default:
-						_ = conn.WriteControl(websocket.CloseMessage,
-							websocket.FormatCloseMessage(websocket.CloseNormalClosure, "Shell exited"),
-							closeDeadline)
-						return
-					}
-				}
+				drainAndClose(websocket.CloseNormalClosure, "Shell exited")
+				return
+			case <-sub.Dropped():
+				// Output after what is queued will not reach this client: say
+				// so, so that it reconnects and resyncs from the replay.
+				drainAndClose(websocket.CloseTryAgainLater, terminalOutputDroppedReason)
+				return
 			}
 		}
 	}()

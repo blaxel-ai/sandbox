@@ -169,4 +169,28 @@ func TestTerminalInput_Errors(t *testing.T) {
 	if code := postTerminalInput(t, srv, sessionID, big); code != http.StatusRequestEntityTooLarge {
 		t.Errorf("oversized body: want 413, got %d", code)
 	}
+	padded := `{"type":"input","data":"x"}` + strings.Repeat(" ", terminalInputMaxBytes)
+	if code := postTerminalInput(t, srv, sessionID, padded); code != http.StatusRequestEntityTooLarge {
+		t.Errorf("oversized body after a valid message: want 413, got %d", code)
+	}
+}
+
+func TestSplitIncompleteUTF8(t *testing.T) {
+	euro := []byte("€") // 3 bytes
+	cases := []struct {
+		in, complete, rest []byte
+	}{
+		{[]byte("abc"), []byte("abc"), nil},
+		{append([]byte("a"), euro...), append([]byte("a"), euro...), nil},
+		{append([]byte("a"), euro[:1]...), []byte("a"), euro[:1]},
+		{append([]byte("a"), euro[:2]...), []byte("a"), euro[:2]},
+		{euro[1:], euro[1:], nil}, // stray continuation bytes are not held back
+		{nil, nil, nil},
+	}
+	for _, tc := range cases {
+		complete, rest := splitIncompleteUTF8(tc.in)
+		if !bytes.Equal(complete, tc.complete) || !bytes.Equal(rest, tc.rest) {
+			t.Errorf("splitIncompleteUTF8(%q) = %q, %q; want %q, %q", tc.in, complete, rest, tc.complete, tc.rest)
+		}
+	}
 }
