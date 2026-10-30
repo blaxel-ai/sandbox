@@ -20,20 +20,21 @@ func TestTerminalWS_SlowClientGetsAllOutput(t *testing.T) {
 	srv := httptest.NewServer(r)
 	t.Cleanup(srv.Close)
 
-	url := "ws" + strings.TrimPrefix(srv.URL, "http") + "/terminal/ws?sessionId=ws-slow-" + t.Name()
+	url := "ws" + strings.TrimPrefix(srv.URL, "http") + "/terminal/ws?shell=/bin/sh&sessionId=ws-slow-" + t.Name()
 	conn, _, err := websocket.DefaultDialer.Dial(url, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer conn.Close()
 
-	// Enough output to fill the socket buffers and the subscriber channel.
-	const last = 200000
-	cmd := fmt.Sprintf("stty -echo; seq 1 %d; exit\r", last)
+	// 6.9 MB: more than the socket buffers and the subscriber channel hold.
+	// Below 1000000, which BSD seq prints as 1e+06.
+	const last = 999999
+	cmd := fmt.Sprintf("stty -echo; seq 1 %d; exit\n", last)
 	if err := conn.WriteJSON(TerminalMessage{Type: "input", Data: cmd}); err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(2 * time.Second)
+	time.Sleep(3 * time.Second)
 
 	var out strings.Builder
 	_ = conn.SetReadDeadline(time.Now().Add(60 * time.Second))
@@ -41,7 +42,7 @@ func TestTerminalWS_SlowClientGetsAllOutput(t *testing.T) {
 		var msg TerminalMessage
 		if err := conn.ReadJSON(&msg); err != nil {
 			if !websocket.IsCloseError(err, websocket.CloseNormalClosure) {
-				t.Fatalf("read: %v", err)
+				t.Fatalf("read after %d bytes: %v", out.Len(), err)
 			}
 			break
 		}

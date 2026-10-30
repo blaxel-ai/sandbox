@@ -19,9 +19,11 @@ terminate that shell; sessions without clients expire after ten minutes idle.
 Output draining is bounded: after the shell exits, the server closes a PTY
 still held by a background child once no output has been read for 250 ms.
 Output still being delivered to a slow client extends this, up to 30 seconds.
-The final WebSocket output queue and close frame share a five-second write
-deadline. A stalled client may therefore lose pending output and observe an
-abnormal transport closure instead of the normal close frame.
+Every WebSocket write, including the remaining output and the close frame,
+must complete within five seconds. A client that keeps reading gets all of it,
+however far behind it is; a client that stops reading for five seconds is
+disconnected, and observes an abnormal transport closure instead of the normal
+close frame.
 
 ## Slow clients
 

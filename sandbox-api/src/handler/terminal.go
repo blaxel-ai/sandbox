@@ -247,26 +247,21 @@ func (h *TerminalHandler) HandleTerminalWS(c *gin.Context) {
 			closeDone()
 		}()
 
-		var closeDeadline time.Time
-		writeOutput := func(data []byte) error {
-			deadline := closeDeadline
-			if deadline.IsZero() {
-				deadline = time.Now().Add(5 * time.Second)
-			}
-			if err := conn.SetWriteDeadline(deadline); err != nil {
+		// Every write gets its own deadline: a client that keeps reading is
+		// never cut off, however far behind it is; one that stops is.
+		writeMessage := func(msg TerminalMessage) error {
+			if err := conn.SetWriteDeadline(time.Now().Add(5 * time.Second)); err != nil {
 				return err
 			}
-			return conn.WriteJSON(TerminalMessage{Type: "output", Data: string(data)})
+			return conn.WriteJSON(msg)
+		}
+		writeOutput := func(data []byte) error {
+			return writeMessage(TerminalMessage{Type: "output", Data: string(data)})
 		}
 		// drainAndClose writes the queued output, then closes the connection
-		// with code and reason. On shell exit the queue and the close frame
-		// share one deadline. When output was dropped, each queued write gets
-		// its own, so that a client on a slow link still receives the warning.
+		// with code and reason, preceded by an "error" message unless the
+		// shell exited normally.
 		drainAndClose := func(code int, reason string) {
-			dropped := code != websocket.CloseNormalClosure
-			if !dropped {
-				closeDeadline = time.Now().Add(5 * time.Second)
-			}
 			for {
 				select {
 				case data := <-sub.Ch:
@@ -274,15 +269,13 @@ func (h *TerminalHandler) HandleTerminalWS(c *gin.Context) {
 						return
 					}
 				default:
-					if dropped {
-						closeDeadline = time.Now().Add(5 * time.Second)
-						_ = conn.SetWriteDeadline(closeDeadline)
-						if err := conn.WriteJSON(TerminalMessage{Type: "error", Data: reason}); err != nil {
+					if code != websocket.CloseNormalClosure {
+						if err := writeMessage(TerminalMessage{Type: "error", Data: reason}); err != nil {
 							return
 						}
 					}
 					_ = conn.WriteControl(websocket.CloseMessage,
-						websocket.FormatCloseMessage(code, reason), closeDeadline)
+						websocket.FormatCloseMessage(code, reason), time.Now().Add(5*time.Second))
 					return
 				}
 			}
