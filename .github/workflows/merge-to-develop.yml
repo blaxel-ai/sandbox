@@ -70,7 +70,8 @@ jobs:
 
       - name: Push to develop
         if: steps.merge.outputs.result == 'success'
-        run: git push origin develop
+        # A `develop` tag also exists here: name the branch ref, or the push is ambiguous.
+        run: git push origin HEAD:refs/heads/develop
 
       # A GITHUB_TOKEN push does not trigger other workflows, so dispatch the
       # develop builds that a push would have run and wait for them.
