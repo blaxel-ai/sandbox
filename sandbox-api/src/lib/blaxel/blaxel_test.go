@@ -117,7 +117,7 @@ func TestRequestStandby(t *testing.T) {
 	if err := RequestStandby(); err != nil {
 		t.Fatalf("RequestStandby() = %v", err)
 	}
-	if content, err := os.ReadFile(standbyFile); err != nil || string(content) != "1" {
-		t.Errorf("standby file = %q (%v), want \"1\"", content, err)
+	if content, err := os.ReadFile(standbyFile); err != nil || string(content) != "+" {
+		t.Errorf("standby file = %q (%v), want \"+\"", content, err)
 	}
 }

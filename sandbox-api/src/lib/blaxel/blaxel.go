@@ -19,7 +19,7 @@ const (
 	EnvDisableKeepAlive = "BL_DISABLE_KEEPALIVE"
 
 	// EnvStandbyNowFile is the path of the host file that forces a standby
-	// when anything is written to it.
+	// when "+" is written to it ("-" or an empty write asks nothing).
 	EnvStandbyNowFile = "BLAXEL_STANDBY_NOW_FILE"
 )
 
@@ -254,7 +254,7 @@ func RequestStandby() error {
 	if err != nil {
 		return err
 	}
-	_, err = f.WriteString("1")
+	_, err = f.WriteString("+")
 	if cerr := f.Close(); err == nil {
 		err = cerr
 	}
