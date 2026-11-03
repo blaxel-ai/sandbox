@@ -179,6 +179,19 @@ var (
 // the host pauses it.
 var standbyDelay = 100 * time.Millisecond
 
+// HandleResume handles POST requests to /resume
+// @Summary Resume the sandbox
+// @Description Wakes a sandbox in standby: like any request, it resumes the sandbox before it is answered.
+// @Description Answers right away when the sandbox is already running.
+// @Tags system
+// @Produce json
+// @Success 200 {object} SuccessResponse "Sandbox is running"
+// @Router /resume [post]
+func (h *SystemHandler) HandleResume(c *gin.Context) {
+	// ponytail: the host wakes the VM for the request itself, nothing to do here.
+	h.SendJSON(c, http.StatusOK, SuccessResponse{Message: "Sandbox is running"})
+}
+
 // HandleStandby handles POST requests to /standby
 // @Summary Put the sandbox in standby
 // @Description Asks the host to put the sandbox in standby right away instead of waiting for it to be idle.

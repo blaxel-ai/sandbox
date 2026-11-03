@@ -2088,6 +2088,26 @@ const docTemplate = `{
                 }
             }
         },
+        "/resume": {
+            "post": {
+                "description": "Wakes a sandbox in standby: like any request, it resumes the sandbox before it is answered.\nAnswers right away when the sandbox is already running.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "system"
+                ],
+                "summary": "Resume the sandbox",
+                "responses": {
+                    "200": {
+                        "description": "Sandbox is running",
+                        "schema": {
+                            "$ref": "#/definitions/SuccessResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/standby": {
             "post": {
                 "description": "Asks the host to put the sandbox in standby right away instead of waiting for it to be idle.\nReturns 202 before the standby happens; the connection is closed and the sandbox pauses shortly after.\nRefused while a keepAlive process or an archive operation holds the sandbox awake.",

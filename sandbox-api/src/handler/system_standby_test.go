@@ -64,3 +64,14 @@ func TestHandleStandbyRefuses(t *testing.T) {
 		}
 	}
 }
+
+func TestHandleResume(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/resume", nil)
+	NewSystemHandler().HandleResume(c)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+}
