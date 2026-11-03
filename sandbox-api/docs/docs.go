@@ -2142,7 +2142,7 @@ const docTemplate = `{
         },
         "/upgrade": {
             "post": {
-                "description": "Triggers an upgrade of the sandbox-api process. Returns 200 immediately before upgrading.\nThe upgrade will: download the specified binary from GitHub releases, validate it, and restart.\nAll running processes will be preserved across the upgrade.\nAvailable versions: \"latest\" (default, most recent release), \"develop\", \"main\", or specific tag like \"v1.0.0\"\nYou can also specify a custom baseUrl for forks (defaults to https://github.com/blaxel-ai/sandbox/releases)",
+                "description": "Triggers an upgrade of the sandbox-api process. Returns 200 immediately before upgrading.\nThe upgrade will: download the specified binary from GitHub releases, validate it, and restart.\nAll running processes will be preserved across the upgrade.\nAvailable versions: \"latest\" (default, most recent release), \"develop\", \"main\", or specific tag like \"v1.0.0\"\nBinaries are downloaded from https://github.com/blaxel-ai/sandbox/releases; requests with a baseUrl are rejected.\nReleases that still accepted a baseUrl are refused, and the refusal is reported in the health endpoint's lastUpgrade.",
                 "consumes": [
                     "application/json"
                 ],
@@ -2168,6 +2168,12 @@ const docTemplate = `{
                         "description": "Upgrade initiated",
                         "schema": {
                             "$ref": "#/definitions/SuccessResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid version or baseUrl",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
                         }
                     },
                     "500": {
@@ -3471,12 +3477,11 @@ const docTemplate = `{
             "type": "object",
             "properties": {
                 "baseUrl": {
-                    "description": "Base URL for releases (useful for forks)",
-                    "type": "string",
-                    "example": "https://github.com/blaxel-ai/sandbox/releases"
+                    "description": "Deprecated: custom binary sources are not accepted",
+                    "type": "string"
                 },
                 "version": {
-                    "description": "Version to upgrade to: \"latest\" (default), \"develop\", \"main\", or specific tag like \"v1.0.0\"",
+                    "description": "Version to upgrade to: \"latest\" (default), \"develop\", \"main\", or a release tag like \"v1.0.0\"",
                     "type": "string",
                     "example": "latest"
                 }
