@@ -1797,6 +1797,22 @@ paths:
       summary: Write to a process's stdin
       tags:
         - process
+  /resume:
+    post:
+      description: >-
+        Wakes a sandbox in standby: like any request, it resumes the sandbox before it is answered.
+
+        Answers right away when the sandbox is already running.
+      responses:
+        "200":
+          description: Sandbox is running
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+      summary: Resume the sandbox
+      tags:
+        - system
   /standby:
     post:
       description: >-

@@ -214,6 +214,7 @@ func SetupRouter(disableRequestLogging bool, enableProcessingTime bool) *gin.Eng
 	r.POST("/upgrade", systemHandler.HandleUpgrade)
 	r.HEAD("/upgrade", head)
 	r.POST("/standby", systemHandler.HandleStandby)
+	r.POST("/resume", systemHandler.HandleResume)
 	r.GET("/health", systemHandler.HandleHealth)
 	r.HEAD("/health", head)
 
