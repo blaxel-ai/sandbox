@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 
 	"github.com/sirupsen/logrus"
 )
@@ -159,9 +160,10 @@ func capLogFile(path string, max int64) {
 	}
 
 	// Keep a whole cap's worth of tail, and only punch entire pages: a partial
-	// page cannot be freed anyway.
+	// page cannot be freed anyway. A head released by an earlier pass already
+	// left the file at its share, so there is nothing more to free.
 	head := (stat.Size() - max) & ^int64(pageSize-1)
-	if head <= 0 {
+	if head <= 0 || residentBytes(stat) <= max+int64(pageSize) {
 		return
 	}
 
@@ -179,6 +181,19 @@ func capLogFile(path string, max int64) {
 }
 
 var pageSize = os.Getpagesize()
+
+// residentBytes is how much of a log file actually holds memory. A released head
+// keeps the file's apparent size, so that writers keep their offsets, but no
+// longer costs the guest anything: budgeting by apparent size would charge a
+// finished process for output that is already gone.
+func residentBytes(info os.FileInfo) int64 {
+	if st, ok := info.Sys().(*syscall.Stat_t); ok {
+		if allocated := int64(st.Blocks) * 512; allocated < info.Size() {
+			return allocated
+		}
+	}
+	return info.Size()
+}
 
 // MaxInlinedLogBytes is how much of a process' output GET /process inlines per
 // stream, per process: enough to be useful, small enough that listing a hundred

@@ -359,6 +359,40 @@ func TestCapLogFilesKeepsABusyProcessNextToManyFinishedOnes(t *testing.T) {
 	}
 }
 
+// A released head keeps the file's apparent size; only what is still resident
+// may count against the budget, or finished processes whose output was already
+// capped keep squeezing the running ones.
+func TestCapLogFilesBudgetsReleasedFilesByWhatTheyStillHold(t *testing.T) {
+	t.Setenv("SANDBOX_MAX_LOG_BYTES_TOTAL", fmt.Sprint(100*1024*1024))
+	pm := NewProcessManager()
+	dir := t.TempDir()
+
+	pm.mu.Lock()
+	for i := 0; i < 300; i++ {
+		path := filepath.Join(dir, fmt.Sprintf("done-%d.log", i))
+		if err := os.WriteFile(path, []byte(strings.Repeat("d", 1024*1024)), 0644); err != nil {
+			t.Fatal(err)
+		}
+		capLogFile(path, minLogFileBytes)
+		if i == 0 && diskUsage(t, path) >= 1024*1024 {
+			pm.mu.Unlock()
+			t.Skip("this filesystem cannot release a file's head")
+		}
+		id := fmt.Sprint(i)
+		pm.processes[id] = &ProcessInfo{PID: id, LogFile: path}
+	}
+	busy := filepath.Join(dir, "busy.log")
+	if err := os.WriteFile(busy, []byte(strings.Repeat("e", 1024*1024)), 0644); err != nil {
+		t.Fatal(err)
+	}
+	pm.processes["busy"] = &ProcessInfo{PID: "busy", LogFile: busy}
+	pm.mu.Unlock()
+
+	if share := pm.CapLogFiles(); share < 1024*1024 {
+		t.Errorf("share = %d, want the busy process' 1 MiB kept whole", share)
+	}
+}
+
 func TestReadLogTailMissingFile(t *testing.T) {
 	if _, ok := readLogTail(filepath.Join(t.TempDir(), "absent.log"), 1024); ok {
 		t.Error("readLogTail reported success for a file that does not exist")

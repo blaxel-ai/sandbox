@@ -1075,7 +1075,7 @@ func (pm *ProcessManager) CapLogFiles() int64 {
 				continue
 			}
 			paths = append(paths, path)
-			sizes = append(sizes, info.Size())
+			sizes = append(sizes, residentBytes(info))
 		}
 	}
 
