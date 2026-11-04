@@ -33,6 +33,7 @@ func (p *ProcessInfo) SupportsStructuredLogs() bool { return p.LogFormat == stru
 // []byte is base64 in JSON, preserving arbitrary output including split UTF-8.
 // Offsets allow recovery after a state snapshot without replaying collected bytes.
 type logRecord struct {
+	Incomplete    bool   `json:"incomplete,omitempty"`
 	RawText       bool   `json:"rawText,omitempty"`
 	Type          string `json:"type"`
 	Data          []byte `json:"data"`
@@ -77,19 +78,35 @@ func writeStreamGap(w io.Writer) {
 // readLogRecords bounds both total replay and record size. Seeking or hole
 // punching can cut a record: discard it, never infer its source from raw text.
 func readLogRecords(path string, end, max int64, emit func(logRecord), gap func()) error {
-	f, err := os.Open(path)
+	originalEmit := emit
+	reportedIncomplete := false
+	emit = func(r logRecord) {
+		if r.Incomplete && !reportedIncomplete {
+			gap()
+			reportedIncomplete = true
+		}
+		originalEmit(r)
+	}
+	f, truncated, err := openLogTail(path, 0)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
-	start := int64(0)
-	if max > 0 && end > max {
+	start, err := f.Seek(0, io.SeekCurrent)
+	if err != nil {
+		return err
+	}
+	if max > 0 && end-max > start {
 		start = end - max
 	}
 	if _, err = f.Seek(start, io.SeekStart); err != nil {
 		return err
 	}
-	reader := bufio.NewReader(io.LimitReader(f, end-start))
+	remaining := end - start
+	if remaining < 0 {
+		remaining = 0
+	}
+	reader := bufio.NewReader(io.LimitReader(retainedReader{f}, remaining))
 	zeroHead := false
 	for {
 		chunk, _ := reader.Peek(reader.Size())
@@ -104,7 +121,7 @@ func readLogRecords(path string, end, max int64, emit func(logRecord), gap func(
 	}
 	s := bufio.NewScanner(reader)
 	s.Buffer(make([]byte, 4096), maxStructuredRecordBytes)
-	skip := start > 0 || zeroHead
+	skip := start > 0 || zeroHead || truncated
 	if skip {
 		var prev [1]byte
 		if !zeroHead {
@@ -135,9 +152,17 @@ func readLogRecords(path string, end, max int64, emit func(logRecord), gap func(
 		}
 		var r logRecord
 		if err := json.Unmarshal(line, &r); err != nil || !validLogRecord(r) {
+			if errors.Is(s.Err(), errLogRetentionGap) {
+				gap()
+				return nil
+			}
 			return fmt.Errorf("invalid structured log record")
 		}
 		emit(r)
+	}
+	if errors.Is(s.Err(), errLogRetentionGap) {
+		gap()
+		return nil
 	}
 	return s.Err()
 }
@@ -159,6 +184,7 @@ func restoreStructuredPosition(p *ProcessInfo) bool {
 		return false
 	}
 	if last != nil {
+		p.logIncomplete = p.logIncomplete || last.Incomplete
 		restoreCollectedOffset(p.stdout, last.StdoutOffset)
 		restoreCollectedOffset(p.stderr, last.StderrOffset)
 		p.stdoutMidLine = last.StdoutMidLine
@@ -178,7 +204,7 @@ func restoreStructuredPosition(p *ProcessInfo) bool {
 // persistLogRecord runs under logLock, matching writer attachment with durable ordering.
 func (p *ProcessInfo) persistLogRecord(file *os.File, kind string, data []byte, lineStart bool, rawText ...bool) {
 	rawNotice := len(rawText) > 0 && rawText[0]
-	raw, _ := json.Marshal(logRecord{RawText: rawNotice, Type: kind, Data: data, LineStart: lineStart, StdoutOffset: p.stdout.Len(), StderrOffset: p.stderr.Len(), StdoutMidLine: p.stdoutMidLine, StderrMidLine: p.stderrMidLine})
+	raw, _ := json.Marshal(logRecord{Incomplete: p.logIncomplete, RawText: rawNotice, Type: kind, Data: data, LineStart: lineStart, StdoutOffset: p.stdout.Len(), StderrOffset: p.stderr.Len(), StdoutMidLine: p.stdoutMidLine, StderrMidLine: p.stderrMidLine})
 	raw = append(raw, '\n')
 	var err error
 	if file == nil {

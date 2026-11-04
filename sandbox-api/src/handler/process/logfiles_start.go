@@ -16,6 +16,10 @@ func openProcessLogFiles(paths ...string) ([]*os.File, error) {
 			return nil, fmt.Errorf("failed to create process log file: %w", err)
 		}
 		files = append(files, file)
+		if err := initializeLogRetention(file); err != nil {
+			cleanupProcessLogFiles(files, true)
+			return nil, fmt.Errorf("failed to initialize process log retention: %w", err)
+		}
 	}
 	return files, nil
 }
@@ -24,10 +28,11 @@ func openProcessLogFiles(paths ...string) ([]*os.File, error) {
 // Until spawn succeeds, every created file must also be removed.
 func cleanupProcessLogFiles(files []*os.File, remove bool) {
 	for _, file := range files {
-		_ = file.Close()
 		if remove {
+			removeLogRetention(file)
 			_ = os.Remove(file.Name())
 		}
+		_ = file.Close()
 	}
 }
 

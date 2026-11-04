@@ -430,7 +430,8 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 	started := false
 	defer func() { cleanupProcessLogFiles(logFiles, !started) }()
 	stdoutFile, stderrFile := logFiles[0], logFiles[1]
-	_ = logFiles[2].Close()
+	// Keep the combined descriptor until deferred cleanup can validate its
+	// retention metadata if spawning fails. It is not inherited by the child.
 
 	process := &ProcessInfo{
 		Name:             name,
@@ -656,7 +657,11 @@ func (p *ProcessInfo) midLine(streamType string) bool {
 // readAndBroadcast reads from a file and broadcasts to log writers.
 // Returns the number of bytes read.
 func (pm *ProcessManager) readAndBroadcast(file *os.File, buf []byte, proc *ProcessInfo, streamType string, combinedFile *os.File) int {
-	n, err := file.Read(buf)
+	read, err := readRetained(file, buf)
+	n := read.n
+	if read.skipped || (err != nil && err != io.EOF) {
+		proc.recordLogGap(streamType, read)
+	}
 	if n > 0 {
 		data := buf[:n]
 		proc.logLock.Lock()
@@ -1230,11 +1235,14 @@ func (pm *ProcessManager) StreamProcessOutputForProcess(process *ProcessInfo, w 
 				if havePending {
 					emit(pendingLine, false)
 				}
-				pendingLine = strings.TrimLeft(scanner.Text(), "\x00")
+				pendingLine = scanner.Text()
 				havePending = true
 			}
 			if havePending {
 				emit(pendingLine, true)
+			}
+			if scanner.Err() != nil {
+				writeStreamGap(w)
 			}
 			file.Close()
 		}
