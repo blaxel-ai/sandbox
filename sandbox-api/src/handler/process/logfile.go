@@ -3,6 +3,7 @@ package process
 import (
 	"io"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -68,34 +69,40 @@ func logBudget() int64 {
 	return total * percent / 100
 }
 
-// logFilesPerProcess is how many log files each process keeps: stdout, stderr
-// and the combined one.
-const logFilesPerProcess = 3
-
-// perFileBudget is what one log file may keep when that many processes are
-// sharing the budget. 0 means capping is disabled.
-func perFileBudget(processes int) int64 {
+// fileShare is what one log file may keep when log files of these sizes share
+// the budget. The split is max-min fair: a file holding less than an equal share
+// keeps all of it and leaves the rest to the files that need more. An even split
+// per process let a sandbox that had run a few hundred short commands squeeze a
+// long-lived process down to the floor, although those finished processes'
+// files held almost nothing. 0 means capping is disabled.
+func fileShare(sizes []int64) int64 {
 	max := maxLogFile()
 	if max == 0 {
 		return 0
 	}
-	if processes < 1 {
-		processes = 1
-	}
-
 	budget := logBudget()
 	if budget == 0 {
 		return max
 	}
 
-	share := budget / int64(processes*logFilesPerProcess)
+	sorted := slices.Sorted(slices.Values(sizes))
+	share := max
+	left := budget
+	for i, size := range sorted {
+		equal := left / int64(len(sorted)-i)
+		if size > equal {
+			share = equal
+			break
+		}
+		left -= size
+	}
 	if share < minLogFileBytes {
 		share = minLogFileBytes
 	}
-	if share < max {
-		return share
+	if share > max {
+		share = max
 	}
-	return max
+	return share
 }
 
 // memTotalBytes is the guest's total memory, or 0 when it cannot be read. Read
@@ -122,9 +129,9 @@ var memTotalBytes = sync.OnceValue(func() int64 {
 	return 0
 })
 
-// capLogFile releases the head of an oversized log file, keeping the tail its
-// share of the budget allows readable. processes is how many processes are
-// sharing that budget.
+// capLogFile releases the head of an oversized log file, keeping its last max
+// bytes readable. max is the file's share of the budget, from fileShare; 0
+// leaves the file alone.
 //
 // The workload writes to these files itself, through a file descriptor this
 // process does not have (that is what lets it survive an API restart), so the
@@ -135,9 +142,8 @@ var memTotalBytes = sync.OnceValue(func() int64 {
 // reads back as zero bytes, so it must always stay behind what readers ask for
 // - hence the tail is kept whole and only the head, rounded down to a page
 // boundary, is released.
-func capLogFile(path string, processes int) {
-	max := perFileBudget(processes)
-	if path == "" || max == 0 {
+func capLogFile(path string, max int64) {
+	if path == "" || max <= 0 {
 		return
 	}
 
