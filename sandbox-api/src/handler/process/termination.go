@@ -128,6 +128,12 @@ func (pm *ProcessManager) waitForRun(p *ProcessInfo, cmd *exec.Cmd, callback fun
 		p.stopTimeoutOnce.Do(func() { close(p.stopTimeout) })
 	}
 	pm.mu.Unlock()
+	pm.restartOrFinish(p, restart, callback)
+}
+
+// restartOrFinish ends a run whose outcome is already published: the process
+// is brought back when restart is set, and finished for good otherwise.
+func (pm *ProcessManager) restartOrFinish(p *ProcessInfo, restart bool, callback func(*ProcessInfo)) {
 	if !restart {
 		pm.finishProcess(p, callback)
 		return
