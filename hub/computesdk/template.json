@@ -1,0 +1,20 @@
+{
+  "name": "computesdk-image",
+  "displayName": "ComputeSDK",
+  "categories": [],
+  "description": "Sandbox environment with the ComputeSDK compute runtime pre-installed",
+  "longDescription": "A Blaxel sandbox image with the ComputeSDK compute runtime pre-installed. The compute daemon is started automatically during sandbox creation via the gateway provider.",
+  "memory": 4096,
+  "ports": [
+    {
+      "name": "sandbox-api",
+      "target": 8080,
+      "protocol": "HTTP"
+    },
+    {
+      "name": "compute",
+      "target": 18080,
+      "protocol": "HTTP"
+    }
+  ]
+}
