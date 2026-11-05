@@ -200,22 +200,31 @@ func (id *Identity) Credential() *syscall.Credential {
 	}
 }
 
-// DecorateEnv overrides the identity-related variables of an environment slice
-// so a spawned process sees a coherent HOME/USER/LOGNAME.
+// apiOnlyEnv holds variables meant for sandbox-api alone (see
+// process/callback.go). A workload holding the callback secret could forge
+// signed process.exited webhooks.
+var apiOnlyEnv = map[string]bool{
+	"BL_PROCESS_CALLBACK_SECRET": true,
+	"BL_PROCESS_CALLBACK_URL":    true,
+}
+
+// DecorateEnv prepares sandbox-api's environment for a spawned process: it
+// drops API-only variables and overrides the identity-related ones so the
+// process sees a coherent HOME/USER/LOGNAME. Every spawn path goes through it.
 func (id *Identity) DecorateEnv(env []string) []string {
-	if id == nil {
-		return env
-	}
-	overrides := map[string]string{
-		"HOME":    id.Home,
-		"USER":    id.Name,
-		"LOGNAME": id.Name,
+	var overrides map[string]string
+	if id != nil {
+		overrides = map[string]string{
+			"HOME":    id.Home,
+			"USER":    id.Name,
+			"LOGNAME": id.Name,
+		}
 	}
 	out := make([]string, 0, len(env)+len(overrides))
 	for _, kv := range env {
 		key, _, ok := strings.Cut(kv, "=")
 		if ok {
-			if _, replaced := overrides[key]; replaced {
+			if _, replaced := overrides[key]; replaced || apiOnlyEnv[key] {
 				continue
 			}
 		}

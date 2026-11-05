@@ -114,6 +114,7 @@ type ProcessInfo struct {
 
 	terminationRequested constants.ProcessStatus // Protected by ProcessManager.mu.
 	runExited            bool                    // Wait has returned; no live OS process may be signalled.
+	skipExitWebhook      bool                    // Protected by ProcessManager.mu; an archive stops it to relaunch it elsewhere.
 
 	WorkingDir string `json:"workingDir"`
 
@@ -383,12 +384,12 @@ func (pm *ProcessManager) StartProcess(command string, workingDir string, env ma
 }
 
 func (pm *ProcessManager) StartProcessWithName(command string, workingDir string, name string, env map[string]string, restartOnFailure bool, maxRestarts int, keepAlive bool, timeout int, stdin bool, callback func(process *ProcessInfo)) (string, error) {
-	return pm.startProcess(command, workingDir, name, env, restartOnFailure, maxRestarts, keepAlive, timeout, stdin, "", callback)
+	return pm.StartProcessWithCallbackURL(command, workingDir, name, env, restartOnFailure, maxRestarts, keepAlive, timeout, stdin, "", callback)
 }
 
-// startProcess takes callbackURL before the process exists, so an exit cannot
-// race the URL being set.
-func (pm *ProcessManager) startProcess(command string, workingDir string, name string, env map[string]string, restartOnFailure bool, maxRestarts int, keepAlive bool, timeout int, stdin bool, callbackURL string, callback func(process *ProcessInfo)) (string, error) {
+// StartProcessWithCallbackURL takes callbackURL before the process exists, so
+// an exit cannot race the URL being set.
+func (pm *ProcessManager) StartProcessWithCallbackURL(command string, workingDir string, name string, env map[string]string, restartOnFailure bool, maxRestarts int, keepAlive bool, timeout int, stdin bool, callbackURL string, callback func(process *ProcessInfo)) (string, error) {
 	cmd, releaseScript, err := shellCommand(command)
 	if err != nil {
 		return "", err

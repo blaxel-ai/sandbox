@@ -15,6 +15,7 @@ import (
 	"os"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/sirupsen/logrus"
@@ -36,7 +37,23 @@ var (
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
 	callbackSecretWarning sync.Once
+	exitWebhooksDisabled  atomic.Bool
 )
+
+// DisableExitWebhooks turns exit webhooks off for this instance. The upgrade
+// validation instance adopts the same processes as the live one, and clearing
+// its env is not enough: startup reloads the secret from the host.
+func DisableExitWebhooks() { exitWebhooksDisabled.Store(true) }
+
+// SkipExitWebhook marks a process whose coming stop is not the end of it (an
+// archive stops it to relaunch it elsewhere), so the stop sends no webhook.
+func (pm *ProcessManager) SkipExitWebhook(identifier string) {
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+	if p := pm.lookupProcessLocked(identifier); p != nil {
+		p.skipExitWebhook = true
+	}
+}
 
 type exitEvent struct {
 	Type        string                  `json:"type"`
@@ -82,6 +99,9 @@ type exitCallback struct {
 // exitCallbackLocked snapshots p (caller holds pm.mu) into the webhook for its
 // final exit, or nil when none is configured. Call only on a final exit.
 func exitCallbackLocked(p *ProcessInfo) *exitCallback {
+	if p.skipExitWebhook || exitWebhooksDisabled.Load() {
+		return nil
+	}
 	target := p.CallbackURL
 	if target == "" {
 		target = os.Getenv("BL_PROCESS_CALLBACK_URL")

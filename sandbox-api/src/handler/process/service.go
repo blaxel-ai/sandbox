@@ -140,7 +140,7 @@ func (pm *ProcessManager) ExecuteProcessWithCallback(
 	if name == "" {
 		name = GenerateRandomName(8)
 	}
-	pid, err = pm.startProcess(command, workingDir, name, env, restartOnFailure, maxRestarts, keepAlive, timeout, stdin, callbackURL, callback)
+	pid, err = pm.StartProcessWithCallbackURL(command, workingDir, name, env, restartOnFailure, maxRestarts, keepAlive, timeout, stdin, callbackURL, callback)
 	if err != nil {
 		return nil, fmt.Errorf("failed to start process: %w", err)
 	}

@@ -5,6 +5,9 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"os/exec"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -269,5 +272,119 @@ func TestWebhookHoldTakenBeforeKeepAliveRelease(t *testing.T) {
 	}
 	if got := holds.Load(); got != 0 {
 		t.Fatalf("holds = %d after delivery, want 0", got)
+	}
+}
+
+// A workload holding the secret could forge signed webhooks.
+func TestWorkloadDoesNotInheritCallbackEnv(t *testing.T) {
+	originalLogDir := ProcessLogDir
+	ProcessLogDir = t.TempDir()
+	t.Cleanup(func() { ProcessLogDir = originalLogDir })
+	t.Setenv("BL_PROCESS_CALLBACK_SECRET", "top-secret")
+	t.Setenv("BL_PROCESS_CALLBACK_URL", "http://127.0.0.1:1/hook")
+	fakeHolds(t, nil)
+
+	pm := NewProcessManager()
+	proc, err := pm.ExecuteProcess(`sh -c 'echo "[${BL_PROCESS_CALLBACK_SECRET:-none}|${BL_PROCESS_CALLBACK_URL:-none}]"'`,
+		"", "env-check", nil, true, 30, nil, false, 0, false, false)
+	if err != nil {
+		t.Fatalf("running process: %v", err)
+	}
+	out, err := pm.GetProcessOutput(proc.PID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.Stdout, "[none|none]") {
+		t.Fatalf("workload saw API-only env: %q", out.Stdout)
+	}
+}
+
+// The upgrade validation instance must never send: the live one does.
+func TestDisableExitWebhooks(t *testing.T) {
+	t.Setenv("BL_PROCESS_CALLBACK_SECRET", "secret")
+	t.Cleanup(func() { exitWebhooksDisabled.Store(false) })
+	p := &ProcessInfo{CallbackURL: "http://127.0.0.1:1/hook"}
+	if exitCallbackLocked(p) == nil {
+		t.Fatal("expected a webhook before disabling")
+	}
+	DisableExitWebhooks()
+	if exitCallbackLocked(p) != nil {
+		t.Fatal("webhook prepared while exit webhooks are disabled")
+	}
+}
+
+// A process found dead on restore is notified once, not on every API restart.
+func TestLoadStateNotifiesADeadProcessOnce(t *testing.T) {
+	dir := t.TempDir()
+	originalLogDir := ProcessLogDir
+	ProcessLogDir = dir
+	t.Cleanup(func() { ProcessLogDir = originalLogDir })
+	stateFile := dir + "/state.json"
+	t.Setenv("SANDBOX_STATE_FILE", stateFile)
+	t.Setenv("BL_PROCESS_CALLBACK_SECRET", "secret")
+	holds := fakeHolds(t, nil)
+
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { hits.Add(1) }))
+	defer srv.Close()
+
+	dead := exec.Command("true")
+	if err := dead.Run(); err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(ManagerState{Version: 1, SavedAt: time.Now(), Processes: map[string]ProcessState{
+		"1234": {PID: "1234", Name: "gone", Command: "true", ProcessPid: dead.Process.Pid,
+			StartedAt: time.Now().Add(-time.Minute), Status: StatusRunning, CallbackURL: srv.URL},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(stateFile, encoded, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	for boot := 0; boot < 2; boot++ {
+		if err := NewProcessManager().LoadState(); err != nil {
+			t.Fatalf("boot %d: %v", boot, err)
+		}
+		deadline := time.Now().Add(2 * time.Second)
+		for holds.Load() != 0 && time.Now().Before(deadline) {
+			time.Sleep(5 * time.Millisecond)
+		}
+	}
+	if got := hits.Load(); got != 1 {
+		t.Fatalf("webhooks over two boots = %d, want 1", got)
+	}
+}
+
+// An archive stops processes to relaunch them elsewhere: not an exit.
+func TestSkipExitWebhook(t *testing.T) {
+	originalLogDir := ProcessLogDir
+	ProcessLogDir = t.TempDir()
+	t.Cleanup(func() { ProcessLogDir = originalLogDir })
+	t.Setenv("BL_PROCESS_CALLBACK_SECRET", "secret")
+	holdsTaken := make(chan struct{}, 1)
+	fakeHolds(t, func() { holdsTaken <- struct{}{} })
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { hits.Add(1) }))
+	defer srv.Close()
+
+	pm := NewProcessManager()
+	proc, err := pm.ExecuteProcessWithCallback(srv.URL, "sleep 30", "", "archived", nil, false, 0, nil, false, 0, false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pm.SkipExitWebhook(proc.PID)
+	if err := pm.StopProcess(proc.PID); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-proc.Finished:
+	case <-time.After(10 * time.Second):
+		t.Fatal("process never stopped")
+	}
+	time.Sleep(200 * time.Millisecond)
+	if len(holdsTaken) != 0 || hits.Load() != 0 {
+		t.Fatalf("archive stop sent a webhook (holds %d, hits %d)", len(holdsTaken), hits.Load())
 	}
 }

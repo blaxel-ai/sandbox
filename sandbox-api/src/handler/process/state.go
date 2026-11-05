@@ -218,6 +218,24 @@ func (pm *ProcessManager) LoadState() error {
 		"processCount": len(state.Processes),
 	}).Info("LoadState: state file parsed")
 
+	// A process found dead is notified now; save its terminal state, or the
+	// next API restart finds it "running" again and notifies a second time.
+	// Deferred first so it runs after the unlock below.
+	notified := false
+	defer func() {
+		if notified {
+			if err := pm.SaveState(); err != nil {
+				logrus.WithError(err).Warn("Failed to persist processes notified as exited")
+			}
+		}
+	}()
+	notifyDead := func(p *ProcessInfo) {
+		if webhook := exitCallbackLocked(p); webhook != nil {
+			webhook.hold()()
+			notified = true
+		}
+	}
+
 	pm.mu.Lock()
 	defer pm.mu.Unlock()
 
@@ -330,7 +348,7 @@ func (pm *ProcessManager) LoadState() error {
 				proc.CompletedAt = &now
 				proc.ExitCode = -1
 				pm.finishRestoredProcess(proc)
-				exitCallbackLocked(proc).hold()()
+				notifyDead(proc)
 				deadCount++
 				pm.processes[pid] = proc
 				continue
@@ -394,7 +412,7 @@ func (pm *ProcessManager) LoadState() error {
 			// Close the Done and TailDone channels since process is no longer running
 			pm.finishRestoredProcess(proc)
 			// It died while no API was watching, so nobody has been told yet.
-			exitCallbackLocked(proc).hold()()
+			notifyDead(proc)
 
 			logrus.WithFields(logrus.Fields{
 				"pid":     proc.PID,
@@ -1114,9 +1132,7 @@ func validateNewBinary(binaryPath string) error {
 
 	// Start the new binary on the validation port
 	cmd := exec.Command(binaryPath, "-p", strconv.Itoa(ValidationPort))
-	// The validation instance adopts the same processes; without a secret it
-	// cannot send exit webhooks this instance also sends.
-	cmd.Env = append(os.Environ(), "BL_PROCESS_CALLBACK_SECRET=")
+	cmd.Env = os.Environ()
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 

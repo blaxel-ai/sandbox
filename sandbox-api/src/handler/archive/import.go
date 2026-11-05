@@ -1126,7 +1126,7 @@ func relaunchProcesses(root string, recorded []process.ProcessState) (relaunched
 			continue
 		}
 
-		identifier, err := pm.StartProcessWithName(
+		identifier, err := pm.StartProcessWithCallbackURL(
 			archived.Command,
 			archived.WorkingDir,
 			archived.Name,
@@ -1136,6 +1136,7 @@ func relaunchProcesses(root string, recorded []process.ProcessState) (relaunched
 			archived.KeepAlive,
 			archived.Timeout,
 			archived.Stdin,
+			archived.CallbackURL,
 			// The process manager calls the completion callback unconditionally,
 			// so a relaunched process exiting must find something to call.
 			func(finished *process.ProcessInfo) {
