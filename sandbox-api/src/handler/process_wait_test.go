@@ -77,6 +77,23 @@ func TestHandleWaitProcess(t *testing.T) {
 		}
 	})
 
+	t.Run("name reused during the wait still reports the waited process", func(t *testing.T) {
+		first, err := h.ExecuteProcess("sleep 1", "", "wait-reused", nil, false, 0, nil, false, 0, false, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		go func() {
+			time.Sleep(300 * time.Millisecond)
+			if second, err := h.ExecuteProcess("sleep 30", "", "wait-reused", nil, false, 0, nil, false, 0, false, false); err == nil {
+				t.Cleanup(func() { _ = h.KillProcess(second.PID) })
+			}
+		}()
+		w, _ := waitRequest(t, h, "/process/wait-reused/wait?timeout=5")
+		if p := decode(w); p.PID != first.PID || p.Status == "running" {
+			t.Fatalf("expected finished pid %s, got pid %s status %s", first.PID, p.PID, p.Status)
+		}
+	})
+
 	t.Run("invalid timeout is a 400", func(t *testing.T) {
 		for _, q := range []string{"abc", "-1", "1.5"} {
 			if w, _ := waitRequest(t, h, "/process/"+slow.PID+"/wait?timeout="+q); w.Code != http.StatusBadRequest {

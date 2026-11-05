@@ -794,7 +794,7 @@ func (h *ProcessHandler) HandleWaitProcess(c *gin.Context) {
 	}
 	timeout = min(timeout, maxProcessWaitSeconds)
 
-	finished, ok := h.processManager.FinishedChannel(identifier)
+	pid, finished, ok := h.processManager.FinishedChannel(identifier)
 	if !ok {
 		h.SendError(c, http.StatusNotFound, fmt.Errorf("process not found"))
 		return
@@ -808,7 +808,7 @@ func (h *ProcessHandler) HandleWaitProcess(c *gin.Context) {
 		return // client gone, nobody to answer
 	}
 
-	processInfo, err := h.GetProcess(identifier)
+	processInfo, err := h.GetProcess(pid)
 	if err != nil {
 		h.SendError(c, http.StatusNotFound, err)
 		return

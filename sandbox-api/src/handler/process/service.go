@@ -24,17 +24,18 @@ func (pm *ProcessManager) processByPID(pid string) *ProcessInfo {
 	return pm.processes[pid]
 }
 
-// FinishedChannel returns the channel closed once the process identified by
-// PID or name is over for good. It is read under the lock because a restart of
-// a finished process swaps in a fresh channel.
-func (pm *ProcessManager) FinishedChannel(identifier string) (<-chan struct{}, bool) {
+// FinishedChannel resolves a PID or name to its PID and the channel closed once
+// that process is over for good. The PID pins the caller to this process even
+// if the name is reused later. Read under the lock because a restart of a
+// finished process swaps in a fresh channel.
+func (pm *ProcessManager) FinishedChannel(identifier string) (string, <-chan struct{}, bool) {
 	pm.mu.RLock()
 	defer pm.mu.RUnlock()
 	proc := pm.lookupProcessLocked(identifier)
 	if proc == nil {
-		return nil, false
+		return "", nil, false
 	}
-	return proc.Finished, true
+	return proc.PID, proc.Finished, true
 }
 
 // endedInFailure reports whether a finished process failed or was killed or
