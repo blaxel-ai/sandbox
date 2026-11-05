@@ -166,6 +166,8 @@ func SetupRouter(disableRequestLogging bool, enableProcessingTime bool) *gin.Eng
 	r.DELETE("/process/:identifier/stdin", processHandler.HandleCloseStdin)
 	r.DELETE("/process/:identifier", processHandler.HandleStopProcess)
 	r.DELETE("/process/:identifier/kill", processHandler.HandleKillProcess)
+	r.GET("/process/:identifier/wait", processHandler.HandleWaitProcess)
+	r.HEAD("/process/:identifier/wait", head)
 	r.GET("/process/:identifier", processHandler.HandleGetProcess)
 	r.HEAD("/process/:identifier", head)
 

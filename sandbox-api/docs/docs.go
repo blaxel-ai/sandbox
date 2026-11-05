@@ -2140,6 +2140,56 @@ const docTemplate = `{
                 }
             }
         },
+        "/process/{identifier}/wait": {
+            "get": {
+                "description": "Hold the request until the process is over for good (no restart to come) or the timeout expires, then return the process like GET /process/{identifier}. A process still running after the timeout comes back with status running: call again. Replaces polling GET /process/{identifier}.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "process"
+                ],
+                "summary": "Wait for a process to finish",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Process identifier (PID or name)",
+                        "name": "identifier",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Seconds to wait (default 119, max 120; larger values are capped)",
+                        "name": "timeout",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Process information",
+                        "schema": {
+                            "$ref": "#/definitions/ProcessResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid timeout",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Process not found",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/resume": {
             "post": {
                 "description": "Wakes a sandbox in standby: like any request, it resumes the sandbox before it is answered.\nAnswers right away when the sandbox is already running.",
