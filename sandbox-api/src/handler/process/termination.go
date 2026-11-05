@@ -181,11 +181,16 @@ func (pm *ProcessManager) waitForRun(p *ProcessInfo, cmd *exec.Cmd, callback fun
 
 // finishProcess releases the scale hold once, after an observed final exit.
 func (pm *ProcessManager) finishProcess(p *ProcessInfo, callback func(*ProcessInfo)) {
+	pm.mu.RLock()
+	webhook := exitCallbackLocked(p)
+	pm.mu.RUnlock()
+	deliver := webhook.hold() // before releaseKeepAlive, so the sandbox never dips to 0 holds
 	pm.releaseKeepAlive(p)
 	p.logLock.Lock()
 	p.logWriters = nil
 	p.logLock.Unlock()
 	p.markFinished()
+	deliver()
 	if callback != nil {
 		callback(p)
 	}

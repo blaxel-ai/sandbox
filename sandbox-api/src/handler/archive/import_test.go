@@ -1614,3 +1614,27 @@ func TestImportNeverRestoresTheMuslLoader(t *testing.T) {
 		}
 	}
 }
+
+// A restored process still reports its exit to the receiver it was given.
+func TestRelaunchKeepsTheCallbackURL(t *testing.T) {
+	state, err := json.Marshal(map[string]any{
+		"version": 1,
+		"processes": map[string]any{
+			"proc-1": map[string]any{"pid": "proc-1", "name": "hooked", "command": "sleep 30",
+				"status": "running", "callbackUrl": "https://receiver-a.example/hook", "callbackSecret": "import-test-secret-0123456789abcdef"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	relaunched, failed := relaunch(DefaultRoot, state)
+	if len(relaunched) != 1 || len(failed) != 0 {
+		t.Fatalf("the process should have been relaunched, got %v and %v as failures", relaunched, failed)
+	}
+	pm := process.GetProcessManager()
+	defer func() { _ = pm.KillProcess(relaunched[0]) }()
+	info, ok := pm.GetProcessByIdentifier(relaunched[0])
+	if !ok || info.Callback != (process.ExitCallback{URL: "https://receiver-a.example/hook", Secret: "import-test-secret-0123456789abcdef"}) {
+		t.Fatalf("relaunched process lost its callback URL (found %v)", ok)
+	}
+}
