@@ -2163,7 +2163,7 @@ const docTemplate = `{
                     },
                     {
                         "type": "integer",
-                        "description": "Seconds to wait (default 119, max 120; larger values are capped)",
+                        "description": "Seconds to wait (default and max 119; larger values are capped)",
                         "name": "timeout",
                         "in": "query"
                     }

@@ -1807,7 +1807,7 @@ paths:
           required: true
           schema:
             type: string
-        - description: Seconds to wait (default 119, max 120; larger values are capped)
+        - description: Seconds to wait (default and max 119; larger values are capped)
           in: query
           name: timeout
           schema:
