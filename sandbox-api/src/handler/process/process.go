@@ -130,7 +130,7 @@ type ProcessInfo struct {
 	KeepAlive        bool              `json:"keepAlive"`
 	Stdin            bool              `json:"stdin"` // Whether the process was started with a writable stdin pipe
 	Timeout          int               `json:"-"`     // Internal: execution timeout in seconds; zero means unlimited
-	CallbackURL      string            `json:"-"`     // Overrides BL_PROCESS_CALLBACK_URL for this process's exit webhook
+	Callback         ExitCallback      `json:"-"`     // Where and how this process's exit webhook is sent; zero means none
 	LogFormat        string            `json:"-"`     // Combined log encoding; immutable
 	LogFile          string            `json:"-"`     // Path to combined log file
 	StdoutFile       string            `json:"-"`     // Path to stdout log file
@@ -384,12 +384,12 @@ func (pm *ProcessManager) StartProcess(command string, workingDir string, env ma
 }
 
 func (pm *ProcessManager) StartProcessWithName(command string, workingDir string, name string, env map[string]string, restartOnFailure bool, maxRestarts int, keepAlive bool, timeout int, stdin bool, callback func(process *ProcessInfo)) (string, error) {
-	return pm.StartProcessWithCallbackURL(command, workingDir, name, env, restartOnFailure, maxRestarts, keepAlive, timeout, stdin, "", callback)
+	return pm.StartProcessWithCallback(command, workingDir, name, env, restartOnFailure, maxRestarts, keepAlive, timeout, stdin, ExitCallback{}, callback)
 }
 
-// StartProcessWithCallbackURL takes callbackURL before the process exists, so
+// StartProcessWithCallback takes the callback before the process exists, so
 // an exit cannot race the URL being set.
-func (pm *ProcessManager) StartProcessWithCallbackURL(command string, workingDir string, name string, env map[string]string, restartOnFailure bool, maxRestarts int, keepAlive bool, timeout int, stdin bool, callbackURL string, callback func(process *ProcessInfo)) (string, error) {
+func (pm *ProcessManager) StartProcessWithCallback(command string, workingDir string, name string, env map[string]string, restartOnFailure bool, maxRestarts int, keepAlive bool, timeout int, stdin bool, cb ExitCallback, callback func(process *ProcessInfo)) (string, error) {
 	cmd, releaseScript, err := shellCommand(command)
 	if err != nil {
 		return "", err
@@ -459,7 +459,7 @@ func (pm *ProcessManager) StartProcessWithCallbackURL(command string, workingDir
 		KeepAlive:        keepAlive,
 		Stdin:            stdin,
 		Timeout:          timeout,
-		CallbackURL:      callbackURL,
+		Callback:         cb,
 		LogFile:          combinedPath,
 		LogFormat:        structuredLogFormat,
 		StdoutFile:       stdoutPath,

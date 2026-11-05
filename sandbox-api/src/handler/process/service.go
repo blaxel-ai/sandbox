@@ -71,13 +71,13 @@ func lastLines(s string, n int) string {
 // ExecuteProcess starts a process with its own execution timeout. An optional
 // waitTimeout limits only how long this call waits; it never stops the process.
 func (pm *ProcessManager) ExecuteProcess(command string, workingDir string, name string, env map[string]string, waitForCompletion bool, timeout int, waitForPorts []int, restartOnFailure bool, maxRestarts int, keepAlive bool, stdin bool, waitTimeout ...int) (*ProcessInfo, error) {
-	return pm.ExecuteProcessWithCallback("", command, workingDir, name, env, waitForCompletion, timeout, waitForPorts, restartOnFailure, maxRestarts, keepAlive, stdin, waitTimeout...)
+	return pm.ExecuteProcessWithCallback(ExitCallback{}, command, workingDir, name, env, waitForCompletion, timeout, waitForPorts, restartOnFailure, maxRestarts, keepAlive, stdin, waitTimeout...)
 }
 
-// ExecuteProcessWithCallback is ExecuteProcess with a per-process exit webhook
-// URL; empty falls back to BL_PROCESS_CALLBACK_URL.
+// ExecuteProcessWithCallback is ExecuteProcess with a per-process exit
+// webhook; the zero ExitCallback sends none.
 func (pm *ProcessManager) ExecuteProcessWithCallback(
-	callbackURL string,
+	cb ExitCallback,
 	command string,
 	workingDir string,
 	name string,
@@ -140,7 +140,7 @@ func (pm *ProcessManager) ExecuteProcessWithCallback(
 	if name == "" {
 		name = GenerateRandomName(8)
 	}
-	pid, err = pm.StartProcessWithCallbackURL(command, workingDir, name, env, restartOnFailure, maxRestarts, keepAlive, timeout, stdin, callbackURL, callback)
+	pid, err = pm.StartProcessWithCallback(command, workingDir, name, env, restartOnFailure, maxRestarts, keepAlive, timeout, stdin, cb, callback)
 	if err != nil {
 		return nil, fmt.Errorf("failed to start process: %w", err)
 	}

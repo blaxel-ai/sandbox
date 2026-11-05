@@ -7,7 +7,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"os/exec"
-	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -75,15 +74,26 @@ func TestCallbackBudgetUnder15s(t *testing.T) {
 	}
 }
 
-func TestValidateCallbackURL(t *testing.T) {
-	for _, ok := range []string{"", "http://x.io/h", "https://x.io:8443/a?b=c"} {
-		if err := ValidateCallbackURL(ok); err != nil {
-			t.Errorf("%q rejected: %v", ok, err)
+const testCallbackSecret = "test-callback-secret-0123456789abcdef"
+
+func TestExitCallbackValidate(t *testing.T) {
+	for _, ok := range []ExitCallback{{}, {"http://x.io/h", testCallbackSecret}, {"https://x.io:8443/a?b=c", testCallbackSecret}} {
+		if err := ok.Validate(); err != nil {
+			t.Errorf("%+v rejected: %v", ok, err)
 		}
 	}
 	for _, bad := range []string{"x.io/h", "/relative", "ftp://x.io", "http://", "://bad"} {
-		if ValidateCallbackURL(bad) == nil {
-			t.Errorf("%q accepted", bad)
+		if (ExitCallback{bad, testCallbackSecret}).Validate() == nil {
+			t.Errorf("url %q accepted", bad)
+		}
+	}
+	for _, bad := range []ExitCallback{
+		{"https://x.io/h", ""},          // unsigned webhook
+		{"https://x.io/h", "too-short"}, // guessable key
+		{"", testCallbackSecret},        // secret with nowhere to go
+	} {
+		if bad.Validate() == nil {
+			t.Errorf("%+v accepted", bad)
 		}
 	}
 }
@@ -94,8 +104,6 @@ func TestExitCallbackOnlyOnFinalExit(t *testing.T) {
 	originalLogDir := ProcessLogDir
 	ProcessLogDir = t.TempDir()
 	t.Cleanup(func() { ProcessLogDir = originalLogDir })
-	t.Setenv("BL_PROCESS_CALLBACK_URL", "")
-	t.Setenv("BL_PROCESS_CALLBACK_SECRET", "secret")
 	t.Setenv("BL_NAME", "my-sandbox")
 	// The real hold would make the blaxel package cache "no scale file" for
 	// every later test in this binary.
@@ -115,7 +123,7 @@ func TestExitCallbackOnlyOnFinalExit(t *testing.T) {
 
 	pm := NewProcessManager()
 	cmd := `if [ ! -f "$MARKER" ]; then touch "$MARKER"; exit 1; fi; exit 3`
-	proc, err := pm.ExecuteProcessWithCallback(srv.URL,
+	proc, err := pm.ExecuteProcessWithCallback(ExitCallback{srv.URL, testCallbackSecret},
 		"sh -c '"+cmd+"'", "", "notifier",
 		map[string]string{"MARKER": ProcessLogDir + "/once"},
 		false, 0, nil, true, 1, false, false,
@@ -135,7 +143,7 @@ func TestExitCallbackOnlyOnFinalExit(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("no webhook received")
 	}
-	if h.sig != "sha256="+signCallback(h.body, "secret") {
+	if h.sig != "sha256="+signCallback(h.body, testCallbackSecret) {
 		t.Fatalf("bad signature %q", h.sig)
 	}
 	var ev map[string]any
@@ -157,11 +165,10 @@ func TestExitCallbackOnlyOnFinalExit(t *testing.T) {
 }
 
 func TestExitCallbackSkippedWithoutSecret(t *testing.T) {
-	t.Setenv("BL_PROCESS_CALLBACK_SECRET", "")
 	var hits atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { hits.Add(1) }))
 	defer srv.Close()
-	if exitCallbackLocked(&ProcessInfo{CallbackURL: srv.URL}) != nil {
+	if exitCallbackLocked(&ProcessInfo{Callback: ExitCallback{URL: srv.URL}}) != nil {
 		t.Fatal("webhook prepared without a secret")
 	}
 }
@@ -241,7 +248,6 @@ func TestWebhookHoldTakenBeforeKeepAliveRelease(t *testing.T) {
 	t.Cleanup(func() { ProcessLogDir = originalLogDir })
 	t.Setenv("BLAXEL_SCALE_FILE", ProcessLogDir+"/scale")
 	t.Setenv("BL_DISABLE_KEEPALIVE", "")
-	t.Setenv("BL_PROCESS_CALLBACK_SECRET", "secret")
 	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 	defer srv.Close()
 
@@ -253,7 +259,7 @@ func TestWebhookHoldTakenBeforeKeepAliveRelease(t *testing.T) {
 		keepAliveAtHold <- p.KeepAlive
 		pm.mu.RUnlock()
 	})
-	proc, err := pm.ExecuteProcessWithCallback(srv.URL, "true", "", "kept", nil, true, 30, nil, false, 0, true, false)
+	proc, err := pm.ExecuteProcessWithCallback(ExitCallback{srv.URL, testCallbackSecret}, "true", "", "kept", nil, true, 30, nil, false, 0, true, false)
 	if err != nil {
 		t.Fatalf("starting process: %v", err)
 	}
@@ -275,35 +281,10 @@ func TestWebhookHoldTakenBeforeKeepAliveRelease(t *testing.T) {
 	}
 }
 
-// A workload holding the secret could forge signed webhooks.
-func TestWorkloadDoesNotInheritCallbackEnv(t *testing.T) {
-	originalLogDir := ProcessLogDir
-	ProcessLogDir = t.TempDir()
-	t.Cleanup(func() { ProcessLogDir = originalLogDir })
-	t.Setenv("BL_PROCESS_CALLBACK_SECRET", "top-secret")
-	t.Setenv("BL_PROCESS_CALLBACK_URL", "http://127.0.0.1:1/hook")
-	fakeHolds(t, nil)
-
-	pm := NewProcessManager()
-	proc, err := pm.ExecuteProcess(`sh -c 'echo "[${BL_PROCESS_CALLBACK_SECRET:-none}|${BL_PROCESS_CALLBACK_URL:-none}]"'`,
-		"", "env-check", nil, true, 30, nil, false, 0, false, false)
-	if err != nil {
-		t.Fatalf("running process: %v", err)
-	}
-	out, err := pm.GetProcessOutput(proc.PID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(out.Stdout, "[none|none]") {
-		t.Fatalf("workload saw API-only env: %q", out.Stdout)
-	}
-}
-
 // The upgrade validation instance must never send: the live one does.
 func TestDisableExitWebhooks(t *testing.T) {
-	t.Setenv("BL_PROCESS_CALLBACK_SECRET", "secret")
 	t.Cleanup(func() { exitWebhooksDisabled.Store(false) })
-	p := &ProcessInfo{CallbackURL: "http://127.0.0.1:1/hook"}
+	p := &ProcessInfo{Callback: ExitCallback{"http://127.0.0.1:1/hook", testCallbackSecret}}
 	if exitCallbackLocked(p) == nil {
 		t.Fatal("expected a webhook before disabling")
 	}
@@ -321,7 +302,6 @@ func TestLoadStateNotifiesADeadProcessOnce(t *testing.T) {
 	t.Cleanup(func() { ProcessLogDir = originalLogDir })
 	stateFile := dir + "/state.json"
 	t.Setenv("SANDBOX_STATE_FILE", stateFile)
-	t.Setenv("BL_PROCESS_CALLBACK_SECRET", "secret")
 	holds := fakeHolds(t, nil)
 
 	var hits atomic.Int32
@@ -334,7 +314,7 @@ func TestLoadStateNotifiesADeadProcessOnce(t *testing.T) {
 	}
 	encoded, err := json.Marshal(ManagerState{Version: 1, SavedAt: time.Now(), Processes: map[string]ProcessState{
 		"1234": {PID: "1234", Name: "gone", Command: "true", ProcessPid: dead.Process.Pid,
-			StartedAt: time.Now().Add(-time.Minute), Status: StatusRunning, CallbackURL: srv.URL},
+			StartedAt: time.Now().Add(-time.Minute), Status: StatusRunning, CallbackURL: srv.URL, CallbackSecret: testCallbackSecret},
 	}})
 	if err != nil {
 		t.Fatal(err)
@@ -362,7 +342,6 @@ func TestSkipExitWebhook(t *testing.T) {
 	originalLogDir := ProcessLogDir
 	ProcessLogDir = t.TempDir()
 	t.Cleanup(func() { ProcessLogDir = originalLogDir })
-	t.Setenv("BL_PROCESS_CALLBACK_SECRET", "secret")
 	holdsTaken := make(chan struct{}, 1)
 	fakeHolds(t, func() { holdsTaken <- struct{}{} })
 	var hits atomic.Int32
@@ -370,7 +349,7 @@ func TestSkipExitWebhook(t *testing.T) {
 	defer srv.Close()
 
 	pm := NewProcessManager()
-	proc, err := pm.ExecuteProcessWithCallback(srv.URL, "sleep 30", "", "archived", nil, false, 0, nil, false, 0, false, false)
+	proc, err := pm.ExecuteProcessWithCallback(ExitCallback{srv.URL, testCallbackSecret}, "sleep 30", "", "archived", nil, false, 0, nil, false, 0, false, false)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -59,6 +59,7 @@ type ProcessState struct {
 	KeepAlive        bool                    `json:"keepAlive,omitempty"`
 	Timeout          int                     `json:"timeout,omitempty"`
 	CallbackURL      string                  `json:"callbackUrl,omitempty"`
+	CallbackSecret   string                  `json:"callbackSecret,omitempty"` // State file is 0600: the workload must not read it
 
 	EffectiveWorkingDir string `json:"effectiveWorkingDir,omitempty"`
 
@@ -144,7 +145,8 @@ func (pm *ProcessManager) SaveState() error {
 			Env:              proc.Env,
 			KeepAlive:        proc.KeepAlive,
 			Timeout:          proc.Timeout,
-			CallbackURL:      proc.CallbackURL,
+			CallbackURL:      proc.Callback.URL,
+			CallbackSecret:   proc.Callback.Secret,
 		}
 
 		logrus.WithFields(logrus.Fields{
@@ -169,7 +171,7 @@ func (pm *ProcessManager) SaveState() error {
 
 	// Write to temp file first, then rename for atomicity
 	tmpFile := stateFile + ".tmp"
-	if err := os.WriteFile(tmpFile, data, 0644); err != nil {
+	if err := os.WriteFile(tmpFile, data, 0600); err != nil {
 		return fmt.Errorf("failed to write state file: %w", err)
 	}
 
@@ -281,7 +283,7 @@ func (pm *ProcessManager) LoadState() error {
 			Env:              procState.Env,
 			KeepAlive:        procState.KeepAlive,
 			Timeout:          procState.Timeout,
-			CallbackURL:      procState.CallbackURL,
+			Callback:         ExitCallback{URL: procState.CallbackURL, Secret: procState.CallbackSecret},
 			Done:             make(chan struct{}),
 			TailDone:         make(chan struct{}),
 			Finished:         make(chan struct{}),

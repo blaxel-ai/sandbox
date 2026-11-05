@@ -499,7 +499,8 @@ func quiesceWorkload(options ExportOptions) (quiescedWorkload, error) {
 			KeepAlive:        info.KeepAlive,
 			Stdin:            info.Stdin,
 			Timeout:          info.Timeout,
-			CallbackURL:      info.CallbackURL,
+			CallbackURL:      info.Callback.URL,
+			CallbackSecret:   info.Callback.Secret,
 		}
 		identifier := info.PID
 		candidate := stoppedProcess{

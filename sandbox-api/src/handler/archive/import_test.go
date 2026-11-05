@@ -1621,7 +1621,7 @@ func TestRelaunchKeepsTheCallbackURL(t *testing.T) {
 		"version": 1,
 		"processes": map[string]any{
 			"proc-1": map[string]any{"pid": "proc-1", "name": "hooked", "command": "sleep 30",
-				"status": "running", "callbackUrl": "https://receiver-a.example/hook"},
+				"status": "running", "callbackUrl": "https://receiver-a.example/hook", "callbackSecret": "import-test-secret-0123456789abcdef"},
 		},
 	})
 	if err != nil {
@@ -1634,7 +1634,7 @@ func TestRelaunchKeepsTheCallbackURL(t *testing.T) {
 	pm := process.GetProcessManager()
 	defer func() { _ = pm.KillProcess(relaunched[0]) }()
 	info, ok := pm.GetProcessByIdentifier(relaunched[0])
-	if !ok || info.CallbackURL != "https://receiver-a.example/hook" {
+	if !ok || info.Callback != (process.ExitCallback{URL: "https://receiver-a.example/hook", Secret: "import-test-secret-0123456789abcdef"}) {
 		t.Fatalf("relaunched process lost its callback URL (found %v)", ok)
 	}
 }

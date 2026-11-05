@@ -658,10 +658,9 @@ func TestExportStopSendsNoExitWebhookAndKeepsTheCallbackURL(t *testing.T) {
 	var hooks atomic.Int32
 	receiver := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { hooks.Add(1) }))
 	defer receiver.Close()
-	t.Setenv("BL_PROCESS_CALLBACK_SECRET", "secret")
 
 	pm := process.GetProcessManager()
-	original, err := pm.StartProcessWithCallbackURL("sleep 30", "", "hooked-worker", nil, false, 0, false, 0, false, receiver.URL, func(*process.ProcessInfo) {})
+	original, err := pm.StartProcessWithCallback("sleep 30", "", "hooked-worker", nil, false, 0, false, 0, false, process.ExitCallback{URL: receiver.URL, Secret: "export-test-secret-0123456789abcdef"}, func(*process.ProcessInfo) {})
 	if err != nil {
 		t.Fatalf("failed to start the workload: %v", err)
 	}
@@ -692,7 +691,7 @@ func TestExportStopSendsNoExitWebhookAndKeepsTheCallbackURL(t *testing.T) {
 	if relaunched == nil {
 		t.Fatal("the process stopped for the export was not relaunched")
 	}
-	if relaunched.CallbackURL != receiver.URL {
-		t.Fatalf("the relaunched process must keep its callback URL, got %q", relaunched.CallbackURL)
+	if relaunched.Callback != (process.ExitCallback{URL: receiver.URL, Secret: "export-test-secret-0123456789abcdef"}) {
+		t.Fatalf("the relaunched process must keep its callback, got %+v", relaunched.Callback)
 	}
 }

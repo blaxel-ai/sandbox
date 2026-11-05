@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"slices"
 	"strconv"
-	"strings"
 	"sync"
 	"testing"
 
@@ -82,18 +81,6 @@ func TestDecorateEnvDisabled(t *testing.T) {
 	env := []string{"HOME=/root"}
 	if got := id.DecorateEnv(env); len(got) != 1 || got[0] != "HOME=/root" {
 		t.Fatalf("DecorateEnv on nil identity = %v, want unchanged", got)
-	}
-}
-
-// The callback secret signs process.exited webhooks: no workload may hold it.
-func TestDecorateEnvDropsAPIOnlyVariables(t *testing.T) {
-	env := []string{"BL_PROCESS_CALLBACK_SECRET=s", "BL_PROCESS_CALLBACK_URL=u", "PATH=/usr/bin"}
-	for _, id := range []*Identity{nil, {Name: "app", Home: "/home/app"}} {
-		for _, kv := range id.DecorateEnv(env) {
-			if strings.HasPrefix(kv, "BL_PROCESS_CALLBACK_") {
-				t.Fatalf("DecorateEnv(identity=%v) kept %q", id != nil, kv)
-			}
-		}
 	}
 }
 

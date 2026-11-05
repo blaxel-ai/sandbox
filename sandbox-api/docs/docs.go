@@ -3132,8 +3132,13 @@ const docTemplate = `{
                 "command"
             ],
             "properties": {
+                "callbackSecret": {
+                    "description": "Key the webhook is signed with (HMAC-SHA256, X-Blaxel-Signature header). At least 32 characters; required with callbackUrl. Never returned by the API.",
+                    "type": "string",
+                    "example": "a-random-secret-of-at-least-32-chars"
+                },
                 "callbackUrl": {
-                    "description": "URL that receives a signed process.exited webhook when the process ends for good (not on auto-restart). Overrides the sandbox default; requires the sandbox callback secret.",
+                    "description": "URL that receives a signed process.exited webhook when the process ends for good (not on auto-restart). Requires callbackSecret.",
                     "type": "string",
                     "example": "https://example.com/hooks/process"
                 },

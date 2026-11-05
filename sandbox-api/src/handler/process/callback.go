@@ -14,7 +14,6 @@ import (
 	"net/url"
 	"os"
 	"strconv"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -36,8 +35,7 @@ var (
 	callbackClient = &http.Client{
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
-	callbackSecretWarning sync.Once
-	exitWebhooksDisabled  atomic.Bool
+	exitWebhooksDisabled atomic.Bool
 )
 
 // DisableExitWebhooks turns exit webhooks off for this instance. The upgrade
@@ -68,15 +66,33 @@ type exitEvent struct {
 	Timestamp   int64                   `json:"timestamp"`
 }
 
-// ValidateCallbackURL rejects anything but an absolute http(s) URL, so a bad
-// value fails the request instead of failing silently at exit time.
-func ValidateCallbackURL(raw string) error {
-	if raw == "" {
+// callbackSecretMinLength keeps caller-chosen secrets out of guessing range:
+// anyone who can guess one can forge webhooks to the caller's receiver.
+const callbackSecretMinLength = 32
+
+// ExitCallback is where a process's exit webhook goes and the key it is
+// signed with. Both come from the POST /process caller; the zero value means
+// no webhook.
+type ExitCallback struct {
+	URL    string
+	Secret string
+}
+
+// Validate rejects a callback that could only fail at exit time, or that would
+// send unsigned or weakly signed webhooks.
+func (c ExitCallback) Validate() error {
+	if c.URL == "" {
+		if c.Secret != "" {
+			return fmt.Errorf("callbackSecret is set without a callbackUrl")
+		}
 		return nil
 	}
-	u, err := url.Parse(raw)
+	u, err := url.Parse(c.URL)
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 		return fmt.Errorf("callbackUrl must be an absolute http or https URL")
+	}
+	if len(c.Secret) < callbackSecretMinLength {
+		return fmt.Errorf("callbackSecret must be at least %d characters when callbackUrl is set", callbackSecretMinLength)
 	}
 	return nil
 }
@@ -102,20 +118,10 @@ func exitCallbackLocked(p *ProcessInfo) *exitCallback {
 	if p.skipExitWebhook || exitWebhooksDisabled.Load() {
 		return nil
 	}
-	target := p.CallbackURL
-	if target == "" {
-		target = os.Getenv("BL_PROCESS_CALLBACK_URL")
-	}
-	if target == "" {
+	if p.Callback.URL == "" || p.Callback.Secret == "" {
 		return nil
 	}
-	secret := os.Getenv("BL_PROCESS_CALLBACK_SECRET")
-	if secret == "" {
-		callbackSecretWarning.Do(func() {
-			logrus.Warn("[Callback] Process callback URL set but BL_PROCESS_CALLBACK_SECRET is empty; not sending process exit webhooks")
-		})
-		return nil
-	}
+	target, secret := p.Callback.URL, p.Callback.Secret
 	ts := time.Now().Unix()
 	body, err := json.Marshal(exitEvent{
 		Type:        "process.exited",
