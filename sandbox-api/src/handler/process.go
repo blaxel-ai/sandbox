@@ -763,10 +763,10 @@ func (h *ProcessHandler) HandleGetProcess(c *gin.Context) {
 }
 
 const (
-	// defaultProcessWaitSeconds sits just under the gateway's 120s cut on held
-	// requests (ENG-5387), so a default wait never ends in a 504.
+	// Both sit just under the gateway's 120s cut on held requests (ENG-5387).
+	// Measured on dev: a 119s wait answers, a 120s wait never gets a response.
 	defaultProcessWaitSeconds = 119
-	maxProcessWaitSeconds     = 120
+	maxProcessWaitSeconds     = 119
 )
 
 // HandleWaitProcess handles GET requests to /process/:identifier/wait
@@ -776,7 +776,7 @@ const (
 // @Accept json
 // @Produce json
 // @Param identifier path string true "Process identifier (PID or name)"
-// @Param timeout query integer false "Seconds to wait (default 119, max 120; larger values are capped)"
+// @Param timeout query integer false "Seconds to wait (default and max 119; larger values are capped)"
 // @Success 200 {object} ProcessResponse "Process information"
 // @Failure 400 {object} ErrorResponse "Invalid timeout"
 // @Failure 404 {object} ErrorResponse "Process not found"
