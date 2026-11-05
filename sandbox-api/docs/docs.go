@@ -3132,6 +3132,11 @@ const docTemplate = `{
                 "command"
             ],
             "properties": {
+                "callbackUrl": {
+                    "description": "URL that receives a signed process.exited webhook when the process ends for good (not on auto-restart). Overrides the sandbox default; requires the sandbox callback secret.",
+                    "type": "string",
+                    "example": "https://example.com/hooks/process"
+                },
                 "command": {
                     "type": "string",
                     "example": "ls -la"

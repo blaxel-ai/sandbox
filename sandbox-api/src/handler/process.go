@@ -66,6 +66,8 @@ type ProcessRequest struct {
 	MaxRestarts       int               `json:"maxRestarts" example:"3"`   // Maximum number of restarts on failure. Set to a negative value (e.g. -1) for unlimited restarts.
 	KeepAlive         bool              `json:"keepAlive" example:"false"` // Disable scale-to-zero while process runs. Default timeout is 600s (10 minutes). Set timeout to 0 for infinite.
 	Stdin             bool              `json:"stdin" example:"false"`     // Open a writable stdin pipe, fed via POST /process/{identifier}/stdin and closed via DELETE. The pipe does not survive a sandbox-api restart: the process then sees EOF.
+	// URL that receives a signed process.exited webhook when the process ends for good (not on auto-restart). Overrides the sandbox default; requires the sandbox callback secret.
+	CallbackURL string `json:"callbackUrl,omitempty" example:"https://example.com/hooks/process"`
 } // @name ProcessRequest
 
 // ProcessResponse is the response body for a process
@@ -100,10 +102,15 @@ type ProcessKillRequest struct {
 
 // ExecuteProcess executes a process
 func (h *ProcessHandler) ExecuteProcess(command string, workingDir string, name string, env map[string]string, waitForCompletion bool, timeout int, waitForPorts []int, restartOnFailure bool, maxRestarts int, keepAlive bool, stdin bool, waitTimeout ...int) (ProcessResponse, error) {
+	return h.ExecuteProcessWithCallback("", command, workingDir, name, env, waitForCompletion, timeout, waitForPorts, restartOnFailure, maxRestarts, keepAlive, stdin, waitTimeout...)
+}
+
+// ExecuteProcessWithCallback is ExecuteProcess with a per-process exit webhook URL.
+func (h *ProcessHandler) ExecuteProcessWithCallback(callbackURL string, command string, workingDir string, name string, env map[string]string, waitForCompletion bool, timeout int, waitForPorts []int, restartOnFailure bool, maxRestarts int, keepAlive bool, stdin bool, waitTimeout ...int) (ProcessResponse, error) {
 	if keepAlive && blaxel.KeepAliveDisabled() {
 		return ProcessResponse{}, ErrKeepAliveDisabled
 	}
-	processInfo, err := h.processManager.ExecuteProcess(command, workingDir, name, env, waitForCompletion, timeout, waitForPorts, restartOnFailure, maxRestarts, keepAlive, stdin, waitTimeout...)
+	processInfo, err := h.processManager.ExecuteProcessWithCallback(callbackURL, command, workingDir, name, env, waitForCompletion, timeout, waitForPorts, restartOnFailure, maxRestarts, keepAlive, stdin, waitTimeout...)
 
 	// If processInfo is nil (process failed to start), return empty response with error
 	if processInfo == nil {
@@ -237,6 +244,11 @@ func (h *ProcessHandler) HandleExecuteCommand(c *gin.Context) {
 		return
 	}
 
+	if err := process.ValidateCallbackURL(req.CallbackURL); err != nil {
+		h.SendError(c, http.StatusBadRequest, err)
+		return
+	}
+
 	if req.WorkingDir != "" {
 		formattedWorkingDir, err := lib.FormatPath(req.WorkingDir)
 		if err != nil {
@@ -272,7 +284,7 @@ func (h *ProcessHandler) HandleExecuteCommand(c *gin.Context) {
 	}
 
 	// Execute the process
-	processInfo, err := h.ExecuteProcess(req.Command, req.WorkingDir, req.Name, req.Env, req.WaitForCompletion, timeout, req.WaitForPorts, req.RestartOnFailure, req.MaxRestarts, req.KeepAlive, req.Stdin)
+	processInfo, err := h.ExecuteProcessWithCallback(req.CallbackURL, req.Command, req.WorkingDir, req.Name, req.Env, req.WaitForCompletion, timeout, req.WaitForPorts, req.RestartOnFailure, req.MaxRestarts, req.KeepAlive, req.Stdin)
 	if err != nil {
 		h.SendError(c, http.StatusUnprocessableEntity, err)
 		return
@@ -323,6 +335,11 @@ func (h *ProcessHandler) handleExecuteCommandStream(c *gin.Context) {
 		return
 	}
 
+	if err := process.ValidateCallbackURL(req.CallbackURL); err != nil {
+		h.SendError(c, http.StatusBadRequest, err)
+		return
+	}
+
 	if req.WorkingDir != "" {
 		formattedWorkingDir, err := lib.FormatPath(req.WorkingDir)
 		if err != nil {
@@ -368,7 +385,7 @@ func (h *ProcessHandler) handleExecuteCommandStream(c *gin.Context) {
 	jw := &JSONStreamWriter{gin: c}
 
 	// Execute the process without waiting for completion (we'll handle waiting ourselves)
-	processInfo, err := h.ExecuteProcess(req.Command, req.WorkingDir, req.Name, req.Env, false, timeout, req.WaitForPorts, req.RestartOnFailure, req.MaxRestarts, req.KeepAlive, req.Stdin)
+	processInfo, err := h.ExecuteProcessWithCallback(req.CallbackURL, req.Command, req.WorkingDir, req.Name, req.Env, false, timeout, req.WaitForPorts, req.RestartOnFailure, req.MaxRestarts, req.KeepAlive, req.Stdin)
 	if err != nil {
 		jw.WriteEvent("error", err.Error())
 		return

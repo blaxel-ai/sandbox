@@ -2607,6 +2607,10 @@ components:
       type: object
     ProcessRequest:
       properties:
+        callbackUrl:
+          description: URL that receives a signed process.exited webhook when the process ends for good (not on auto-restart). Overrides the sandbox default; requires the sandbox callback secret.
+          example: https://example.com/hooks/process
+          type: string
         command:
           example: ls -la
           type: string
