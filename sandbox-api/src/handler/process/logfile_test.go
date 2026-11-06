@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -34,7 +35,7 @@ func TestCapLogFileReleasesTheHeadAndKeepsTheTail(t *testing.T) {
 	}
 	before := diskUsage(t, path)
 
-	capLogFile(path, 1)
+	capLogFile(path, maxLogFile())
 
 	if after := diskUsage(t, path); after >= before {
 		t.Errorf("disk usage %d bytes after capping, want less than %d", after, before)
@@ -76,7 +77,7 @@ func TestCapLogFileLeavesASmallFileAlone(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	capLogFile(path, 1)
+	capLogFile(path, maxLogFile())
 
 	if got, ok := readLogTail(path, 64*1024); !ok || got != "hello\n" {
 		t.Errorf("readLogTail = %q (ok=%v), want %q verbatim", got, ok, "hello\n")
@@ -93,7 +94,7 @@ func TestCapLogFileDisabled(t *testing.T) {
 	}
 	before := diskUsage(t, path)
 
-	capLogFile(path, 1)
+	capLogFile(path, maxLogFile())
 
 	if after := diskUsage(t, path); after != before {
 		t.Errorf("disk usage changed from %d to %d with the cap disabled", before, after)
@@ -127,7 +128,7 @@ func TestOpenLogTailStartsPastAReleasedHead(t *testing.T) {
 	if err := os.WriteFile(path, []byte(strings.Repeat("stdout:x\n", 400*1024)+"stdout:THE TAIL\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	capLogFile(path, 1)
+	capLogFile(path, maxLogFile())
 
 	file, truncated, err := openLogTail(path, maxLogFile())
 	if err != nil {
@@ -230,35 +231,51 @@ func TestReadLogsSinceNothingNew(t *testing.T) {
 }
 
 // The log files live on the tmpfs root, so the budget is memory the workload
-// cannot have back: a per-file cap alone is paid three times per process, times
-// however many processes the sandbox runs.
-func TestPerFileBudgetIsSharedBetweenProcesses(t *testing.T) {
+// cannot have back: it is split between every log file still on disk.
+func TestFileShareSplitsTheBudgetBetweenFiles(t *testing.T) {
 	t.Setenv("SANDBOX_MAX_LOG_BYTES_TOTAL", fmt.Sprint(90*1024*1024))
+	big := int64(1 << 40)
 
-	if got, want := perFileBudget(1), int64(30*1024*1024); got != want {
-		t.Errorf("one process gets %d bytes per file, want %d", got, want)
+	if got, want := fileShare([]int64{big, big, big}), int64(30*1024*1024); got != want {
+		t.Errorf("three full files get %d bytes each, want %d", got, want)
 	}
-	if got, want := perFileBudget(10), int64(3*1024*1024); got != want {
-		t.Errorf("ten processes get %d bytes per file, want %d", got, want)
+	if got, want := fileShare(slices.Repeat([]int64{big}, 30)), int64(3*1024*1024); got != want {
+		t.Errorf("thirty full files get %d bytes each, want %d", got, want)
+	}
+	// Nothing to cap yet: every file may grow up to the ceiling.
+	if got, want := fileShare([]int64{1024, 2048}), maxLogFile(); got != want {
+		t.Errorf("small files get %d, want the %d ceiling", got, want)
 	}
 	// The share never grows past what one file may hold on its own.
 	t.Setenv("SANDBOX_MAX_LOG_FILE_BYTES", fmt.Sprint(1024*1024))
-	if got, want := perFileBudget(1), int64(1024*1024); got != want {
-		t.Errorf("per-file budget = %d, want the %d ceiling", got, want)
+	if got, want := fileShare([]int64{big}), int64(1024*1024); got != want {
+		t.Errorf("per-file share = %d, want the %d ceiling", got, want)
 	}
 }
 
-func TestPerFileBudgetFloorAndDisabling(t *testing.T) {
-	// A thousand processes would divide the budget into nothing; a process is
-	// left enough output to be worth reading instead.
+// A sandbox that ran hundreds of short commands used to squeeze a long-lived
+// process down to the floor, although the finished ones held almost nothing.
+func TestFileShareIgnoresWhatSmallFilesDoNotUse(t *testing.T) {
+	t.Setenv("SANDBOX_MAX_LOG_BYTES_TOTAL", fmt.Sprint(200*1024*1024))
+	sizes := slices.Repeat([]int64{512}, 300*3) // 300 finished processes
+	sizes = append(sizes, 2*1024*1024, 0, 2*1024*1024)
+
+	if got := fileShare(sizes); got < 2*1024*1024 {
+		t.Errorf("share = %d, want the busy process' 2 MiB kept whole", got)
+	}
+}
+
+func TestFileShareFloorAndDisabling(t *testing.T) {
+	// A thousand full files would divide the budget into nothing; each is left
+	// enough output to be worth reading instead.
 	t.Setenv("SANDBOX_MAX_LOG_BYTES_TOTAL", fmt.Sprint(16*1024*1024))
-	if got, want := perFileBudget(1000), int64(minLogFileBytes); got != want {
-		t.Errorf("per-file budget = %d, want the %d floor", got, want)
+	if got, want := fileShare(slices.Repeat([]int64{1 << 30}, 1000)), int64(minLogFileBytes); got != want {
+		t.Errorf("per-file share = %d, want the %d floor", got, want)
 	}
 
 	t.Setenv("SANDBOX_MAX_LOG_FILE_BYTES", "0")
-	if got := perFileBudget(1); got != 0 {
-		t.Errorf("per-file budget = %d, want capping disabled", got)
+	if got := fileShare([]int64{1 << 30}); got != 0 {
+		t.Errorf("per-file share = %d, want capping disabled", got)
 	}
 }
 
@@ -306,6 +323,73 @@ func TestCapLogFilesShrinksFilesNobodyIsTailing(t *testing.T) {
 	tail, ok := readLogTail(path, maxLogFile())
 	if !ok || !strings.HasSuffix(tail, "THE TAIL\n") {
 		t.Error("the newest output was not kept")
+	}
+}
+
+func TestCapLogFilesKeepsABusyProcessNextToManyFinishedOnes(t *testing.T) {
+	t.Setenv("SANDBOX_MAX_LOG_BYTES_TOTAL", fmt.Sprint(16*1024*1024))
+	pm := NewProcessManager()
+	dir := t.TempDir()
+
+	pm.mu.Lock()
+	for i := 0; i < 300; i++ {
+		path := filepath.Join(dir, fmt.Sprintf("done-%d.log", i))
+		if err := os.WriteFile(path, []byte("ok\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		id := fmt.Sprint(i)
+		pm.processes[id] = &ProcessInfo{PID: id, LogFile: path}
+	}
+	busy := filepath.Join(dir, "busy.log")
+	if err := os.WriteFile(busy, []byte(strings.Repeat("e", 1024*1024)), 0644); err != nil {
+		t.Fatal(err)
+	}
+	pm.processes["busy"] = &ProcessInfo{PID: "busy", LogFile: busy}
+	pm.mu.Unlock()
+
+	share := pm.CapLogFiles()
+	if share < 1024*1024 {
+		t.Errorf("share = %d, want the busy process' 1 MiB kept whole", share)
+	}
+	if got := pm.currentLogShare(); got != share {
+		t.Errorf("cached share = %d, want %d", got, share)
+	}
+	if tail, ok := readLogTail(busy, maxLogFile()); !ok || len(tail) != 1024*1024 {
+		t.Errorf("busy log lost output: %d bytes left", len(tail))
+	}
+}
+
+// A released head keeps the file's apparent size; only what is still resident
+// may count against the budget, or finished processes whose output was already
+// capped keep squeezing the running ones.
+func TestCapLogFilesBudgetsReleasedFilesByWhatTheyStillHold(t *testing.T) {
+	t.Setenv("SANDBOX_MAX_LOG_BYTES_TOTAL", fmt.Sprint(100*1024*1024))
+	pm := NewProcessManager()
+	dir := t.TempDir()
+
+	pm.mu.Lock()
+	for i := 0; i < 300; i++ {
+		path := filepath.Join(dir, fmt.Sprintf("done-%d.log", i))
+		if err := os.WriteFile(path, []byte(strings.Repeat("d", 1024*1024)), 0644); err != nil {
+			t.Fatal(err)
+		}
+		capLogFile(path, minLogFileBytes)
+		if i == 0 && diskUsage(t, path) >= 1024*1024 {
+			pm.mu.Unlock()
+			t.Skip("this filesystem cannot release a file's head")
+		}
+		id := fmt.Sprint(i)
+		pm.processes[id] = &ProcessInfo{PID: id, LogFile: path}
+	}
+	busy := filepath.Join(dir, "busy.log")
+	if err := os.WriteFile(busy, []byte(strings.Repeat("e", 1024*1024)), 0644); err != nil {
+		t.Fatal(err)
+	}
+	pm.processes["busy"] = &ProcessInfo{PID: "busy", LogFile: busy}
+	pm.mu.Unlock()
+
+	if share := pm.CapLogFiles(); share < 1024*1024 {
+		t.Errorf("share = %d, want the busy process' 1 MiB kept whole", share)
 	}
 }
 

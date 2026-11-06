@@ -96,7 +96,7 @@ Every `template.json` file should include:
 
 ### Testing without touching production
 
-Push to `develop`: it builds against the dev control plane only. To build without publishing to the dev store, run `bl push` locally under another name:
+To deploy a PR to dev, add the `deploy-to-dev` label: it merges the branch into `develop` and runs the develop builds, then comments the result on the PR. Push to `develop`: it builds against the dev control plane only. To build without publishing to the dev store, run `bl push` locally under another name:
 
 ```bash
 BL_API_KEY=<dev key> BL_ENV=dev bl push -y -w blaxel -t sandbox -n <name>-canary \

@@ -66,6 +66,10 @@ type ProcessRequest struct {
 	MaxRestarts       int               `json:"maxRestarts" example:"3"`   // Maximum number of restarts on failure. Set to a negative value (e.g. -1) for unlimited restarts.
 	KeepAlive         bool              `json:"keepAlive" example:"false"` // Disable scale-to-zero while process runs. Default timeout is 600s (10 minutes). Set timeout to 0 for infinite.
 	Stdin             bool              `json:"stdin" example:"false"`     // Open a writable stdin pipe, fed via POST /process/{identifier}/stdin and closed via DELETE. The pipe does not survive a sandbox-api restart: the process then sees EOF.
+	// URL that receives a signed process.exited webhook when the process ends for good (not on auto-restart). Requires callbackSecret.
+	CallbackURL string `json:"callbackUrl,omitempty" example:"https://example.com/hooks/process"`
+	// Key the webhook is signed with (HMAC-SHA256, X-Blaxel-Signature header). At least 32 characters; required with callbackUrl. Never returned by the API.
+	CallbackSecret string `json:"callbackSecret,omitempty" example:"a-random-secret-of-at-least-32-chars"`
 } // @name ProcessRequest
 
 // ProcessResponse is the response body for a process
@@ -100,10 +104,15 @@ type ProcessKillRequest struct {
 
 // ExecuteProcess executes a process
 func (h *ProcessHandler) ExecuteProcess(command string, workingDir string, name string, env map[string]string, waitForCompletion bool, timeout int, waitForPorts []int, restartOnFailure bool, maxRestarts int, keepAlive bool, stdin bool, waitTimeout ...int) (ProcessResponse, error) {
+	return h.ExecuteProcessWithCallback(process.ExitCallback{}, command, workingDir, name, env, waitForCompletion, timeout, waitForPorts, restartOnFailure, maxRestarts, keepAlive, stdin, waitTimeout...)
+}
+
+// ExecuteProcessWithCallback is ExecuteProcess with a per-process exit webhook URL.
+func (h *ProcessHandler) ExecuteProcessWithCallback(cb process.ExitCallback, command string, workingDir string, name string, env map[string]string, waitForCompletion bool, timeout int, waitForPorts []int, restartOnFailure bool, maxRestarts int, keepAlive bool, stdin bool, waitTimeout ...int) (ProcessResponse, error) {
 	if keepAlive && blaxel.KeepAliveDisabled() {
 		return ProcessResponse{}, ErrKeepAliveDisabled
 	}
-	processInfo, err := h.processManager.ExecuteProcess(command, workingDir, name, env, waitForCompletion, timeout, waitForPorts, restartOnFailure, maxRestarts, keepAlive, stdin, waitTimeout...)
+	processInfo, err := h.processManager.ExecuteProcessWithCallback(cb, command, workingDir, name, env, waitForCompletion, timeout, waitForPorts, restartOnFailure, maxRestarts, keepAlive, stdin, waitTimeout...)
 
 	// If processInfo is nil (process failed to start), return empty response with error
 	if processInfo == nil {
@@ -237,6 +246,11 @@ func (h *ProcessHandler) HandleExecuteCommand(c *gin.Context) {
 		return
 	}
 
+	if err := (process.ExitCallback{URL: req.CallbackURL, Secret: req.CallbackSecret}).Validate(); err != nil {
+		h.SendError(c, http.StatusBadRequest, err)
+		return
+	}
+
 	if req.WorkingDir != "" {
 		formattedWorkingDir, err := lib.FormatPath(req.WorkingDir)
 		if err != nil {
@@ -272,7 +286,7 @@ func (h *ProcessHandler) HandleExecuteCommand(c *gin.Context) {
 	}
 
 	// Execute the process
-	processInfo, err := h.ExecuteProcess(req.Command, req.WorkingDir, req.Name, req.Env, req.WaitForCompletion, timeout, req.WaitForPorts, req.RestartOnFailure, req.MaxRestarts, req.KeepAlive, req.Stdin)
+	processInfo, err := h.ExecuteProcessWithCallback(process.ExitCallback{URL: req.CallbackURL, Secret: req.CallbackSecret}, req.Command, req.WorkingDir, req.Name, req.Env, req.WaitForCompletion, timeout, req.WaitForPorts, req.RestartOnFailure, req.MaxRestarts, req.KeepAlive, req.Stdin)
 	if err != nil {
 		h.SendError(c, http.StatusUnprocessableEntity, err)
 		return
@@ -323,6 +337,11 @@ func (h *ProcessHandler) handleExecuteCommandStream(c *gin.Context) {
 		return
 	}
 
+	if err := (process.ExitCallback{URL: req.CallbackURL, Secret: req.CallbackSecret}).Validate(); err != nil {
+		h.SendError(c, http.StatusBadRequest, err)
+		return
+	}
+
 	if req.WorkingDir != "" {
 		formattedWorkingDir, err := lib.FormatPath(req.WorkingDir)
 		if err != nil {
@@ -368,7 +387,7 @@ func (h *ProcessHandler) handleExecuteCommandStream(c *gin.Context) {
 	jw := &JSONStreamWriter{gin: c}
 
 	// Execute the process without waiting for completion (we'll handle waiting ourselves)
-	processInfo, err := h.ExecuteProcess(req.Command, req.WorkingDir, req.Name, req.Env, false, timeout, req.WaitForPorts, req.RestartOnFailure, req.MaxRestarts, req.KeepAlive, req.Stdin)
+	processInfo, err := h.ExecuteProcessWithCallback(process.ExitCallback{URL: req.CallbackURL, Secret: req.CallbackSecret}, req.Command, req.WorkingDir, req.Name, req.Env, false, timeout, req.WaitForPorts, req.RestartOnFailure, req.MaxRestarts, req.KeepAlive, req.Stdin)
 	if err != nil {
 		jw.WriteEvent("error", err.Error())
 		return
@@ -759,6 +778,60 @@ func (h *ProcessHandler) HandleGetProcess(c *gin.Context) {
 		return
 	}
 
+	h.SendJSON(c, http.StatusOK, processInfo)
+}
+
+const (
+	// Both sit just under the gateway's 120s cut on held requests (ENG-5387).
+	// Measured on dev: a 119s wait answers, a 120s wait never gets a response.
+	defaultProcessWaitSeconds = 119
+	maxProcessWaitSeconds     = 119
+)
+
+// HandleWaitProcess handles GET requests to /process/:identifier/wait
+// @Summary Wait for a process to finish
+// @Description Hold the request until the process is over for good (no restart to come) or the timeout expires, then return the process like GET /process/{identifier}. A process still running after the timeout comes back with status running: call again. Replaces polling GET /process/{identifier}.
+// @Tags process
+// @Accept json
+// @Produce json
+// @Param identifier path string true "Process identifier (PID or name)"
+// @Param timeout query integer false "Seconds to wait (default and max 119; larger values are capped)"
+// @Success 200 {object} ProcessResponse "Process information"
+// @Failure 400 {object} ErrorResponse "Invalid timeout"
+// @Failure 404 {object} ErrorResponse "Process not found"
+// @Router /process/{identifier}/wait [get]
+func (h *ProcessHandler) HandleWaitProcess(c *gin.Context) {
+	identifier, err := h.GetPathParam(c, "identifier")
+	if err != nil {
+		h.SendError(c, http.StatusBadRequest, err)
+		return
+	}
+	timeout, err := strconv.Atoi(h.GetQueryParam(c, "timeout", strconv.Itoa(defaultProcessWaitSeconds)))
+	if err != nil || timeout < 0 {
+		h.SendError(c, http.StatusBadRequest, fmt.Errorf("timeout must be a non-negative integer of seconds"))
+		return
+	}
+	timeout = min(timeout, maxProcessWaitSeconds)
+
+	pid, finished, ok := h.processManager.FinishedChannel(identifier)
+	if !ok {
+		h.SendError(c, http.StatusNotFound, fmt.Errorf("process not found"))
+		return
+	}
+	timer := time.NewTimer(time.Duration(timeout) * time.Second)
+	defer timer.Stop()
+	select {
+	case <-finished:
+	case <-timer.C:
+	case <-c.Request.Context().Done():
+		return // client gone, nobody to answer
+	}
+
+	processInfo, err := h.GetProcess(pid)
+	if err != nil {
+		h.SendError(c, http.StatusNotFound, err)
+		return
+	}
 	h.SendJSON(c, http.StatusOK, processInfo)
 }
 

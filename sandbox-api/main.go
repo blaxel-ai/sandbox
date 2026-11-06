@@ -95,6 +95,11 @@ func main() {
 	if *shortPort != 8080 {
 		portValue = *shortPort
 	}
+	// The upgrade's validation instance (started with -p ValidationPort) adopts
+	// the live instance's processes; only the live one may report their exits.
+	if portValue == process.ValidationPort {
+		process.DisableExitWebhooks()
+	}
 
 	// Before anything of the workload runs, so no process of it ever sees the
 	// API reachable. Failing to install the rules is fatal: the option was

@@ -24,6 +24,20 @@ func (pm *ProcessManager) processByPID(pid string) *ProcessInfo {
 	return pm.processes[pid]
 }
 
+// FinishedChannel resolves a PID or name to its PID and the channel closed once
+// that process is over for good. The PID pins the caller to this process even
+// if the name is reused later. Read under the lock because a restart of a
+// finished process swaps in a fresh channel.
+func (pm *ProcessManager) FinishedChannel(identifier string) (string, <-chan struct{}, bool) {
+	pm.mu.RLock()
+	defer pm.mu.RUnlock()
+	proc := pm.lookupProcessLocked(identifier)
+	if proc == nil {
+		return "", nil, false
+	}
+	return proc.PID, proc.Finished, true
+}
+
 // endedInFailure reports whether a finished process failed or was killed or
 // stopped, as opposed to exiting cleanly with code 0.
 func (pm *ProcessManager) endedInFailure(pid string) bool {
@@ -70,7 +84,14 @@ func lastLines(s string, n int) string {
 
 // ExecuteProcess starts a process with its own execution timeout. An optional
 // waitTimeout limits only how long this call waits; it never stops the process.
-func (pm *ProcessManager) ExecuteProcess(
+func (pm *ProcessManager) ExecuteProcess(command string, workingDir string, name string, env map[string]string, waitForCompletion bool, timeout int, waitForPorts []int, restartOnFailure bool, maxRestarts int, keepAlive bool, stdin bool, waitTimeout ...int) (*ProcessInfo, error) {
+	return pm.ExecuteProcessWithCallback(ExitCallback{}, command, workingDir, name, env, waitForCompletion, timeout, waitForPorts, restartOnFailure, maxRestarts, keepAlive, stdin, waitTimeout...)
+}
+
+// ExecuteProcessWithCallback is ExecuteProcess with a per-process exit
+// webhook; the zero ExitCallback sends none.
+func (pm *ProcessManager) ExecuteProcessWithCallback(
+	cb ExitCallback,
 	command string,
 	workingDir string,
 	name string,
@@ -130,11 +151,10 @@ func (pm *ProcessManager) ExecuteProcess(
 	// Start the process
 	var pid string
 	var err error
-	if name != "" {
-		pid, err = pm.StartProcessWithName(command, workingDir, name, env, restartOnFailure, maxRestarts, keepAlive, timeout, stdin, callback)
-	} else {
-		pid, err = pm.StartProcess(command, workingDir, env, restartOnFailure, maxRestarts, keepAlive, timeout, stdin, callback)
+	if name == "" {
+		name = GenerateRandomName(8)
 	}
+	pid, err = pm.StartProcessWithCallback(command, workingDir, name, env, restartOnFailure, maxRestarts, keepAlive, timeout, stdin, cb, callback)
 	if err != nil {
 		return nil, fmt.Errorf("failed to start process: %w", err)
 	}

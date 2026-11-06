@@ -3,12 +3,14 @@
   "private": true,
   "type": "module",
   "dependencies": {
-    "@blaxel/core": "^0.3.32"
+    "@blaxel/core": "^0.3.34"
   },
   "scripts": {
     "test": "node --test test/*.test.mjs"
   },
   "overrides": {
-    "js-yaml": "4.3.2"
+    "js-yaml": "4.3.2",
+    "glob": "14.0.2",
+    "minimatch": "11.0.1"
   }
 }

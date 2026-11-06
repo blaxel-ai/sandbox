@@ -1,6 +1,7 @@
 package process
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -57,6 +58,8 @@ type ProcessState struct {
 	Env              map[string]string       `json:"env,omitempty"` // Custom env vars provided at start, reused on restart-on-failure
 	KeepAlive        bool                    `json:"keepAlive,omitempty"`
 	Timeout          int                     `json:"timeout,omitempty"`
+	CallbackURL      string                  `json:"callbackUrl,omitempty"`
+	CallbackSecret   string                  `json:"callbackSecret,omitempty"` // State file is 0600: the workload must not read it
 
 	EffectiveWorkingDir string `json:"effectiveWorkingDir,omitempty"`
 
@@ -142,6 +145,8 @@ func (pm *ProcessManager) SaveState() error {
 			Env:              proc.Env,
 			KeepAlive:        proc.KeepAlive,
 			Timeout:          proc.Timeout,
+			CallbackURL:      proc.Callback.URL,
+			CallbackSecret:   proc.Callback.Secret,
 		}
 
 		logrus.WithFields(logrus.Fields{
@@ -166,7 +171,7 @@ func (pm *ProcessManager) SaveState() error {
 
 	// Write to temp file first, then rename for atomicity
 	tmpFile := stateFile + ".tmp"
-	if err := os.WriteFile(tmpFile, data, 0644); err != nil {
+	if err := os.WriteFile(tmpFile, data, 0600); err != nil {
 		return fmt.Errorf("failed to write state file: %w", err)
 	}
 
@@ -215,6 +220,24 @@ func (pm *ProcessManager) LoadState() error {
 		"processCount": len(state.Processes),
 	}).Info("LoadState: state file parsed")
 
+	// A process found dead is notified now; save its terminal state, or the
+	// next API restart finds it "running" again and notifies a second time.
+	// Deferred first so it runs after the unlock below.
+	notified := false
+	defer func() {
+		if notified {
+			if err := pm.SaveState(); err != nil {
+				logrus.WithError(err).Warn("Failed to persist processes notified as exited")
+			}
+		}
+	}()
+	notifyDead := func(p *ProcessInfo) {
+		if webhook := exitCallbackLocked(p); webhook != nil {
+			webhook.hold()()
+			notified = true
+		}
+	}
+
 	pm.mu.Lock()
 	defer pm.mu.Unlock()
 
@@ -260,6 +283,7 @@ func (pm *ProcessManager) LoadState() error {
 			Env:              procState.Env,
 			KeepAlive:        procState.KeepAlive,
 			Timeout:          procState.Timeout,
+			Callback:         ExitCallback{URL: procState.CallbackURL, Secret: procState.CallbackSecret},
 			Done:             make(chan struct{}),
 			TailDone:         make(chan struct{}),
 			Finished:         make(chan struct{}),
@@ -326,6 +350,7 @@ func (pm *ProcessManager) LoadState() error {
 				proc.CompletedAt = &now
 				proc.ExitCode = -1
 				pm.finishRestoredProcess(proc)
+				notifyDead(proc)
 				deadCount++
 				pm.processes[pid] = proc
 				continue
@@ -388,6 +413,8 @@ func (pm *ProcessManager) LoadState() error {
 
 			// Close the Done and TailDone channels since process is no longer running
 			pm.finishRestoredProcess(proc)
+			// It died while no API was watching, so nobody has been told yet.
+			notifyDead(proc)
 
 			logrus.WithFields(logrus.Fields{
 				"pid":     proc.PID,
@@ -829,7 +856,7 @@ func isDevMode() bool {
 // It downloads the specified binary from GitHub releases, validates it, and restarts
 // Pre-built binaries are available at https://github.com/blaxel-ai/sandbox/releases
 // Available versions: "develop", "main", "latest", or specific tag like "v1.0.0"
-// baseURL can be customized for forks (e.g., https://github.com/your-org/sandbox/releases)
+// baseURL is the build's release source (handler.UpgradeReleaseURL), never chosen by the API caller
 func TriggerUpgrade(version, baseURL string) {
 	logger := logrus.WithField("component", "upgrade")
 
@@ -1088,6 +1115,12 @@ func validateNewBinary(binaryPath string) error {
 	logger := logrus.WithField("component", "upgrade")
 	logger.Info("Validating new binary before replacement...")
 
+	// Never start a build that predates pinned upgrade sources: it would accept a
+	// caller-chosen baseUrl again, first while validating and then after the exec.
+	if err := requireUpgradeSourceMarker(binaryPath); err != nil {
+		return err
+	}
+
 	// Re-save process state right before starting validation binary.
 	// The original SaveState was called in HandleUpgrade before download started,
 	// so the state file may be stale if processes completed during download.
@@ -1341,6 +1374,41 @@ func validateBinaryFormat(binaryPath string) error {
 	return nil
 }
 
+// upgradeSourceMarker is compiled into every build whose upgrades only download
+// from the build's release source. Upgrades refuse binaries without it, so a
+// sandbox cannot be rolled back to a release that accepted a custom baseUrl.
+const upgradeSourceMarker = "blaxel-sandbox-api:pinned-upgrade-source:v1"
+
+// requireUpgradeSourceMarker checks that the binary contains upgradeSourceMarker.
+// It streams the file so the check doesn't hold the whole binary in memory.
+func requireUpgradeSourceMarker(binaryPath string) error {
+	file, err := os.Open(binaryPath)
+	if err != nil {
+		return fmt.Errorf("cannot open binary: %w", err)
+	}
+	defer file.Close()
+
+	marker := []byte(upgradeSourceMarker)
+	overlap := len(marker) - 1
+	buf := make([]byte, overlap+1<<20)
+	kept := 0
+	for {
+		n, err := io.ReadFull(file, buf[kept:])
+		end := kept + n
+		if bytes.Contains(buf[:end], marker) {
+			return nil
+		}
+		if err == io.EOF || err == io.ErrUnexpectedEOF {
+			return fmt.Errorf("binary predates pinned upgrade sources; refusing to run it")
+		}
+		if err != nil {
+			return fmt.Errorf("cannot read binary: %w", err)
+		}
+		// Keep the tail so a marker split across reads is still found
+		kept = copy(buf, buf[end-overlap:end])
+	}
+}
+
 // UpgradedBinaryName is the file a hot upgrade installs next to the running
 // binary and execs into. It is exported because the paths this API may be
 // exec'd from have to be named where they are protected from being replaced.
@@ -1399,6 +1467,12 @@ func upgradeWithNewBinary(newBinaryPath string) {
 	// Make executable
 	if err := os.Chmod(permanentPath, 0755); err != nil {
 		logger.WithError(err).Warn("Failed to chmod new binary")
+	}
+
+	// Processes that ended during validation already sent their exit webhook;
+	// a stale "running" entry would make the new binary send it again.
+	if err := GetProcessManager().SaveState(); err != nil {
+		logger.WithError(err).Warn("Failed to re-save state before exec")
 	}
 
 	logger.Info("Executing new binary...")

@@ -87,6 +87,11 @@ const (
 type ProcessManager struct {
 	processes map[string]*ProcessInfo
 	mu        sync.RWMutex
+
+	// logShare is the per-file log cap the last sweep computed, plus one, so
+	// zero means no sweep has run yet. Tailers read it instead of each stat-ing
+	// every process' log files.
+	logShare atomic.Int64
 }
 
 type ProcessLogs struct {
@@ -109,6 +114,7 @@ type ProcessInfo struct {
 
 	terminationRequested constants.ProcessStatus // Protected by ProcessManager.mu.
 	runExited            bool                    // Wait has returned; no live OS process may be signalled.
+	skipExitWebhook      bool                    // Protected by ProcessManager.mu; an archive stops it to relaunch it elsewhere.
 
 	WorkingDir string `json:"workingDir"`
 
@@ -124,6 +130,7 @@ type ProcessInfo struct {
 	KeepAlive        bool              `json:"keepAlive"`
 	Stdin            bool              `json:"stdin"` // Whether the process was started with a writable stdin pipe
 	Timeout          int               `json:"-"`     // Internal: execution timeout in seconds; zero means unlimited
+	Callback         ExitCallback      `json:"-"`     // Where and how this process's exit webhook is sent; zero means none
 	LogFormat        string            `json:"-"`     // Combined log encoding; immutable
 	LogFile          string            `json:"-"`     // Path to combined log file
 	StdoutFile       string            `json:"-"`     // Path to stdout log file
@@ -377,6 +384,12 @@ func (pm *ProcessManager) StartProcess(command string, workingDir string, env ma
 }
 
 func (pm *ProcessManager) StartProcessWithName(command string, workingDir string, name string, env map[string]string, restartOnFailure bool, maxRestarts int, keepAlive bool, timeout int, stdin bool, callback func(process *ProcessInfo)) (string, error) {
+	return pm.StartProcessWithCallback(command, workingDir, name, env, restartOnFailure, maxRestarts, keepAlive, timeout, stdin, ExitCallback{}, callback)
+}
+
+// StartProcessWithCallback takes the callback before the process exists, so
+// an exit cannot race the URL being set.
+func (pm *ProcessManager) StartProcessWithCallback(command string, workingDir string, name string, env map[string]string, restartOnFailure bool, maxRestarts int, keepAlive bool, timeout int, stdin bool, cb ExitCallback, callback func(process *ProcessInfo)) (string, error) {
 	cmd, releaseScript, err := shellCommand(command)
 	if err != nil {
 		return "", err
@@ -446,6 +459,7 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 		KeepAlive:        keepAlive,
 		Stdin:            stdin,
 		Timeout:          timeout,
+		Callback:         cb,
 		LogFile:          combinedPath,
 		LogFormat:        structuredLogFormat,
 		StdoutFile:       stdoutPath,
@@ -588,11 +602,11 @@ func (pm *ProcessManager) tailLogFiles(proc *ProcessInfo) {
 	defer capCheck.Stop()
 	capFiles := func() {
 		// Every process' log files share one budget, so what this one may keep
-		// depends on how many others are keeping output too.
-		processes := pm.countProcesses()
-		capLogFile(proc.StdoutFile, processes)
-		capLogFile(proc.StderrFile, processes)
-		capLogFile(proc.LogFile, processes)
+		// depends on how much output the others are keeping.
+		share := pm.currentLogShare()
+		capLogFile(proc.StdoutFile, share)
+		capLogFile(proc.StderrFile, share)
+		capLogFile(proc.LogFile, share)
 	}
 
 	for {
@@ -1051,25 +1065,49 @@ func (pm *ProcessManager) ListProcesses() []*ProcessInfo {
 	return processes
 }
 
-// countProcesses is how many processes the manager knows about, running or not:
-// they all hold log files, so they all share the log budget.
-func (pm *ProcessManager) countProcesses() int {
-	pm.mu.RLock()
-	defer pm.mu.RUnlock()
-	return len(pm.processes)
+// CapLogFiles keeps every process' log files inside the shared budget and
+// returns the per-file share it applied. A process' own tailer stops capping
+// when the process exits, but its output stays on the tmpfs and still costs the
+// guest memory, so something has to keep looking at the ones nobody is tailing
+// any more.
+func (pm *ProcessManager) CapLogFiles() int64 {
+	processes := pm.ListProcesses()
+	paths := make([]string, 0, len(processes)*3)
+	sizes := make([]int64, 0, len(processes)*3)
+	for _, proc := range processes {
+		for _, path := range []string{proc.StdoutFile, proc.StderrFile, proc.LogFile} {
+			if path == "" {
+				continue
+			}
+			info, err := os.Stat(path)
+			if err != nil {
+				continue
+			}
+			paths = append(paths, path)
+			sizes = append(sizes, residentBytes(info))
+		}
+	}
+
+	share := fileShare(sizes)
+	pm.logShare.Store(share + 1)
+	if share == 0 {
+		return 0
+	}
+	for i, path := range paths {
+		if sizes[i] > share {
+			capLogFile(path, share)
+		}
+	}
+	return share
 }
 
-// CapLogFiles keeps every process' log files inside the shared budget. A
-// process' own tailer stops capping when the process exits, but its output stays
-// on the tmpfs and still costs the guest memory, so something has to keep
-// looking at the ones nobody is tailing any more.
-func (pm *ProcessManager) CapLogFiles() {
-	processes := pm.ListProcesses()
-	for _, proc := range processes {
-		capLogFile(proc.StdoutFile, len(processes))
-		capLogFile(proc.StderrFile, len(processes))
-		capLogFile(proc.LogFile, len(processes))
+// currentLogShare is the per-file share the last sweep computed, or a fresh one
+// when no sweep has run yet.
+func (pm *ProcessManager) currentLogShare() int64 {
+	if share := pm.logShare.Load(); share > 0 {
+		return share - 1
 	}
+	return pm.CapLogFiles()
 }
 
 // StopProcess requests graceful termination. Status stays running until exit is observed.
