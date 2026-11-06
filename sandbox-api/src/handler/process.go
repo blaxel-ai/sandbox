@@ -762,6 +762,60 @@ func (h *ProcessHandler) HandleGetProcess(c *gin.Context) {
 	h.SendJSON(c, http.StatusOK, processInfo)
 }
 
+const (
+	// Both sit just under the gateway's 120s cut on held requests (ENG-5387).
+	// Measured on dev: a 119s wait answers, a 120s wait never gets a response.
+	defaultProcessWaitSeconds = 119
+	maxProcessWaitSeconds     = 119
+)
+
+// HandleWaitProcess handles GET requests to /process/:identifier/wait
+// @Summary Wait for a process to finish
+// @Description Hold the request until the process is over for good (no restart to come) or the timeout expires, then return the process like GET /process/{identifier}. A process still running after the timeout comes back with status running: call again. Replaces polling GET /process/{identifier}.
+// @Tags process
+// @Accept json
+// @Produce json
+// @Param identifier path string true "Process identifier (PID or name)"
+// @Param timeout query integer false "Seconds to wait (default and max 119; larger values are capped)"
+// @Success 200 {object} ProcessResponse "Process information"
+// @Failure 400 {object} ErrorResponse "Invalid timeout"
+// @Failure 404 {object} ErrorResponse "Process not found"
+// @Router /process/{identifier}/wait [get]
+func (h *ProcessHandler) HandleWaitProcess(c *gin.Context) {
+	identifier, err := h.GetPathParam(c, "identifier")
+	if err != nil {
+		h.SendError(c, http.StatusBadRequest, err)
+		return
+	}
+	timeout, err := strconv.Atoi(h.GetQueryParam(c, "timeout", strconv.Itoa(defaultProcessWaitSeconds)))
+	if err != nil || timeout < 0 {
+		h.SendError(c, http.StatusBadRequest, fmt.Errorf("timeout must be a non-negative integer of seconds"))
+		return
+	}
+	timeout = min(timeout, maxProcessWaitSeconds)
+
+	pid, finished, ok := h.processManager.FinishedChannel(identifier)
+	if !ok {
+		h.SendError(c, http.StatusNotFound, fmt.Errorf("process not found"))
+		return
+	}
+	timer := time.NewTimer(time.Duration(timeout) * time.Second)
+	defer timer.Stop()
+	select {
+	case <-finished:
+	case <-timer.C:
+	case <-c.Request.Context().Done():
+		return // client gone, nobody to answer
+	}
+
+	processInfo, err := h.GetProcess(pid)
+	if err != nil {
+		h.SendError(c, http.StatusNotFound, err)
+		return
+	}
+	h.SendJSON(c, http.StatusOK, processInfo)
+}
+
 // ResponseWriter is a custom writer for SSE responses that also flushes after each write
 type ResponseWriter struct {
 	gin       *gin.Context

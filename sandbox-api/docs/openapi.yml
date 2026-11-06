@@ -1797,6 +1797,43 @@ paths:
       summary: Write to a process's stdin
       tags:
         - process
+  "/process/{identifier}/wait":
+    get:
+      description: "Hold the request until the process is over for good (no restart to come) or the timeout expires, then return the process like GET /process/{identifier}. A process still running after the timeout comes back with status running: call again. Replaces polling GET /process/{identifier}."
+      parameters:
+        - description: Process identifier (PID or name)
+          in: path
+          name: identifier
+          required: true
+          schema:
+            type: string
+        - description: Seconds to wait (default and max 119; larger values are capped)
+          in: query
+          name: timeout
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Process information
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProcessResponse"
+        "400":
+          description: Invalid timeout
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Process not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+      summary: Wait for a process to finish
+      tags:
+        - process
   /upgrade:
     post:
       description: >-

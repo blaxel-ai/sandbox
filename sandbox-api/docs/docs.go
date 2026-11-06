@@ -2140,6 +2140,56 @@ const docTemplate = `{
                 }
             }
         },
+        "/process/{identifier}/wait": {
+            "get": {
+                "description": "Hold the request until the process is over for good (no restart to come) or the timeout expires, then return the process like GET /process/{identifier}. A process still running after the timeout comes back with status running: call again. Replaces polling GET /process/{identifier}.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "process"
+                ],
+                "summary": "Wait for a process to finish",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Process identifier (PID or name)",
+                        "name": "identifier",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Seconds to wait (default and max 119; larger values are capped)",
+                        "name": "timeout",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Process information",
+                        "schema": {
+                            "$ref": "#/definitions/ProcessResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid timeout",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Process not found",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/upgrade": {
             "post": {
                 "description": "Triggers an upgrade of the sandbox-api process. Returns 200 immediately before upgrading.\nThe upgrade will: download the specified binary from GitHub releases, validate it, and restart.\nAll running processes will be preserved across the upgrade.\nAvailable versions: \"latest\" (default, most recent release), \"develop\", \"main\", or specific tag like \"v1.0.0\"\nBinaries are downloaded from https://github.com/blaxel-ai/sandbox/releases; requests with a baseUrl are rejected.\nReleases that still accepted a baseUrl are refused, and the refusal is reported in the health endpoint's lastUpgrade.",
