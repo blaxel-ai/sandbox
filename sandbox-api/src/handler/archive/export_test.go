@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -643,5 +644,54 @@ func TestExportRefusesAnUntrustworthyImageSource(t *testing.T) {
 		if err := (ExportOptions{ImageDevice: DefaultImageDevice}).validateImageSource(); err != nil {
 			t.Errorf("expected %s to be accepted, got %v", DefaultImageDevice, err)
 		}
+	}
+}
+
+// Stopping the workload for an export is a migration, not an exit: no
+// process.exited may fire, and a relaunch keeps the process's callback URL.
+func TestExportStopSendsNoExitWebhookAndKeepsTheCallbackURL(t *testing.T) {
+	root, lower := fakeSandbox(t)
+	upload := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer upload.Close()
+	var hooks atomic.Int32
+	receiver := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { hooks.Add(1) }))
+	defer receiver.Close()
+
+	pm := process.GetProcessManager()
+	original, err := pm.StartProcessWithCallback("sleep 30", "", "hooked-worker", nil, false, 0, false, 0, false, process.ExitCallback{URL: receiver.URL, Secret: "export-test-secret-0123456789abcdef"}, func(*process.ProcessInfo) {})
+	if err != nil {
+		t.Fatalf("failed to start the workload: %v", err)
+	}
+	t.Cleanup(func() {
+		for _, info := range pm.ListProcesses() {
+			if info.Name == "hooked-worker" {
+				_ = pm.KillProcess(info.PID)
+			}
+		}
+	})
+
+	options := exportOptions(t, root, lower)
+	options.URL = upload.URL
+	if _, err := Export(context.Background(), options); err == nil {
+		t.Fatal("expected the rejected upload to fail the export")
+	}
+	time.Sleep(300 * time.Millisecond)
+	if got := hooks.Load(); got != 0 {
+		t.Fatalf("the export's stop sent %d exit webhooks, want 0", got)
+	}
+	// Any status: other tests in this package may stop it again meanwhile.
+	var relaunched *process.ProcessInfo
+	for _, info := range pm.ListProcesses() {
+		if info.Name == "hooked-worker" && info.PID != original {
+			relaunched = info
+		}
+	}
+	if relaunched == nil {
+		t.Fatal("the process stopped for the export was not relaunched")
+	}
+	if relaunched.Callback != (process.ExitCallback{URL: receiver.URL, Secret: "export-test-secret-0123456789abcdef"}) {
+		t.Fatalf("the relaunched process must keep its callback, got %+v", relaunched.Callback)
 	}
 }

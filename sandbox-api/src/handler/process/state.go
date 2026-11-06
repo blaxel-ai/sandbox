@@ -58,6 +58,8 @@ type ProcessState struct {
 	Env              map[string]string       `json:"env,omitempty"` // Custom env vars provided at start, reused on restart-on-failure
 	KeepAlive        bool                    `json:"keepAlive,omitempty"`
 	Timeout          int                     `json:"timeout,omitempty"`
+	CallbackURL      string                  `json:"callbackUrl,omitempty"`
+	CallbackSecret   string                  `json:"callbackSecret,omitempty"` // State file is 0600: the workload must not read it
 
 	EffectiveWorkingDir string `json:"effectiveWorkingDir,omitempty"`
 
@@ -143,6 +145,8 @@ func (pm *ProcessManager) SaveState() error {
 			Env:              proc.Env,
 			KeepAlive:        proc.KeepAlive,
 			Timeout:          proc.Timeout,
+			CallbackURL:      proc.Callback.URL,
+			CallbackSecret:   proc.Callback.Secret,
 		}
 
 		logrus.WithFields(logrus.Fields{
@@ -167,7 +171,7 @@ func (pm *ProcessManager) SaveState() error {
 
 	// Write to temp file first, then rename for atomicity
 	tmpFile := stateFile + ".tmp"
-	if err := os.WriteFile(tmpFile, data, 0644); err != nil {
+	if err := os.WriteFile(tmpFile, data, 0600); err != nil {
 		return fmt.Errorf("failed to write state file: %w", err)
 	}
 
@@ -216,6 +220,24 @@ func (pm *ProcessManager) LoadState() error {
 		"processCount": len(state.Processes),
 	}).Info("LoadState: state file parsed")
 
+	// A process found dead is notified now; save its terminal state, or the
+	// next API restart finds it "running" again and notifies a second time.
+	// Deferred first so it runs after the unlock below.
+	notified := false
+	defer func() {
+		if notified {
+			if err := pm.SaveState(); err != nil {
+				logrus.WithError(err).Warn("Failed to persist processes notified as exited")
+			}
+		}
+	}()
+	notifyDead := func(p *ProcessInfo) {
+		if webhook := exitCallbackLocked(p); webhook != nil {
+			webhook.hold()()
+			notified = true
+		}
+	}
+
 	pm.mu.Lock()
 	defer pm.mu.Unlock()
 
@@ -261,6 +283,7 @@ func (pm *ProcessManager) LoadState() error {
 			Env:              procState.Env,
 			KeepAlive:        procState.KeepAlive,
 			Timeout:          procState.Timeout,
+			Callback:         ExitCallback{URL: procState.CallbackURL, Secret: procState.CallbackSecret},
 			Done:             make(chan struct{}),
 			TailDone:         make(chan struct{}),
 			Finished:         make(chan struct{}),
@@ -327,6 +350,7 @@ func (pm *ProcessManager) LoadState() error {
 				proc.CompletedAt = &now
 				proc.ExitCode = -1
 				pm.finishRestoredProcess(proc)
+				notifyDead(proc)
 				deadCount++
 				pm.processes[pid] = proc
 				continue
@@ -389,6 +413,8 @@ func (pm *ProcessManager) LoadState() error {
 
 			// Close the Done and TailDone channels since process is no longer running
 			pm.finishRestoredProcess(proc)
+			// It died while no API was watching, so nobody has been told yet.
+			notifyDead(proc)
 
 			logrus.WithFields(logrus.Fields{
 				"pid":     proc.PID,
@@ -1441,6 +1467,12 @@ func upgradeWithNewBinary(newBinaryPath string) {
 	// Make executable
 	if err := os.Chmod(permanentPath, 0755); err != nil {
 		logger.WithError(err).Warn("Failed to chmod new binary")
+	}
+
+	// Processes that ended during validation already sent their exit webhook;
+	// a stale "running" entry would make the new binary send it again.
+	if err := GetProcessManager().SaveState(); err != nil {
+		logger.WithError(err).Warn("Failed to re-save state before exec")
 	}
 
 	logger.Info("Executing new binary...")

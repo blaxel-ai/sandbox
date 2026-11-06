@@ -114,6 +114,7 @@ type ProcessInfo struct {
 
 	terminationRequested constants.ProcessStatus // Protected by ProcessManager.mu.
 	runExited            bool                    // Wait has returned; no live OS process may be signalled.
+	skipExitWebhook      bool                    // Protected by ProcessManager.mu; an archive stops it to relaunch it elsewhere.
 
 	WorkingDir string `json:"workingDir"`
 
@@ -129,6 +130,7 @@ type ProcessInfo struct {
 	KeepAlive        bool              `json:"keepAlive"`
 	Stdin            bool              `json:"stdin"` // Whether the process was started with a writable stdin pipe
 	Timeout          int               `json:"-"`     // Internal: execution timeout in seconds; zero means unlimited
+	Callback         ExitCallback      `json:"-"`     // Where and how this process's exit webhook is sent; zero means none
 	LogFormat        string            `json:"-"`     // Combined log encoding; immutable
 	LogFile          string            `json:"-"`     // Path to combined log file
 	StdoutFile       string            `json:"-"`     // Path to stdout log file
@@ -382,6 +384,12 @@ func (pm *ProcessManager) StartProcess(command string, workingDir string, env ma
 }
 
 func (pm *ProcessManager) StartProcessWithName(command string, workingDir string, name string, env map[string]string, restartOnFailure bool, maxRestarts int, keepAlive bool, timeout int, stdin bool, callback func(process *ProcessInfo)) (string, error) {
+	return pm.StartProcessWithCallback(command, workingDir, name, env, restartOnFailure, maxRestarts, keepAlive, timeout, stdin, ExitCallback{}, callback)
+}
+
+// StartProcessWithCallback takes the callback before the process exists, so
+// an exit cannot race the URL being set.
+func (pm *ProcessManager) StartProcessWithCallback(command string, workingDir string, name string, env map[string]string, restartOnFailure bool, maxRestarts int, keepAlive bool, timeout int, stdin bool, cb ExitCallback, callback func(process *ProcessInfo)) (string, error) {
 	cmd, releaseScript, err := shellCommand(command)
 	if err != nil {
 		return "", err
@@ -451,6 +459,7 @@ func (pm *ProcessManager) StartProcessWithName(command string, workingDir string
 		KeepAlive:        keepAlive,
 		Stdin:            stdin,
 		Timeout:          timeout,
+		Callback:         cb,
 		LogFile:          combinedPath,
 		LogFormat:        structuredLogFormat,
 		StdoutFile:       stdoutPath,
