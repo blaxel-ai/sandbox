@@ -83,8 +83,7 @@ func restartStartupWorkload() bool {
 // export waits for it like any other stopped process. The second return value is
 // false when there is nothing to stop.
 //
-// Only the command's own process is signalled, not a process group: it shares
-// sandbox-api's group, so signalling the group would kill this API. A shell
+// Only the command's own process is signalled, not its process group. A shell
 // running the command usually execs it, in which case this is the workload
 // itself; a shell that instead forks leaves its children running, and the
 // read-only remount is what stops them from writing.

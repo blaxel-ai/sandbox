@@ -10,6 +10,7 @@ import (
 	"syscall"
 
 	"github.com/blaxel-ai/sandbox-api/src/lib/identity"
+	"github.com/blaxel-ai/sandbox-api/src/lib/lifecycle"
 	"github.com/blaxel-ai/sandbox-api/src/lib/oom"
 	"github.com/creack/pty"
 )
@@ -130,7 +131,7 @@ func NewTerminalSession(shell string, workingDir string, env map[string]string, 
 		Credential: identity.Get().Credential(),
 	}
 
-	if err := cmd.Start(); err != nil {
+	if err := lifecycle.StartChild(cmd); err != nil {
 		ptmx.Close()
 		return nil, err
 	}
@@ -144,7 +145,7 @@ func NewTerminalSession(shell string, workingDir string, env map[string]string, 
 	// When the shell exits (e.g. user types "exit"), shellDoneCh is closed
 	// to notify listeners even if child processes still hold the PTY slave open.
 	go func() {
-		_ = cmd.Wait()
+		_ = lifecycle.WaitChild(cmd)
 		close(shellDoneCh)
 		// Release process resources immediately after Wait() to close pidfd
 		if cmd.Process != nil {
