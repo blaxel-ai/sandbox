@@ -15,6 +15,7 @@ import (
 	"os"
 	"strconv"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/sirupsen/logrus"
@@ -36,21 +37,55 @@ var (
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
 	exitWebhooksDisabled atomic.Bool
+	// exitWebhooksInFlight counts deliveries that have been committed to (held)
+	// and not yet sent or dropped, so shutdown and upgrade can wait for them.
+	exitWebhooksInFlight atomic.Int64
 )
+
+// ErrNotRunning is returned by StopForMigration for a process that has
+// already ended on its own.
+var ErrNotRunning = errors.New("process is not running")
+
+// exitWebhooksWaitLimit bounds WaitExitWebhooks. A delivery gives up within
+// ~11s on its own, so this only bites when new exits keep arriving during
+// the wait (an upgrade leaves processes running) and would otherwise hold
+// shutdown forever.
+const exitWebhooksWaitLimit = 15 * time.Second
+
+// WaitExitWebhooks returns once every exit webhook already committed to has
+// been delivered or dropped, or after exitWebhooksWaitLimit. Call it before
+// the process exits or execs, which would kill those deliveries.
+// ponytail: an atomic counter polled rather than a sync.WaitGroup: exits keep
+// happening during the wait, and a WaitGroup panics when Add races a Wait
+// that is waking up at zero.
+func WaitExitWebhooks() {
+	deadline := time.Now().Add(exitWebhooksWaitLimit)
+	for exitWebhooksInFlight.Load() > 0 && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+}
 
 // DisableExitWebhooks turns exit webhooks off for this instance. The upgrade
 // validation instance adopts the same processes as the live one, and clearing
 // its env is not enough: startup reloads the secret from the host.
 func DisableExitWebhooks() { exitWebhooksDisabled.Store(true) }
 
-// SkipExitWebhook marks a process whose coming stop is not the end of it (an
-// archive stops it to relaunch it elsewhere), so the stop sends no webhook.
-func (pm *ProcessManager) SkipExitWebhook(identifier string) {
+// StopForMigration sends SIGTERM to a process whose stop is not the end of it
+// (an archive stops it to relaunch it elsewhere), so the stop sends no
+// webhook. Check and mark happen under one lock: a process that has already
+// ended on its own returns ErrNotRunning and keeps its webhook.
+func (pm *ProcessManager) StopForMigration(identifier string) error {
 	pm.mu.Lock()
 	defer pm.mu.Unlock()
-	if p := pm.lookupProcessLocked(identifier); p != nil {
-		p.skipExitWebhook = true
+	p := pm.lookupProcessLocked(identifier)
+	if p == nil {
+		return fmt.Errorf("process with Identifier %s not found", identifier)
 	}
+	if p.Status != StatusRunning {
+		return ErrNotRunning
+	}
+	p.skipExitWebhook = true
+	return pm.signalProcessLocked(identifier, syscall.SIGTERM, StatusStopped)
 }
 
 type exitEvent struct {
@@ -155,8 +190,10 @@ func (c *exitCallback) hold() func() {
 		return func() {}
 	}
 	release := holdAwake("process exit webhook " + c.pid)
+	exitWebhooksInFlight.Add(1) // before markFinished, so a waiter on Finished sees it
 	return func() {
 		go func() {
+			defer exitWebhooksInFlight.Add(-1)
 			defer release()
 			sendExitCallback(c.target, c.secret, c.body, c.ts)
 		}()

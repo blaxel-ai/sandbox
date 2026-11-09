@@ -115,11 +115,15 @@ func stopStartupWorkload() (stoppedProcess, bool) {
 func TerminateWorkload() {
 	pm := process.GetProcessManager()
 	var stopping []stoppedProcess
+	var finished []chan struct{}
 	for _, info := range pm.ListProcesses() {
 		if info.ProcessPid <= 0 {
 			continue
 		}
-		candidate := stoppedProcess{identifier: info.PID, pid: info.ProcessPid, done: info.Done, group: true}
+		// Finished, not Done: Done closes before the final status and the exit
+		// webhook, and is replaced on every restart.
+		finished = append(finished, info.Finished)
+		candidate := stoppedProcess{identifier: info.PID, pid: info.ProcessPid, done: info.Finished, group: true}
 		if info.Status == process.StatusRunning {
 			// Signals the whole group and keeps the manager from restarting it.
 			if err := pm.StopProcessGroup(info.PID); err != nil {
@@ -142,6 +146,19 @@ func TerminateWorkload() {
 			logrus.WithField("processes", identifiers(stopping)).Info("Still waiting for the workload to exit")
 		}
 	}
+	// The OS process can be gone before the manager has published its exit
+	// (exited also probes the PID); the webhook is only committed after that.
+	// Bounded: a process waiting to be restarted keeps Finished open.
+	publish := time.After(5 * time.Second)
+wait:
+	for _, ch := range finished {
+		select {
+		case <-ch:
+		case <-publish:
+			break wait
+		}
+	}
+	process.WaitExitWebhooks()
 }
 
 // ForwardToWorkload sends sig to the workload processes that handle it, and
