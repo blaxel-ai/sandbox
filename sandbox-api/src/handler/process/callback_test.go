@@ -2,6 +2,7 @@ package process
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -353,8 +354,7 @@ func TestSkipExitWebhook(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pm.SkipExitWebhook(proc.PID)
-	if err := pm.StopProcess(proc.PID); err != nil {
+	if err := pm.StopForMigration(proc.PID); err != nil {
 		t.Fatal(err)
 	}
 	select {
@@ -365,5 +365,71 @@ func TestSkipExitWebhook(t *testing.T) {
 	time.Sleep(200 * time.Millisecond)
 	if len(holdsTaken) != 0 || hits.Load() != 0 {
 		t.Fatalf("archive stop sent a webhook (holds %d, hits %d)", len(holdsTaken), hits.Load())
+	}
+}
+
+// A process that ended on its own before the archive got to it must keep its
+// webhook: the check and the skip mark are one locked step.
+func TestStopForMigrationLeavesAnExitedProcessAlone(t *testing.T) {
+	originalLogDir := ProcessLogDir
+	ProcessLogDir = t.TempDir()
+	t.Cleanup(func() { ProcessLogDir = originalLogDir })
+	fakeHolds(t, nil)
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { hits.Add(1) }))
+	defer srv.Close()
+
+	pm := NewProcessManager()
+	proc, err := pm.ExecuteProcessWithCallback(ExitCallback{srv.URL, testCallbackSecret}, "true", "", "ended", nil, false, 0, nil, false, 0, false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-proc.Finished:
+	case <-time.After(10 * time.Second):
+		t.Fatal("process never finished")
+	}
+	if err := pm.StopForMigration(proc.PID); !errors.Is(err, ErrNotRunning) {
+		t.Fatalf("StopForMigration = %v, want ErrNotRunning", err)
+	}
+	pm.mu.RLock()
+	skipped := proc.skipExitWebhook
+	pm.mu.RUnlock()
+	if skipped {
+		t.Fatal("an exited process was marked to skip its exit webhook")
+	}
+	WaitExitWebhooks()
+	if hits.Load() != 1 {
+		t.Fatalf("webhooks = %d, want 1", hits.Load())
+	}
+}
+
+// Shutdown and upgrade exit right after this returns, so it must cover a
+// delivery that is still in flight.
+func TestWaitExitWebhooksWaitsForDelivery(t *testing.T) {
+	originalLogDir := ProcessLogDir
+	ProcessLogDir = t.TempDir()
+	t.Cleanup(func() { ProcessLogDir = originalLogDir })
+	fakeHolds(t, nil)
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		time.Sleep(500 * time.Millisecond)
+		hits.Add(1)
+	}))
+	defer srv.Close()
+
+	pm := NewProcessManager()
+	proc, err := pm.ExecuteProcessWithCallback(ExitCallback{srv.URL, testCallbackSecret}, "true", "", "slow-receiver", nil, false, 0, nil, false, 0, false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-proc.Finished:
+	case <-time.After(10 * time.Second):
+		t.Fatal("process never finished")
+	}
+	WaitExitWebhooks()
+	if hits.Load() != 1 {
+		t.Fatalf("WaitExitWebhooks returned with %d webhooks delivered, want 1", hits.Load())
 	}
 }

@@ -169,9 +169,20 @@ func (pm *ProcessManager) SaveState() error {
 		return fmt.Errorf("failed to create state directory: %w", err)
 	}
 
-	// Write to temp file first, then rename for atomicity
-	tmpFile := stateFile + ".tmp"
-	if err := os.WriteFile(tmpFile, data, 0600); err != nil {
+	// Write to temp file first, then rename for atomicity. The name is random
+	// (and the file 0600) because the default directory is /tmp: a fixed name
+	// could be pre-created by another user, who would then own the state file.
+	tmp, err := os.CreateTemp(filepath.Dir(stateFile), filepath.Base(stateFile)+".*.tmp")
+	if err != nil {
+		return fmt.Errorf("failed to write state file: %w", err)
+	}
+	tmpFile := tmp.Name()
+	_, err = tmp.Write(data)
+	if closeErr := tmp.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		os.Remove(tmpFile)
 		return fmt.Errorf("failed to write state file: %w", err)
 	}
 
@@ -1474,6 +1485,9 @@ func upgradeWithNewBinary(newBinaryPath string) {
 	if err := GetProcessManager().SaveState(); err != nil {
 		logger.WithError(err).Warn("Failed to re-save state before exec")
 	}
+	// Exec kills in-flight exit webhooks. Exits after the save are recorded as
+	// running, and the new binary notifies them when it finds them dead.
+	WaitExitWebhooks()
 
 	logger.Info("Executing new binary...")
 
