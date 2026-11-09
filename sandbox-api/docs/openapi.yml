@@ -1857,7 +1857,13 @@ paths:
 
         Returns 202 before the standby happens; the connection is closed and the sandbox pauses shortly after.
 
-        Refused while a keepAlive process or an archive operation holds the sandbox awake.
+        Refused while a keepAlive process or an archive operation holds the sandbox awake, unless force is true.
+      parameters:
+        - description: Put the sandbox in standby even while keepAlive processes hold it awake
+          in: query
+          name: force
+          schema:
+            type: boolean
       responses:
         "202":
           description: Standby requested

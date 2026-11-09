@@ -2212,7 +2212,7 @@ const docTemplate = `{
         },
         "/standby": {
             "post": {
-                "description": "Asks the host to put the sandbox in standby right away instead of waiting for it to be idle.\nReturns 202 before the standby happens; the connection is closed and the sandbox pauses shortly after.\nRefused while a keepAlive process or an archive operation holds the sandbox awake.",
+                "description": "Asks the host to put the sandbox in standby right away instead of waiting for it to be idle.\nReturns 202 before the standby happens; the connection is closed and the sandbox pauses shortly after.\nRefused while a keepAlive process or an archive operation holds the sandbox awake, unless force is true.",
                 "produces": [
                     "application/json"
                 ],
@@ -2220,6 +2220,14 @@ const docTemplate = `{
                     "system"
                 ],
                 "summary": "Put the sandbox in standby",
+                "parameters": [
+                    {
+                        "type": "boolean",
+                        "description": "Put the sandbox in standby even while keepAlive processes hold it awake",
+                        "name": "force",
+                        "in": "query"
+                    }
+                ],
                 "responses": {
                     "202": {
                         "description": "Standby requested",

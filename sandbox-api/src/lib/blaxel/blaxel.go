@@ -24,6 +24,13 @@ const (
 
 	// defaultStandbyNowFile is where the initrd serves that file.
 	defaultStandbyNowFile = "/bl/standby_now"
+
+	// EnvStandbyForceFile overrides the path of the host file that forces a
+	// standby even while keepAlive processes hold the sandbox awake.
+	EnvStandbyForceFile = "BLAXEL_STANDBY_FORCE_FILE"
+
+	// defaultStandbyForceFile is where the initrd serves that file.
+	defaultStandbyForceFile = "/bl/standby_force"
 )
 
 var (
@@ -230,14 +237,28 @@ func GetStandbyNowFile() string {
 	return defaultStandbyNowFile
 }
 
+// GetStandbyForceFile returns the path of the host's forced standby file.
+func GetStandbyForceFile() string {
+	if envPath := os.Getenv(EnvStandbyForceFile); envPath != "" {
+		return envPath
+	}
+	return defaultStandbyForceFile
+}
+
 // CheckStandby reports whether the sandbox can be put in standby right now and
-// returns the file to write to for it.
-func CheckStandby() (string, error) {
+// returns the file to write to for it. force skips the keepAlive hold.
+func CheckStandby(force bool) (string, error) {
 	path := GetStandbyNowFile()
+	if force {
+		path = GetStandbyForceFile()
+	}
 	// The host serves the file itself: a missing one (an older initrd, a
 	// local run) means nothing would receive the request.
 	if _, err := os.Stat(path); err != nil {
 		return "", ErrStandbyUnsupported
+	}
+	if force {
+		return path, nil
 	}
 	// Fail closed: an unreadable counter may hide a hold.
 	counter, err := GetCounter()
@@ -252,8 +273,8 @@ func CheckStandby() (string, error) {
 
 // RequestStandby asks the host to put the sandbox in standby now. The host
 // pauses the VM as soon as the write lands, cutting in-flight requests.
-func RequestStandby() error {
-	path, err := CheckStandby()
+func RequestStandby(force bool) error {
+	path, err := CheckStandby(force)
 	if err != nil {
 		return err
 	}

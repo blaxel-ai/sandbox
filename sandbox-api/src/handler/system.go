@@ -209,16 +209,18 @@ func (h *SystemHandler) HandleResume(c *gin.Context) {
 // @Summary Put the sandbox in standby
 // @Description Asks the host to put the sandbox in standby right away instead of waiting for it to be idle.
 // @Description Returns 202 before the standby happens; the connection is closed and the sandbox pauses shortly after.
-// @Description Refused while a keepAlive process or an archive operation holds the sandbox awake.
+// @Description Refused while a keepAlive process or an archive operation holds the sandbox awake, unless force is true.
 // @Tags system
 // @Produce json
+// @Param force query bool false "Put the sandbox in standby even while keepAlive processes hold it awake"
 // @Success 202 {object} SuccessResponse "Standby requested"
 // @Failure 409 {object} ErrorResponse "The sandbox is held awake"
 // @Failure 501 {object} ErrorResponse "Standby is not supported in this environment"
 // @Failure 503 {object} ErrorResponse "The keep-awake state could not be read"
 // @Router /standby [post]
 func (h *SystemHandler) HandleStandby(c *gin.Context) {
-	if _, err := checkStandby(); err != nil {
+	force := c.Query("force") == "true"
+	if _, err := checkStandby(force); err != nil {
 		status := http.StatusInternalServerError
 		switch err {
 		case blaxel.ErrStandbyUnsupported:
@@ -237,7 +239,7 @@ func (h *SystemHandler) HandleStandby(c *gin.Context) {
 
 	go func() {
 		time.Sleep(standbyDelay)
-		if err := requestStandby(); err != nil {
+		if err := requestStandby(force); err != nil {
 			logrus.WithError(err).Warn("[Standby] Failed to request standby")
 		}
 	}()

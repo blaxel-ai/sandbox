@@ -89,7 +89,7 @@ func TestRequestStandby(t *testing.T) {
 	}
 	// The host serves the file: when it is absent, nothing is created in its place.
 	t.Setenv(EnvStandbyNowFile, standbyFile)
-	if err := RequestStandby(); err != ErrStandbyUnsupported {
+	if err := RequestStandby(false); err != ErrStandbyUnsupported {
 		t.Errorf("with a missing file: err = %v, want ErrStandbyUnsupported", err)
 	}
 	if _, err := os.Stat(standbyFile); !os.IsNotExist(err) {
@@ -103,7 +103,7 @@ func TestRequestStandby(t *testing.T) {
 		if err := os.WriteFile(scaleFile, []byte(counter), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		if err := RequestStandby(); err != want {
+		if err := RequestStandby(false); err != want {
 			t.Errorf("counter %q: err = %v, want %v", counter, err, want)
 		}
 		if content, _ := os.ReadFile(standbyFile); len(content) != 0 {
@@ -114,10 +114,42 @@ func TestRequestStandby(t *testing.T) {
 	if err := os.WriteFile(scaleFile, []byte("=0"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := RequestStandby(); err != nil {
-		t.Fatalf("RequestStandby() = %v", err)
+	if err := RequestStandby(false); err != nil {
+		t.Fatalf("RequestStandby(false) = %v", err)
 	}
 	if content, err := os.ReadFile(standbyFile); err != nil || string(content) != "+" {
 		t.Errorf("standby file = %q (%v), want \"+\"", content, err)
+	}
+}
+
+// force writes the force file, held awake or not, and still needs the host's file.
+func TestRequestStandbyForce(t *testing.T) {
+	dir := t.TempDir()
+	scaleFile := filepath.Join(dir, "scale_to_zero_disable")
+	forceFile := filepath.Join(dir, "standby_force")
+	t.Setenv("BLAXEL_SCALE_FILE", scaleFile)
+	scaleAvailableChecked, scaleAvailable = true, true
+	t.Cleanup(func() { scaleAvailableChecked, scaleAvailable = false, false })
+
+	t.Setenv(EnvStandbyForceFile, "")
+	if got := GetStandbyForceFile(); got != defaultStandbyForceFile {
+		t.Errorf("without %s: GetStandbyForceFile() = %q, want %q", EnvStandbyForceFile, got, defaultStandbyForceFile)
+	}
+	t.Setenv(EnvStandbyForceFile, forceFile)
+	if err := RequestStandby(true); err != ErrStandbyUnsupported {
+		t.Errorf("with a missing force file: err = %v, want ErrStandbyUnsupported", err)
+	}
+
+	if err := os.WriteFile(forceFile, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(scaleFile, []byte("=1"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := RequestStandby(true); err != nil {
+		t.Fatalf("RequestStandby(true) while held = %v, want nil", err)
+	}
+	if content, err := os.ReadFile(forceFile); err != nil || string(content) != "+" {
+		t.Errorf("force file = %q (%v), want \"+\"", content, err)
 	}
 }
