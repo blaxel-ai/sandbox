@@ -84,8 +84,8 @@ func TestRequestStandby(t *testing.T) {
 	t.Cleanup(func() { scaleAvailableChecked, scaleAvailable = false, false })
 
 	t.Setenv(EnvStandbyNowFile, "")
-	if err := RequestStandby(); err != ErrStandbyUnsupported {
-		t.Errorf("without %s: err = %v, want ErrStandbyUnsupported", EnvStandbyNowFile, err)
+	if got := GetStandbyNowFile(); got != defaultStandbyNowFile {
+		t.Errorf("without %s: GetStandbyNowFile() = %q, want %q", EnvStandbyNowFile, got, defaultStandbyNowFile)
 	}
 	// The host serves the file: when it is absent, nothing is created in its place.
 	t.Setenv(EnvStandbyNowFile, standbyFile)

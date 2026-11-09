@@ -18,9 +18,12 @@ const (
 	// when set to a truthy value at boot.
 	EnvDisableKeepAlive = "BL_DISABLE_KEEPALIVE"
 
-	// EnvStandbyNowFile is the path of the host file that forces a standby
-	// when "+" is written to it ("-" or an empty write asks nothing).
+	// EnvStandbyNowFile overrides the path of the host file that forces a
+	// standby when "+" is written to it ("-" or an empty write asks nothing).
 	EnvStandbyNowFile = "BLAXEL_STANDBY_NOW_FILE"
+
+	// defaultStandbyNowFile is where the initrd serves that file.
+	defaultStandbyNowFile = "/bl/standby_now"
 )
 
 var (
@@ -219,15 +222,20 @@ func GetCounter() (int, error) {
 	return -1, nil
 }
 
+// GetStandbyNowFile returns the path of the host's standby file.
+func GetStandbyNowFile() string {
+	if envPath := os.Getenv(EnvStandbyNowFile); envPath != "" {
+		return envPath
+	}
+	return defaultStandbyNowFile
+}
+
 // CheckStandby reports whether the sandbox can be put in standby right now and
 // returns the file to write to for it.
 func CheckStandby() (string, error) {
-	path := os.Getenv(EnvStandbyNowFile)
-	if path == "" {
-		return "", ErrStandbyUnsupported
-	}
-	// The host serves the file itself: a missing one means nothing would
-	// receive the request.
+	path := GetStandbyNowFile()
+	// The host serves the file itself: a missing one (an older initrd, a
+	// local run) means nothing would receive the request.
 	if _, err := os.Stat(path); err != nil {
 		return "", ErrStandbyUnsupported
 	}
