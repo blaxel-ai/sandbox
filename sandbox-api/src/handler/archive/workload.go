@@ -96,9 +96,9 @@ func stopStartupWorkload() (stoppedProcess, bool) {
 		identifier: "startup-command",
 		pid:        pid,
 		group:      true,
-		kill:       func() error { return syscall.Kill(-pid, syscall.SIGKILL) },
+		kill:       func() error { return signalStartupWorkload(pid, syscall.SIGKILL) },
 	}
-	if err := syscall.Kill(-pid, syscall.SIGTERM); err != nil {
+	if err := signalStartupWorkload(pid, syscall.SIGTERM); err != nil {
 		if errors.Is(err, syscall.ESRCH) {
 			// Exited on its own before the signal: the export did not stop it.
 			return stoppedProcess{}, false
@@ -106,6 +106,18 @@ func stopStartupWorkload() (stoppedProcess, bool) {
 		logrus.WithError(err).WithField("pid", pid).Warn("[Archive] Failed to stop the startup command gracefully, it will be killed")
 	}
 	return candidate, true
+}
+
+// signalStartupWorkload signals the startup command's group and its leader. The
+// leader is signalled too because it can move itself to another group, which
+// the group signal would then miss (or report as ESRCH while it still runs). It
+// fails only when neither signal was delivered.
+func signalStartupWorkload(pid int, sig syscall.Signal) error {
+	groupErr := syscall.Kill(-pid, sig)
+	if err := syscall.Kill(pid, sig); err != nil && groupErr != nil {
+		return err
+	}
+	return nil
 }
 
 // TerminateWorkload sends SIGTERM to every process (and the rest of its process
