@@ -28,6 +28,7 @@ func TestTerminateWorkloadWaitsForEveryProcessToExit(t *testing.T) {
 	t.Cleanup(func() { _ = pm.KillProcess(identifier) })
 
 	startup := exec.Command("sh", "-c", `trap 'sleep 0.5; exit 0' TERM; while :; do sleep 0.05; done`)
+	startup.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := startup.Start(); err != nil {
 		t.Fatalf("failed to start the startup command: %v", err)
 	}

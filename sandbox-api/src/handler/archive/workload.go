@@ -83,10 +83,9 @@ func restartStartupWorkload() bool {
 // export waits for it like any other stopped process. The second return value is
 // false when there is nothing to stop.
 //
-// Only the command's own process is signalled, not its process group. A shell
-// running the command usually execs it, in which case this is the workload
-// itself; a shell that instead forks leaves its children running, and the
-// read-only remount is what stops them from writing.
+// The command runs in its own process group (see startBackgroundCommand), so the
+// whole group is signalled and waited for: a shell that forks rather than execs
+// would otherwise exit on SIGTERM and leave its children running, unsignalled.
 func stopStartupWorkload() (stoppedProcess, bool) {
 	pid := startupWorkloadPID()
 	if pid <= 0 || !processAlive(pid) {
@@ -96,9 +95,10 @@ func stopStartupWorkload() (stoppedProcess, bool) {
 	candidate := stoppedProcess{
 		identifier: "startup-command",
 		pid:        pid,
-		kill:       func() error { return syscall.Kill(pid, syscall.SIGKILL) },
+		group:      true,
+		kill:       func() error { return syscall.Kill(-pid, syscall.SIGKILL) },
 	}
-	if err := syscall.Kill(pid, syscall.SIGTERM); err != nil {
+	if err := syscall.Kill(-pid, syscall.SIGTERM); err != nil {
 		if errors.Is(err, syscall.ESRCH) {
 			// Exited on its own before the signal: the export did not stop it.
 			return stoppedProcess{}, false
