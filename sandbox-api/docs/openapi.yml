@@ -1859,7 +1859,7 @@ paths:
 
         Refused while a keepAlive process or an archive operation holds the sandbox awake, unless force is true.
       parameters:
-        - description: Put the sandbox in standby even while keepAlive processes hold it awake
+        - description: "Put the sandbox in standby even while keepAlive processes hold it awake: their holds are released for the standby and taken back once it resumes"
           in: query
           name: force
           schema:

@@ -212,7 +212,7 @@ func (h *SystemHandler) HandleResume(c *gin.Context) {
 // @Description Refused while a keepAlive process or an archive operation holds the sandbox awake, unless force is true.
 // @Tags system
 // @Produce json
-// @Param force query bool false "Put the sandbox in standby even while keepAlive processes hold it awake"
+// @Param force query bool false "Put the sandbox in standby even while keepAlive processes hold it awake: their holds are released for the standby and taken back once it resumes"
 // @Success 202 {object} SuccessResponse "Standby requested"
 // @Failure 409 {object} ErrorResponse "The sandbox is held awake"
 // @Failure 501 {object} ErrorResponse "Standby is not supported in this environment"

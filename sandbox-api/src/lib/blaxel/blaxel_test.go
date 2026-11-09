@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestKeepAliveDisabled(t *testing.T) {
@@ -122,34 +123,64 @@ func TestRequestStandby(t *testing.T) {
 	}
 }
 
-// force writes the force file, held awake or not, and still needs the host's file.
+// force releases the holds for the standby, takes back only the ones still
+// held, and still needs the host's file.
 func TestRequestStandbyForce(t *testing.T) {
 	dir := t.TempDir()
 	scaleFile := filepath.Join(dir, "scale_to_zero_disable")
-	forceFile := filepath.Join(dir, "standby_force")
+	standbyFile := filepath.Join(dir, "standby_now")
 	t.Setenv("BLAXEL_SCALE_FILE", scaleFile)
+	t.Setenv(EnvStandbyNowFile, standbyFile)
 	scaleAvailableChecked, scaleAvailable = true, true
-	t.Cleanup(func() { scaleAvailableChecked, scaleAvailable = false, false })
+	oldAfter := restoreAfter
+	restoreAfter = time.Hour // the test takes the holds back itself
+	t.Cleanup(func() {
+		scaleAvailableChecked, scaleAvailable = false, false
+		restoreAfter = oldAfter
+		releasedMu.Lock()
+		released = 0
+		releasedMu.Unlock()
+	})
 
-	t.Setenv(EnvStandbyForceFile, "")
-	if got := GetStandbyForceFile(); got != defaultStandbyForceFile {
-		t.Errorf("without %s: GetStandbyForceFile() = %q, want %q", EnvStandbyForceFile, got, defaultStandbyForceFile)
-	}
-	t.Setenv(EnvStandbyForceFile, forceFile)
-	if err := RequestStandby(true); err != ErrStandbyUnsupported {
-		t.Errorf("with a missing force file: err = %v, want ErrStandbyUnsupported", err)
-	}
-
-	if err := os.WriteFile(forceFile, nil, 0o644); err != nil {
+	if err := os.WriteFile(scaleFile, []byte("=2"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(scaleFile, []byte("=1"), 0o644); err != nil {
+	if err := RequestStandby(true); err != ErrStandbyUnsupported {
+		t.Errorf("with a missing standby file: err = %v, want ErrStandbyUnsupported", err)
+	}
+	if released != 0 {
+		t.Errorf("refused request released %d holds", released)
+	}
+
+	if err := os.WriteFile(standbyFile, nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := RequestStandby(true); err != nil {
 		t.Fatalf("RequestStandby(true) while held = %v, want nil", err)
 	}
-	if content, err := os.ReadFile(forceFile); err != nil || string(content) != "+" {
-		t.Errorf("force file = %q (%v), want \"+\"", content, err)
+	if content, _ := os.ReadFile(scaleFile); string(content) != "-2" {
+		t.Errorf("scale file = %q, want the 2 holds released (\"-2\")", content)
+	}
+	if content, _ := os.ReadFile(standbyFile); string(content) != "+" {
+		t.Errorf("standby file = %q, want \"+\"", content)
+	}
+
+	// A hold ending before the resume comes off what is taken back.
+	if err := os.WriteFile(scaleFile, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := decrement(); err != nil {
+		t.Fatal(err)
+	}
+	if content, _ := os.ReadFile(scaleFile); len(content) != 0 {
+		t.Errorf("decrement during the release wrote %q to the counter", content)
+	}
+
+	restoreHoldsAfterResume(time.Now(), 0)
+	if content, _ := os.ReadFile(scaleFile); string(content) != "+1" {
+		t.Errorf("scale file after the resume = %q, want the 1 remaining hold back (\"+1\")", content)
+	}
+	if released != 0 {
+		t.Errorf("released = %d after the restore, want 0", released)
 	}
 }

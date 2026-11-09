@@ -2,11 +2,13 @@ package blaxel
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"strconv"
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/sirupsen/logrus"
 )
@@ -24,13 +26,6 @@ const (
 
 	// defaultStandbyNowFile is where the initrd serves that file.
 	defaultStandbyNowFile = "/bl/standby_now"
-
-	// EnvStandbyForceFile overrides the path of the host file that forces a
-	// standby even while keepAlive processes hold the sandbox awake.
-	EnvStandbyForceFile = "BLAXEL_STANDBY_FORCE_FILE"
-
-	// defaultStandbyForceFile is where the initrd serves that file.
-	defaultStandbyForceFile = "/bl/standby_force"
 )
 
 var (
@@ -134,7 +129,7 @@ func ScaleEnable() error {
 	if KeepAliveDisabled() {
 		return nil
 	}
-	err := writeWithLock("-")
+	err := decrement()
 	if err != nil {
 		logrus.Warnf("[Scale] Failed to enable scale-to-zero: %v", err)
 		return err
@@ -176,7 +171,7 @@ func HoldAwake(reason string) func() {
 			if !held {
 				return
 			}
-			if err := writeWithLock("-"); err != nil {
+			if err := decrement(); err != nil {
 				logrus.WithError(err).Warnf("[Scale] Failed to release the keep-alive taken for %s", reason)
 				return
 			}
@@ -237,35 +232,22 @@ func GetStandbyNowFile() string {
 	return defaultStandbyNowFile
 }
 
-// GetStandbyForceFile returns the path of the host's forced standby file.
-func GetStandbyForceFile() string {
-	if envPath := os.Getenv(EnvStandbyForceFile); envPath != "" {
-		return envPath
-	}
-	return defaultStandbyForceFile
-}
-
 // CheckStandby reports whether the sandbox can be put in standby right now and
-// returns the file to write to for it. force skips the keepAlive hold.
+// returns the file to write to for it. force does not refuse a sandbox held
+// awake: RequestStandby releases its holds for the standby.
 func CheckStandby(force bool) (string, error) {
 	path := GetStandbyNowFile()
-	if force {
-		path = GetStandbyForceFile()
-	}
 	// The host serves the file itself: a missing one (an older initrd, a
 	// local run) means nothing would receive the request.
 	if _, err := os.Stat(path); err != nil {
 		return "", ErrStandbyUnsupported
-	}
-	if force {
-		return path, nil
 	}
 	// Fail closed: an unreadable counter may hide a hold.
 	counter, err := GetCounter()
 	if err != nil || counter < 0 {
 		return "", ErrCounterUnknown
 	}
-	if counter > 0 {
+	if counter > 0 && !force {
 		return "", ErrHeldAwake
 	}
 	return path, nil
@@ -273,10 +255,17 @@ func CheckStandby(force bool) (string, error) {
 
 // RequestStandby asks the host to put the sandbox in standby now. The host
 // pauses the VM as soon as the write lands, cutting in-flight requests.
+// force first releases the keepAlive holds (the host refuses a standby while
+// they hold) and takes them back once the sandbox has resumed.
 func RequestStandby(force bool) error {
 	path, err := CheckStandby(force)
 	if err != nil {
 		return err
+	}
+	if force {
+		if err := releaseHoldsForStandby(); err != nil {
+			return err
+		}
 	}
 	// No O_CREATE: never stand in for the host's file with a plain one.
 	f, err := os.OpenFile(path, os.O_WRONLY, 0)
@@ -288,4 +277,78 @@ func RequestStandby(force bool) error {
 		err = cerr
 	}
 	return err
+}
+
+// Holds released for a forced standby, not yet taken back. A hold that ends
+// in the meantime comes off this count instead of the counter: the host's
+// counter is clamped at 0, so its "-" would be lost and the restore would
+// leave one hold too many (a sandbox that never goes idle again).
+var (
+	releasedMu sync.Mutex
+	released   int
+)
+
+// decrement ends one hold.
+func decrement() error {
+	releasedMu.Lock()
+	defer releasedMu.Unlock()
+	if released > 0 {
+		released--
+		return nil
+	}
+	return writeWithLock("-")
+}
+
+// Resume detection: the VM's monotonic clock stops while it is paused and the
+// initrd steps the wall clock to the host's on resume, so wall time racing
+// ahead of monotonic time means the sandbox slept. Past restoreAfter without
+// one (the host refused or dropped the standby) the holds are taken back.
+var (
+	resumeJump   = time.Second
+	resumePoll   = 200 * time.Millisecond
+	restoreAfter = 30 * time.Second
+)
+
+// releaseHoldsForStandby sets the counter to 0 and takes the holds back once
+// the sandbox has resumed.
+func releaseHoldsForStandby() error {
+	releasedMu.Lock()
+	defer releasedMu.Unlock()
+	counter, err := GetCounter()
+	if err != nil || counter < 0 {
+		return ErrCounterUnknown
+	}
+	if counter == 0 {
+		return nil
+	}
+	if err := writeWithLock(fmt.Sprintf("-%d", counter)); err != nil {
+		return err
+	}
+	pending := released > 0
+	released += counter
+	logrus.Infof("[Scale] Released %d keep-alive hold(s) for a forced standby", counter)
+	if !pending {
+		go restoreHoldsAfterResume(time.Now(), restoreAfter)
+	}
+	return nil
+}
+
+func restoreHoldsAfterResume(start time.Time, wait time.Duration) {
+	for time.Since(start) < wait {
+		time.Sleep(resumePoll)
+		if time.Now().Round(0).Sub(start.Round(0))-time.Since(start) > resumeJump {
+			break
+		}
+	}
+	releasedMu.Lock()
+	defer releasedMu.Unlock()
+	if released == 0 {
+		return
+	}
+	if err := writeWithLock(fmt.Sprintf("+%d", released)); err != nil {
+		logrus.WithError(err).Warn("[Scale] Failed to take the keep-alive holds back after a forced standby")
+		return
+	}
+	logrus.Infof("[Scale] Took %d keep-alive hold(s) back after a forced standby", released)
+	released = 0
 }

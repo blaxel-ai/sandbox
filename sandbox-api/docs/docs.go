@@ -2223,7 +2223,7 @@ const docTemplate = `{
                 "parameters": [
                     {
                         "type": "boolean",
-                        "description": "Put the sandbox in standby even while keepAlive processes hold it awake",
+                        "description": "Put the sandbox in standby even while keepAlive processes hold it awake: their holds are released for the standby and taken back once it resumes",
                         "name": "force",
                         "in": "query"
                     }
