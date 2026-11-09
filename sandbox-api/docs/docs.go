@@ -186,7 +186,7 @@ const docTemplate = `{
         },
         "/codegen/reranking/{path}": {
             "get": {
-                "description": "Uses Relace's code reranking model to find the most relevant files for a given query. This is useful as a first pass in agentic exploration to narrow down the search space.\n\nBased on: https://docs.relace.ai/docs/code-reranker/agent\n\nQuery Construction: The query can be a short question or a more detailed conversation with the user request included. For a first pass, use the full conversation; for subsequent calls, use more targeted questions.\n\nToken Limit and Score Threshold: For 200k token context models like Claude 4 Sonnet, recommended defaults are scoreThreshold=0.5 and tokenLimit=30000.\n\nThe response will be a list of file paths and contents ordered from most relevant to least relevant.",
+                "description": "Deprecated: Relace and Morph discontinued their reranking APIs, so this endpoint no longer returns results (503 when a codegen provider is configured).",
                 "produces": [
                     "application/json"
                 ],
@@ -194,6 +194,7 @@ const docTemplate = `{
                     "codegen"
                 ],
                 "summary": "Code reranking/semantic search",
+                "deprecated": true,
                 "parameters": [
                     {
                         "type": "string",
@@ -248,7 +249,7 @@ const docTemplate = `{
                         }
                     },
                     "503": {
-                        "description": "Service unavailable - Relace not configured",
+                        "description": "Service unavailable - code reranking is no longer offered by any provider",
                         "schema": {
                             "$ref": "#/definitions/ErrorResponse"
                         }

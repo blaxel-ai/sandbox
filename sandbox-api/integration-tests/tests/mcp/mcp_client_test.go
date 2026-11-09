@@ -109,7 +109,6 @@ func TestMCPClientListTools(t *testing.T) {
 	// These tools are only available when codegen is enabled
 	conditionalTools := []string{
 		"codegenEditFile",
-		"codegenRerank",
 	}
 
 	toolNames := make(map[string]bool)
@@ -126,6 +125,9 @@ func TestMCPClientListTools(t *testing.T) {
 	for _, expected := range expectedTools {
 		assert.True(t, toolNames[expected], "Expected tool %s to be present", expected)
 	}
+
+	// Reranking providers are gone, so the tool must never be offered
+	assert.False(t, toolNames["codegenRerank"], "codegenRerank should not be registered")
 
 	// Check conditional tools - they may or may not be present depending on configuration
 	codegenEnabled := os.Getenv("RELACE_API_KEY") != "" || os.Getenv("MORPH_API_KEY") != ""
