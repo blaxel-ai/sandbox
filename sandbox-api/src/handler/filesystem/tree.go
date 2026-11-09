@@ -3,6 +3,7 @@ package filesystem
 import (
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"os/user"
@@ -150,20 +151,43 @@ func (f *Filesystem) readTree(path string, opts TreeOptions) (*Directory, error)
 	}
 
 	// Read contents only once the whole selection is known to fit the limits.
+	// The sizes above are only a preflight: a file can grow after the stat, and
+	// /proc files report 0, so the reads themselves stay within MaxBytes.
 	if opts.Content {
+		remaining := opts.MaxBytes
 		for i, absPath := range contentPaths {
 			if absPath == "" {
 				continue
 			}
-			data, err := os.ReadFile(absPath)
+			data, err := readAtMost(absPath, remaining, opts.MaxBytes > 0)
 			if err != nil {
 				return nil, err
+			}
+			if opts.MaxBytes > 0 {
+				if int64(len(data)) > remaining {
+					return nil, fmt.Errorf("%w: files under %s hold more than %d bytes", ErrTreeLimit, displayRoot, opts.MaxBytes)
+				}
+				remaining -= int64(len(data))
 			}
 			content := string(data)
 			dir.Files[i].Content = &content
 		}
 	}
 	return dir, nil
+}
+
+// readAtMost reads the file, stopping one byte past limit when bounded so the
+// caller can tell it overflowed without reading the rest.
+func readAtMost(path string, limit int64, bounded bool) ([]byte, error) {
+	if !bounded {
+		return os.ReadFile(path)
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	return io.ReadAll(io.LimitReader(f, limit+1))
 }
 
 func matchesAny(patterns []string, name string) bool {

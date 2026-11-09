@@ -1,11 +1,14 @@
 package archive
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -25,6 +28,7 @@ func TestTerminateWorkloadWaitsForEveryProcessToExit(t *testing.T) {
 	t.Cleanup(func() { _ = pm.KillProcess(identifier) })
 
 	startup := exec.Command("sh", "-c", `trap 'sleep 0.5; exit 0' TERM; while :; do sleep 0.05; done`)
+	startup.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := startup.Start(); err != nil {
 		t.Fatalf("failed to start the startup command: %v", err)
 	}
@@ -164,5 +168,29 @@ func TestTerminateWorkloadStopsChildrenOfAnExitedLeaderStillRunning(t *testing.T
 	}
 	if _, err := os.Stat(marker); err != nil {
 		t.Fatal("TerminateWorkload returned before the leftover child got SIGTERM and flushed")
+	}
+}
+
+// main exits right after TerminateWorkload, so the exit webhook of a process
+// it stopped must have been delivered by then.
+func TestTerminateWorkloadWaitsForExitWebhooks(t *testing.T) {
+	t.Setenv("SANDBOX_STATE_FILE", filepath.Join(t.TempDir(), "process-state.json"))
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		time.Sleep(time.Second)
+		hits.Add(1)
+	}))
+	defer srv.Close()
+
+	pm := process.GetProcessManager()
+	proc, err := pm.ExecuteProcessWithCallback(process.ExitCallback{URL: srv.URL, Secret: "terminate-test-secret-0123456789abcdef"}, "sleep 30", "", "webhooked", nil, false, 0, nil, false, 0, false, false)
+	if err != nil {
+		t.Fatalf("failed to start the process: %v", err)
+	}
+	t.Cleanup(func() { _ = pm.KillProcess(proc.PID) })
+
+	TerminateWorkload()
+	if hits.Load() != 1 {
+		t.Fatalf("TerminateWorkload returned with %d exit webhooks delivered, want 1", hits.Load())
 	}
 }

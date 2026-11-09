@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -439,6 +440,7 @@ func TestFailedExportRelaunchesTheWorkloadItStopped(t *testing.T) {
 	})
 
 	startup := exec.Command("sleep", "30")
+	startup.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := startup.Start(); err != nil {
 		t.Fatalf("failed to start the startup command: %v", err)
 	}

@@ -83,11 +83,9 @@ func restartStartupWorkload() bool {
 // export waits for it like any other stopped process. The second return value is
 // false when there is nothing to stop.
 //
-// Only the command's own process is signalled, not a process group: it shares
-// sandbox-api's group, so signalling the group would kill this API. A shell
-// running the command usually execs it, in which case this is the workload
-// itself; a shell that instead forks leaves its children running, and the
-// read-only remount is what stops them from writing.
+// The command runs in its own process group (see startBackgroundCommand), so the
+// whole group is signalled and waited for: a shell that forks rather than execs
+// would otherwise exit on SIGTERM and leave its children running, unsignalled.
 func stopStartupWorkload() (stoppedProcess, bool) {
 	pid := startupWorkloadPID()
 	if pid <= 0 || !processAlive(pid) {
@@ -97,9 +95,10 @@ func stopStartupWorkload() (stoppedProcess, bool) {
 	candidate := stoppedProcess{
 		identifier: "startup-command",
 		pid:        pid,
-		kill:       func() error { return syscall.Kill(pid, syscall.SIGKILL) },
+		group:      true,
+		kill:       func() error { return signalStartupWorkload(pid, syscall.SIGKILL) },
 	}
-	if err := syscall.Kill(pid, syscall.SIGTERM); err != nil {
+	if err := signalStartupWorkload(pid, syscall.SIGTERM); err != nil {
 		if errors.Is(err, syscall.ESRCH) {
 			// Exited on its own before the signal: the export did not stop it.
 			return stoppedProcess{}, false
@@ -109,6 +108,18 @@ func stopStartupWorkload() (stoppedProcess, bool) {
 	return candidate, true
 }
 
+// signalStartupWorkload signals the startup command's group and its leader. The
+// leader is signalled too because it can move itself to another group, which
+// the group signal would then miss (or report as ESRCH while it still runs). It
+// fails only when neither signal was delivered.
+func signalStartupWorkload(pid int, sig syscall.Signal) error {
+	groupErr := syscall.Kill(-pid, sig)
+	if err := syscall.Kill(pid, sig); err != nil && groupErr != nil {
+		return err
+	}
+	return nil
+}
+
 // TerminateWorkload sends SIGTERM to every process (and the rest of its process
 // group) and to the startup command, and returns once they have all exited. It
 // has no deadline of its own: the host bounds the shutdown, and kills the guest
@@ -116,11 +127,15 @@ func stopStartupWorkload() (stoppedProcess, bool) {
 func TerminateWorkload() {
 	pm := process.GetProcessManager()
 	var stopping []stoppedProcess
+	var finished []chan struct{}
 	for _, info := range pm.ListProcesses() {
 		if info.ProcessPid <= 0 {
 			continue
 		}
-		candidate := stoppedProcess{identifier: info.PID, pid: info.ProcessPid, done: info.Done, group: true}
+		// Finished, not Done: Done closes before the final status and the exit
+		// webhook, and is replaced on every restart.
+		finished = append(finished, info.Finished)
+		candidate := stoppedProcess{identifier: info.PID, pid: info.ProcessPid, done: info.Finished, group: true}
 		if info.Status == process.StatusRunning {
 			// Signals the whole group and keeps the manager from restarting it.
 			if err := pm.StopProcessGroup(info.PID); err != nil {
@@ -143,6 +158,19 @@ func TerminateWorkload() {
 			logrus.WithField("processes", identifiers(stopping)).Info("Still waiting for the workload to exit")
 		}
 	}
+	// The OS process can be gone before the manager has published its exit
+	// (exited also probes the PID); the webhook is only committed after that.
+	// Bounded: a process waiting to be restarted keeps Finished open.
+	publish := time.After(5 * time.Second)
+wait:
+	for _, ch := range finished {
+		select {
+		case <-ch:
+		case <-publish:
+			break wait
+		}
+	}
+	process.WaitExitWebhooks()
 }
 
 // ForwardToWorkload sends sig to the workload processes that handle it, and

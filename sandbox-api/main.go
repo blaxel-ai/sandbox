@@ -385,7 +385,9 @@ func startBackgroundCommand(ctx context.Context, command string) error {
 	cmd.Stderr = logrus.StandardLogger().Out
 	cmd.Dir = "/"
 	cmd.Env = identity.Get().DecorateEnv(os.Environ())
-	cmd.SysProcAttr = &syscall.SysProcAttr{Credential: identity.Get().Credential()}
+	// Its own process group, so stopping it reaches the children a forking shell
+	// leaves behind, and signalling the group never hits sandbox-api.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Credential: identity.Get().Credential(), Setpgid: true}
 
 	// Started before the goroutine, so the workload is known to be running by
 	// the time this returns and the server starts accepting calls: an export

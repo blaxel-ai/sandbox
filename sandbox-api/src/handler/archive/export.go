@@ -3,6 +3,7 @@ package archive
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -515,9 +516,8 @@ func quiesceWorkload(options ExportOptions) (quiescedWorkload, error) {
 		// into the archive.
 		// The stop is a migration, not an end: the process is relaunched after
 		// the import (or after a failed export), so it must not report process.exited.
-		pm.SkipExitWebhook(identifier)
-		if err := pm.StopProcess(identifier); err != nil {
-			if info.Status != process.StatusRunning {
+		if err := pm.StopForMigration(identifier); err != nil {
+			if errors.Is(err, process.ErrNotRunning) {
 				// It ended on its own between the listing and the stop: the export
 				// did not interrupt it, so a failed export has nothing to restart.
 				continue
