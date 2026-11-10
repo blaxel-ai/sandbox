@@ -600,6 +600,9 @@ func (pm *ProcessManager) tailLogFiles(proc *ProcessInfo) {
 	// them from filling the guest's tmpfs.
 	capCheck := time.NewTicker(5 * time.Second)
 	defer capCheck.Stop()
+	poll := time.NewTimer(0)
+	<-poll.C
+	defer poll.Stop()
 	capFiles := func() {
 		// Every process' log files share one budget, so what this one may keep
 		// depends on how much output the others are keeping.
@@ -628,7 +631,13 @@ func (pm *ProcessManager) tailLogFiles(proc *ProcessInfo) {
 		default:
 			pm.drainStream(stdoutFile, stdoutBuf, proc, "stdout", combinedFile)
 			pm.drainStream(stderrFile, stderrBuf, proc, "stderr", combinedFile)
-			time.Sleep(50 * time.Millisecond)
+			// Wake on exit: a fixed sleep held every waitForCompletion response
+			// up to 50ms after a short command had already finished.
+			poll.Reset(50 * time.Millisecond)
+			select {
+			case <-proc.Done:
+			case <-poll.C:
+			}
 		}
 	}
 }
