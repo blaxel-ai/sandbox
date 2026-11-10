@@ -80,174 +80,6 @@ func setupHTTP(t *testing.T) string {
 	return baseURL
 }
 
-// TestMCPCodegenRerank tests the MCP reranking tool
-func TestMCPCodegenRerank(t *testing.T) {
-	if !checkCodegenConfigured(t) {
-		t.Skip("Codegen not configured on server - skipping test")
-		return
-	}
-	_, session := setupMCPClient(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	// Create a test directory with some files
-	testDir := setupTestDirectory(t)
-
-	// Call the codegenRerank tool
-	result, err := session.CallTool(ctx, &mcp.CallToolParams{
-		Name: "codegenRerank",
-		Arguments: map[string]any{
-			"path":           testDir,
-			"query":          "authentication middleware",
-			"scoreThreshold": 0.3,
-			"tokenLimit":     10000,
-		},
-	})
-
-	require.NoError(t, err, "Tool call should not fail at transport level")
-	require.NotNil(t, result, "Result should not be nil")
-
-	// If codegen is not configured, the error message will say so - this is not a test failure
-	if result.IsError && len(result.Content) > 0 {
-		textContent, ok := result.Content[0].(*mcp.TextContent)
-		require.True(t, ok, "Expected TextContent")
-		if strings.Contains(textContent.Text, "does not support reranking") ||
-			strings.Contains(textContent.Text, "codegen") {
-			t.Logf("Codegen not configured on server: %s", textContent.Text)
-			return // Test passes - configuration error is expected
-		}
-		// If it's a different error, fail the test
-		t.Fatalf("Unexpected error: %s", textContent.Text)
-	}
-
-	assert.False(t, result.IsError, "Tool call should not return an error")
-	assert.NotEmpty(t, result.Content, "Result should have content")
-
-	// Verify we got text content back
-	if len(result.Content) > 0 {
-		textContent, ok := result.Content[0].(*mcp.TextContent)
-		require.True(t, ok, "Expected TextContent")
-		assert.NotEmpty(t, textContent.Text, "Result should not be empty")
-
-		// Parse the JSON response
-		var response map[string]interface{}
-		err := json.Unmarshal([]byte(textContent.Text), &response)
-		require.NoError(t, err, "Response should be valid JSON")
-
-		// Verify response structure
-		assert.True(t, response["success"].(bool), "Success should be true")
-		assert.Contains(t, response, "data", "Response should contain data")
-
-		data := response["data"].(map[string]interface{})
-		assert.Contains(t, data, "files", "Data should contain files")
-	}
-}
-
-// TestMCPCodegenRerankWithFilePattern tests reranking with file pattern
-func TestMCPCodegenRerankWithFilePattern(t *testing.T) {
-	if !checkCodegenConfigured(t) {
-		t.Skip("Codegen not configured on server - skipping test")
-		return
-	}
-	_, session := setupMCPClient(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	// Create a test directory with some files
-	testDir := setupTestDirectory(t)
-
-	// Call the codegenRerank tool with file pattern
-	result, err := session.CallTool(ctx, &mcp.CallToolParams{
-		Name: "codegenRerank",
-		Arguments: map[string]any{
-			"path":        testDir,
-			"query":       "function",
-			"filePattern": ".*\\.js$", // Only match .js files
-			"tokenLimit":  10000,
-		},
-	})
-
-	require.NoError(t, err, "Tool call should not fail at transport level")
-	require.NotNil(t, result, "Result should not be nil")
-
-	// If codegen is not configured, handle gracefully
-	if result.IsError && len(result.Content) > 0 {
-		textContent, ok := result.Content[0].(*mcp.TextContent)
-		require.True(t, ok, "Expected TextContent")
-		if strings.Contains(textContent.Text, "does not support reranking") ||
-			strings.Contains(textContent.Text, "codegen") {
-			t.Logf("Codegen not configured on server: %s", textContent.Text)
-			return // Test passes
-		}
-		t.Fatalf("Unexpected error: %s", textContent.Text)
-	}
-
-	assert.False(t, result.IsError, "Tool call should not return an error")
-
-	// Verify response
-	if len(result.Content) > 0 {
-		textContent, ok := result.Content[0].(*mcp.TextContent)
-		require.True(t, ok, "Expected TextContent")
-
-		var response map[string]interface{}
-		err := json.Unmarshal([]byte(textContent.Text), &response)
-		require.NoError(t, err, "Response should be valid JSON")
-		assert.True(t, response["success"].(bool), "Success should be true")
-	}
-}
-
-// TestMCPCodegenRerankEmptyDirectory tests reranking an empty directory
-func TestMCPCodegenRerankEmptyDirectory(t *testing.T) {
-	if !checkCodegenConfigured(t) {
-		t.Skip("Codegen not configured on server - skipping test")
-		return
-	}
-	_, session := setupMCPClient(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	// Create an empty test directory
-	emptyDir := t.TempDir()
-
-	// Call the codegenRerank tool on empty directory
-	result, err := session.CallTool(ctx, &mcp.CallToolParams{
-		Name: "codegenRerank",
-		Arguments: map[string]any{
-			"path":  emptyDir,
-			"query": "test",
-		},
-	})
-
-	require.NoError(t, err, "Tool call should not fail at transport level")
-	require.NotNil(t, result, "Result should not be nil")
-
-	// If codegen is not configured, handle gracefully
-	if result.IsError && len(result.Content) > 0 {
-		textContent, ok := result.Content[0].(*mcp.TextContent)
-		require.True(t, ok, "Expected TextContent")
-		if strings.Contains(textContent.Text, "does not support reranking") ||
-			strings.Contains(textContent.Text, "codegen") {
-			t.Logf("Codegen not configured on server: %s", textContent.Text)
-			return // Test passes
-		}
-		t.Fatalf("Unexpected error: %s", textContent.Text)
-	}
-
-	assert.False(t, result.IsError, "Tool call should not return an error")
-
-	// Verify response indicates no files found
-	if len(result.Content) > 0 {
-		textContent, ok := result.Content[0].(*mcp.TextContent)
-		require.True(t, ok, "Expected TextContent")
-
-		var response map[string]interface{}
-		err := json.Unmarshal([]byte(textContent.Text), &response)
-		require.NoError(t, err, "Response should be valid JSON")
-		assert.True(t, response["success"].(bool), "Success should be true")
-		assert.Contains(t, response["message"], "No files found", "Message should indicate no files found")
-	}
-}
-
 // TestHTTPCodegenReranking tests the HTTP reranking endpoint
 func TestHTTPCodegenReranking(t *testing.T) {
 	baseURL := setupHTTP(t)
@@ -278,7 +110,7 @@ func TestHTTPCodegenReranking(t *testing.T) {
 	}
 
 	// If codegen is not configured, expect 503 - this is not a failure
-	if strings.Contains(string(body), "codegen tools are not configured") {
+	if strings.Contains(string(body), "codegen tools are not configured") || strings.Contains(string(body), "code reranking is no longer available") {
 		t.Skip("Codegen not configured on server - test passes")
 		return
 	}
@@ -324,7 +156,7 @@ func TestHTTPCodegenRerankingWithFilePattern(t *testing.T) {
 	}
 
 	// If codegen is not configured, expect 503 - this is not a failure
-	if strings.Contains(string(body), "codegen tools are not configured") {
+	if strings.Contains(string(body), "codegen tools are not configured") || strings.Contains(string(body), "code reranking is no longer available") {
 		t.Logf("Codegen not configured on server - test passes")
 		return
 	}
@@ -365,7 +197,7 @@ func TestHTTPCodegenRerankingEmptyDirectory(t *testing.T) {
 	}
 
 	// If codegen is not configured, expect 503 - this is not a failure
-	if strings.Contains(string(body), "codegen tools are not configured") {
+	if strings.Contains(string(body), "codegen tools are not configured") || strings.Contains(string(body), "code reranking is no longer available") {
 		t.Logf("Codegen not configured on server - test passes")
 		return
 	}

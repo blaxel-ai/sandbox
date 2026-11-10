@@ -1,6 +1,7 @@
 package codegen
 
 import (
+	"errors"
 	"fmt"
 	"os"
 )
@@ -10,6 +11,11 @@ type Client interface {
 	ApplyCodeEdit(originalContent, codeEdit, model string) (string, error)
 	ProviderName() string
 }
+
+// ErrRerankingUnavailable is returned when no configured provider can rerank.
+// Relace removed its ranker endpoint and Morph retired its rerank models, so
+// no provider currently implements CodeReranker.
+var ErrRerankingUnavailable = errors.New("code reranking is no longer available: Relace and Morph have both discontinued their reranking APIs")
 
 // CodeReranker is an interface for semantic code search/reranking
 type CodeReranker interface {

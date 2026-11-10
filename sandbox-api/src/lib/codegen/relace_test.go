@@ -71,25 +71,13 @@ func TestApplyCodeEditModelDefaulting(t *testing.T) {
 	}
 }
 
-func TestRerankCodeUsesConfiguredBaseURL(t *testing.T) {
-	var gotPath string
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotPath = r.URL.Path
-		_, _ = w.Write([]byte(`{"results":[{"filename":"a.go","score":0.9}]}`))
-	}))
-	defer server.Close()
-
-	client := NewRelaceClient("key")
-	client.BaseURL = server.URL
-
-	ranked, err := client.RerankCode([]CodebaseDocument{{Path: "a.go", Content: "package a"}}, "query", 100)
-	if err != nil {
-		t.Fatalf("RerankCode returned error: %v", err)
-	}
-	if gotPath != "/v2/code/rank" {
-		t.Fatalf("expected rerank path /v2/code/rank, got %q", gotPath)
-	}
-	if len(ranked) != 1 || ranked[0].Path != "a.go" {
-		t.Fatalf("unexpected ranked result: %+v", ranked)
+// Neither provider offers reranking anymore (Relace removed /v2/code/rank,
+// Morph retired morph-rerank-*), so no client may claim CodeReranker: callers
+// rely on that to return ErrRerankingUnavailable instead of an upstream 404.
+func TestNoProviderImplementsCodeReranker(t *testing.T) {
+	for _, client := range []Client{NewRelaceClient("key"), NewMorphClient("key")} {
+		if _, ok := client.(CodeReranker); ok {
+			t.Fatalf("%s must not implement CodeReranker", client.ProviderName())
+		}
 	}
 }

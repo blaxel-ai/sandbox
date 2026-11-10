@@ -227,15 +227,8 @@ type RankedFile = codegen.RankedFile // @name RankedFile
 
 // HandleReranking performs semantic search/reranking on code files
 // @Summary Code reranking/semantic search
-// @Description Uses Relace's code reranking model to find the most relevant files for a given query. This is useful as a first pass in agentic exploration to narrow down the search space.
-// @Description
-// @Description Based on: https://docs.relace.ai/docs/code-reranker/agent
-// @Description
-// @Description Query Construction: The query can be a short question or a more detailed conversation with the user request included. For a first pass, use the full conversation; for subsequent calls, use more targeted questions.
-// @Description
-// @Description Token Limit and Score Threshold: For 200k token context models like Claude 4 Sonnet, recommended defaults are scoreThreshold=0.5 and tokenLimit=30000.
-// @Description
-// @Description The response will be a list of file paths and contents ordered from most relevant to least relevant.
+// @Description Deprecated: Relace and Morph discontinued their reranking APIs, so this endpoint no longer returns results (503 when a codegen provider is configured).
+// @Deprecated
 // @Tags codegen
 // @Produce json
 // @Param path path string true "Path to search in (relative to workspace)"
@@ -246,7 +239,7 @@ type RankedFile = codegen.RankedFile // @name RankedFile
 // @Success 200 {object} RerankingResponse "Relevant files found"
 // @Failure 400 {object} ErrorResponse "Invalid request"
 // @Failure 422 {object} ErrorResponse "Unprocessable entity - failed to process the request"
-// @Failure 503 {object} ErrorResponse "Service unavailable - Relace not configured"
+// @Failure 503 {object} ErrorResponse "Service unavailable - code reranking is no longer offered by any provider"
 // @Router /codegen/reranking/{path} [get]
 func (h *CodegenHandler) HandleReranking(c *gin.Context) {
 	// Check if codegen tools are enabled (we need Relace for reranking)
@@ -306,11 +299,10 @@ func (h *CodegenHandler) HandleReranking(c *gin.Context) {
 		return
 	}
 
-	// Check if the client supports reranking (only Relace does)
+	// Check if the client supports reranking (no current provider does)
 	reranker, ok := client.(codegen.CodeReranker)
 	if !ok {
-		h.SendError(c, http.StatusServiceUnavailable,
-			fmt.Errorf("code reranking is only available with Relace. Set RELACE_API_KEY to use this feature"))
+		h.SendError(c, http.StatusServiceUnavailable, codegen.ErrRerankingUnavailable)
 		return
 	}
 
