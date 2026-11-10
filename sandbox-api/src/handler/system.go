@@ -210,6 +210,8 @@ func (h *SystemHandler) HandleResume(c *gin.Context) {
 // @Description Asks the host to put the sandbox in standby right away instead of waiting for it to be idle.
 // @Description Returns 202 before the standby happens; the connection is closed and the sandbox pauses shortly after.
 // @Description Refused while a keepAlive process or an archive operation holds the sandbox awake, unless force is true.
+// @Description A 202 means the request was accepted, not that the standby happened: the host ignores it, without an error, when the sandbox started less than about 10 seconds ago, within 5 seconds of the sandbox's previous accepted request, past 10 requests per second (bursts of 20) per workspace on the host, while another standby, stop or delete is in progress, or during the backoff after failed standbys (10 seconds, doubling up to 5 minutes).
+// @Description An ignored sandbox still goes on standby once idle. Check that the sandbox status is STANDBY to confirm.
 // @Tags system
 // @Produce json
 // @Param force query bool false "Put the sandbox in standby even while keepAlive processes hold it awake: their holds are released for the standby and taken back once it resumes"
