@@ -5,6 +5,7 @@ FROM node:24-alpine3.23
 
 RUN apk update && apk add --no-cache \
   bash \
+  coreutils \
   git \
   python3 \
   py3-pip \
