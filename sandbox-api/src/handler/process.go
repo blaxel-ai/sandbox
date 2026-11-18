@@ -213,9 +213,69 @@ func (h *ProcessHandler) HandleListProcesses(c *gin.Context) {
 	h.SendJSON(c, http.StatusOK, processes)
 }
 
+const (
+	// edgeRequestTimeoutSeconds is how long the edge in front of sandbox URLs
+	// (CloudFront, the origin read timeout of the run distribution) waits for
+	// an answer. A request still open by then gets the edge's bare 504.
+	edgeRequestTimeoutSeconds = 120
+
+	// codeProcessWaitLimitReached marks an exec whose wait hit
+	// maxExecWaitSeconds while the process was still running.
+	codeProcessWaitLimitReached = "PROCESS_WAIT_LIMIT_REACHED"
+)
+
+// maxExecWaitSeconds is the longest one exec request waits for
+// waitForCompletion or waitForPorts, so the caller gets this API's answer
+// rather than the edge's 504. The headroom under edgeRequestTimeoutSeconds
+// covers what also runs on the edge's clock: waking the sandbox from standby
+// and starting the process. Only the wait is capped; the process keeps its own
+// timeout. A variable so tests can shorten it.
+var maxExecWaitSeconds = 115
+
+// execWait returns how long an exec request may wait, and whether that is
+// shorter than the process's own timeout (0 or less: none), in which case the
+// process can outlive the request.
+func execWait(timeout int, waits bool) (seconds int, capped bool) {
+	if !waits || (timeout > 0 && timeout <= maxExecWaitSeconds) {
+		return timeout, false
+	}
+	return maxExecWaitSeconds, true
+}
+
+// execWaitLimitMessage is the 422 message for an exec whose wait hit the cap
+// while the process kept running. It names the process, says it is still
+// running and how to keep following it without a held request, and warns
+// that resending the exec would start a second copy.
+func execWaitLimitMessage(p ProcessResponse, ports []int, portsWait bool, waited, timeout int) string {
+	state := "is still running"
+	if portsWait {
+		portList := make([]string, len(ports))
+		for i, port := range ports {
+			portList[i] = strconv.Itoa(port)
+		}
+		if len(ports) == 1 {
+			state = fmt.Sprintf("is still running and port %s is not open yet", portList[0])
+		} else {
+			state = fmt.Sprintf("is still running and ports %s are not all open yet", strings.Join(portList, ", "))
+		}
+	}
+	until := "until it exits"
+	if timeout > 0 {
+		until = fmt.Sprintf("until it exits or its %d-second timeout ends", timeout)
+	}
+	next := fmt.Sprintf("Wait for it with GET /process/%s/wait (process.wait in the SDKs) or follow its output with GET /process/%s/logs/stream (streamLogs). To wait longer in one call, stream the exec instead (onLog in the SDKs, or Accept: application/x-ndjson): the request then stays open until the process exits.", p.Name, p.Name)
+	if portsWait {
+		next = fmt.Sprintf("Follow its output with GET /process/%s/logs/stream (streamLogs) to see why it is slow, and check its ports with GET /network/process/%s/ports.", p.Name, p.PID)
+	}
+	return fmt.Sprintf("process %q (PID %s) %s after %d seconds, the longest one exec request waits: the edge gateway closes requests after %d seconds. It keeps running %s. %s Don't resend the exec: that starts a second copy.",
+		p.Name, p.PID, state, waited, edgeRequestTimeoutSeconds, until, next)
+}
+
 // HandleExecuteCommand handles POST requests to /process/
 // @Summary Execute a command
 // @Description Execute a command and return process information.
+// @Description
+// @Description With waitForCompletion or waitForPorts, one request waits at most 115 seconds, under the edge gateway's 120-second limit. A process still running then (or still short of its ports) gets a 422 with code PROCESS_WAIT_LIMIT_REACHED, and keeps running until it exits or its own timeout ends: follow it with GET /process/{identifier}/wait or GET /process/{identifier}/logs/stream. Streamed requests (below) are not capped.
 // @Description
 // @Description Streaming: with `Accept: application/x-ndjson` (or `Accept: text/event-stream`, kept for compatibility) the response is NDJSON (`Content-Type: application/x-ndjson`), not SSE: one JSON object per line, `{"type": "...", "data": "..."}`.
 // @Description `type` is `stdout` or `stderr` (`data` is a raw output chunk, sent as soon as the process writes it, newlines included; if the process finished before any chunk was streamed, its output is sent instead as one event per line, without the newline), `keepalive` (every 5 seconds, no data), `error` (`data` is the message, ends the stream) or `result` (last event, `data` is the ProcessResponse as a JSON string).
@@ -226,7 +286,7 @@ func (h *ProcessHandler) HandleListProcesses(c *gin.Context) {
 // @Param request body ProcessRequest true "Process execution request"
 // @Success 200 {object} ProcessResponse "Process information"
 // @Failure 400 {object} ErrorResponse "Invalid request"
-// @Failure 422 {object} ErrorResponse "Unprocessable entity"
+// @Failure 422 {object} ErrorResponse "The process could not start, its timeout ended, it exited before opening its ports, or the wait reached 115 seconds while the process kept running (code PROCESS_WAIT_LIMIT_REACHED)"
 // @Failure 500 {object} ErrorResponse "Internal server error"
 // @Router /process [post]
 func (h *ProcessHandler) HandleExecuteCommand(c *gin.Context) {
@@ -285,9 +345,29 @@ func (h *ProcessHandler) HandleExecuteCommand(c *gin.Context) {
 		timeout = 600 // Default 10 minutes
 	}
 
+	// Answer before the edge gives up on the request: past the cap the process
+	// keeps running and the caller follows it with /wait or the log stream.
+	waitSeconds, capped := execWait(timeout, req.WaitForCompletion || len(req.WaitForPorts) > 0)
+	var waitTimeout []int
+	if capped {
+		waitTimeout = []int{waitSeconds}
+	}
+
 	// Execute the process
-	processInfo, err := h.ExecuteProcessWithCallback(process.ExitCallback{URL: req.CallbackURL, Secret: req.CallbackSecret}, req.Command, req.WorkingDir, req.Name, req.Env, req.WaitForCompletion, timeout, req.WaitForPorts, req.RestartOnFailure, req.MaxRestarts, req.KeepAlive, req.Stdin)
+	processInfo, err := h.ExecuteProcessWithCallback(process.ExitCallback{URL: req.CallbackURL, Secret: req.CallbackSecret}, req.Command, req.WorkingDir, req.Name, req.Env, req.WaitForCompletion, timeout, req.WaitForPorts, req.RestartOnFailure, req.MaxRestarts, req.KeepAlive, req.Stdin, waitTimeout...)
 	if err != nil {
+		portsWait := errors.Is(err, process.ErrPortsWaitExpired)
+		if capped && processInfo.Status == string(constants.ProcessStatusRunning) &&
+			(portsWait || errors.Is(err, process.ErrCompletionWaitExpired)) {
+			// The gateway strips X-Blaxel-* headers from sandbox responses, so
+			// callers read the code in the body; the gateway still logs it.
+			c.Header("X-Blaxel-Error-Code", codeProcessWaitLimitReached)
+			c.JSON(http.StatusUnprocessableEntity, ErrorResponse{
+				Error: execWaitLimitMessage(processInfo, req.WaitForPorts, portsWait, waitSeconds, timeout),
+				Code:  codeProcessWaitLimitReached,
+			})
+			return
+		}
 		h.SendError(c, http.StatusUnprocessableEntity, err)
 		return
 	}
