@@ -57,7 +57,7 @@ func NewProcessHandler() *ProcessHandler {
 type ProcessRequest struct {
 	Command           string            `json:"command" example:"ls -la" binding:"required"`
 	Name              string            `json:"name" example:"my-process"`
-	WorkingDir        string            `json:"workingDir" example:"/home/user"`
+	WorkingDir        string            `json:"workingDir" example:"/home/user"` // Working directory of the command. Created with its missing parents when it does not exist, like `docker run -w`, as the user the command runs as. A path that exists but is not a directory, or that this user may not create or enter, fails with 422.
 	Env               map[string]string `json:"env" example:"{\"PORT\": \"3000\"}"`
 	WaitForCompletion bool              `json:"waitForCompletion" example:"false"`
 	Timeout           *int              `json:"timeout,omitempty" example:"30"` // Timeout in seconds. When keepAlive is true, defaults to 600s (10 minutes). Set to 0 for infinite (no auto-kill).
