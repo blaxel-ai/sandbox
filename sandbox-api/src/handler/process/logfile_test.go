@@ -54,7 +54,7 @@ func TestCapLogFileReleasesTheHeadAndKeepsTheTail(t *testing.T) {
 		t.Errorf("size = %d, want %d (offsets must not move)", got, want)
 	}
 
-	tail, ok := readLogTail(path, 64*1024)
+	tail, cut, ok := readLogTail(path, 64*1024, 0)
 	if !ok {
 		t.Fatal("readLogTail failed")
 	}
@@ -66,6 +66,9 @@ func TestCapLogFileReleasesTheHeadAndKeepsTheTail(t *testing.T) {
 	}
 	if strings.ContainsRune(tail, 0) {
 		t.Error("the released head is being served as NUL bytes")
+	}
+	if cut != 64*1024 {
+		t.Errorf("cut = %d, want the read limit %d", cut, 64*1024)
 	}
 }
 
@@ -79,7 +82,7 @@ func TestCapLogFileLeavesASmallFileAlone(t *testing.T) {
 
 	capLogFile(path, maxLogFile())
 
-	if got, ok := readLogTail(path, 64*1024); !ok || got != "hello\n" {
+	if got, _, ok := readLogTail(path, 64*1024, 0); !ok || got != "hello\n" {
 		t.Errorf("readLogTail = %q (ok=%v), want %q verbatim", got, ok, "hello\n")
 	}
 }
@@ -107,9 +110,12 @@ func TestReadLogTailBoundsWhatItReads(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	tail, ok := readLogTail(path, 8*1024)
+	tail, cut, ok := readLogTail(path, 8*1024, 0)
 	if !ok {
 		t.Fatal("readLogTail failed")
+	}
+	if cut != 8*1024 {
+		t.Errorf("cut = %d, want the read limit %d", cut, 8*1024)
 	}
 	if got, max := len(tail), 8*1024+len(truncationMarker); got > max {
 		t.Errorf("read %d bytes, want at most %d", got, max)
@@ -320,7 +326,7 @@ func TestCapLogFilesShrinksFilesNobodyIsTailing(t *testing.T) {
 	if after := diskUsage(t, path); after >= before {
 		t.Errorf("disk usage %d bytes, want less than %d: an exited process' output is still costing the guest memory", after, before)
 	}
-	tail, ok := readLogTail(path, maxLogFile())
+	tail, _, ok := readLogTail(path, maxLogFile(), 0)
 	if !ok || !strings.HasSuffix(tail, "THE TAIL\n") {
 		t.Error("the newest output was not kept")
 	}
@@ -354,7 +360,7 @@ func TestCapLogFilesKeepsABusyProcessNextToManyFinishedOnes(t *testing.T) {
 	if got := pm.currentLogShare(); got != share {
 		t.Errorf("cached share = %d, want %d", got, share)
 	}
-	if tail, ok := readLogTail(busy, maxLogFile()); !ok || len(tail) != 1024*1024 {
+	if tail, _, ok := readLogTail(busy, maxLogFile(), 0); !ok || len(tail) != 1024*1024 {
 		t.Errorf("busy log lost output: %d bytes left", len(tail))
 	}
 }
@@ -394,10 +400,58 @@ func TestCapLogFilesBudgetsReleasedFilesByWhatTheyStillHold(t *testing.T) {
 }
 
 func TestReadLogTailMissingFile(t *testing.T) {
-	if _, ok := readLogTail(filepath.Join(t.TempDir(), "absent.log"), 1024); ok {
+	if _, _, ok := readLogTail(filepath.Join(t.TempDir(), "absent.log"), 1024, 0); ok {
 		t.Error("readLogTail reported success for a file that does not exist")
 	}
-	if _, ok := readLogTail("", 1024); ok {
+	if _, _, ok := readLogTail("", 1024, 0); ok {
 		t.Error("readLogTail reported success for an empty path")
+	}
+}
+
+// A log file whose head was released but which is shorter than the read limit
+// is cut by the log file cap, not by the read: that is the limit to report.
+func TestReadLogTailReportsTheRetentionForAReleasedHead(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "released.log")
+	released := make([]byte, 8*1024) // a punched head reads back as zeros
+	if err := os.WriteFile(path, append(released, "THE TAIL\n"...), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	tail, cut, ok := readLogTail(path, 64*1024, 4096)
+	if !ok {
+		t.Fatal("readLogTail failed")
+	}
+	if tail != truncationMarker+"THE TAIL\n" {
+		t.Errorf("tail = %q, want the marker and the kept tail", tail)
+	}
+	if cut != 4096 {
+		t.Errorf("cut = %d, want the retention 4096", cut)
+	}
+
+	whole := filepath.Join(t.TempDir(), "whole.log")
+	if err := os.WriteFile(whole, []byte("all of it\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, cut, _ := readLogTail(whole, 64*1024, 4096); cut != 0 {
+		t.Errorf("cut = %d for whole output, want 0", cut)
+	}
+}
+
+func TestOutputCutReportsTheTighterLimit(t *testing.T) {
+	cases := []struct {
+		stdout, stderr int64
+		truncated      bool
+		limit          int64
+	}{
+		{0, 0, false, 0},
+		{4096, 0, true, 4096},
+		{0, 65536, true, 65536},
+		{65536, 4096, true, 4096},
+	}
+	for _, c := range cases {
+		truncated, limit := outputCut(c.stdout, c.stderr)
+		if truncated != c.truncated || limit != c.limit {
+			t.Errorf("outputCut(%d, %d) = %v, %d; want %v, %d", c.stdout, c.stderr, truncated, limit, c.truncated, c.limit)
+		}
 	}
 }
