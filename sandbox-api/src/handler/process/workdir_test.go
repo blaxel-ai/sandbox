@@ -232,18 +232,30 @@ func TestWorkingDirTheUserMayNotCreateIsRejected(t *testing.T) {
 	}
 }
 
-// An existing directory the user may not enter is reported up front rather
-// than as an opaque fork/exec failure.
-func TestWorkingDirTheUserMayNotEnterIsRejected(t *testing.T) {
+// An existing directory the user reaches only through a supplementary group
+// is accepted. identity.Do switches the primary group only, so checking access
+// under it would refuse a directory the child, which gets every group of the
+// user, can enter.
+func TestWorkingDirReachableThroughASupplementaryGroupIsAccepted(t *testing.T) {
 	requireRoot(t)
-	locked := filepath.Join(searchableTempDir(t), "locked")
-	if err := os.Mkdir(locked, 0o700); err != nil {
+	const group = 4242
+	member := &identity.Identity{Uid: 65534, Gid: 65534, Name: "nobody", Home: "/", Groups: []uint32{65534, group}}
+	shared := filepath.Join(searchableTempDir(t), "shared")
+	if err := os.Mkdir(shared, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chown(shared, 0, group); err != nil {
+		t.Fatal(err)
+	}
+	work := filepath.Join(shared, "work")
+	if err := os.Mkdir(work, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chown(work, 0, group); err != nil {
 		t.Fatal(err)
 	}
 
-	err := prepareWorkingDirAs(nobody, locked)
-
-	if err == nil || !errors.Is(err, fs.ErrPermission) {
-		t.Fatalf("err = %v, want a permission error", err)
+	if err := prepareWorkingDirAs(member, work); err != nil {
+		t.Fatalf("prepareWorkingDirAs: %v", err)
 	}
 }

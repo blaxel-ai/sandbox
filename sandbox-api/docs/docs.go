@@ -3315,7 +3315,7 @@ const docTemplate = `{
                     ]
                 },
                 "workingDir": {
-                    "description": "Working directory of the command. Created with its missing parents when it does not exist, like ` + "`" + `docker run -w` + "`" + `, as the user the command runs as. A path that exists but is not a directory, or that this user may not create or enter, fails with 422.",
+                    "description": "Working directory of the command. Created with its missing parents when it does not exist, like ` + "`" + `docker run -w` + "`" + `, as the user the command runs as. A path that exists but is not a directory, or that this user may not create, fails with 422.",
                     "type": "string",
                     "example": "/home/user"
                 }
