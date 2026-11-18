@@ -4,6 +4,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -25,6 +26,61 @@ type TerminalSession struct {
 	// still hold the PTY slave open. This allows detecting "exit" without waiting
 	// for all children to close their inherited file descriptors.
 	shellDoneCh chan struct{}
+}
+
+// terminalEnv builds the shell's environment: sandbox-api's own, then the
+// caller's overrides, then what an xterm.js terminal needs.
+//
+// TERM always describes the PTY, i.e. the web terminal (xterm.js), unless the
+// caller sets it. sandbox-api's own TERM describes wherever it was started
+// (often TERM=linux), and passing it on gives vim, less and htop the Linux
+// console's 8 colours, no mouse and Home/End codes that don't match.
+//
+// Without a locale the shell runs in POSIX/C and treats every byte as a
+// character, so accented input and UTF-8 output break. LANG=C.UTF-8 is set
+// only when no LC_ALL / LC_CTYPE / LANG is set and the image can honour it.
+func terminalEnv(systemEnv []string, overrides map[string]string, utf8Locale bool) []string {
+	finalEnv := make([]string, 0, len(systemEnv)+len(overrides)+3)
+	set := make(map[string]bool, len(systemEnv)+len(overrides))
+	for _, envVar := range systemEnv {
+		key, _, ok := strings.Cut(envVar, "=")
+		if !ok || key == "" || key == "TERM" {
+			continue
+		}
+		if _, overridden := overrides[key]; overridden {
+			continue
+		}
+		finalEnv = append(finalEnv, envVar)
+		set[key] = true
+	}
+	for k, v := range overrides {
+		finalEnv = append(finalEnv, k+"="+v)
+		set[k] = true
+	}
+	if !set["TERM"] {
+		finalEnv = append(finalEnv, "TERM=xterm-256color")
+	}
+	if !set["COLORTERM"] {
+		finalEnv = append(finalEnv, "COLORTERM=truecolor")
+	}
+	if utf8Locale && !set["LC_ALL"] && !set["LC_CTYPE"] && !set["LANG"] {
+		finalEnv = append(finalEnv, "LANG=C.UTF-8")
+	}
+	return finalEnv
+}
+
+// utf8LocaleAvailable reports whether LANG=C.UTF-8 works in this image: musl
+// (Alpine) is always UTF-8, and glibc images ship it as /usr/lib/locale/C.utf8
+// (Debian, Ubuntu, Fedora). Elsewhere setting it would only make the shell
+// print a setlocale warning, so it is left unset.
+func utf8LocaleAvailable() bool {
+	for _, p := range []string{"/usr/lib/locale/C.utf8", "/usr/lib/locale/C.UTF-8"} {
+		if _, err := os.Stat(p); err == nil {
+			return true
+		}
+	}
+	musl, _ := filepath.Glob("/lib/ld-musl-*")
+	return len(musl) > 0
 }
 
 // findShell returns the best available shell
@@ -60,43 +116,7 @@ func NewTerminalSession(shell string, workingDir string, env map[string]string, 
 		cmd.Dir = workingDir
 	}
 
-	// Build environment
-	systemEnv := os.Environ()
-	envOverrides := make(map[string]bool)
-	for k := range env {
-		envOverrides[k] = true
-	}
-
-	finalEnv := make([]string, 0, len(systemEnv)+len(env))
-	for _, envVar := range systemEnv {
-		idx := -1
-		for i, c := range envVar {
-			if c == '=' {
-				idx = i
-				break
-			}
-		}
-		if idx > 0 {
-			key := envVar[:idx]
-			if !envOverrides[key] {
-				finalEnv = append(finalEnv, envVar)
-			}
-		}
-	}
-	for k, v := range env {
-		finalEnv = append(finalEnv, k+"="+v)
-	}
-	// Set TERM for proper terminal emulation only if not already set
-	hasTerm := false
-	for _, e := range finalEnv {
-		if strings.HasPrefix(e, "TERM=") {
-			hasTerm = true
-			break
-		}
-	}
-	if !hasTerm {
-		finalEnv = append(finalEnv, "TERM=xterm-256color")
-	}
+	finalEnv := terminalEnv(os.Environ(), env, utf8LocaleAvailable())
 	cmd.Env = identity.Get().DecorateEnv(finalEnv)
 
 	// The PTY pair is opened here rather than through pty.StartWithSize so the
