@@ -90,6 +90,14 @@ type ProcessResponse struct {
 	RestartCount     int    `json:"restartCount" example:"2"`
 	KeepAlive        bool   `json:"keepAlive" example:"false"` // Whether scale-to-zero is disabled for this process
 	Stdin            bool   `json:"stdin" example:"false"`     // Whether the process was started with a writable stdin pipe
+	// Why the process ended, when exitCode alone does not say: oom_killed (the kernel's out-of-memory killer ended it, or the command its shell ran last: the sandbox ran out of memory) or disk_full (it failed while the sandbox's disk had no space left, so its output, error message included, may be missing). Absent otherwise, and for a process the API stopped, killed or timed out. status and exitCode are unchanged.
+	ExitReason string `json:"exitReason,omitempty" example:"oom_killed" enums:"oom_killed,disk_full"`
+	// How many processes the kernel's out-of-memory killer ended in the sandbox while this process ran: this one or any other, such as a test worker it started. Set only when the process failed and the count is above zero.
+	OOMKills int `json:"oomKills,omitempty" example:"1"`
+	// True when the start of stdout or stderr is missing: the stream holds only its last outputLimitBytes, after a "[... truncated, see the process log file for the full output ...]" line. Absent when the output is whole. GET /process/{identifier}/logs/stream replays what the sandbox kept.
+	OutputTruncated bool `json:"outputTruncated,omitempty" example:"true"`
+	// The limit that cut the output, in bytes per stream: how much of each stream this response returns, or how much of it the sandbox keeps on disk when that is less. Set only with outputTruncated.
+	OutputLimitBytes int64 `json:"outputLimitBytes,omitempty" example:"4194304"`
 } // @name ProcessResponse
 
 type ProcessResponseWithLogs struct {
@@ -140,6 +148,8 @@ func processResponse(p process.ProcessSnapshot) ProcessResponse {
 		Logs: processOutputString(p.Logs), Stdout: processOutputString(p.Stdout), Stderr: processOutputString(p.Stderr),
 		RestartOnFailure: p.RestartOnFailure, MaxRestarts: p.MaxRestarts,
 		RestartCount: p.RestartCount, KeepAlive: p.KeepAlive, Stdin: p.Stdin,
+		ExitReason: p.ExitReason, OOMKills: p.OOMKills,
+		OutputTruncated: p.OutputTruncated, OutputLimitBytes: p.OutputLimitBytes,
 	}
 }
 
@@ -159,6 +169,7 @@ func (h *ProcessHandler) ListProcesses() []ProcessResponse {
 	for _, p := range processes {
 		output := p.OutputTail(process.MaxInlinedLogBytes)
 		p.Logs, p.Stdout, p.Stderr = &output.Logs, &output.Stdout, &output.Stderr
+		p.OutputTruncated, p.OutputLimitBytes = output.OutputTruncated, output.OutputLimitBytes
 		result = append(result, processResponse(p))
 	}
 	return result
@@ -172,6 +183,7 @@ func (h *ProcessHandler) GetProcess(identifier string) (ProcessResponse, error) 
 	}
 	output := p.OutputTail(process.MaxInlinedLogBytes)
 	p.Logs, p.Stdout, p.Stderr = &output.Logs, &output.Stdout, &output.Stderr
+	p.OutputTruncated, p.OutputLimitBytes = output.OutputTruncated, output.OutputLimitBytes
 	return processResponse(p), nil
 }
 

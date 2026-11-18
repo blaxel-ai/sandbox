@@ -323,6 +323,7 @@ func (pm *ProcessManager) ExecuteProcessWithCallback(
 			processInfo.Logs = &output.Logs
 			processInfo.Stdout = &output.Stdout
 			processInfo.Stderr = &output.Stderr
+			processInfo.outputCutBytes = output.OutputLimitBytes
 		} else {
 			// Fall back to in-memory
 			logs := processInfo.logs.String()
@@ -331,6 +332,7 @@ func (pm *ProcessManager) ExecuteProcessWithCallback(
 			processInfo.Stdout = &stdout
 			stderr := processInfo.stderr.String()
 			processInfo.Stderr = &stderr
+			_, processInfo.outputCutBytes = outputCut(processInfo.stdout.cut(), processInfo.stderr.cut())
 		}
 		processInfo.logLock.Unlock()
 	}

@@ -96,6 +96,8 @@ type exitEvent struct {
 	Command     string                  `json:"command"`
 	ExitCode    int                     `json:"exitCode"`
 	Status      constants.ProcessStatus `json:"status"`
+	ExitReason  string                  `json:"exitReason,omitempty"`
+	OOMKills    int                     `json:"oomKills,omitempty"`
 	StartedAt   time.Time               `json:"startedAt"`
 	CompletedAt *time.Time              `json:"completedAt"`
 	Timestamp   int64                   `json:"timestamp"`
@@ -166,6 +168,8 @@ func exitCallbackLocked(p *ProcessInfo) *exitCallback {
 		Command:     p.Command,
 		ExitCode:    p.ExitCode,
 		Status:      p.Status,
+		ExitReason:  p.ExitReason,
+		OOMKills:    p.OOMKills,
 		StartedAt:   p.StartedAt,
 		CompletedAt: p.CompletedAt,
 		Timestamp:   ts,

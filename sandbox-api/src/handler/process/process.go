@@ -99,6 +99,10 @@ type ProcessLogs struct {
 	Stderr string `json:"stderr" example:"stderr output" binding:"required"`
 	// Concatenation of the returned stdout followed by the returned stderr. Output from the two streams is not interleaved.
 	Logs string `json:"logs" example:"logs output" binding:"required"`
+	// True when the start of stdout or stderr is missing: the stream holds only its last outputLimitBytes, after a "[... truncated, see the process log file for the full output ...]" line. Absent when the output is whole.
+	OutputTruncated bool `json:"outputTruncated,omitempty" example:"true"`
+	// The limit that cut the output, in bytes per stream: how much of each stream this response returns, or how much of it the sandbox keeps on disk when that is less. Set only with outputTruncated.
+	OutputLimitBytes int64 `json:"outputLimitBytes,omitempty" example:"4194304"`
 } // @name ProcessLogs
 
 // ProcessInfo stores information about a running process
@@ -111,8 +115,16 @@ type ProcessInfo struct {
 	CompletedAt *time.Time              `json:"completedAt"`
 	ExitCode    int                     `json:"exitCode"`
 	Status      constants.ProcessStatus `json:"status"`
+	// ExitReason says why the last run ended when its exit code does not
+	// (ExitReasonOOMKilled, ExitReasonDiskFull); empty otherwise. OOMKills
+	// counts the processes the kernel OOM-killed in the sandbox during that
+	// run. Both are set with the exit code, under ProcessManager.mu.
+	ExitReason string `json:"exitReason,omitempty"`
+	OOMKills   int    `json:"oomKills,omitempty"`
 
 	terminationRequested constants.ProcessStatus // Protected by ProcessManager.mu.
+	oomKillsAtStart      int64                   // oomKillCount() just before this run started; -1 when unknown.
+	outputCutBytes       int64                   // Guarded by logLock: the limit that cut Logs, Stdout and Stderr when an exec read them; 0 when whole.
 	runExited            bool                    // Wait has returned; no live OS process may be signalled.
 	skipExitWebhook      bool                    // Protected by ProcessManager.mu; an archive stops it to relaunch it elsewhere.
 
@@ -490,6 +502,8 @@ func (pm *ProcessManager) StartProcessWithCallback(command string, workingDir st
 	// Capture inherited cwd once per run without setting cmd.Dir: an unprivileged
 	// child may inherit a directory it cannot chdir into.
 	process.EffectiveWorkingDir = effectiveWorkingDir(workingDir)
+	// Taken before the start, so a kill during the run always counts.
+	process.oomKillsAtStart = readOOMKillCount()
 	// Start the process
 	if err := cmd.Start(); err != nil {
 		return "", err
@@ -960,6 +974,9 @@ func (pm *ProcessManager) restartProcess(oldProcess *ProcessInfo, callback func(
 
 	effectiveDir := effectiveWorkingDir(workingDir)
 
+	// Taken before the start, so a kill during the run always counts.
+	oomKillsAtStart := readOOMKillCount()
+
 	// Serialize the actual spawn with explicit stop/kill requests. Setup above
 	// does not hold the manager lock or allow a stop to miss the new OS PID.
 	pm.mu.Lock()
@@ -976,6 +993,9 @@ func (pm *ProcessManager) restartProcess(oldProcess *ProcessInfo, callback func(
 		return "", err
 	}
 	started = true
+	oldProcess.oomKillsAtStart = oomKillsAtStart
+	oldProcess.ExitReason = ""
+	oldProcess.OOMKills = 0
 	oldProcess.ProcessPid = cmd.Process.Pid
 	oldProcess.EffectiveWorkingDir = effectiveDir
 	oldProcess.runExited = false
@@ -1151,25 +1171,38 @@ func (pm *ProcessManager) getProcessOutput(identifier string, max int64) (Proces
 
 	// The log files hold the whole output; the in-memory buffers are the
 	// fallback for when a file is gone or unreadable.
-	stdout, ok := readLogTail(process.StdoutFile, max)
+	retention := pm.logRetention()
+	stdout, stdoutCut, ok := readLogTail(process.StdoutFile, max, retention)
 	if !ok {
 		process.logLock.RLock()
-		stdout = process.stdout.String()
+		stdout, stdoutCut = process.stdout.String(), process.stdout.cut()
 		process.logLock.RUnlock()
 	}
 
-	stderr, ok := readLogTail(process.StderrFile, max)
+	stderr, stderrCut, ok := readLogTail(process.StderrFile, max, retention)
 	if !ok {
 		process.logLock.RLock()
-		stderr = process.stderr.String()
+		stderr, stderrCut = process.stderr.String(), process.stderr.cut()
 		process.logLock.RUnlock()
 	}
 
+	truncated, limit := outputCut(stdoutCut, stderrCut)
 	return ProcessLogs{
-		Stdout: stdout,
-		Stderr: stderr,
-		Logs:   stdout + stderr,
+		Stdout:           stdout,
+		Stderr:           stderr,
+		Logs:             stdout + stderr,
+		OutputTruncated:  truncated,
+		OutputLimitBytes: limit,
 	}, nil
+}
+
+// logRetention is how much of each log file the last sweep let it keep: the
+// limit a log file whose head was released was cut at.
+func (pm *ProcessManager) logRetention() int64 {
+	if share := pm.logShare.Load(); share > 1 {
+		return share - 1
+	}
+	return maxLogFile()
 }
 
 // endsWithNewline reports whether the first size bytes of path end a line.
