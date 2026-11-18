@@ -2,6 +2,8 @@ package handler
 
 import (
 	"errors"
+	"fmt"
+	"syscall"
 
 	"github.com/blaxel-ai/sandbox-api/src/handler/process"
 )
@@ -14,12 +16,23 @@ import (
 // request fails the same way until the path changes.
 const codeProcessWorkingDirUnusable = "PROCESS_WORKING_DIR_UNUSABLE"
 
-// workingDirErrorCode is codeProcessWorkingDirUnusable for an exec refused
-// because of its working directory, and "" for any other error.
-func workingDirErrorCode(err error) string {
+// workingDirError is the code and message for an exec refused because of its
+// working directory, and ok false for any other error. The message keeps the
+// original error and adds that the command did not run and how to fix the
+// path for the cause at hand.
+func workingDirError(err error) (code, message string, ok bool) {
 	var wdErr *process.WorkingDirError
-	if errors.As(err, &wdErr) {
-		return codeProcessWorkingDirUnusable
+	if !errors.As(err, &wdErr) {
+		return "", "", false
 	}
-	return ""
+	var next string
+	switch {
+	case errors.Is(wdErr, syscall.ENOTDIR):
+		next = "Set workingDir to a directory, or to a path whose existing parents are all directories, then resend."
+	case errors.Is(wdErr, syscall.EACCES), errors.Is(wdErr, syscall.EPERM), errors.Is(wdErr, syscall.EROFS):
+		next = "Use a workingDir the command's user can create, such as one under its home directory or /tmp, or create this one in the image owned by that user, then resend."
+	default:
+		next = "Fix the path or use another workingDir, then resend."
+	}
+	return codeProcessWorkingDirUnusable, fmt.Sprintf("%s. The command did not run, and resending it unchanged fails the same way. %s", err, next), true
 }

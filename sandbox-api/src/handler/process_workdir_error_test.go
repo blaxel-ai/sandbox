@@ -56,9 +56,9 @@ func TestHandleExecuteCommandWorkingDirUnusable(t *testing.T) {
 	if err := os.WriteFile(file, []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	cases := []struct{ name, dir string }{
-		{"path is a file", file},
-		{"parent is a file", filepath.Join(file, "sub", "dir")},
+	cases := []struct{ name, dir, next string }{
+		{"path is a file", file, "Set workingDir to a directory"},
+		{"parent is a file", filepath.Join(file, "sub", "dir"), "Set workingDir to a directory"},
 	}
 	if os.Geteuid() != 0 {
 		// Root may create anywhere, so only a non-root API sees the permission error.
@@ -66,7 +66,7 @@ func TestHandleExecuteCommandWorkingDirUnusable(t *testing.T) {
 		if err := os.Mkdir(readOnly, 0o555); err != nil {
 			t.Fatal(err)
 		}
-		cases = append(cases, struct{ name, dir string }{"user may not create it", filepath.Join(readOnly, "work")})
+		cases = append(cases, struct{ name, dir, next string }{"user may not create it", filepath.Join(readOnly, "work"), "the command's user can create"})
 	}
 
 	for _, tc := range cases {
@@ -86,9 +86,7 @@ func TestHandleExecuteCommandWorkingDirUnusable(t *testing.T) {
 				t.Errorf("code = %v", body["code"])
 			}
 			msg, _ := body["error"].(string)
-			if !strings.HasPrefix(msg, "failed to start process: ") || !strings.Contains(msg, "'"+tc.dir+"'") {
-				t.Errorf("error %q changed its wording or does not name %s", msg, tc.dir)
-			}
+			checkWorkingDirMessage(t, msg, tc.dir, tc.next)
 			if got := w.Header().Get("X-Blaxel-Error-Code"); got != codeProcessWorkingDirUnusable {
 				t.Errorf("X-Blaxel-Error-Code = %q", got)
 			}
@@ -124,9 +122,8 @@ func TestHandleExecuteCommandWorkingDirUnusable(t *testing.T) {
 			if event["type"] != "error" || event["code"] != codeProcessWorkingDirUnusable {
 				t.Errorf("event %s", lines[0])
 			}
-			if data, _ := event["data"].(string); !strings.Contains(data, "'"+tc.dir+"'") {
-				t.Errorf("data %q does not name %s", data, tc.dir)
-			}
+			data, _ := event["data"].(string)
+			checkWorkingDirMessage(t, data, tc.dir, tc.next)
 		})
 	}
 
@@ -142,8 +139,21 @@ func TestHandleExecuteCommandWorkingDirUnusable(t *testing.T) {
 	})
 }
 
-func TestWorkingDirErrorCodeIgnoresOtherErrors(t *testing.T) {
-	if code := workingDirErrorCode(errors.New("failed to start process: working directory")); code != "" {
+// checkWorkingDirMessage checks that an unusable working directory's message
+// keeps the original error, names the directory, says the command did not run
+// and gives the fix for its cause.
+func checkWorkingDirMessage(t *testing.T, msg, dir, next string) {
+	t.Helper()
+	if !strings.HasPrefix(msg, "failed to start process: ") || !strings.Contains(msg, "'"+dir+"'") {
+		t.Errorf("message %q changed its wording or does not name %s", msg, dir)
+	}
+	if !strings.Contains(msg, ". The command did not run") || !strings.Contains(msg, next) || !strings.HasSuffix(msg, "then resend.") {
+		t.Errorf("message %q does not say the command did not run and %q", msg, next)
+	}
+}
+
+func TestWorkingDirErrorIgnoresOtherErrors(t *testing.T) {
+	if code, _, ok := workingDirError(errors.New("failed to start process: working directory")); ok || code != "" {
 		t.Fatalf("a plain error got code %q", code)
 	}
 }

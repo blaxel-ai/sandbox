@@ -1013,6 +1013,12 @@ func TestProcessNonExistentWorkingDirectory(t *testing.T) {
 	requireUnusableCode := func(t *testing.T, body map[string]interface{}) {
 		t.Helper()
 		assert.Equal(t, "PROCESS_WORKING_DIR_UNUSABLE", body["code"], "body: %v", body)
+		msg, _ := body["error"].(string)
+		if data, ok := body["data"].(string); ok {
+			msg = data
+		}
+		assert.Contains(t, msg, "The command did not run")
+		assert.True(t, strings.HasSuffix(msg, "then resend."), "message: %s", msg)
 	}
 
 	t.Run("path that is a file is rejected", func(t *testing.T) {

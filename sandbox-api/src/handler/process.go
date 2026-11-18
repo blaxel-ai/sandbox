@@ -380,9 +380,11 @@ func (h *ProcessHandler) HandleExecuteCommand(c *gin.Context) {
 			})
 			return
 		}
-		if code := workingDirErrorCode(err); code != "" {
+		if code, message, ok := workingDirError(err); ok {
+			// The gateway strips X-Blaxel-* headers from sandbox responses, so
+			// callers read the code in the body; the gateway still logs it.
 			c.Header("X-Blaxel-Error-Code", code)
-			c.JSON(http.StatusUnprocessableEntity, ErrorResponse{Error: err.Error(), Code: code})
+			c.JSON(http.StatusUnprocessableEntity, ErrorResponse{Error: message, Code: code})
 			return
 		}
 		h.SendError(c, http.StatusUnprocessableEntity, err)
@@ -486,7 +488,11 @@ func (h *ProcessHandler) handleExecuteCommandStream(c *gin.Context) {
 	// Execute the process without waiting for completion (we'll handle waiting ourselves)
 	processInfo, err := h.ExecuteProcessWithCallback(process.ExitCallback{URL: req.CallbackURL, Secret: req.CallbackSecret}, req.Command, req.WorkingDir, req.Name, req.Env, false, timeout, req.WaitForPorts, req.RestartOnFailure, req.MaxRestarts, req.KeepAlive, req.Stdin)
 	if err != nil {
-		jw.WriteErrorEvent(workingDirErrorCode(err), err.Error())
+		if code, message, ok := workingDirError(err); ok {
+			jw.WriteErrorEvent(code, message)
+			return
+		}
+		jw.WriteEvent("error", err.Error())
 		return
 	}
 
