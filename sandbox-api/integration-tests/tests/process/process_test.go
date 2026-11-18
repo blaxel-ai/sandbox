@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -957,87 +958,90 @@ func TestProcessRestartPIDStaysTheSame(t *testing.T) {
 	t.Log("✓ PID remains stable across restarts, completely transparent to users")
 }
 
-// TestProcessNonExistentWorkingDirectory tests error handling when working directory doesn't exist
+// TestProcessNonExistentWorkingDirectory covers a working directory that does
+// not exist yet: it is created with its missing parents, like `docker run -w`,
+// as the user the command runs as. What is not a missing directory (a file, a
+// path under a file, a directory that user may not create) stays a 422.
 func TestProcessNonExistentWorkingDirectory(t *testing.T) {
-	t.Run("absolute path non-existent", func(t *testing.T) {
-		processRequest := map[string]interface{}{
-			"command":           "echo test",
-			"workingDir":        "/this/folder/does/not/exist",
+	// Under /tmp, which root and the workload user can both create in.
+	base := fmt.Sprintf("/tmp/workdir-it-%d", time.Now().UnixNano())
+	t.Cleanup(func() {
+		resp, err := common.MakeRequest(http.MethodPost, "/process", map[string]interface{}{
+			"command":           "rm -rf " + base,
 			"waitForCompletion": true,
+		})
+		if err == nil {
+			resp.Body.Close()
 		}
-
-		resp, err := common.MakeRequest(http.MethodPost, "/process", processRequest)
-		require.NoError(t, err)
-		defer resp.Body.Close()
-
-		// Should return an error
-		assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode)
-
-		var errorResponse map[string]interface{}
-		err = json.NewDecoder(resp.Body).Decode(&errorResponse)
-		require.NoError(t, err)
-
-		// Verify error message contains the command and folder path
-		require.Contains(t, errorResponse, "error")
-		errorMsg := errorResponse["error"].(string)
-		assert.Contains(t, errorMsg, "could not execute command")
-		assert.Contains(t, errorMsg, "echo test")
-		assert.Contains(t, errorMsg, "/this/folder/does/not/exist")
-		assert.Contains(t, errorMsg, "does not exist")
 	})
 
-	t.Run("relative path non-existent", func(t *testing.T) {
-		processRequest := map[string]interface{}{
-			"command":           "ls -la",
-			"workingDir":        "nonexistent/relative/folder",
+	run := func(t *testing.T, command, workingDir string) (int, map[string]interface{}) {
+		t.Helper()
+		resp, err := common.MakeRequest(http.MethodPost, "/process", map[string]interface{}{
+			"command":           command,
+			"workingDir":        workingDir,
 			"waitForCompletion": true,
-		}
-
-		resp, err := common.MakeRequest(http.MethodPost, "/process", processRequest)
+		})
 		require.NoError(t, err)
 		defer resp.Body.Close()
+		var body map[string]interface{}
+		require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+		return resp.StatusCode, body
+	}
 
-		// Should return an error
-		assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode)
+	t.Run("missing directory and parents are created", func(t *testing.T) {
+		dir := base + "/a/b/c"
+		status, body := run(t, "pwd && touch probe && echo writable", dir)
 
-		var errorResponse map[string]interface{}
-		err = json.NewDecoder(resp.Body).Decode(&errorResponse)
-		require.NoError(t, err)
+		require.Equal(t, http.StatusOK, status, "body: %v", body)
+		assert.Equal(t, "completed", body["status"])
+		assert.Equal(t, float64(0), body["exitCode"])
+		assert.Equal(t, dir+"\nwritable\n", body["stdout"])
+	})
 
-		// Verify error message
-		require.Contains(t, errorResponse, "error")
-		errorMsg := errorResponse["error"].(string)
-		assert.Contains(t, errorMsg, "could not execute command")
-		assert.Contains(t, errorMsg, "ls -la")
-		assert.Contains(t, errorMsg, "nonexistent/relative/folder")
-		assert.Contains(t, errorMsg, "does not exist")
+	t.Run("setup command that creates its own working directory", func(t *testing.T) {
+		// What Harbor sends first: `mkdir -p <workdir>` with that workdir as cwd.
+		dir := base + "/work"
+		status, body := run(t, "mkdir -p "+dir+" && echo setup-ok", dir)
+
+		require.Equal(t, http.StatusOK, status, "body: %v", body)
+		assert.Equal(t, float64(0), body["exitCode"])
+		assert.Equal(t, "setup-ok\n", body["stdout"])
+	})
+
+	t.Run("path that is a file is rejected", func(t *testing.T) {
+		status, body := run(t, "pwd", "/etc/passwd")
+
+		assert.Equal(t, http.StatusUnprocessableEntity, status)
+		assert.Contains(t, body["error"], "working directory '/etc/passwd' is not a directory")
+	})
+
+	t.Run("path under a file is rejected", func(t *testing.T) {
+		status, body := run(t, "pwd", "/etc/passwd/sub")
+
+		assert.Equal(t, http.StatusUnprocessableEntity, status)
+		assert.Contains(t, body["error"], "cannot use working directory '/etc/passwd/sub'")
+		assert.Contains(t, body["error"], "not a directory")
+	})
+
+	t.Run("directory the workload user may not create is rejected", func(t *testing.T) {
+		if strings.TrimSpace(os.Getenv("WORKLOAD_USER")) == "" {
+			t.Skip("WORKLOAD_USER is not set: the API under test runs commands as root")
+		}
+		dir := fmt.Sprintf("/workdir-it-%d", time.Now().UnixNano())
+		status, body := run(t, "pwd", dir)
+
+		assert.Equal(t, http.StatusUnprocessableEntity, status)
+		assert.Contains(t, body["error"], "mkdir "+dir+": permission denied")
 	})
 
 	t.Run("valid working directory still works", func(t *testing.T) {
-		processRequest := map[string]interface{}{
-			"command":           "pwd",
-			"workingDir":        "/tmp",
-			"waitForCompletion": true,
-		}
+		status, body := run(t, "pwd", "/tmp")
 
-		resp, err := common.MakeRequest(http.MethodPost, "/process", processRequest)
-		require.NoError(t, err)
-		defer resp.Body.Close()
-
-		// Should succeed
-		assert.Equal(t, http.StatusOK, resp.StatusCode)
-
-		var processResponse map[string]interface{}
-		err = json.NewDecoder(resp.Body).Decode(&processResponse)
-		require.NoError(t, err)
-
-		// Verify process executed successfully
-		assert.Equal(t, "completed", processResponse["status"])
-		assert.Equal(t, float64(0), processResponse["exitCode"])
-
-		// Verify logs contain /tmp (on Mac it might be /private/tmp)
-		logs := processResponse["logs"].(string)
-		assert.True(t, strings.Contains(logs, "/tmp"), "Logs should contain /tmp path")
+		require.Equal(t, http.StatusOK, status, "body: %v", body)
+		assert.Equal(t, "completed", body["status"])
+		assert.Equal(t, float64(0), body["exitCode"])
+		assert.Equal(t, "/tmp\n", body["stdout"])
 	})
 }
 
@@ -1047,7 +1051,6 @@ type StreamEvent struct {
 	Data string `json:"data,omitempty"`
 }
 
-// parseStreamEvents reads newline-delimited JSON events from a response body
 func parseStreamEvents(t *testing.T, resp *http.Response) ([]StreamEvent, map[string]interface{}) {
 	reader := bufio.NewReader(resp.Body)
 	events := []StreamEvent{}

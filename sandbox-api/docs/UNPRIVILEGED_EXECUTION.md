@@ -57,6 +57,7 @@ exception: a missing or root `USER` keeps the workload running as root.
 | `/ws/terminal` | same credential, plus the PTY slave is chowned to the user before the shell starts |
 | `-c/--command` startup command | same credential |
 | every `/filesystem` operation, including multipart completion | `setfsuid(2)`/`setfsgid(2)` around the operation |
+| creating a missing `workingDir` for `POST /process` (like `mkdir -p`) | same, so the directory belongs to the user, and one the user could not create with `mkdir -p` is refused |
 
 `HOME`, `USER` and `LOGNAME` are rewritten to match the identity in all spawned
 environments.
