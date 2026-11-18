@@ -1009,11 +1009,18 @@ func TestProcessNonExistentWorkingDirectory(t *testing.T) {
 		assert.Equal(t, "setup-ok\n", body["stdout"])
 	})
 
+	// Every refusal carries the same stable code and says the command did not run.
+	requireUnusableCode := func(t *testing.T, body map[string]interface{}) {
+		t.Helper()
+		assert.Equal(t, "PROCESS_WORKING_DIR_UNUSABLE", body["code"], "body: %v", body)
+	}
+
 	t.Run("path that is a file is rejected", func(t *testing.T) {
 		status, body := run(t, "pwd", "/etc/passwd")
 
 		assert.Equal(t, http.StatusUnprocessableEntity, status)
 		assert.Contains(t, body["error"], "working directory '/etc/passwd' is not a directory")
+		requireUnusableCode(t, body)
 	})
 
 	t.Run("path under a file is rejected", func(t *testing.T) {
@@ -1022,6 +1029,25 @@ func TestProcessNonExistentWorkingDirectory(t *testing.T) {
 		assert.Equal(t, http.StatusUnprocessableEntity, status)
 		assert.Contains(t, body["error"], "cannot use working directory '/etc/passwd/sub'")
 		assert.Contains(t, body["error"], "not a directory")
+		requireUnusableCode(t, body)
+	})
+
+	t.Run("streamed exec ends with the same code in its error event", func(t *testing.T) {
+		resp, err := makeRequestWithHeaders(http.MethodPost, "/process", map[string]interface{}{
+			"command":    "pwd",
+			"workingDir": "/etc/passwd",
+		}, map[string]string{"Accept": "application/x-ndjson"})
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+
+		raw, err := io.ReadAll(resp.Body)
+		require.NoError(t, err)
+		var event map[string]interface{}
+		require.NoError(t, json.Unmarshal(bytes.TrimSpace(raw), &event), "stream: %s", raw)
+		assert.Equal(t, "error", event["type"])
+		assert.Contains(t, event["data"], "working directory '/etc/passwd' is not a directory")
+		requireUnusableCode(t, event)
 	})
 
 	t.Run("directory the workload user may not create is rejected", func(t *testing.T) {
@@ -1033,6 +1059,7 @@ func TestProcessNonExistentWorkingDirectory(t *testing.T) {
 
 		assert.Equal(t, http.StatusUnprocessableEntity, status)
 		assert.Contains(t, body["error"], "mkdir "+dir+": permission denied")
+		requireUnusableCode(t, body)
 	})
 
 	t.Run("valid working directory still works", func(t *testing.T) {

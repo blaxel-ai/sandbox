@@ -57,7 +57,7 @@ func NewProcessHandler() *ProcessHandler {
 type ProcessRequest struct {
 	Command           string            `json:"command" example:"ls -la" binding:"required"`
 	Name              string            `json:"name" example:"my-process"`
-	WorkingDir        string            `json:"workingDir" example:"/home/user"` // Working directory of the command. Created with its missing parents when it does not exist, like `docker run -w`, as the user the command runs as. A path that exists but is not a directory, or that this user may not create, fails with 422.
+	WorkingDir        string            `json:"workingDir" example:"/home/user"` // Working directory of the command. Created with its missing parents when it does not exist, like `docker run -w`, as the user the command runs as. A path that exists but is not a directory, or that this user may not create, fails with 422 and code PROCESS_WORKING_DIR_UNUSABLE.
 	Env               map[string]string `json:"env" example:"{\"PORT\": \"3000\"}"`
 	WaitForCompletion bool              `json:"waitForCompletion" example:"false"`
 	Timeout           *int              `json:"timeout,omitempty" example:"30"` // Timeout in seconds. When keepAlive is true, defaults to 600s (10 minutes). Set to 0 for infinite (no auto-kill).
@@ -278,7 +278,7 @@ func execWaitLimitMessage(p ProcessResponse, ports []int, portsWait bool, waited
 // @Description With waitForCompletion or waitForPorts, one request waits at most 115 seconds, under the edge gateway's 120-second limit. A process still running then (or still short of its ports) gets a 422 with code PROCESS_WAIT_LIMIT_REACHED, and keeps running until it exits or its own timeout ends: follow it with GET /process/{identifier}/wait or GET /process/{identifier}/logs/stream. Streamed requests (below) are not capped.
 // @Description
 // @Description Streaming: with `Accept: application/x-ndjson` (or `Accept: text/event-stream`, kept for compatibility) the response is NDJSON (`Content-Type: application/x-ndjson`), not SSE: one JSON object per line, `{"type": "...", "data": "..."}`.
-// @Description `type` is `stdout` or `stderr` (`data` is a raw output chunk, sent as soon as the process writes it, newlines included; if the process finished before any chunk was streamed, its output is sent instead as one event per line, without the newline), `keepalive` (every 5 seconds, no data), `error` (`data` is the message, ends the stream) or `result` (last event, `data` is the ProcessResponse as a JSON string).
+// @Description `type` is `stdout` or `stderr` (`data` is a raw output chunk, sent as soon as the process writes it, newlines included; if the process finished before any chunk was streamed, its output is sent instead as one event per line, without the newline), `keepalive` (every 5 seconds, no data), `error` (`data` is the message, ends the stream; `code` is set when the error has a stable code, such as PROCESS_WORKING_DIR_UNUSABLE) or `result` (last event, `data` is the ProcessResponse as a JSON string).
 // @Tags process
 // @Accept json
 // @Produce json
@@ -286,7 +286,7 @@ func execWaitLimitMessage(p ProcessResponse, ports []int, portsWait bool, waited
 // @Param request body ProcessRequest true "Process execution request"
 // @Success 200 {object} ProcessResponse "Process information"
 // @Failure 400 {object} ErrorResponse "Invalid request"
-// @Failure 422 {object} ErrorResponse "The process could not start, its timeout ended, it exited before opening its ports, or the wait reached 115 seconds while the process kept running (code PROCESS_WAIT_LIMIT_REACHED)"
+// @Failure 422 {object} ErrorResponse "The process could not start (code PROCESS_WORKING_DIR_UNUSABLE when workingDir is not a directory or cannot be created), its timeout ended, it exited before opening its ports, or the wait reached 115 seconds while the process kept running (code PROCESS_WAIT_LIMIT_REACHED)"
 // @Failure 500 {object} ErrorResponse "Internal server error"
 // @Router /process [post]
 func (h *ProcessHandler) HandleExecuteCommand(c *gin.Context) {
@@ -366,6 +366,11 @@ func (h *ProcessHandler) HandleExecuteCommand(c *gin.Context) {
 				Error: execWaitLimitMessage(processInfo, req.WaitForPorts, portsWait, waitSeconds, timeout),
 				Code:  codeProcessWaitLimitReached,
 			})
+			return
+		}
+		if code := workingDirErrorCode(err); code != "" {
+			c.Header("X-Blaxel-Error-Code", code)
+			c.JSON(http.StatusUnprocessableEntity, ErrorResponse{Error: err.Error(), Code: code})
 			return
 		}
 		h.SendError(c, http.StatusUnprocessableEntity, err)
@@ -469,7 +474,7 @@ func (h *ProcessHandler) handleExecuteCommandStream(c *gin.Context) {
 	// Execute the process without waiting for completion (we'll handle waiting ourselves)
 	processInfo, err := h.ExecuteProcessWithCallback(process.ExitCallback{URL: req.CallbackURL, Secret: req.CallbackSecret}, req.Command, req.WorkingDir, req.Name, req.Env, false, timeout, req.WaitForPorts, req.RestartOnFailure, req.MaxRestarts, req.KeepAlive, req.Stdin)
 	if err != nil {
-		jw.WriteEvent("error", err.Error())
+		jw.WriteErrorEvent(workingDirErrorCode(err), err.Error())
 		return
 	}
 
@@ -995,6 +1000,8 @@ type JSONStreamWriter struct {
 type StreamEvent struct {
 	Type string `json:"type"`
 	Data string `json:"data,omitempty"`
+	// Code is the stable code of an error event, when the error has one.
+	Code string `json:"code,omitempty"`
 }
 
 func (w *JSONStreamWriter) LogStreamContext() context.Context {
@@ -1008,6 +1015,16 @@ func (w *JSONStreamWriter) IsJSONStreamWriter() bool {
 
 // WriteEvent writes a JSON event to the stream
 func (w *JSONStreamWriter) WriteEvent(eventType string, data string) (int, error) {
+	return w.writeEvent(StreamEvent{Type: eventType, Data: data})
+}
+
+// WriteErrorEvent sends an error event with its stable code, if it has one
+// (code "" sends the same event as WriteEvent).
+func (w *JSONStreamWriter) WriteErrorEvent(code string, message string) (int, error) {
+	return w.writeEvent(StreamEvent{Type: "error", Data: message, Code: code})
+}
+
+func (w *JSONStreamWriter) writeEvent(event StreamEvent) (int, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
@@ -1023,11 +1040,10 @@ func (w *JSONStreamWriter) WriteEvent(eventType string, data string) (int, error
 	}
 
 	// Track if we've sent any stdout/stderr data
-	if eventType == "stdout" || eventType == "stderr" {
+	if event.Type == "stdout" || event.Type == "stderr" {
 		w.sentData = true
 	}
 
-	event := StreamEvent{Type: eventType, Data: data}
 	eventJSON, err := json.Marshal(event)
 	if err != nil {
 		return 0, err
