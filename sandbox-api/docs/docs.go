@@ -3233,6 +3233,16 @@ const docTemplate = `{
                     "type": "string",
                     "example": "logs output"
                 },
+                "outputLimitBytes": {
+                    "description": "The limit that cut the output, in bytes per stream: how much of each stream this response returns, or how much of it the sandbox keeps on disk when that is less. Set only with outputTruncated.",
+                    "type": "integer",
+                    "example": 4194304
+                },
+                "outputTruncated": {
+                    "description": "True when the start of stdout or stderr is missing: the stream holds only its last outputLimitBytes, after a \"[... truncated, see the process log file for the full output ...]\" line. Absent when the output is whole.",
+                    "type": "boolean",
+                    "example": true
+                },
                 "stderr": {
                     "type": "string",
                     "example": "stderr output"
@@ -3349,6 +3359,15 @@ const docTemplate = `{
                     "type": "integer",
                     "example": 0
                 },
+                "exitReason": {
+                    "description": "Why the process ended, when exitCode alone does not say: oom_killed (the kernel's out-of-memory killer ended it, or the command its shell ran last: the sandbox ran out of memory) or disk_full (it failed while the sandbox's disk had no space left, so its output, error message included, may be missing). Absent otherwise, and for a process the API stopped, killed or timed out. status and exitCode are unchanged.",
+                    "type": "string",
+                    "enum": [
+                        "oom_killed",
+                        "disk_full"
+                    ],
+                    "example": "oom_killed"
+                },
                 "keepAlive": {
                     "description": "Whether scale-to-zero is disabled for this process",
                     "type": "boolean",
@@ -3365,6 +3384,21 @@ const docTemplate = `{
                 "name": {
                     "type": "string",
                     "example": "my-process"
+                },
+                "oomKills": {
+                    "description": "How many processes the kernel's out-of-memory killer ended in the sandbox while this process ran: this one or any other, such as a test worker it started. Set only when the process failed and the count is above zero.",
+                    "type": "integer",
+                    "example": 1
+                },
+                "outputLimitBytes": {
+                    "description": "The limit that cut the output, in bytes per stream: how much of each stream this response returns, or how much of it the sandbox keeps on disk when that is less. Set only with outputTruncated.",
+                    "type": "integer",
+                    "example": 4194304
+                },
+                "outputTruncated": {
+                    "description": "True when the start of stdout or stderr is missing: the stream holds only its last outputLimitBytes, after a \"[... truncated, see the process log file for the full output ...]\" line. Absent when the output is whole. GET /process/{identifier}/logs/stream replays what the sandbox kept.",
+                    "type": "boolean",
+                    "example": true
                 },
                 "pid": {
                     "type": "string",
