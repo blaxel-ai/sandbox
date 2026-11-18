@@ -1445,6 +1445,9 @@ paths:
         Execute a command and return process information.
 
 
+        With waitForCompletion or waitForPorts, one request waits at most 115 seconds, under the edge gateway's 120-second limit. A process still running then (or still short of its ports) gets a 422 with code PROCESS_WAIT_LIMIT_REACHED, and keeps running until it exits or its own timeout ends: follow it with GET /process/{identifier}/wait or GET /process/{identifier}/logs/stream. Streamed requests (below) are not capped.
+
+
         Streaming: with `Accept: application/x-ndjson` (or `Accept: text/event-stream`, kept for compatibility) the response is NDJSON (`Content-Type: application/x-ndjson`), not SSE: one JSON object per line, `{"type": "...", "data": "..."}`.
 
         `type` is `stdout` or `stderr` (`data` is a raw output chunk, sent as soon as the process writes it, newlines included; if the process finished before any chunk was streamed, its output is sent instead as one event per line, without the newline), `keepalive` (every 5 seconds, no data), `error` (`data` is the message, ends the stream) or `result` (last event, `data` is the ProcessResponse as a JSON string).
@@ -1476,7 +1479,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "422":
-          description: Unprocessable entity
+          description: The process could not start, its timeout ended, it exited before opening its ports, or the wait reached 115 seconds while the process kept running (code PROCESS_WAIT_LIMIT_REACHED)
           content:
             application/json:
               schema:

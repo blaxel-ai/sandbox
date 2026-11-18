@@ -17,6 +17,14 @@ import (
 // when it ends before opening its ports: enough to show why it failed.
 const exitedBeforePortsTailLines = 20
 
+// The caller's wait ran out before the process opened its ports or exited.
+// Returned wrapped with the wait's length; the messages read as they always
+// have ("process timed out waiting for ports after N seconds").
+var (
+	ErrPortsWaitExpired      = errors.New("process timed out waiting for ports")
+	ErrCompletionWaitExpired = errors.New("process timed out")
+)
+
 // processByPID returns the process record for a PID without copying its logs.
 func (pm *ProcessManager) processByPID(pid string) *ProcessInfo {
 	pm.mu.RLock()
@@ -269,7 +277,7 @@ func (pm *ProcessManager) ExecuteProcessWithCallback(
 					return nil, pm.exitedBeforePortsError(pid, waitForPorts)
 				}
 			case <-ctx.Done():
-				err := fmt.Errorf("process timed out waiting for ports after %d seconds", waitSeconds)
+				err := fmt.Errorf("%w after %d seconds", ErrPortsWaitExpired, waitSeconds)
 				if len(waitTimeout) > 0 && waitSeconds > 0 && (timeout <= 0 || waitSeconds < timeout) {
 					// A capped caller wait leaves execution running. Return its
 					// identity so the caller can continue monitoring the process.
@@ -293,11 +301,12 @@ func (pm *ProcessManager) ExecuteProcessWithCallback(
 		case <-ctx.Done():
 			// The wait deadline may precede the execution deadline (e.g. MCP).
 			// Return process info so the caller can inspect the eventual outcome.
+			err := fmt.Errorf("%w after %d seconds", ErrCompletionWaitExpired, waitSeconds)
 			processInfo, exists := pm.GetProcessByIdentifier(pid)
 			if exists {
-				return processInfo, fmt.Errorf("process timed out after %d seconds", waitSeconds)
+				return processInfo, err
 			}
-			return nil, fmt.Errorf("process timed out after %d seconds", waitSeconds)
+			return nil, err
 		}
 	}
 
