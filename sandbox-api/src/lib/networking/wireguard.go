@@ -99,13 +99,13 @@ func StartWireGuardFromEnv() error {
 }
 
 // StopWireGuard stops the global WireGuard client and cleans up resources.
-// Returns an error if no client is running.
+// Returns ErrWireGuardNotRunning if no client is running.
 func StopWireGuard() error {
 	wgMutex.Lock()
 	defer wgMutex.Unlock()
 
 	if wgClient == nil {
-		return fmt.Errorf("no WireGuard client is running")
+		return ErrWireGuardNotRunning
 	}
 
 	if err := wgClient.Stop(); err != nil {

@@ -18,6 +18,7 @@ import (
 	"github.com/blaxel-ai/sandbox-api/src/handler/constants"
 	"github.com/blaxel-ai/sandbox-api/src/handler/process"
 	"github.com/blaxel-ai/sandbox-api/src/lib"
+	"github.com/blaxel-ai/sandbox-api/src/lib/apierrors"
 	"github.com/blaxel-ai/sandbox-api/src/lib/audit"
 	"github.com/blaxel-ai/sandbox-api/src/lib/blaxel"
 )
@@ -230,10 +231,6 @@ const (
 	// (CloudFront, the origin read timeout of the run distribution) waits for
 	// an answer. A request still open by then gets the edge's bare 504.
 	edgeRequestTimeoutSeconds = 120
-
-	// codeProcessWaitLimitReached marks an exec whose wait hit
-	// maxExecWaitSeconds while the process was still running.
-	codeProcessWaitLimitReached = "PROCESS_WAIT_LIMIT_REACHED"
 )
 
 // maxExecWaitSeconds is the longest one exec request waits for
@@ -309,24 +306,24 @@ func (h *ProcessHandler) HandleExecuteCommand(c *gin.Context) {
 
 	var req ProcessRequest
 	if err := h.BindJSON(c, &req); err != nil {
-		h.SendError(c, http.StatusBadRequest, err)
+		h.SendError(c, apierrors.InvalidRequestBody, err)
 		return
 	}
 
 	if req.KeepAlive && blaxel.KeepAliveDisabled() {
-		h.SendError(c, http.StatusBadRequest, ErrKeepAliveDisabled)
+		h.SendError(c, apierrors.KeepAliveUnavailable, ErrKeepAliveDisabled)
 		return
 	}
 
 	if err := (process.ExitCallback{URL: req.CallbackURL, Secret: req.CallbackSecret}).Validate(); err != nil {
-		h.SendError(c, http.StatusBadRequest, err)
+		h.SendError(c, apierrors.ProcessCallbackInvalid, err)
 		return
 	}
 
 	if req.WorkingDir != "" {
 		formattedWorkingDir, err := lib.FormatPath(req.WorkingDir)
 		if err != nil {
-			h.SendError(c, http.StatusBadRequest, err)
+			h.SendError(c, apierrors.InvalidPath, err)
 			return
 		}
 		req.WorkingDir = formattedWorkingDir
@@ -336,7 +333,7 @@ func (h *ProcessHandler) HandleExecuteCommand(c *gin.Context) {
 	if req.Name != "" {
 		alreadyExists, err := h.GetProcess(req.Name)
 		if err == nil && alreadyExists.Status == string(constants.ProcessStatusRunning) {
-			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("process with name '%s' already exists and is running", req.Name)})
+			h.SendError(c, apierrors.ProcessNameInUse, fmt.Errorf("process with name '%s' already exists and is running", req.Name))
 			return
 		}
 	}
@@ -371,23 +368,11 @@ func (h *ProcessHandler) HandleExecuteCommand(c *gin.Context) {
 		portsWait := errors.Is(err, process.ErrPortsWaitExpired)
 		if capped && processInfo.Status == string(constants.ProcessStatusRunning) &&
 			(portsWait || errors.Is(err, process.ErrCompletionWaitExpired)) {
-			// The gateway strips X-Blaxel-* headers from sandbox responses, so
-			// callers read the code in the body; the gateway still logs it.
-			c.Header("X-Blaxel-Error-Code", codeProcessWaitLimitReached)
-			c.JSON(http.StatusUnprocessableEntity, ErrorResponse{
-				Error: execWaitLimitMessage(processInfo, req.WaitForPorts, portsWait, waitSeconds, timeout),
-				Code:  codeProcessWaitLimitReached,
-			})
+			h.SendError(c, apierrors.ProcessWaitLimitReached, errors.New(execWaitLimitMessage(processInfo, req.WaitForPorts, portsWait, waitSeconds, timeout)))
 			return
 		}
-		if code, message, ok := workingDirError(err); ok {
-			// The gateway strips X-Blaxel-* headers from sandbox responses, so
-			// callers read the code in the body; the gateway still logs it.
-			c.Header("X-Blaxel-Error-Code", code)
-			c.JSON(http.StatusUnprocessableEntity, ErrorResponse{Error: message, Code: code})
-			return
-		}
-		h.SendError(c, http.StatusUnprocessableEntity, err)
+		entry, err := execErrorEntry(err)
+		h.SendError(c, entry, err)
 		return
 	}
 
@@ -427,24 +412,24 @@ func wantsProcessStream(accept string) bool {
 func (h *ProcessHandler) handleExecuteCommandStream(c *gin.Context) {
 	var req ProcessRequest
 	if err := h.BindJSON(c, &req); err != nil {
-		h.SendError(c, http.StatusBadRequest, err)
+		h.SendError(c, apierrors.InvalidRequestBody, err)
 		return
 	}
 
 	if req.KeepAlive && blaxel.KeepAliveDisabled() {
-		h.SendError(c, http.StatusBadRequest, ErrKeepAliveDisabled)
+		h.SendError(c, apierrors.KeepAliveUnavailable, ErrKeepAliveDisabled)
 		return
 	}
 
 	if err := (process.ExitCallback{URL: req.CallbackURL, Secret: req.CallbackSecret}).Validate(); err != nil {
-		h.SendError(c, http.StatusBadRequest, err)
+		h.SendError(c, apierrors.ProcessCallbackInvalid, err)
 		return
 	}
 
 	if req.WorkingDir != "" {
 		formattedWorkingDir, err := lib.FormatPath(req.WorkingDir)
 		if err != nil {
-			h.SendError(c, http.StatusBadRequest, err)
+			h.SendError(c, apierrors.InvalidPath, err)
 			return
 		}
 		req.WorkingDir = formattedWorkingDir
@@ -454,7 +439,7 @@ func (h *ProcessHandler) handleExecuteCommandStream(c *gin.Context) {
 	if req.Name != "" {
 		alreadyExists, err := h.GetProcess(req.Name)
 		if err == nil && alreadyExists.Status == string(constants.ProcessStatusRunning) {
-			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("process with name '%s' already exists and is running", req.Name)})
+			h.SendError(c, apierrors.ProcessNameInUse, fmt.Errorf("process with name '%s' already exists and is running", req.Name))
 			return
 		}
 	}
@@ -488,18 +473,15 @@ func (h *ProcessHandler) handleExecuteCommandStream(c *gin.Context) {
 	// Execute the process without waiting for completion (we'll handle waiting ourselves)
 	processInfo, err := h.ExecuteProcessWithCallback(process.ExitCallback{URL: req.CallbackURL, Secret: req.CallbackSecret}, req.Command, req.WorkingDir, req.Name, req.Env, false, timeout, req.WaitForPorts, req.RestartOnFailure, req.MaxRestarts, req.KeepAlive, req.Stdin)
 	if err != nil {
-		if code, message, ok := workingDirError(err); ok {
-			jw.WriteErrorEvent(code, message)
-			return
-		}
-		jw.WriteEvent("error", err.Error())
+		entry, err := execErrorEntry(err)
+		_, _ = jw.SendError(entry, err)
 		return
 	}
 
 	// Stream process output using JSON writer
 	err = h.StreamProcessOutput(processInfo.PID, jw)
 	if err != nil {
-		jw.WriteEvent("error", err.Error())
+		_, _ = jw.SendError(apierrors.ProcessStreamFailed, err)
 		return
 	}
 
@@ -534,7 +516,7 @@ done:
 	// Get final process info (now includes stdout, stderr, logs)
 	finalProcessInfo, err := h.GetProcess(processInfo.PID)
 	if err != nil {
-		jw.WriteEvent("error", err.Error())
+		_, _ = jw.SendError(apierrors.ProcessStreamFailed, err)
 		return
 	}
 
@@ -563,7 +545,7 @@ done:
 	// Send final result as JSON event
 	resultJSON, err := json.Marshal(finalProcessInfo)
 	if err != nil {
-		jw.WriteEvent("error", err.Error())
+		_, _ = jw.SendError(apierrors.ProcessStreamFailed, err)
 		return
 	}
 	jw.WriteEvent("result", string(resultJSON))
@@ -584,7 +566,7 @@ done:
 func (h *ProcessHandler) HandleGetProcessLogs(c *gin.Context) {
 	identifier, err := h.GetPathParam(c, "identifier")
 	if err != nil {
-		h.SendError(c, http.StatusBadRequest, err)
+		h.SendError(c, apierrors.InvalidParameter, err)
 		return
 	}
 
@@ -592,7 +574,7 @@ func (h *ProcessHandler) HandleGetProcessLogs(c *gin.Context) {
 
 	logs, err := h.GetProcessOutput(identifier)
 	if err != nil {
-		h.SendError(c, http.StatusNotFound, err)
+		h.SendError(c, apierrors.ProcessNotFound, err)
 		return
 	}
 
@@ -619,7 +601,7 @@ func (h *ProcessHandler) HandleGetProcessLogs(c *gin.Context) {
 func (h *ProcessHandler) HandleGetProcessLogsStream(c *gin.Context) {
 	identifier, err := h.GetPathParam(c, "identifier")
 	if err != nil {
-		h.SendError(c, http.StatusBadRequest, err)
+		h.SendError(c, apierrors.InvalidParameter, err)
 		return
 	}
 
@@ -627,19 +609,19 @@ func (h *ProcessHandler) HandleGetProcessLogsStream(c *gin.Context) {
 	// different process while the response is being streamed.
 	proc, exists := h.processManager.GetProcessByIdentifier(identifier)
 	if !exists {
-		h.SendError(c, http.StatusNotFound, fmt.Errorf("process not found"))
+		h.SendError(c, apierrors.ProcessNotFound, fmt.Errorf("process not found"))
 		return
 	}
 	ndjson := wantsLogNDJSON(c.GetHeader("Accept"))
 	c.Writer.Header().Add("Vary", "Accept")
 	if ndjson && !proc.SupportsStructuredLogs() {
-		h.SendError(c, http.StatusConflict, process.ErrLegacyLogFormat)
+		h.SendError(c, apierrors.ProcessLogFormatUnsupported, process.ErrLegacyLogFormat)
 		return
 	}
 
 	if err := proc.WaitForLogCollector(c.Request.Context()); err != nil {
 		if c.Request.Context().Err() == nil {
-			h.SendError(c, http.StatusInternalServerError, err)
+			h.SendError(c, apierrors.ProcessLogStreamFailed, err)
 		}
 		return
 	}
@@ -671,7 +653,7 @@ func (h *ProcessHandler) HandleGetProcessLogsStream(c *gin.Context) {
 
 	if err := h.processManager.StreamProcessOutputForProcess(proc, writer); err != nil {
 		if jw != nil {
-			_, _ = jw.WriteEvent("error", err.Error())
+			_, _ = jw.SendError(apierrors.ProcessLogStreamFailed, err)
 		} else {
 			_, _ = rw.Write([]byte("[error: " + err.Error() + "]\n"))
 		}
@@ -729,7 +711,7 @@ func logStreamEnd(identifier, reason string, start time.Time, rw *ResponseWriter
 func (h *ProcessHandler) HandleStopProcess(c *gin.Context) {
 	identifier, err := h.GetPathParam(c, "identifier")
 	if err != nil {
-		h.SendError(c, http.StatusBadRequest, err)
+		h.SendError(c, apierrors.InvalidParameter, err)
 		return
 	}
 
@@ -737,7 +719,7 @@ func (h *ProcessHandler) HandleStopProcess(c *gin.Context) {
 
 	err = h.StopProcess(identifier)
 	if err != nil {
-		h.SendError(c, http.StatusNotFound, err)
+		h.SendError(c, signalErrorEntry(err), err)
 		return
 	}
 
@@ -759,7 +741,7 @@ func (h *ProcessHandler) HandleStopProcess(c *gin.Context) {
 func (h *ProcessHandler) HandleKillProcess(c *gin.Context) {
 	identifier, err := h.GetPathParam(c, "identifier")
 	if err != nil {
-		h.SendError(c, http.StatusBadRequest, err)
+		h.SendError(c, apierrors.InvalidParameter, err)
 		return
 	}
 
@@ -767,7 +749,7 @@ func (h *ProcessHandler) HandleKillProcess(c *gin.Context) {
 
 	err = h.KillProcess(identifier)
 	if err != nil {
-		h.SendError(c, http.StatusNotFound, err)
+		h.SendError(c, signalErrorEntry(err), err)
 		return
 	}
 
@@ -778,19 +760,62 @@ func (h *ProcessHandler) HandleKillProcess(c *gin.Context) {
 // at a time, so a single body this large is a bug, not a use case.
 const maxStdinBody = 8 << 20
 
-// stdinErrorStatus maps a stdin error to an HTTP status: 404 for an unknown
+// execErrorEntry is the registry entry for a failed exec, and the error to
+// send. Each entry says whether the command ran: a working directory that
+// cannot be used, keepAlive outside the plan and a start failure are refused
+// before it starts; a wait that ran out, a process that exited before its
+// ports and anything unexpected come after it started.
+func execErrorEntry(err error) (apierrors.Entry, error) {
+	if wdErr := workingDirError(err); wdErr != nil {
+		return apierrors.ProcessWorkingDirUnusable, wdErr
+	}
+	var startErr *process.StartError
+	var exitedErr *process.ExitedBeforePortsError
+	switch {
+	case errors.Is(err, ErrKeepAliveDisabled):
+		return apierrors.KeepAliveUnavailable, err
+	case errors.As(err, &startErr):
+		return apierrors.ProcessStartFailed, err
+	case errors.Is(err, process.ErrPortsWaitExpired):
+		return apierrors.ProcessPortsTimeout, err
+	case errors.Is(err, process.ErrCompletionWaitExpired):
+		return apierrors.ProcessTimedOut, err
+	case errors.As(err, &exitedErr):
+		return apierrors.ProcessExitedBeforePorts, err
+	default:
+		return apierrors.ProcessExecFailed, err
+	}
+}
+
+// signalErrorEntry is the registry entry for a stop or kill that failed: an
+// unknown process, one that is not running, or a signal the kernel refused.
+// None of them delivered a signal. All keep the 404 they answered with before.
+func signalErrorEntry(err error) apierrors.Entry {
+	switch {
+	case errors.Is(err, process.ErrProcessNotFound):
+		return apierrors.ProcessNotFound
+	case errors.Is(err, process.ErrProcessNotRunning):
+		return apierrors.ProcessNotRunning
+	default:
+		return apierrors.ProcessSignalFailed
+	}
+}
+
+// stdinErrorEntry is the registry entry for a stdin error: 404 for an unknown
 // process, 409 when the pipe is absent or gone, 503 when the child is not
 // reading, 500 for a failed write.
-func stdinErrorStatus(err error) int {
+func stdinErrorEntry(err error) apierrors.Entry {
 	switch {
-	case errors.Is(err, process.ErrStdinNotEnabled), errors.Is(err, process.ErrStdinClosed):
-		return http.StatusConflict
+	case errors.Is(err, process.ErrStdinNotEnabled):
+		return apierrors.ProcessStdinNotEnabled
+	case errors.Is(err, process.ErrStdinClosed):
+		return apierrors.ProcessStdinClosed
 	case errors.Is(err, process.ErrStdinStalled):
-		return http.StatusServiceUnavailable
+		return apierrors.ProcessStdinStalled
 	case strings.Contains(err.Error(), "not found"):
-		return http.StatusNotFound
+		return apierrors.ProcessNotFound
 	default:
-		return http.StatusInternalServerError
+		return apierrors.ProcessStdinFailed
 	}
 }
 
@@ -812,23 +837,23 @@ func stdinErrorStatus(err error) int {
 func (h *ProcessHandler) HandleWriteStdin(c *gin.Context) {
 	identifier, err := h.GetPathParam(c, "identifier")
 	if err != nil {
-		h.SendError(c, http.StatusBadRequest, err)
+		h.SendError(c, apierrors.InvalidParameter, err)
 		return
 	}
 	data, err := io.ReadAll(http.MaxBytesReader(c.Writer, c.Request.Body, maxStdinBody))
 	if err != nil {
 		var tooBig *http.MaxBytesError
 		if errors.As(err, &tooBig) {
-			h.SendError(c, http.StatusRequestEntityTooLarge, err)
+			h.SendError(c, apierrors.ProcessStdinTooLarge, err)
 		} else {
-			h.SendError(c, http.StatusBadRequest, err)
+			h.SendError(c, apierrors.InvalidRequestBody, err)
 		}
 		return
 	}
 	// The body itself may carry secrets, so only its size is audited.
 	audit.LogEvent(c, "process_stdin_write", logrus.Fields{"identifier": identifier, "bytes": len(data)})
 	if err := h.processManager.WriteStdin(identifier, data); err != nil {
-		h.SendError(c, stdinErrorStatus(err), err)
+		h.SendError(c, stdinErrorEntry(err), err)
 		return
 	}
 	h.SendJSON(c, http.StatusOK, gin.H{"message": "Bytes written to stdin"})
@@ -847,12 +872,12 @@ func (h *ProcessHandler) HandleWriteStdin(c *gin.Context) {
 func (h *ProcessHandler) HandleCloseStdin(c *gin.Context) {
 	identifier, err := h.GetPathParam(c, "identifier")
 	if err != nil {
-		h.SendError(c, http.StatusBadRequest, err)
+		h.SendError(c, apierrors.InvalidParameter, err)
 		return
 	}
 	audit.LogEvent(c, "process_stdin_close", logrus.Fields{"identifier": identifier})
 	if err := h.processManager.CloseStdin(identifier); err != nil {
-		h.SendError(c, stdinErrorStatus(err), err)
+		h.SendError(c, stdinErrorEntry(err), err)
 		return
 	}
 	h.SendJSON(c, http.StatusOK, gin.H{"message": "Stdin closed"})
@@ -871,13 +896,13 @@ func (h *ProcessHandler) HandleCloseStdin(c *gin.Context) {
 func (h *ProcessHandler) HandleGetProcess(c *gin.Context) {
 	identifier, err := h.GetPathParam(c, "identifier")
 	if err != nil {
-		h.SendError(c, http.StatusBadRequest, err)
+		h.SendError(c, apierrors.InvalidParameter, err)
 		return
 	}
 
 	processInfo, err := h.GetProcess(identifier)
 	if err != nil {
-		h.SendError(c, http.StatusNotFound, err)
+		h.SendError(c, apierrors.ProcessNotFound, err)
 		return
 	}
 
@@ -906,19 +931,19 @@ const (
 func (h *ProcessHandler) HandleWaitProcess(c *gin.Context) {
 	identifier, err := h.GetPathParam(c, "identifier")
 	if err != nil {
-		h.SendError(c, http.StatusBadRequest, err)
+		h.SendError(c, apierrors.InvalidParameter, err)
 		return
 	}
 	timeout, err := strconv.Atoi(h.GetQueryParam(c, "timeout", strconv.Itoa(defaultProcessWaitSeconds)))
 	if err != nil || timeout < 0 {
-		h.SendError(c, http.StatusBadRequest, fmt.Errorf("timeout must be a non-negative integer of seconds"))
+		h.SendError(c, apierrors.InvalidParameter, fmt.Errorf("timeout must be a non-negative integer of seconds"))
 		return
 	}
 	timeout = min(timeout, maxProcessWaitSeconds)
 
 	pid, finished, ok := h.processManager.FinishedChannel(identifier)
 	if !ok {
-		h.SendError(c, http.StatusNotFound, fmt.Errorf("process not found"))
+		h.SendError(c, apierrors.ProcessNotFound, fmt.Errorf("process not found"))
 		return
 	}
 	timer := time.NewTimer(time.Duration(timeout) * time.Second)
@@ -932,7 +957,7 @@ func (h *ProcessHandler) HandleWaitProcess(c *gin.Context) {
 
 	processInfo, err := h.GetProcess(pid)
 	if err != nil {
-		h.SendError(c, http.StatusNotFound, err)
+		h.SendError(c, apierrors.ProcessNotFound, err)
 		return
 	}
 	h.SendJSON(c, http.StatusOK, processInfo)
@@ -1014,12 +1039,12 @@ type JSONStreamWriter struct {
 	mu       sync.Mutex
 }
 
-// StreamEvent represents a JSON streaming event
+// StreamEvent represents a JSON streaming event. An error event (type error)
+// also carries the platform error fields of ErrorResponse: code, action,
+// retryable, dispatch_state and the rest; see JSONStreamWriter.SendError.
 type StreamEvent struct {
 	Type string `json:"type"`
 	Data string `json:"data,omitempty"`
-	// Code is the stable code of an error event, when the error has one.
-	Code string `json:"code,omitempty"`
 }
 
 func (w *JSONStreamWriter) LogStreamContext() context.Context {
@@ -1033,16 +1058,16 @@ func (w *JSONStreamWriter) IsJSONStreamWriter() bool {
 
 // WriteEvent writes a JSON event to the stream
 func (w *JSONStreamWriter) WriteEvent(eventType string, data string) (int, error) {
-	return w.writeEvent(StreamEvent{Type: eventType, Data: data})
+	return w.writeEvent(eventType, StreamEvent{Type: eventType, Data: data})
 }
 
-// WriteErrorEvent sends an error event with its stable code, if it has one
-// (code "" sends the same event as WriteEvent).
-func (w *JSONStreamWriter) WriteErrorEvent(code string, message string) (int, error) {
-	return w.writeEvent(StreamEvent{Type: "error", Data: message, Code: code})
+// SendError sends err as the stream's error event: type error, the message
+// in data as before, and entry's code and platform error fields.
+func (w *JSONStreamWriter) SendError(entry apierrors.Entry, err error) (int, error) {
+	return w.writeEvent("error", streamErrorEvent(w.gin, entry, err))
 }
 
-func (w *JSONStreamWriter) writeEvent(event StreamEvent) (int, error) {
+func (w *JSONStreamWriter) writeEvent(eventType string, event any) (int, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
@@ -1058,7 +1083,7 @@ func (w *JSONStreamWriter) writeEvent(event StreamEvent) (int, error) {
 	}
 
 	// Track if we've sent any stdout/stderr data
-	if event.Type == "stdout" || event.Type == "stderr" {
+	if eventType == "stdout" || eventType == "stderr" {
 		w.sentData = true
 	}
 

@@ -1,0 +1,1198 @@
+{
+  "version": 1,
+  "source": "sandbox-api",
+  "codes": [
+    {
+      "code": "ARCHIVE_EXPORT_FAILED",
+      "status": 500,
+      "message": "{detail}",
+      "action": "Read GET /archive/status for the sandbox's state; lift a freeze left behind with POST /archive/resume before exporting again.",
+      "do_not": "Do not resend the export without checking the status first.",
+      "retryable": false,
+      "safe_to_retry_request": false,
+      "dispatch_state": "dispatched_unknown",
+      "docs_url": "https://docs.blaxel.ai/troubleshooting/error-codes#archive-export-failed",
+      "docs_anchor": "archive-export-failed",
+      "catalog": [
+        "S0080"
+      ]
+    },
+    {
+      "code": "ARCHIVE_IN_PROGRESS",
+      "status": 409,
+      "message": "an archive export is in progress",
+      "action": "Wait for the running operation to end (GET /archive/status), then resend.",
+      "retryable": true,
+      "safe_to_retry_request": true,
+      "dispatch_state": "not_dispatched",
+      "docs_url": "https://docs.blaxel.ai/troubleshooting/error-codes#archive-in-progress",
+      "docs_anchor": "archive-in-progress",
+      "catalog": [
+        "S0079"
+      ]
+    },
+    {
+      "code": "ARCHIVE_OPTIONS_INVALID",
+      "status": 400,
+      "message": "{detail}",
+      "action": "Fix the option the message names, then resend the export.",
+      "retryable": false,
+      "safe_to_retry_request": false,
+      "dispatch_state": "not_dispatched",
+      "docs_url": "https://docs.blaxel.ai/troubleshooting/error-codes#archive-options-invalid",
+      "docs_anchor": "archive-options-invalid",
+      "catalog": [
+        "S0077"
+      ]
+    },
+    {
+      "code": "ARCHIVE_RESUME_FAILED",
+      "status": 500,
+      "message": "{detail}",
+      "action": "Recreate the sandbox: its filesystem stays read-only.",
+      "retryable": false,
+      "safe_to_retry_request": false,
+      "dispatch_state": "dispatched_unknown",
+      "docs_url": "https://docs.blaxel.ai/troubleshooting/error-codes#archive-resume-failed",
+      "docs_anchor": "archive-resume-failed",
+      "catalog": [
+        "S0081"
+      ]
+    },
+    {
+      "code": "CODEGEN_APPLY_FAILED",
+      "status": 422,
+      "message": "{detail}",
+      "action": "Read the provider's error in the message; fix the edit or the provider settings, then resend.",
+      "retryable": false,
+      "safe_to_retry_request": false,
+      "dispatch_state": "not_dispatched",
+      "docs_url": "https://docs.blaxel.ai/troubleshooting/error-codes#codegen-apply-failed",
+      "docs_anchor": "codegen-apply-failed",
+      "catalog": [
+        "S0096"
+      ]
+    },
+    {
+      "code": "CODEGEN_CLIENT_FAILED",
+      "status": 422,
+      "message": "{detail}",
+      "action": "Fix the codegen provider settings the message names, then resend.",
+      "retryable": false,
+      "safe_to_retry_request": false,
+      "dispatch_state": "not_dispatched",
+      "docs_url": "https://docs.blaxel.ai/troubleshooting/error-codes#codegen-client-failed",
+      "docs_anchor": "codegen-client-failed",
+      "catalog": [
+        "S0095"
+      ]
+    },
+    {
+      "code": "CODEGEN_NOT_CONFIGURED",
+      "status": 400,
+      "message": "codegen tools are not configured, follow this documentation to configure it: https://docs.blaxel.ai/Sandboxes/Codegen",
+      "action": "Configure a codegen provider as https://docs.blaxel.ai/Sandboxes/Codegen describes, then resend.",
+      "retryable": false,
+      "safe_to_retry_request": false,
+      "dispatch_state": "not_dispatched",
+      "docs_url": "https://docs.blaxel.ai/troubleshooting/error-codes#codegen-not-configured",
+      "docs_anchor": "codegen-not-configured",
+      "catalog": [
+        "S0094"
+      ]
+    },
+    {
+      "code": "CODEGEN_RERANKING_UNAVAILABLE",
+      "status": 503,
+      "message": "code reranking is no longer available: Relace and Morph have both discontinued their reranking APIs",
+      "action": "Search the code with GET /filesystem-content-search/{path} instead.",
+      "retryable": false,
+      "safe_to_retry_request": false,
+      "dispatch_state": "not_dispatched",
+      "docs_url": "https://docs.blaxel.ai/troubleshooting/error-codes#codegen-reranking-unavailable",
+      "docs_anchor": "codegen-reranking-unavailable",
+      "catalog": [
+        "S0097"
+      ]
+    },
+    {
+      "code": "CODEGEN_RERANK_FAILED",
+      "status": 422,
+      "message": "{detail}",
+      "action": "Search the code with GET /filesystem-content-search/{path} instead.",
+      "retryable": false,
+      "safe_to_retry_request": false,
+      "dispatch_state": "not_dispatched",
+      "docs_url": "https://docs.blaxel.ai/troubleshooting/error-codes#codegen-rerank-failed",
+      "docs_anchor": "codegen-rerank-failed",
+      "catalog": [
+        "S0098"
+      ]
+    },
+    {
+      "code": "DISK_FULL",
+      "status": 422,
+      "message": "{detail}. The sandbox's disk is full: no space is left on the filesystem that holds {path}{size}. Free space by deleting files you no longer need (DELETE /filesystem/{path}, or rm in a process), then resend the request. Don't resend it unchanged: it fails the same way until space is freed.",
+      "action": "Free space by deleting files you no longer need (DELETE /filesystem/{path}, or rm in a process), then resend the request.",
+      "do_not": "Do not resend it unchanged: it fails the same way until space is freed.",
+      "retryable": false,
+      "safe_to_retry_request": false,
+      "dispatch_state": "dispatched_unknown",
+      "docs_url": "https://docs.blaxel.ai/troubleshooting/error-codes#disk-full",
+      "docs_anchor": "disk-full",
+      "catalog": [
+        "S0038"
+      ]
+    },
+    {
+      "code": "DRIVE_ACCESS_DENIED",
+      "status": 403,
+      "message": "Failed to mount drive: {detail}",
+      "action": "Check that the drive exists in this workspace and that the sandbox may use it.",
+      "retryable": false,
+      "safe_to_retry_request": false,
+      "dispatch_state": "dispatched_unknown",
+      "docs_url": "https://docs.blaxel.ai/troubleshooting/error-codes#drive-access-denied",
+      "docs_anchor": "drive-access-denied",
+      "catalog": [
+        "S0088"
+      ]
+    },
+    {
+      "code": "DRIVE_INSUFFICIENT_STORAGE",
+      "status": 507,
+      "message": "Failed to mount drive: {detail}",
+      "action": "Free disk space or memory in the sandbox, or use a sandbox with more, then mount again.",
+      "retryable": false,
+      "safe_to_retry_request": false,
+      "dispatch_state": "dispatched_unknown",
+      "docs_url": "https://docs.blaxel.ai/troubleshooting/error-codes#drive-insufficient-storage",
+      "docs_anchor": "drive-insufficient-storage",
+      "catalog": [
+        "S0089"
+      ]
+    },
+    {
+      "code": "DRIVE_LIST_FAILED",
+      "status": 500,
+      "message": "Failed to list mounts: {detail}",
+      "action": "Read the cause at the end of the message.",
+      "retryable": false,
+      "safe_to_retry_request": false,
+      "dispatch_state": "not_dispatched",
+      "docs_url": "https://docs.blaxel.ai/troubleshooting/error-codes#drive-list-failed",
+      "docs_anchor": "drive-list-failed",
+      "catalog": [
+        "S0093"
+      ]
+    },
+    {
+      "code": "DRIVE_MOUNT_FAILED",
+      "status": 500,
+      "message": "Failed to mount drive: {detail}",
+      "action": "Read the cause in the message and list mounts with GET /drives/mount before mounting again.",
+      "retryable": false,
+      "safe_to_retry_request": false,
+      "dispatch_state": "dispatched_unknown",
+      "docs_url": "https://docs.blaxel.ai/troubleshooting/error-codes#drive-mount-failed",
+      "docs_anchor": "drive-mount-failed",
+      "catalog": [
+        "S0090"
+      ]
+    },
+    {
+      "code": "DRIVE_MOUNT_PATH_BUSY",
+      "status": 409,
+      "message": "Failed to mount drive: {detail}",
+      "action": "Unmount what is there (DELETE /drives/mount/{path}) or choose another mount path.",
+      "retryable": false,
+      "safe_to_retry_request": false,
+      "dispatch_state": "not_dispatched",
+      "docs_url": "https://docs.blaxel.ai/troubleshooting/error-codes#drive-mount-path-busy",
+      "docs_anchor": "drive-mount-path-busy",
+      "catalog": [
+        "S0087"
+      ]
+    },
+    {
+      "code": "DRIVE_MOUNT_PATH_SYMLINK",
+      "status": 400,
+      "message": "Failed to mount drive: {detail}",
+      "action": "Mount on a path that is not a symbolic link.",
+      "retryable": false,
+      "safe_to_retry_request": false,
+      "dispatch_state": "not_dispatched",
+      "docs_url": "https://docs.blaxel.ai/troubleshooting/error-codes#drive-mount-path-symlink",
+      "docs_anchor": "drive-mount-path-symlink",
+      "catalog": [
+        "S0086"
+      ]
+    },
+    {
+      "code": "DRIVE_NOT_MOUNTED",
+      "status": 404,
+      "message": "Failed to unmount drive: no drive mounted at this path",
+      "action": "List mounts with GET /drives/mount to find the right path.",
+      "retryable": false,
+      "safe_to_retry_request": false,
+      "dispatch_state": "not_dispatched",
+      "docs_url": "https://docs.blaxel.ai/troubleshooting/error-codes#drive-not-mounted",
+      "docs_anchor": "drive-not-mounted",
+      "catalog": [
+        "S0091"
+      ]
+    },
+    {
+      "code": "DRIVE_REQUEST_INVALID",
+      "status": 400,
+      "message": "{detail}",
+      "action": "Fix the field the message names (mount and drive paths start with /), then resend.",
+      "retryable": false,
+      "safe_to_retry_request": false,
+      "dispatch_state": "not_dispatched",
+      "docs_url": "https://docs.blaxel.ai/troubleshooting/error-codes#drive-request-invalid",
+      "docs_anchor": "drive-request-invalid",
+      "catalog": [
+        "S0083",
+        "S0084",
+        "S0085"
+      ]
+    },
+    {
+      "code": "DRIVE_UNMOUNT_FAILED",
+      "status": 500,
+      "message": "Failed to unmount drive: {detail}",
+      "action": "Stop the processes that use the mount path, then unmount again.",
+      "retryable": false,
+      "safe_to_retry_request": false,
+      "dispatch_state": "dispatched_unknown",
+      "docs_url": "https://docs.blaxel.ai/troubleshooting/error-codes#drive-unmount-failed",
+      "docs_anchor": "drive-unmount-failed",
+      "catalog": [
+        "S0092"
+      ]
+    },
+    {
+      "code": "ENVIRONMENT_FILE_NOT_FOUND",
+      "status": 404,
+      "message": "{detail}",
+      "action": "Nothing to reload in this sandbox: set environment variables per process with env instead.",
+      "retryable": false,
+      "safe_to_retry_request": false,
+      "dispatch_state": "not_dispatched",
+      "docs_url": "https://docs.blaxel.ai/troubleshooting/error-codes#environment-file-not-found",
+      "docs_anchor": "environment-file-not-found",
+      "catalog": [
+        "S0105"
+      ]
+    },
+    {
+      "code": "ENVIRONMENT_RELOAD_FAILED",
+      "status": 500,
+      "message": "{detail}",
+      "action": "Read the cause in the message.",
+      "retryable": false,
+      "safe_to_retry_request": false,
+      "dispatch_state": "dispatched_unknown",
+      "docs_url": "https://docs.blaxel.ai/troubleshooting/error-codes#environment-reload-failed",
+      "docs_anchor": "environment-reload-failed",
+      "catalog": [
+        "S0106"
+      ]
+    },
+    {
+      "code": "FILESYSTEM_DELETE_FAILED",
+      "status": 422,
+      "message": "error deleting directory: {detail}",
+      "action": "Read the cause at the end of the message; for a directory that is not empty, resend with recursive=true.",
+      "retryable": false,
+      "safe_to_retry_request": false,
+      "dispatch_state": "dispatched_unknown",
+      "docs_url": "https://docs.blaxel.ai/troubleshooting/error-codes#filesystem-delete-failed",
+      "docs_anchor": "filesystem-delete-failed",
+      "catalog": [
+        "S0036"
+      ]
+    },
+    {
+      "code": "FILESYSTEM_READ_FAILED",
+      "status": 422,
+      "message": "error reading file: {detail}",
+      "action": "Read the cause at the end of the message (often a permission or a file type the endpoint cannot read), fix the path or its permissions, then resend.",
+      "retryable": false,
+      "safe_to_retry_request": false,
+      "dispatch_state": "not_dispatched",
+      "docs_url": "https://docs.blaxel.ai/troubleshooting/error-codes#filesystem-read-failed",
+      "docs_anchor": "filesystem-read-failed",
+      "catalog": [
+        "S0025",
+        "S0026",
+        "S0027",
+        "S0028",
+        "S0029",
+        "S0030"
+      ]
+    },
+    {
+      "code": "FILESYSTEM_SEARCH_FAILED",
+      "status": 500,
+      "message": "error walking directory: {detail}",
+      "action": "Read the cause at the end of the message (often a directory the search may not read), then search a narrower directory.",
+      "retryable": false,
+      "safe_to_retry_request": false,
+      "dispatch_state": "not_dispatched",
+      "docs_url": "https://docs.blaxel.ai/troubleshooting/error-codes#filesystem-search-failed",
+      "docs_anchor": "filesystem-search-failed",
+      "catalog": [
+        "S0050"
+      ]
+    },
+    {
+      "code": "FILESYSTEM_WATCH_FAILED",
+      "status": 500,
+      "message": "{detail}",
+      "action": "Read the cause in the message; on a large tree, watch a narrower directory or pass ignore patterns.",
+      "retryable": false,
+      "safe_to_retry_request": false,
+      "dispatch_state": "not_dispatched",
+      "docs_url": "https://docs.blaxel.ai/troubleshooting/error-codes#filesystem-watch-failed",
+      "docs_anchor": "filesystem-watch-failed",
+      "catalog": [
+        "S0049"
+      ]
+    },
+    {
+      "code": "FILESYSTEM_WRITE_FAILED",
+      "status": 422,
+      "message": "error writing file: {detail}",
+      "action": "Read the cause at the end of the message (often a permission or a missing parent), check what was written with GET /filesystem/{path}, fix the cause, then resend.",
+      "do_not": "Do not resend unchanged: it fails the same way, and part of the change may already be on disk.",
+      "retryable": false,
+      "safe_to_retry_request": false,
+      "dispatch_state": "dispatched_unknown",
+      "docs_url": "https://docs.blaxel.ai/troubleshooting/error-codes#filesystem-write-failed",
+      "docs_anchor": "filesystem-write-failed",
+      "catalog": [
+        "S0031",
+        "S0032",
+        "S0033",
+        "S0034",
+        "S0035"
+      ]
+    },
+    {
+      "code": "FILE_ALREADY_EXISTS",
+      "status": 409,
+      "message": "error copying destination {path}: {detail}",
+      "action": "Copy to another destination, delete the existing one first, or resend without noOverwrite to replace it.",
+      "retryable": false,
+      "safe_to_retry_request": false,
+      "dispatch_state": "dispatched_unknown",
+      "docs_url": "https://docs.blaxel.ai/troubleshooting/error-codes#file-already-exists",
+      "docs_anchor": "file-already-exists",
+      "catalog": [
+        "S0037"
+      ]
+    },
+    {
+      "code": "FILE_INFO_FAILED",
+      "status": 500,
+      "message": "{detail}",
+      "action": "Check the permissions of the path and its parent directories, for example with ls -ld in a process.",
+      "retryable": false,
+      "safe_to_retry_request": false,
+      "dispatch_state": "not_dispatched",
+      "docs_url": "https://docs.blaxel.ai/troubleshooting/error-codes#file-info-failed",
+      "docs_anchor": "file-info-failed",
+      "catalog": [
+        "S0021"
+      ]
+    },
+    {
+      "code": "FILE_NOT_FOUND",
+      "status": 404,
+      "message": "file or directory not found",
+      "action": "Check the path: list its parent directory (GET /filesystem/{parent}) to see what exists, then resend with an existing path.",
+      "retryable": false,
+      "safe_to_retry_request": false,
+      "dispatch_state": "not_dispatched",
+      "docs_url": "https://docs.blaxel.ai/troubleshooting/error-codes#file-not-found",
+      "docs_anchor": "file-not-found",
+      "catalog": [
+        "S0019",
+        "S0020"
+      ]
+    },
+    {
+      "code": "INVALID_MULTIPART_BODY",
+      "status": 400,
+      "message": "error reading multipart part: {detail}",
+      "action": "Send a multipart/form-data body with a file field, then resend the request.",
+      "retryable": false,
+      "safe_to_retry_request": false,
+      "dispatch_state": "dispatched_unknown",
+      "docs_url": "https://docs.blaxel.ai/troubleshooting/error-codes#invalid-multipart-body",
+      "docs_anchor": "invalid-multipart-body",
+      "catalog": [
+        "S0041"
+      ]
+    },
+    {
+      "code": "INVALID_PARAMETER",
+      "status": 400,
+      "message": "{detail}",
+      "action": "Fix the parameter the message names (the API reference lists the accepted values), then resend the request.",
+      "retryable": false,
+      "safe_to_retry_request": false,
+      "dispatch_state": "not_dispatched",
+      "docs_url": "https://docs.blaxel.ai/troubleshooting/error-codes#invalid-parameter",
+      "docs_anchor": "invalid-parameter",
+      "catalog": [
+        "S0004",
+        "S0005",
+        "S0006",
+        "S0007",
+        "S0008",
+        "S0009",
+        "S0010",
+        "S0011",
+        "S0012",
+        "S0013",
+        "S0014",
+        "S0015"
+      ]
+    },
+    {
+      "code": "INVALID_PATH",
+      "status": 400,
+      "message": "{detail}",
+      "action": "Send an absolute path, or a relative path that stays inside the working directory, then resend the request.",
+      "retryable": false,
+      "safe_to_retry_request": false,
+      "dispatch_state": "not_dispatched",
+      "docs_url": "https://docs.blaxel.ai/troubleshooting/error-codes#invalid-path",
+      "docs_anchor": "invalid-path",
+      "catalog": [
+        "S0016",
+        "S0017"
+      ]
+    },
+    {
+      "code": "INVALID_PATH_PARAMETER",
+      "status": 422,
+      "message": "invalid path parameter",
+      "action": "Send the path as part of the URL, as in /filesystem/tree/{path}, then resend the request.",
+      "retryable": false,
+      "safe_to_retry_request": false,
+      "dispatch_state": "not_dispatched",
+      "docs_url": "https://docs.blaxel.ai/troubleshooting/error-codes#invalid-path-parameter",
+      "docs_anchor": "invalid-path-parameter",
+      "catalog": [
+        "S0018"
+      ]
+    },
+    {
+      "code": "INVALID_PERMISSIONS",
+      "status": 400,
+      "message": "invalid permissions format '{permissions}': {detail}",
+      "action": "Send permissions as an octal string such as \"0644\", then resend the request.",
+      "retryable": false,
+      "safe_to_retry_request": false,
+      "dispatch_state": "dispatched_unknown",
+      "docs_url": "https://docs.blaxel.ai/troubleshooting/error-codes#invalid-permissions",
+      "docs_anchor": "invalid-permissions",
+      "catalog": [
+        "S0039",
+        "S0040"
+      ]
+    },
+    {
+      "code": "INVALID_REQUEST_BODY",
+      "status": 400,
+      "message": "invalid request body: {detail}",
+      "action": "Fix the request body to match the endpoint's schema in the API reference (/swagger/doc.json), then resend it.",
+      "do_not": "Do not resend the same body: it is refused the same way every time.",
+      "retryable": false,
+      "safe_to_retry_request": false,
+      "dispatch_state": "not_dispatched",
+      "docs_url": "https://docs.blaxel.ai/troubleshooting/error-codes#invalid-request-body",
+      "docs_anchor": "invalid-request-body",
+      "catalog": [
+        "S0001",
+        "S0002",
+        "S0003"
+      ]
+    },
+    {
+      "code": "KEEP_ALIVE_UNAVAILABLE",
+      "status": 400,
+      "message": "keepAlive is not available for this sandbox: it is not included in your current plan",
+      "action": "Resend without keepAlive, or upgrade to a plan that includes it.",
+      "retryable": false,
+      "safe_to_retry_request": false,
+      "dispatch_state": "not_dispatched",
+      "docs_url": "https://docs.blaxel.ai/troubleshooting/error-codes#keep-alive-unavailable",
+      "docs_anchor": "keep-alive-unavailable",
+      "catalog": [
+        "S0051"
+      ]
+    },
+    {
+      "code": "MULTIPART_ABORT_FAILED",
+      "status": 404,
+      "message": "failed to remove upload directory: {detail}",
+      "action": "Read the cause at the end of the message; the upload stays listed, so abort it again once the cause is fixed.",
+      "retryable": false,
+      "safe_to_retry_request": false,
+      "dispatch_state": "dispatched_unknown",
+      "docs_url": "https://docs.blaxel.ai/troubleshooting/error-codes#multipart-abort-failed",
+      "docs_anchor": "multipart-abort-failed",
+      "catalog": [
+        "S0045"
+      ]
+    },
+    {
+      "code": "MULTIPART_FILE_MISSING",
+      "status": 400,
+      "message": "missing 'file' field in multipart form",
+      "action": "Add the content as a form field named \"file\" with a filename, then resend the request.",
+      "retryable": false,
+      "safe_to_retry_request": false,
+      "dispatch_state": "not_dispatched",
+      "docs_url": "https://docs.blaxel.ai/troubleshooting/error-codes#multipart-file-missing",
+      "docs_anchor": "multipart-file-missing",
+      "catalog": [
+        "S0042"
+      ]
+    },
+    {
+      "code": "MULTIPART_UNAVAILABLE",
+      "status": 500,
+      "message": "multipart upload not available",
+      "action": "Upload the file in one request with PUT /filesystem/{path} instead.",
+      "retryable": false,
+      "safe_to_retry_request": false,
+      "dispatch_state": "not_dispatched",
+      "docs_url": "https://docs.blaxel.ai/troubleshooting/error-codes#multipart-unavailable",
+      "docs_anchor": "multipart-unavailable",
+      "catalog": [
+        "S0043"
+      ]
+    },
+    {
+      "code": "MULTIPART_UPLOAD_FAILED",
+      "status": 500,
+      "message": "failed to complete upload: {detail}",
+      "action": "Read the cause at the end of the message, then list the stored parts (GET /filesystem-multipart/{uploadId}/parts) and resend only what is missing.",
+      "do_not": "Do not resend blindly: parts may already be stored.",
+      "retryable": false,
+      "safe_to_retry_request": false,
+      "dispatch_state": "dispatched_unknown",
+      "docs_url": "https://docs.blaxel.ai/troubleshooting/error-codes#multipart-upload-failed",
+      "docs_anchor": "multipart-upload-failed",
+      "catalog": [
+        "S0046",
+        "S0047",
+        "S0048"
+      ]
+    },
+    {
+      "code": "MULTIPART_UPLOAD_NOT_FOUND",
+      "status": 404,
+      "message": "upload not found: {upload_id}",
+      "action": "Initiate a new upload with POST /filesystem-multipart/initiate/{path} and use the uploadId it returns.",
+      "retryable": false,
+      "safe_to_retry_request": false,
+      "dispatch_state": "not_dispatched",
+      "docs_url": "https://docs.blaxel.ai/troubleshooting/error-codes#multipart-upload-not-found",
+      "docs_anchor": "multipart-upload-not-found",
+      "catalog": [
+        "S0044"
+      ]
+    },
+    {
+      "code": "PATH_IS_DIRECTORY",
+      "status": 400,
+      "message": "path is a directory, not a file",
+      "action": "Send the path of a file, or list the directory with GET /filesystem/{path}.",
+      "retryable": false,
+      "safe_to_retry_request": false,
+      "dispatch_state": "not_dispatched",
+      "docs_url": "https://docs.blaxel.ai/troubleshooting/error-codes#path-is-directory",
+      "docs_anchor": "path-is-directory",
+      "catalog": [
+        "S0022"
+      ]
+    },
+    {
+      "code": "PATH_NOT_DIRECTORY",
+      "status": 400,
+      "message": "path is not a directory",
+      "action": "Send the path of an existing directory, then resend the request.",
+      "retryable": false,
+      "safe_to_retry_request": false,
+      "dispatch_state": "not_dispatched",
+      "docs_url": "https://docs.blaxel.ai/troubleshooting/error-codes#path-not-directory",
+      "docs_anchor": "path-not-directory",
+      "catalog": [
+        "S0023",
+        "S0024"
+      ]
+    },
+    {
+      "code": "PORTS_READ_FAILED",
+      "status": 422,
+      "message": "{detail}",
+      "action": "Check that the PID belongs to a running process (GET /process), then resend.",
+      "retryable": false,
+      "safe_to_retry_request": false,
+      "dispatch_state": "not_dispatched",
+      "docs_url": "https://docs.blaxel.ai/troubleshooting/error-codes#ports-read-failed",
+      "docs_anchor": "ports-read-failed",
+      "catalog": [
+        "S0072"
+      ]
+    },
+    {
+      "code": "PROCESS_CALLBACK_INVALID",
+      "status": 400,
+      "message": "{detail}",
+      "action": "Send callbackUrl as an absolute http or https URL, with a callbackSecret of at least the length the message names, then resend.",
+      "retryable": false,
+      "safe_to_retry_request": false,
+      "dispatch_state": "not_dispatched",
+      "docs_url": "https://docs.blaxel.ai/troubleshooting/error-codes#process-callback-invalid",
+      "docs_anchor": "process-callback-invalid",
+      "catalog": [
+        "S0052"
+      ]
+    },
+    {
+      "code": "PROCESS_EXEC_FAILED",
+      "status": 422,
+      "message": "process creation failed because process does not exist",
+      "action": "List processes with GET /process to see whether the command is running before you resend it.",
+      "do_not": "Do not resend without checking: the command may be running.",
+      "retryable": false,
+      "safe_to_retry_request": false,
+      "dispatch_state": "dispatched_unknown",
+      "docs_url": "https://docs.blaxel.ai/troubleshooting/error-codes#process-exec-failed",
+      "docs_anchor": "process-exec-failed",
+      "catalog": [
+        "S0060"
+      ]
+    },
+    {
+      "code": "PROCESS_EXITED_BEFORE_PORTS",
+      "status": 422,
+      "message": "process exited with code {exit_code} before ports {ports} opened; last output:\n{output}",
+      "action": "Read the last output at the end of the message to see why the process failed, fix the command, then resend the exec.",
+      "retryable": false,
+      "safe_to_retry_request": false,
+      "dispatch_state": "dispatched_unknown",
+      "docs_url": "https://docs.blaxel.ai/troubleshooting/error-codes#process-exited-before-ports",
+      "docs_anchor": "process-exited-before-ports",
+      "catalog": [
+        "S0059"
+      ]
+    },
+    {
+      "code": "PROCESS_LOG_FORMAT_UNSUPPORTED",
+      "status": 409,
+      "message": "structured logs are unavailable for this process; start a new process",
+      "action": "Stream the logs as text (without Accept: application/x-ndjson), or start a new process.",
+      "retryable": false,
+      "safe_to_retry_request": false,
+      "dispatch_state": "not_dispatched",
+      "docs_url": "https://docs.blaxel.ai/troubleshooting/error-codes#process-log-format-unsupported",
+      "docs_anchor": "process-log-format-unsupported",
+      "catalog": [
+        "S0065"
+      ]
+    },
+    {
+      "code": "PROCESS_LOG_STREAM_FAILED",
+      "status": 500,
+      "message": "{detail}",
+      "action": "Read the logs in one call with GET /process/{identifier}/logs.",
+      "retryable": false,
+      "safe_to_retry_request": false,
+      "dispatch_state": "not_dispatched",
+      "docs_url": "https://docs.blaxel.ai/troubleshooting/error-codes#process-log-stream-failed",
+      "docs_anchor": "process-log-stream-failed",
+      "catalog": [
+        "S0066"
+      ]
+    },
+    {
+      "code": "PROCESS_NAME_IN_USE",
+      "status": 400,
+      "message": "process with name '{name}' already exists and is running",
+      "action": "Use another name, or stop the running process (DELETE /process/{name}) or wait for it (GET /process/{name}/wait) before reusing its name.",
+      "do_not": "Do not resend unchanged while the process runs: the name stays taken.",
+      "retryable": false,
+      "safe_to_retry_request": false,
+      "dispatch_state": "not_dispatched",
+      "docs_url": "https://docs.blaxel.ai/troubleshooting/error-codes#process-name-in-use",
+      "docs_anchor": "process-name-in-use",
+      "catalog": [
+        "S0053"
+      ]
+    },
+    {
+      "code": "PROCESS_NOT_FOUND",
+      "status": 404,
+      "message": "process with Identifier {identifier} not found",
+      "action": "List processes with GET /process to find the right PID or name.",
+      "retryable": false,
+      "safe_to_retry_request": false,
+      "dispatch_state": "not_dispatched",
+      "docs_url": "https://docs.blaxel.ai/troubleshooting/error-codes#process-not-found",
+      "docs_anchor": "process-not-found",
+      "catalog": [
+        "S0062"
+      ]
+    },
+    {
+      "code": "PROCESS_NOT_RUNNING",
+      "status": 404,
+      "message": "process with Identifier {identifier} is not running",
+      "action": "Read the process's final state with GET /process/{identifier}: it already ended.",
+      "retryable": false,
+      "safe_to_retry_request": false,
+      "dispatch_state": "not_dispatched",
+      "docs_url": "https://docs.blaxel.ai/troubleshooting/error-codes#process-not-running",
+      "docs_anchor": "process-not-running",
+      "catalog": [
+        "S0063"
+      ]
+    },
+    {
+      "code": "PROCESS_PORTS_TIMEOUT",
+      "status": 422,
+      "message": "process timed out waiting for ports after {seconds} seconds",
+      "action": "Follow the process's output with GET /process/{identifier}/logs/stream to see why its ports are not open, and check that it listens on 0.0.0.0, not only 127.0.0.1.",
+      "do_not": "Do not resend unchanged: the command already started and may still be running.",
+      "retryable": false,
+      "safe_to_retry_request": false,
+      "dispatch_state": "dispatched_unknown",
+      "docs_url": "https://docs.blaxel.ai/troubleshooting/error-codes#process-ports-timeout",
+      "docs_anchor": "process-ports-timeout",
+      "catalog": [
+        "S0058"
+      ]
+    },
+    {
+      "code": "PROCESS_SIGNAL_FAILED",
+      "status": 404,
+      "message": "failed to send {signal} to process {identifier}: {detail}",
+      "action": "Read the cause at the end of the message, then check the process with GET /process/{identifier}.",
+      "retryable": false,
+      "safe_to_retry_request": false,
+      "dispatch_state": "not_dispatched",
+      "docs_url": "https://docs.blaxel.ai/troubleshooting/error-codes#process-signal-failed",
+      "docs_anchor": "process-signal-failed",
+      "catalog": [
+        "S0064"
+      ]
+    },
+    {
+      "code": "PROCESS_START_FAILED",
+      "status": 422,
+      "message": "failed to start process: {detail}",
+      "action": "Read the cause at the end of the message (often a missing shell or binary, or a full disk), fix it, then resend the exec.",
+      "retryable": false,
+      "safe_to_retry_request": false,
+      "dispatch_state": "not_dispatched",
+      "docs_url": "https://docs.blaxel.ai/troubleshooting/error-codes#process-start-failed",
+      "docs_anchor": "process-start-failed",
+      "catalog": [
+        "S0056"
+      ]
+    },
+    {
+      "code": "PROCESS_STDIN_CLOSED",
+      "status": 409,
+      "message": "stdin is closed; restart the process to get a new one",
+      "action": "Start the process again to get a new stdin.",
+      "retryable": false,
+      "safe_to_retry_request": false,
+      "dispatch_state": "not_dispatched",
+      "docs_url": "https://docs.blaxel.ai/troubleshooting/error-codes#process-stdin-closed",
+      "docs_anchor": "process-stdin-closed",
+      "catalog": [
+        "S0069"
+      ]
+    },
+    {
+      "code": "PROCESS_STDIN_FAILED",
+      "status": 500,
+      "message": "{detail}",
+      "action": "Read the cause in the message and check the process with GET /process/{identifier} before sending more input.",
+      "do_not": "Do not resend the same body: part of it may already be written.",
+      "retryable": false,
+      "safe_to_retry_request": false,
+      "dispatch_state": "dispatched_unknown",
+      "docs_url": "https://docs.blaxel.ai/troubleshooting/error-codes#process-stdin-failed",
+      "docs_anchor": "process-stdin-failed",
+      "catalog": [
+        "S0071"
+      ]
+    },
+    {
+      "code": "PROCESS_STDIN_NOT_ENABLED",
+      "status": 409,
+      "message": "process was started without stdin; start it with \"stdin\": true",
+      "action": "Start the process again with \"stdin\": true.",
+      "retryable": false,
+      "safe_to_retry_request": false,
+      "dispatch_state": "not_dispatched",
+      "docs_url": "https://docs.blaxel.ai/troubleshooting/error-codes#process-stdin-not-enabled",
+      "docs_anchor": "process-stdin-not-enabled",
+      "catalog": [
+        "S0068"
+      ]
+    },
+    {
+      "code": "PROCESS_STDIN_STALLED",
+      "status": 503,
+      "message": "process is not reading its stdin",
+      "action": "Check that the process still reads its input (GET /process/{identifier}/logs); part of the body may have been written, so decide what to send next from its output.",
+      "do_not": "Do not resend the same body: part of it may already be written, and it would arrive twice.",
+      "retryable": false,
+      "safe_to_retry_request": false,
+      "dispatch_state": "dispatched_unknown",
+      "docs_url": "https://docs.blaxel.ai/troubleshooting/error-codes#process-stdin-stalled",
+      "docs_anchor": "process-stdin-stalled",
+      "catalog": [
+        "S0070"
+      ]
+    },
+    {
+      "code": "PROCESS_STDIN_TOO_LARGE",
+      "status": 413,
+      "message": "http: request body too large",
+      "action": "Split the input into several requests of at most 8 MiB; they are written in order.",
+      "retryable": false,
+      "safe_to_retry_request": false,
+      "dispatch_state": "not_dispatched",
+      "docs_url": "https://docs.blaxel.ai/troubleshooting/error-codes#process-stdin-too-large",
+      "docs_anchor": "process-stdin-too-large",
+      "catalog": [
+        "S0067"
+      ]
+    },
+    {
+      "code": "PROCESS_STREAM_FAILED",
+      "status": 500,
+      "message": "{detail}",
+      "action": "Read the process's state with GET /process/{identifier} and its output with GET /process/{identifier}/logs.",
+      "do_not": "Do not resend the exec: the process already started.",
+      "retryable": false,
+      "safe_to_retry_request": false,
+      "dispatch_state": "dispatched_unknown",
+      "docs_url": "https://docs.blaxel.ai/troubleshooting/error-codes#process-stream-failed",
+      "docs_anchor": "process-stream-failed",
+      "catalog": [
+        "S0061"
+      ]
+    },
+    {
+      "code": "PROCESS_TIMED_OUT",
+      "status": 422,
+      "message": "process timed out after {seconds} seconds",
+      "action": "Read the process's state and output with GET /process/{identifier}, then raise timeout or run it without waitForCompletion and follow it with GET /process/{identifier}/wait.",
+      "do_not": "Do not resend unchanged: the command already ran and may have changed the sandbox.",
+      "retryable": false,
+      "safe_to_retry_request": false,
+      "dispatch_state": "dispatched_unknown",
+      "docs_url": "https://docs.blaxel.ai/troubleshooting/error-codes#process-timed-out",
+      "docs_anchor": "process-timed-out",
+      "catalog": [
+        "S0057"
+      ]
+    },
+    {
+      "code": "PROCESS_WAIT_LIMIT_REACHED",
+      "status": 422,
+      "message": "process \"{name}\" (PID {pid}) {state} after {seconds} seconds, the longest one exec request waits: the edge gateway closes requests after {edge_seconds} seconds. It keeps running {until}. {next} Don't resend the exec: that starts a second copy.",
+      "action": "Wait for the process with GET /process/{identifier}/wait, or follow its output with GET /process/{identifier}/logs/stream. To wait longer in one call, stream the exec (Accept: application/x-ndjson).",
+      "do_not": "Do not resend the exec: that starts a second copy of the command.",
+      "retryable": false,
+      "safe_to_retry_request": false,
+      "dispatch_state": "dispatched_unknown",
+      "docs_url": "https://docs.blaxel.ai/troubleshooting/error-codes#process-wait-limit-reached",
+      "docs_anchor": "process-wait-limit-reached",
+      "catalog": [
+        "S0054"
+      ]
+    },
+    {
+      "code": "PROCESS_WORKING_DIR_UNUSABLE",
+      "status": 422,
+      "message": "{detail}. The command did not run, and resending it unchanged fails the same way. {next}",
+      "action": "Set workingDir to a directory the command's user can use (or create), then resend the exec.",
+      "do_not": "Do not resend unchanged: it fails the same way until the path changes.",
+      "retryable": false,
+      "safe_to_retry_request": false,
+      "dispatch_state": "not_dispatched",
+      "docs_url": "https://docs.blaxel.ai/troubleshooting/error-codes#process-working-dir-unusable",
+      "docs_anchor": "process-working-dir-unusable",
+      "catalog": [
+        "S0055"
+      ]
+    },
+    {
+      "code": "SANDBOX_ALREADY_FROZEN",
+      "status": 409,
+      "message": "sandbox is already frozen",
+      "action": "Follow the earlier export on GET /archive/status, or lift the freeze with POST /archive/resume before exporting again.",
+      "retryable": false,
+      "safe_to_retry_request": false,
+      "dispatch_state": "not_dispatched",
+      "docs_url": "https://docs.blaxel.ai/troubleshooting/error-codes#sandbox-already-frozen",
+      "docs_anchor": "sandbox-already-frozen",
+      "catalog": [
+        "S0078"
+      ]
+    },
+    {
+      "code": "SANDBOX_FROZEN",
+      "status": 503,
+      "message": "sandbox is {state} ({reason}): this endpoint is unavailable until the archive completes, follow it on /archive/status",
+      "action": "Follow the archive on GET /archive/status; once it ends (or after POST /archive/resume), resend the request.",
+      "retryable": false,
+      "safe_to_retry_request": false,
+      "dispatch_state": "not_dispatched",
+      "docs_url": "https://docs.blaxel.ai/troubleshooting/error-codes#sandbox-frozen",
+      "docs_anchor": "sandbox-frozen",
+      "catalog": [
+        "S0082"
+      ]
+    },
+    {
+      "code": "SANDBOX_HELD_AWAKE",
+      "status": 409,
+      "message": "the sandbox is held awake by a keepAlive process or an archive operation",
+      "action": "Stop the keepAlive processes, or resend with force=true to release their holds for the standby.",
+      "retryable": false,
+      "safe_to_retry_request": false,
+      "dispatch_state": "not_dispatched",
+      "docs_url": "https://docs.blaxel.ai/troubleshooting/error-codes#sandbox-held-awake",
+      "docs_anchor": "sandbox-held-awake",
+      "catalog": [
+        "S0110"
+      ]
+    },
+    {
+      "code": "STANDBY_FAILED",
+      "status": 500,
+      "message": "{detail}",
+      "action": "Read the cause in the message; the sandbox still goes to standby on its own once idle.",
+      "retryable": false,
+      "safe_to_retry_request": false,
+      "dispatch_state": "not_dispatched",
+      "docs_url": "https://docs.blaxel.ai/troubleshooting/error-codes#standby-failed",
+      "docs_anchor": "standby-failed",
+      "catalog": [
+        "S0112"
+      ]
+    },
+    {
+      "code": "STANDBY_STATE_UNKNOWN",
+      "status": 503,
+      "message": "could not read the scale-to-zero counter",
+      "action": "Resend the request in a few seconds.",
+      "retryable": true,
+      "safe_to_retry_request": true,
+      "dispatch_state": "not_dispatched",
+      "docs_url": "https://docs.blaxel.ai/troubleshooting/error-codes#standby-state-unknown",
+      "docs_anchor": "standby-state-unknown",
+      "catalog": [
+        "S0111"
+      ]
+    },
+    {
+      "code": "STANDBY_UNSUPPORTED",
+      "status": 501,
+      "message": "standby is not supported in this environment",
+      "action": "Let the sandbox go to standby on its own once it is idle.",
+      "retryable": false,
+      "safe_to_retry_request": false,
+      "dispatch_state": "not_dispatched",
+      "docs_url": "https://docs.blaxel.ai/troubleshooting/error-codes#standby-unsupported",
+      "docs_anchor": "standby-unsupported",
+      "catalog": [
+        "S0109"
+      ]
+    },
+    {
+      "code": "TERMINAL_INPUT_TOO_LARGE",
+      "status": 413,
+      "message": "input is larger than {bytes} bytes",
+      "action": "Send the input in smaller messages.",
+      "retryable": false,
+      "safe_to_retry_request": false,
+      "dispatch_state": "not_dispatched",
+      "docs_url": "https://docs.blaxel.ai/troubleshooting/error-codes#terminal-input-too-large",
+      "docs_anchor": "terminal-input-too-large",
+      "catalog": [
+        "S0101"
+      ]
+    },
+    {
+      "code": "TERMINAL_MESSAGE_INVALID",
+      "status": 400,
+      "message": "invalid terminal message: {detail}",
+      "action": "Send {\"type\":\"input\",\"data\":\"...\"} or {\"type\":\"resize\",\"cols\":N,\"rows\":N}.",
+      "retryable": false,
+      "safe_to_retry_request": false,
+      "dispatch_state": "not_dispatched",
+      "docs_url": "https://docs.blaxel.ai/troubleshooting/error-codes#terminal-message-invalid",
+      "docs_anchor": "terminal-message-invalid",
+      "catalog": [
+        "S0102"
+      ]
+    },
+    {
+      "code": "TERMINAL_RESIZE_FAILED",
+      "status": 409,
+      "message": "failed to resize terminal session \"{session_id}\": {detail}",
+      "action": "Open a new session with GET /terminal/stream if this one has ended.",
+      "retryable": false,
+      "safe_to_retry_request": false,
+      "dispatch_state": "not_dispatched",
+      "docs_url": "https://docs.blaxel.ai/troubleshooting/error-codes#terminal-resize-failed",
+      "docs_anchor": "terminal-resize-failed",
+      "catalog": [
+        "S0104"
+      ]
+    },
+    {
+      "code": "TERMINAL_SESSION_CLOSED",
+      "status": 409,
+      "message": "terminal session \"{session_id}\" is not accepting input: {detail}",
+      "action": "Open a new session with GET /terminal/stream.",
+      "retryable": false,
+      "safe_to_retry_request": false,
+      "dispatch_state": "dispatched_unknown",
+      "docs_url": "https://docs.blaxel.ai/troubleshooting/error-codes#terminal-session-closed",
+      "docs_anchor": "terminal-session-closed",
+      "catalog": [
+        "S0103"
+      ]
+    },
+    {
+      "code": "TERMINAL_SESSION_NOT_FOUND",
+      "status": 404,
+      "message": "terminal session \"{session_id}\" not found: open it with GET /terminal/stream first",
+      "action": "Open the session with GET /terminal/stream first, then send input to it.",
+      "retryable": false,
+      "safe_to_retry_request": false,
+      "dispatch_state": "not_dispatched",
+      "docs_url": "https://docs.blaxel.ai/troubleshooting/error-codes#terminal-session-not-found",
+      "docs_anchor": "terminal-session-not-found",
+      "catalog": [
+        "S0100"
+      ]
+    },
+    {
+      "code": "TERMINAL_START_FAILED",
+      "status": 500,
+      "message": "{detail}",
+      "action": "Read the cause in the message (often the shell or working directory), then open the terminal again.",
+      "retryable": false,
+      "safe_to_retry_request": false,
+      "dispatch_state": "dispatched_unknown",
+      "docs_url": "https://docs.blaxel.ai/troubleshooting/error-codes#terminal-start-failed",
+      "docs_anchor": "terminal-start-failed",
+      "catalog": [
+        "S0099"
+      ]
+    },
+    {
+      "code": "TUNNEL_CONFIG_FAILED",
+      "status": 500,
+      "message": "failed to apply tunnel config: {detail}",
+      "action": "Read the cause at the end of the message, then apply the config again once it is fixed.",
+      "retryable": false,
+      "safe_to_retry_request": false,
+      "dispatch_state": "dispatched_unknown",
+      "docs_url": "https://docs.blaxel.ai/troubleshooting/error-codes#tunnel-config-failed",
+      "docs_anchor": "tunnel-config-failed",
+      "catalog": [
+        "S0074"
+      ]
+    },
+    {
+      "code": "TUNNEL_CONFIG_INVALID",
+      "status": 422,
+      "message": "invalid tunnel config: {detail}",
+      "action": "Send the tunnel config base64-encoded, as the API reference describes, then resend.",
+      "retryable": false,
+      "safe_to_retry_request": false,
+      "dispatch_state": "not_dispatched",
+      "docs_url": "https://docs.blaxel.ai/troubleshooting/error-codes#tunnel-config-invalid",
+      "docs_anchor": "tunnel-config-invalid",
+      "catalog": [
+        "S0073"
+      ]
+    },
+    {
+      "code": "TUNNEL_NOT_RUNNING",
+      "status": 400,
+      "message": "no WireGuard client is running",
+      "action": "Nothing to do: the tunnel is already disconnected.",
+      "retryable": false,
+      "safe_to_retry_request": false,
+      "dispatch_state": "not_dispatched",
+      "docs_url": "https://docs.blaxel.ai/troubleshooting/error-codes#tunnel-not-running",
+      "docs_anchor": "tunnel-not-running",
+      "catalog": [
+        "S0075"
+      ]
+    },
+    {
+      "code": "TUNNEL_STOP_FAILED",
+      "status": 400,
+      "message": "failed to stop WireGuard client: {detail}",
+      "action": "Read the cause at the end of the message, then disconnect again.",
+      "retryable": false,
+      "safe_to_retry_request": false,
+      "dispatch_state": "dispatched_unknown",
+      "docs_url": "https://docs.blaxel.ai/troubleshooting/error-codes#tunnel-stop-failed",
+      "docs_anchor": "tunnel-stop-failed",
+      "catalog": [
+        "S0076"
+      ]
+    },
+    {
+      "code": "UPGRADE_STATE_SAVE_FAILED",
+      "status": 500,
+      "message": "{detail}",
+      "action": "Read the cause in the message (often a full disk), fix it, then upgrade again.",
+      "retryable": false,
+      "safe_to_retry_request": false,
+      "dispatch_state": "not_dispatched",
+      "docs_url": "https://docs.blaxel.ai/troubleshooting/error-codes#upgrade-state-save-failed",
+      "docs_anchor": "upgrade-state-save-failed",
+      "catalog": [
+        "S0108"
+      ]
+    },
+    {
+      "code": "UPGRADE_VERSION_INVALID",
+      "status": 400,
+      "message": "invalid upgrade version or custom baseUrl",
+      "action": "Send \"latest\", \"develop\", \"main\" or a release tag such as \"v1.0.0\", without baseUrl.",
+      "retryable": false,
+      "safe_to_retry_request": false,
+      "dispatch_state": "not_dispatched",
+      "docs_url": "https://docs.blaxel.ai/troubleshooting/error-codes#upgrade-version-invalid",
+      "docs_anchor": "upgrade-version-invalid",
+      "catalog": [
+        "S0107"
+      ]
+    }
+  ]
+}

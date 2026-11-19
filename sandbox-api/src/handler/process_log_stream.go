@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/blaxel-ai/sandbox-api/src/lib/apierrors"
 )
 
 // wantsLogNDJSON requires an explicit opt-in; wildcards and the historical
@@ -60,6 +62,16 @@ func (w *logJSONStreamWriter) WriteEvent(eventType, data string) (int, error) {
 	encoded, err := json.Marshal(event)
 	if err != nil {
 		return 0, err
+	}
+	return w.ResponseWriter.Write(append(encoded, '\n'))
+}
+
+// SendError ends a log stream with an error event: type error, the message in
+// data as before, and entry's code and platform error fields.
+func (w *logJSONStreamWriter) SendError(entry apierrors.Entry, err error) (int, error) {
+	encoded, mErr := json.Marshal(streamErrorEvent(w.gin, entry, err))
+	if mErr != nil {
+		return 0, mErr
 	}
 	return w.ResponseWriter.Write(append(encoded, '\n'))
 }

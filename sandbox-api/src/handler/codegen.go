@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/blaxel-ai/sandbox-api/src/lib"
+	"github.com/blaxel-ai/sandbox-api/src/lib/apierrors"
 	"github.com/blaxel-ai/sandbox-api/src/lib/codegen"
 	"github.com/gin-gonic/gin"
 	"github.com/sirupsen/logrus"
@@ -112,7 +113,7 @@ type ApplyEditResponse struct {
 func (h *CodegenHandler) HandleFastApply(c *gin.Context) {
 	// Check if fastapply is enabled
 	if !codegen.IsEnabled() {
-		h.SendError(c, http.StatusBadRequest,
+		h.SendError(c, apierrors.CodegenNotConfigured,
 			fmt.Errorf("codegen tools are not configured, follow this documentation to configure it: https://docs.blaxel.ai/Sandboxes/Codegen"))
 		return
 	}
@@ -123,37 +124,37 @@ func (h *CodegenHandler) HandleFastApply(c *gin.Context) {
 	// Format the path
 	filePath, err := lib.FormatPath(filePath)
 	if err != nil {
-		h.SendError(c, http.StatusBadRequest, err)
+		h.SendError(c, apierrors.InvalidPath, err)
 		return
 	}
 
 	if filePath == "" {
-		h.SendError(c, http.StatusBadRequest, fmt.Errorf("file path is required"))
+		h.SendError(c, apierrors.InvalidParameter, fmt.Errorf("file path is required"))
 		return
 	}
 
 	// Parse request body
 	var req ApplyEditRequest
 	if err := h.BindJSON(c, &req); err != nil {
-		h.SendError(c, http.StatusBadRequest, err)
+		h.SendError(c, apierrors.InvalidRequestBody, err)
 		return
 	}
 
 	// Check if path is a directory
 	isDir, err := h.FileSystem.DirectoryExists(filePath)
 	if err != nil {
-		h.SendError(c, http.StatusUnprocessableEntity, fmt.Errorf("failed to check path: %w", err))
+		h.SendError(c, apierrors.FilesystemReadFailed, fmt.Errorf("failed to check path: %w", err))
 		return
 	}
 	if isDir {
-		h.SendError(c, http.StatusBadRequest, fmt.Errorf("path is a directory, not a file"))
+		h.SendError(c, apierrors.PathIsDirectory, fmt.Errorf("path is a directory, not a file"))
 		return
 	}
 
 	// Check if file exists and read its content
 	fileExists, err := h.FileSystem.FileExists(filePath)
 	if err != nil {
-		h.SendError(c, http.StatusUnprocessableEntity, fmt.Errorf("failed to check if file exists: %w", err))
+		h.SendError(c, apierrors.FilesystemReadFailed, fmt.Errorf("failed to check if file exists: %w", err))
 		return
 	}
 
@@ -161,7 +162,7 @@ func (h *CodegenHandler) HandleFastApply(c *gin.Context) {
 	if fileExists {
 		file, err := h.FileSystem.ReadFile(filePath)
 		if err != nil {
-			h.SendError(c, http.StatusUnprocessableEntity, fmt.Errorf("failed to read file: %w", err))
+			h.SendError(c, apierrors.FilesystemReadFailed, fmt.Errorf("failed to read file: %w", err))
 			return
 		}
 		originalContent = string(file.Content)
@@ -171,7 +172,7 @@ func (h *CodegenHandler) HandleFastApply(c *gin.Context) {
 	client, err := codegen.NewClient()
 	if err != nil {
 		logrus.Errorf("Failed to create fastapply client: %v", err)
-		h.SendError(c, http.StatusUnprocessableEntity, err)
+		h.SendError(c, apierrors.CodegenClientFailed, err)
 		return
 	}
 
@@ -184,7 +185,7 @@ func (h *CodegenHandler) HandleFastApply(c *gin.Context) {
 	updatedContent, err := client.ApplyCodeEdit(originalContent, req.CodeEdit, model)
 	if err != nil {
 		logrus.Errorf("Failed to apply code edit: %v", err)
-		h.SendError(c, http.StatusUnprocessableEntity, err)
+		h.SendError(c, apierrors.CodegenApplyFailed, err)
 		return
 	}
 
@@ -192,7 +193,7 @@ func (h *CodegenHandler) HandleFastApply(c *gin.Context) {
 	err = h.FileSystem.WriteFile(filePath, []byte(updatedContent), 0644)
 	if err != nil {
 		logrus.Errorf("Failed to write file: %v", err)
-		h.SendError(c, http.StatusUnprocessableEntity, fmt.Errorf("failed to write file: %w", err))
+		h.SendError(c, apierrors.FilesystemWriteFailed, fmt.Errorf("failed to write file: %w", err))
 		return
 	}
 
@@ -244,7 +245,7 @@ type RankedFile = codegen.RankedFile // @name RankedFile
 func (h *CodegenHandler) HandleReranking(c *gin.Context) {
 	// Check if codegen tools are enabled (we need Relace for reranking)
 	if !codegen.IsEnabled() {
-		h.SendError(c, http.StatusBadRequest,
+		h.SendError(c, apierrors.CodegenNotConfigured,
 			fmt.Errorf("codegen tools are not configured, follow this documentation to configure it: https://docs.blaxel.ai/Sandboxes/Codegen"))
 		return
 	}
@@ -254,7 +255,7 @@ func (h *CodegenHandler) HandleReranking(c *gin.Context) {
 	// Format the path
 	directory, err := lib.FormatPath(directory)
 	if err != nil {
-		h.SendError(c, http.StatusBadRequest, err)
+		h.SendError(c, apierrors.InvalidPath, err)
 		return
 	}
 
@@ -265,7 +266,7 @@ func (h *CodegenHandler) HandleReranking(c *gin.Context) {
 	// Parse query parameters
 	var req RerankingRequest
 	if err := c.ShouldBindQuery(&req); err != nil {
-		h.SendError(c, http.StatusBadRequest, err)
+		h.SendError(c, apierrors.InvalidParameter, err)
 		return
 	}
 
@@ -283,11 +284,11 @@ func (h *CodegenHandler) HandleReranking(c *gin.Context) {
 	// Check if directory exists
 	isDir, err := h.FileSystem.DirectoryExists(directory)
 	if err != nil {
-		h.SendError(c, http.StatusUnprocessableEntity, fmt.Errorf("failed to check directory: %w", err))
+		h.SendError(c, apierrors.FilesystemReadFailed, fmt.Errorf("failed to check directory: %w", err))
 		return
 	}
 	if !isDir {
-		h.SendError(c, http.StatusBadRequest, fmt.Errorf("path is not a directory"))
+		h.SendError(c, apierrors.PathNotDirectory, fmt.Errorf("path is not a directory"))
 		return
 	}
 
@@ -295,14 +296,14 @@ func (h *CodegenHandler) HandleReranking(c *gin.Context) {
 	client, err := codegen.NewClient()
 	if err != nil {
 		logrus.Errorf("Failed to create fastapply client: %v", err)
-		h.SendError(c, http.StatusUnprocessableEntity, err)
+		h.SendError(c, apierrors.CodegenClientFailed, err)
 		return
 	}
 
 	// Check if the client supports reranking (no current provider does)
 	reranker, ok := client.(codegen.CodeReranker)
 	if !ok {
-		h.SendError(c, http.StatusServiceUnavailable, codegen.ErrRerankingUnavailable)
+		h.SendError(c, apierrors.CodegenRerankingUnavailable, codegen.ErrRerankingUnavailable)
 		return
 	}
 
@@ -310,7 +311,7 @@ func (h *CodegenHandler) HandleReranking(c *gin.Context) {
 	documents, err := h.collectDocumentsFromDirectory(directory, req.FilePattern)
 	if err != nil {
 		logrus.Errorf("Failed to collect documents: %v", err)
-		h.SendError(c, http.StatusUnprocessableEntity, err)
+		h.SendError(c, apierrors.FilesystemReadFailed, err)
 		return
 	}
 
@@ -328,7 +329,7 @@ func (h *CodegenHandler) HandleReranking(c *gin.Context) {
 	rankedFiles, err := reranker.RerankCode(documents, req.Query, tokenLimit)
 	if err != nil {
 		logrus.Errorf("Failed to rerank code: %v", err)
-		h.SendError(c, http.StatusUnprocessableEntity, err)
+		h.SendError(c, apierrors.CodegenRerankFailed, err)
 		return
 	}
 

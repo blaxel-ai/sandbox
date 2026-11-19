@@ -8,8 +8,12 @@ import (
 	"os"
 	"path/filepath"
 	"syscall"
+	"time"
 
 	"github.com/gin-gonic/gin"
+
+	"github.com/blaxel-ai/sandbox-api/src/lib/apierrors"
+	"github.com/blaxel-ai/sandbox-api/src/lib/audit"
 )
 
 // BaseHandler provides common functionality for both MCP and API handlers
@@ -22,10 +26,39 @@ func NewBaseHandler() *BaseHandler {
 	return &BaseHandler{}
 }
 
-// ErrorResponse represents an error response
+// ErrorResponse is the body of every error: the message in error, as it has
+// always been, and the platform error fields, the same as the platform's other
+// errors. SendError builds it from the code's registry entry
+// (src/lib/apierrors). See https://docs.blaxel.ai/troubleshooting/error-codes.
 type ErrorResponse struct {
-	Error string `json:"error" example:"Error message" binding:"required"`
-	Code  string `json:"code,omitempty" example:"FILE_ALREADY_EXISTS"`
+	// The error message, for clients that read only this field
+	Error string `json:"error" example:"process with name 'web' already exists and is running" binding:"required"`
+	// Stable error code: branch on it, not on the message
+	Code string `json:"code" example:"PROCESS_NAME_IN_USE"`
+	// Same as code, under the name every platform error has
+	ErrorCode string `json:"error_code" example:"PROCESS_NAME_IN_USE"`
+	// Same as error
+	Message string `json:"message" example:"process with name 'web' already exists and is running"`
+	// The one next step that works
+	Action string `json:"action" example:"Use another name, or stop the running process (DELETE /process/{name}) or wait for it (GET /process/{name}/wait) before reusing its name."`
+	// The tempting wrong move, when there is one
+	DoNot string `json:"do_not,omitempty" example:"Do not resend unchanged while the process runs: the name stays taken."`
+	// The code's entry in the error codes reference
+	DocsURL string `json:"docs_url" example:"https://docs.blaxel.ai/troubleshooting/error-codes#process-name-in-use"`
+	// The same request may succeed later without changes
+	Retryable bool `json:"retryable" example:"false"`
+	// Resending the request cannot do its work twice: retryable and not_dispatched
+	SafeToRetryRequest bool `json:"safe_to_retry_request" example:"false"`
+	// Whether the operation may have started: not_dispatched (nothing changed) or dispatched_unknown (it may have, for example the command ran)
+	DispatchState string `json:"dispatch_state" example:"not_dispatched" enums:"not_dispatched,dispatched_unknown"`
+	// The HTTP status of the response, an integer (on a stream error event, the status the same error gets as a response). The archive freeze answer (code SANDBOX_FROZEN) keeps its archive status object here instead, so the schema leaves the type open.
+	Status any `json:"status"`
+	// Always platform
+	Origin string `json:"origin" example:"platform"`
+	// When the error was answered, RFC 3339 in UTC
+	Timestamp string `json:"timestamp" example:"2026-11-18T12:00:00.123456Z"`
+	// The request's X-Request-Id, or the ID the sandbox generated for it
+	RequestID string `json:"request_id,omitempty" example:"4bf92f35-77b3-4da6-a3ce-929d0e0e4736"`
 } // @name ErrorResponse
 
 // SuccessResponse represents a success response
@@ -34,23 +67,57 @@ type SuccessResponse struct {
 	Message string `json:"message" example:"File created successfully" binding:"required"`
 } // @name SuccessResponse
 
-// SendError sends a standardized error response
-func (h *BaseHandler) SendError(c *gin.Context, status int, err error) {
-	if path, ok := diskFullPath(err); ok {
-		// The gateway strips X-Blaxel-* headers from sandbox responses, so
-		// callers read the code in the body; the gateway still logs it.
-		c.Header("X-Blaxel-Error-Code", codeDiskFull)
-		c.JSON(status, ErrorResponse{Error: diskFullMessage(err, path), Code: codeDiskFull})
-		return
-	}
-	c.JSON(status, ErrorResponse{
-		Error: err.Error(),
-	})
+// SendError answers err with its registry entry: the entry's status, code and
+// platform error fields and headers, and err's message. An error that ran out
+// of disk space is answered as DISK_FULL, keeping the entry's status.
+//
+// The platform gateway strips the X-Blaxel-* headers from sandbox responses,
+// so callers read the code in the body; the headers are set for the gateway's
+// logs and for callers inside the sandbox.
+func (h *BaseHandler) SendError(c *gin.Context, entry apierrors.Entry, err error) {
+	sent, message := resolveError(entry, err)
+	writeError(c, entry.Status, sent, message)
 }
 
-// codeDiskFull marks a request that failed because the filesystem it wrote to
-// had no space left. The status stays whatever the handler sent before.
-const codeDiskFull = "DISK_FULL"
+// WriteError answers with entry and message, for errors that are not a Go
+// error value.
+func WriteError(c *gin.Context, entry apierrors.Entry, message string) {
+	writeError(c, entry.Status, entry, message)
+}
+
+func writeError(c *gin.Context, status int, entry apierrors.Entry, message string) {
+	entry.SetHeaders(c.Header)
+	c.JSON(status, entry.Body(status, message, errorMeta(c)))
+}
+
+// ErrorBody is the body WriteError sends, for writers that add to it.
+func ErrorBody(c *gin.Context, entry apierrors.Entry, message string) map[string]any {
+	return entry.Body(entry.Status, message, errorMeta(c))
+}
+
+// streamErrorEvent is the error event of an NDJSON stream: type error, the
+// message in data (as before) and the platform error fields. Headers are
+// already sent, so status is the status the same error gets as a response.
+func streamErrorEvent(c *gin.Context, entry apierrors.Entry, err error) map[string]any {
+	sent, message := resolveError(entry, err)
+	event := sent.Fields(entry.Status, message, errorMeta(c))
+	event["type"] = "error"
+	event["data"] = message
+	return event
+}
+
+// resolveError is the entry err is answered with and its message: entry,
+// unless err ran out of disk space.
+func resolveError(entry apierrors.Entry, err error) (apierrors.Entry, string) {
+	if path, ok := diskFullPath(err); ok {
+		return apierrors.DiskFull, diskFullMessage(err, path)
+	}
+	return entry, err.Error()
+}
+
+func errorMeta(c *gin.Context) apierrors.Meta {
+	return apierrors.Meta{RequestID: c.GetString(audit.ContextKeyRequestID), Now: time.Now()}
+}
 
 // diskFullPath reports whether err is a filesystem operation that failed for
 // lack of space, and the path it failed on. ENOSPC alone is not enough: inotify

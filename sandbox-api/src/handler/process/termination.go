@@ -52,25 +52,42 @@ func (pm *ProcessManager) StopProcessGroup(identifier string) error {
 	return nil
 }
 
+// ErrProcessNotFound and ErrProcessNotRunning are the kinds of a stop or kill
+// that found nothing to signal. errors.Is tells them apart; the messages read
+// as they always have.
+var (
+	ErrProcessNotFound   = errors.New("process not found")
+	ErrProcessNotRunning = errors.New("process is not running")
+)
+
+// signalRefusal keeps a refusal's message and lets errors.Is find its kind.
+type signalRefusal struct {
+	kind error
+	msg  string
+}
+
+func (e *signalRefusal) Error() string        { return e.msg }
+func (e *signalRefusal) Is(target error) bool { return target == e.kind }
+
 // signalProcessLocked requires pm.mu to be held.
 func (pm *ProcessManager) signalProcessLocked(identifier string, signal syscall.Signal, status constants.ProcessStatus) error {
 	p := pm.lookupProcessLocked(identifier)
 	if p == nil {
-		return fmt.Errorf("process with Identifier %s not found", identifier)
+		return &signalRefusal{ErrProcessNotFound, fmt.Sprintf("process with Identifier %s not found", identifier)}
 	}
 	if p.Status != StatusRunning {
 		// Repeating a completed stop is harmless and must never signal a reused PID.
 		if p.terminationRequested != "" {
 			return nil
 		}
-		return fmt.Errorf("process with Identifier %s is not running", identifier)
+		return &signalRefusal{ErrProcessNotRunning, fmt.Sprintf("process with Identifier %s is not running", identifier)}
 	}
 	if p.terminationRequested == StatusKilled || p.terminationRequested == status {
 		return nil
 	}
 	if !p.runExited {
 		if p.ProcessPid == 0 {
-			return fmt.Errorf("process with Identifier %s has no OS process", identifier)
+			return &signalRefusal{ErrProcessNotRunning, fmt.Sprintf("process with Identifier %s has no OS process", identifier)}
 		}
 		err := syscall.Kill(-p.ProcessPid, signal)
 		if err != nil {

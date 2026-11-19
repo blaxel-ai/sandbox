@@ -8,22 +8,27 @@ import (
 	"github.com/blaxel-ai/sandbox-api/src/handler/process"
 )
 
-// codeProcessWorkingDirUnusable marks an exec refused because its workingDir
-// cannot be used: the path exists and is not a directory, a parent is a file,
-// or the user the command runs as may not create it. A workingDir that is
-// only missing is created instead, like `docker run -w`. The directory is
-// checked before the process starts, so the command did not run, and the same
-// request fails the same way until the path changes.
-const codeProcessWorkingDirUnusable = "PROCESS_WORKING_DIR_UNUSABLE"
+// workingDirFailure is an exec refused because its workingDir cannot be used:
+// the path exists and is not a directory, a parent is a file, or the user the
+// command runs as may not create it. A workingDir that is only missing is
+// created instead, like `docker run -w`. The directory is checked before the
+// process starts, so the command did not run, and the same request fails the
+// same way until the path changes (PROCESS_WORKING_DIR_UNUSABLE).
+type workingDirFailure struct {
+	msg string
+	err error
+}
 
-// workingDirError is the code and message for an exec refused because of its
-// working directory, and ok false for any other error. The message keeps the
-// original error and adds that the command did not run and how to fix the
-// path for the cause at hand.
-func workingDirError(err error) (code, message string, ok bool) {
+func (e *workingDirFailure) Error() string { return e.msg }
+func (e *workingDirFailure) Unwrap() error { return e.err }
+
+// workingDirError is err with a message that keeps the original error and adds
+// that the command did not run and how to fix the path for the cause at hand,
+// or nil when err is not about the working directory.
+func workingDirError(err error) error {
 	var wdErr *process.WorkingDirError
 	if !errors.As(err, &wdErr) {
-		return "", "", false
+		return nil
 	}
 	var next string
 	switch {
@@ -34,5 +39,8 @@ func workingDirError(err error) (code, message string, ok bool) {
 	default:
 		next = "Fix the path or use another workingDir, then resend."
 	}
-	return codeProcessWorkingDirUnusable, fmt.Sprintf("%s. The command did not run, and resending it unchanged fails the same way. %s", err, next), true
+	return &workingDirFailure{
+		msg: fmt.Sprintf("%s. The command did not run, and resending it unchanged fails the same way. %s", err, next),
+		err: err,
+	}
 }

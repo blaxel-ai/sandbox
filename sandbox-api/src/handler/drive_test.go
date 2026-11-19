@@ -55,8 +55,8 @@ func TestMountFailureStatus(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := mountFailureStatus(tt.err); got != tt.want {
-				t.Fatalf("mountFailureStatus(%v) = %d, want %d", tt.err, got, tt.want)
+			if got := mountFailureEntry(tt.err).Status; got != tt.want {
+				t.Fatalf("mountFailureEntry(%v).Status = %d, want %d", tt.err, got, tt.want)
 			}
 		})
 	}
@@ -82,8 +82,8 @@ func TestUnmountFailureStatus(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := unmountFailureStatus(tt.err); got != tt.want {
-				t.Fatalf("unmountFailureStatus(%v) = %d, want %d", tt.err, got, tt.want)
+			if got := unmountFailureEntry(tt.err).Status; got != tt.want {
+				t.Fatalf("unmountFailureEntry(%v).Status = %d, want %d", tt.err, got, tt.want)
 			}
 		})
 	}

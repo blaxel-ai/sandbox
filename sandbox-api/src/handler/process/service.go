@@ -25,6 +25,20 @@ var (
 	ErrCompletionWaitExpired = errors.New("process timed out")
 )
 
+// StartError is an exec that failed before its command was started, so the
+// command did not run. The message reads as it always has ("failed to start
+// process: ...").
+type StartError struct{ Err error }
+
+func (e *StartError) Error() string { return "failed to start process: " + e.Err.Error() }
+func (e *StartError) Unwrap() error { return e.Err }
+
+// ExitedBeforePortsError is a process that failed for good before it opened
+// the ports it was awaited on: the command ran.
+type ExitedBeforePortsError struct{ msg string }
+
+func (e *ExitedBeforePortsError) Error() string { return e.msg }
+
 // processByPID returns the process record for a PID without copying its logs.
 func (pm *ProcessManager) processByPID(pid string) *ProcessInfo {
 	pm.mu.RLock()
@@ -63,7 +77,7 @@ func (pm *ProcessManager) endedInFailure(pid string) bool {
 func (pm *ProcessManager) exitedBeforePortsError(pid string, ports []int) error {
 	proc := pm.processByPID(pid)
 	if proc == nil {
-		return fmt.Errorf("process failed before ports %v opened", ports)
+		return &ExitedBeforePortsError{msg: fmt.Sprintf("process failed before ports %v opened", ports)}
 	}
 	pm.mu.RLock()
 	status, exitCode := proc.Status, proc.ExitCode
@@ -78,7 +92,7 @@ func (pm *ProcessManager) exitedBeforePortsError(pid string, ports []int) error 
 			msg += "; last output:\n" + tail
 		}
 	}
-	return errors.New(msg)
+	return &ExitedBeforePortsError{msg: msg}
 }
 
 // lastLines returns the last n lines of s, without surrounding whitespace.
@@ -164,7 +178,7 @@ func (pm *ProcessManager) ExecuteProcessWithCallback(
 	}
 	pid, err = pm.StartProcessWithCallback(command, workingDir, name, env, restartOnFailure, maxRestarts, keepAlive, timeout, stdin, cb, callback)
 	if err != nil {
-		return nil, fmt.Errorf("failed to start process: %w", err)
+		return nil, &StartError{Err: err}
 	}
 
 	// Set up port monitoring if requested

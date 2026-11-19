@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+
+	"github.com/blaxel-ai/sandbox-api/src/lib/apierrors"
 )
 
 func TestExecWait(t *testing.T) {
@@ -64,11 +66,13 @@ func TestHandleExecuteCommandWaitLimit(t *testing.T) {
 			t.Fatalf("decode %q: %v", w.Body.String(), err)
 		}
 		var fields map[string]any
-		if err := json.Unmarshal(w.Body.Bytes(), &fields); err != nil || len(fields) != 2 {
-			t.Fatalf("body %s: want only the existing error and code fields", w.Body.String())
+		if err := json.Unmarshal(w.Body.Bytes(), &fields); err != nil {
+			t.Fatalf("decode %q: %v", w.Body.String(), err)
 		}
-		if e.Code != codeProcessWaitLimitReached || w.Header().Get("X-Blaxel-Error-Code") != codeProcessWaitLimitReached {
-			t.Fatalf("code %q, header %q: want %s in both", e.Code, w.Header().Get("X-Blaxel-Error-Code"), codeProcessWaitLimitReached)
+		// The process started and still runs: resending would start a second copy.
+		checkErrorFields(t, fields, apierrors.ProcessWaitLimitReached, http.StatusUnprocessableEntity, e.Error)
+		if w.Header().Get("X-Blaxel-Error-Code") != apierrors.ProcessWaitLimitReached.Code || w.Header().Get("X-Should-Retry") != "false" {
+			t.Fatalf("headers %v: want X-Blaxel-Error-Code %s and X-Should-Retry false", w.Header(), apierrors.ProcessWaitLimitReached.Code)
 		}
 		return e
 	}
@@ -134,9 +138,14 @@ func TestHandleExecuteCommandWaitLimit(t *testing.T) {
 		if w.Code != http.StatusUnprocessableEntity || took > 4*time.Second {
 			t.Fatalf("status %d after %s: %s", w.Code, took, w.Body.String())
 		}
-		if body := w.Body.String(); body != `{"error":"process timed out waiting for ports after 1 seconds"}` {
-			t.Fatalf("got %s, want the unchanged timeout error", body)
+		var body map[string]any
+		if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
 		}
+		if body["error"] != "process timed out waiting for ports after 1 seconds" {
+			t.Fatalf("got %s, want the unchanged timeout error", w.Body.String())
+		}
+		checkErrorFields(t, body, apierrors.ProcessPortsTimeout, http.StatusUnprocessableEntity, "process timed out waiting for ports after 1 seconds")
 	})
 
 	t.Run("a command that ends in time returns its result", func(t *testing.T) {

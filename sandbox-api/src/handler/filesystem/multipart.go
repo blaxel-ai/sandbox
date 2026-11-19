@@ -3,6 +3,7 @@ package filesystem
 import (
 	"crypto/md5"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -14,6 +15,10 @@ import (
 	"github.com/blaxel-ai/sandbox-api/src/lib/identity"
 	"github.com/google/uuid"
 )
+
+// ErrUploadNotFound is an uploadId with no upload: never initiated, or already
+// completed or aborted.
+var ErrUploadNotFound = errors.New("upload not found")
 
 // MultipartUpload represents an in-progress multipart upload
 type MultipartUpload struct {
@@ -94,7 +99,7 @@ func (m *MultipartManager) UploadPart(uploadID string, partNumber int, reader io
 	m.mu.RUnlock()
 
 	if !exists {
-		return nil, fmt.Errorf("upload not found: %s", uploadID)
+		return nil, fmt.Errorf("%w: %s", ErrUploadNotFound, uploadID)
 	}
 
 	if partNumber < 1 || partNumber > 10000 {
@@ -148,7 +153,7 @@ func (m *MultipartManager) CompleteUpload(uploadID string, parts []UploadedPart)
 	m.mu.RUnlock()
 
 	if !exists {
-		return fmt.Errorf("upload not found: %s", uploadID)
+		return fmt.Errorf("%w: %s", ErrUploadNotFound, uploadID)
 	}
 
 	upload.mu.RLock()
@@ -221,7 +226,7 @@ func (m *MultipartManager) AbortUpload(uploadID string) error {
 
 	_, exists := m.uploads[uploadID]
 	if !exists {
-		return fmt.Errorf("upload not found: %s", uploadID)
+		return fmt.Errorf("%w: %s", ErrUploadNotFound, uploadID)
 	}
 
 	// Remove upload directory with all parts
@@ -243,7 +248,7 @@ func (m *MultipartManager) ListParts(uploadID string) ([]*UploadedPart, error) {
 	m.mu.RUnlock()
 
 	if !exists {
-		return nil, fmt.Errorf("upload not found: %s", uploadID)
+		return nil, fmt.Errorf("%w: %s", ErrUploadNotFound, uploadID)
 	}
 
 	upload.mu.RLock()
@@ -269,7 +274,7 @@ func (m *MultipartManager) GetUpload(uploadID string) (*MultipartUpload, error) 
 
 	upload, exists := m.uploads[uploadID]
 	if !exists {
-		return nil, fmt.Errorf("upload not found: %s", uploadID)
+		return nil, fmt.Errorf("%w: %s", ErrUploadNotFound, uploadID)
 	}
 
 	return upload, nil
