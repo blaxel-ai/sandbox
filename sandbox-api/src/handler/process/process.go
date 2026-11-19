@@ -409,11 +409,10 @@ func (pm *ProcessManager) StartProcessWithCallback(command string, workingDir st
 	defer releaseScript()
 
 	if workingDir != "" {
-		// Check if the working directory exists
-		if _, err := os.Stat(workingDir); os.IsNotExist(err) {
-			return "", fmt.Errorf("could not execute command '%s' because folder '%s' does not exist", command, workingDir)
-		} else if err != nil {
-			return "", fmt.Errorf("could not access working directory '%s': %w", workingDir, err)
+		// Created when missing, like `docker run -w`. A restart does not do
+		// this: a directory gone by then was removed after the process started.
+		if err := prepareWorkingDir(workingDir); err != nil {
+			return "", err
 		}
 		cmd.Dir = workingDir
 	}
