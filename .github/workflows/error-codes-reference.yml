@@ -11,8 +11,10 @@ name: Error codes reference
 #
 # On a pull request it reads the docs branch named like the pull request's
 # branch when there is one, so a change that adds a code passes once that docs
-# branch has the regenerated page, and docs main otherwise. Pushes to main and
-# the daily run read docs main.
+# branch has the regenerated page. Otherwise it reads the docs branch named like
+# the pull request's base, so a pull request stacked on such a change reads its
+# page, and docs main when there is neither. Pushes to main and the daily run
+# read docs main.
 
 on:
   pull_request:
@@ -52,13 +54,19 @@ jobs:
         id: docs
         env:
           HEAD_REF: ${{ github.head_ref }}
+          BASE_REF: ${{ github.base_ref }}
           INPUT_REF: ${{ inputs.docs_ref }}
         run: |
+          docs_has() {
+            [ -n "$1" ] && git ls-remote --exit-code --heads https://github.com/blaxel-ai/docs "refs/heads/$1" >/dev/null
+          }
           ref=main
           if [ -n "$INPUT_REF" ]; then
             ref="$INPUT_REF"
-          elif [ -n "$HEAD_REF" ] && git ls-remote --exit-code --heads https://github.com/blaxel-ai/docs "refs/heads/$HEAD_REF" >/dev/null; then
+          elif docs_has "$HEAD_REF"; then
             ref="$HEAD_REF"
+          elif docs_has "$BASE_REF"; then
+            ref="$BASE_REF"
           fi
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
           echo "Reading the error codes reference from blaxel-ai/docs@$ref"
