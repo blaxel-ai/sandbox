@@ -3,8 +3,11 @@ package apierrors
 import "net/http"
 
 // The registered codes. Add an entry here, answer the emitting site with it
-// (SendError in the handler package), add the site's row to catalog.csv and run
-// the export test with UPDATE_EXPORT=1. Retry fields come from reading the
+// (SendError in the handler package), add the site's row to catalog.csv, run
+// the export test with UPDATE_EXPORT=1 and regenerate the error codes reference
+// from registry.json (scripts/error-codes/generate.mjs in blaxel-ai/docs, on a
+// branch named like this change's; reference_test.go fails until the page
+// lists the code). Retry fields come from reading the
 // emitting code path, and its owner confirms them in review. Every entry names
 // its catalog.csv rows in Catalog. A status never changes here without an
 // approved status code change.

@@ -1,0 +1,84 @@
+name: Error codes reference
+
+# Fails when the public error codes reference
+# (https://docs.blaxel.ai/troubleshooting/error-codes) no longer matches the
+# sandbox API's error registry (sandbox-api/src/lib/apierrors): a registered
+# code missing from the page, a code on the page that is no longer registered,
+# a changed status, retryable or dispatch state, or a docs_url anchor the page
+# does not define. The page's sandbox API table is generated from registry.json
+# by scripts/error-codes/generate.mjs in blaxel-ai/docs; this job reads the page
+# as data and runs no docs code.
+#
+# On a pull request it reads the docs branch named like the pull request's
+# branch when there is one, so a change that adds a code passes once that docs
+# branch has the regenerated page, and docs main otherwise. Pushes to main and
+# the daily run read docs main.
+
+on:
+  pull_request:
+    paths:
+      - 'sandbox-api/src/lib/apierrors/**'
+      - '.github/workflows/error-codes-reference.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'sandbox-api/src/lib/apierrors/**'
+      - '.github/workflows/error-codes-reference.yml'
+  schedule:
+    # Daily, to catch an edit on the docs side.
+    - cron: '23 7 * * *'
+  workflow_dispatch:
+    inputs:
+      docs_ref:
+        description: 'blaxel-ai/docs branch to read the page from'
+        required: false
+        default: main
+
+permissions:
+  contents: read
+
+jobs:
+  reference:
+    name: Error codes reference matches the registry
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Pick the docs branch
+        id: docs
+        env:
+          HEAD_REF: ${{ github.head_ref }}
+          INPUT_REF: ${{ inputs.docs_ref }}
+        run: |
+          ref=main
+          if [ -n "$INPUT_REF" ]; then
+            ref="$INPUT_REF"
+          elif [ -n "$HEAD_REF" ] && git ls-remote --exit-code --heads https://github.com/blaxel-ai/docs "refs/heads/$HEAD_REF" >/dev/null; then
+            ref="$HEAD_REF"
+          fi
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+          echo "Reading the error codes reference from blaxel-ai/docs@$ref"
+
+      - uses: actions/checkout@v4
+        with:
+          repository: blaxel-ai/docs
+          ref: ${{ steps.docs.outputs.ref }}
+          path: docs-site
+          persist-credentials: false
+          sparse-checkout: troubleshooting/error-codes.mdx
+          sparse-checkout-cone-mode: false
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.3'
+          cache-dependency-path: sandbox-api/go.sum
+
+      - name: Compare the page with the registry
+        working-directory: sandbox-api
+        env:
+          ERROR_CODES_REFERENCE: ${{ github.workspace }}/docs-site/troubleshooting/error-codes.mdx
+        run: go test ./src/lib/apierrors -run '^TestErrorCodesReference$' -count=1 -v
