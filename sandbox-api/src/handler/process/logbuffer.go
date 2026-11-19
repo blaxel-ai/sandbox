@@ -100,6 +100,18 @@ func (b *logBuffer) resume(offset int) {
 	}
 }
 
+// release drops the buffered bytes of a finished process but keeps the count,
+// which restarts and saved states use as the log file offset.
+func (b *logBuffer) release() {
+	b.buf = nil
+	b.max = 0
+}
+
+// reopen undoes release for a finished process that is restarted.
+func (b *logBuffer) reopen() {
+	b.max = maxInMemoryLog()
+}
+
 // restore seeds the buffer from a saved state: tail is what is left of the
 // output, written is how much the stream had produced in total, so the log file
 // is re-read from where the previous run left off rather than from the tail.

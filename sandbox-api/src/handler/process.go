@@ -124,6 +124,11 @@ func (h *ProcessHandler) ExecuteProcessWithCallback(cb process.ExitCallback, com
 	if !exists {
 		return ProcessResponse{}, fmt.Errorf("process not found")
 	}
+	if waitForCompletion && err == nil {
+		if output, outErr := h.processManager.GetProcessOutput(processInfo.PID); outErr == nil {
+			snapshot.Logs, snapshot.Stdout, snapshot.Stderr = &output.Logs, &output.Stdout, &output.Stderr
+		}
+	}
 	return processResponse(snapshot), err
 }
 
