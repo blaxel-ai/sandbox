@@ -306,7 +306,7 @@ func (pm *ProcessManager) ExecuteProcessWithCallback(
 	if !exists {
 		return nil, fmt.Errorf("process creation failed because process does not exist")
 	}
-	// The output is not attached here: this record lives for the sandbox's
-	// lifetime, so callers read it from the log files (GetProcessOutput) instead.
+	// Callers read output from the log files: this record lives as long as the
+	// sandbox, so anything attached to it would too.
 	return processInfo, nil
 }

@@ -2,9 +2,13 @@ package api
 
 import (
 	"net/http"
+	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/blaxel-ai/sandbox-api/src/handler/process"
 )
 
 // A long-lived sandbox runs thousands of commands and process records are never
@@ -39,5 +43,31 @@ func TestFinishedProcessesDoNotKeepOutputInMemory(t *testing.T) {
 	logs := decodeProcessBody(t, serveProcessRequest(t, router, http.MethodGet, "/process/"+lastPID+"/logs", "").Body.Bytes())
 	if logs["stdout"] != strings.Repeat("x", outputBytes) {
 		t.Fatalf("logs of a finished process: got %d bytes of stdout, want the full output", len(logs["stdout"].(string)))
+	}
+}
+
+// Once a finished process' output is released, a missing log file must not be
+// answered with a pointer to that file.
+func TestFinishedProcessWithoutLogFilesReturnsEmptyOutput(t *testing.T) {
+	router := newProcessTestRouter(t)
+	body := decodeProcessBody(t, serveProcessRequest(t, router, http.MethodPost, "/process",
+		`{"command":"echo hello","waitForCompletion":true}`).Body.Bytes())
+	if body["stdout"] != "hello\n" {
+		t.Fatalf("exec stdout = %q, want %q", body["stdout"], "hello\n")
+	}
+
+	entries, err := os.ReadDir(process.ProcessLogDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if err := os.RemoveAll(filepath.Join(process.ProcessLogDir, e.Name())); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	got := decodeProcessBody(t, serveProcessRequest(t, router, http.MethodGet, "/process/"+body["pid"].(string), "").Body.Bytes())
+	if got["stdout"] != "" || got["logs"] != "" {
+		t.Fatalf("stdout = %q, logs = %q, want both empty", got["stdout"], got["logs"])
 	}
 }
