@@ -1,0 +1,15 @@
+# Error sites that send an error without a registered code, per file and
+# kind: "<count> <kind> <file>", files relative to sandbox-api/. Kinds: direct
+# (an error written straight to the client, around SendError and WriteError),
+# entry (an Entry declared outside the registry). See error_sites_test.go.
+#
+# TestErrorSitesUseTheRegistry fails when a file has more sites than listed, and
+# when it has fewer: the list only gets shorter. Never add a line or raise a
+# count; answer with SendError or WriteError and a registered code instead.
+# After converting sites, rewrite this file:
+#   UPDATE_ERROR_SITES=1 go test ./src/lib/apierrors -run TestErrorSitesUseTheRegistry
+#
+# Total: 6 (direct 6, entry 0)
+
+5 direct src/lib/proxy/shim.go
+1 direct src/mcp/server.go

@@ -33,6 +33,23 @@ jobs:
         working-directory: sandbox-api
         run: go vet ./...
 
+      # TestErrorSitesUseTheRegistry (src/lib/apierrors) fails when the list of
+      # error sites without a registered code has a higher count than the base
+      # branch's: the list only gets shorter.
+      - name: Read the base branch's error sites list
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          SITES: sandbox-api/src/lib/apierrors/testdata/unregistered_error_sites.txt
+        run: |
+          git fetch --no-tags --depth=1 origin "refs/heads/$BASE_REF"
+          if git cat-file -e "FETCH_HEAD:$SITES" 2>/dev/null; then
+            git show "FETCH_HEAD:$SITES" > "$RUNNER_TEMP/base-error-sites.txt"
+            echo "ERROR_SITES_BASE=$RUNNER_TEMP/base-error-sites.txt" >> "$GITHUB_ENV"
+          else
+            echo "$BASE_REF has no $SITES yet: nothing to compare."
+          fi
+
       - name: go test
         working-directory: sandbox-api
         # The process manager writes its log files there; the default

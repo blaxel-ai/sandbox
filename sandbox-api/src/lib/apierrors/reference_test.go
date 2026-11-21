@@ -2,6 +2,7 @@ package apierrors
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"reflect"
 	"regexp"
@@ -38,6 +39,8 @@ var (
 	// dispatch state cells of a generated row.
 	referenceRowPattern = regexp.MustCompile("^\\|\\s*<span id=\"([a-z0-9-]+)\"></span>\x60([A-Z0-9_]+)\x60\\s*\\|\\s*(\\d{3})\\s*\\|\\s*(\\*\\*Yes\\*\\*|No)[^|]*\\|\\s*\x60([a-z_]+)\x60\\s*\\|")
 	referenceIDPattern  = regexp.MustCompile(`\bid="([a-z0-9-]+)"`)
+	// anchorPattern is a code's anchor: its code in lower case, with hyphens.
+	anchorPattern = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
 )
 
 // parseReference returns the rows of section's generated table and every
@@ -88,6 +91,7 @@ func referenceDrift(page, section string, entries []Entry) []string {
 	registered := map[string]bool{}
 	for _, entry := range entries {
 		registered[entry.Code] = true
+		problems = append(problems, docsProblems(entry)...)
 		row, ok := onPage[entry.Code]
 		if !ok {
 			problems = append(problems, entry.Code+" is registered but missing from the page")
@@ -102,7 +106,7 @@ func referenceDrift(page, section string, entries []Entry) []string {
 		if row.DispatchState != string(entry.DispatchState) {
 			problems = append(problems, fmt.Sprintf("%s: the page says %s, the registry %s", entry.Code, row.DispatchState, entry.DispatchState))
 		}
-		if anchor, onReference := strings.CutPrefix(entry.ResolvedDocsURL(), ReferenceURL+"#"); onReference && !ids[anchor] {
+		if anchor, onReference := referenceAnchor(entry); onReference && !ids[anchor] {
 			problems = append(problems, fmt.Sprintf("%s sends docs_url %s, an anchor the page does not define", entry.Code, entry.ResolvedDocsURL()))
 		}
 	}
@@ -113,6 +117,66 @@ func referenceDrift(page, section string, entries []Entry) []string {
 	}
 	sort.Strings(problems)
 	return problems
+}
+
+// docsProblems says what keeps entry from a usable row on the reference: no
+// action to show, or a docs_url that is neither an anchor on the reference
+// (the code's own, by default) nor a page. TestEveryCodeHasADocsAnchorAndAnAction
+// runs it on the registry; referenceDrift also checks the anchor is on the page.
+func docsProblems(entry Entry) []string {
+	var problems []string
+	if strings.TrimSpace(entry.Action) == "" {
+		problems = append(problems, entry.Code+" has no action")
+	}
+	docsURL := entry.ResolvedDocsURL()
+	anchor, onReference := referenceAnchor(entry)
+	switch {
+	case onReference && !anchorPattern.MatchString(anchor), !onReference && strings.HasPrefix(docsURL, ReferenceURL):
+		problems = append(problems, fmt.Sprintf("%s sends docs_url %s, which names no code anchor on the reference", entry.Code, docsURL))
+	case !onReference:
+		if page, err := url.Parse(docsURL); err != nil || page.Scheme != "https" || page.Host == "" {
+			problems = append(problems, fmt.Sprintf("%s sends docs_url %q, which is not a page", entry.Code, docsURL))
+		}
+	}
+	return problems
+}
+
+// referenceAnchor is the anchor entry's docs_url points at on the reference,
+// when it points there.
+func referenceAnchor(entry Entry) (string, bool) {
+	return strings.CutPrefix(entry.ResolvedDocsURL(), ReferenceURL+"#")
+}
+
+// TestEveryCodeHasADocsAnchorAndAnAction runs without the page, so a code
+// that could not get a row fails in every test run, not only in the
+// reference check.
+func TestEveryCodeHasADocsAnchorAndAnAction(t *testing.T) {
+	for _, entry := range Entries() {
+		for _, problem := range docsProblems(entry) {
+			t.Error(problem)
+		}
+	}
+}
+
+func TestDocsProblems(t *testing.T) {
+	for _, tc := range []struct {
+		entry Entry
+		want  []string
+	}{
+		{Entry{Code: "SOME_CODE", Action: "Act."}, nil},
+		{Entry{Code: "SOME_CODE", Action: "Act.", DocsURL: "https://docs.blaxel.ai/Sandboxes/Processes"}, nil},
+		{Entry{Code: "SOME_CODE", Action: " "}, []string{"SOME_CODE has no action"}},
+		{Entry{Code: "SOME_CODE", Action: "Act.", DocsURL: ReferenceURL}, []string{
+			"SOME_CODE sends docs_url https://docs.blaxel.ai/troubleshooting/error-codes, which names no code anchor on the reference",
+		}},
+		{Entry{Code: "SOME_CODE", Action: "Act.", DocsURL: "/Sandboxes/Processes"}, []string{
+			`SOME_CODE sends docs_url "/Sandboxes/Processes", which is not a page`,
+		}},
+	} {
+		if got := docsProblems(tc.entry); !reflect.DeepEqual(got, tc.want) {
+			t.Errorf("%+v: got %q, want %q", tc.entry, got, tc.want)
+		}
+	}
 }
 
 func TestErrorCodesReference(t *testing.T) {
@@ -148,9 +212,9 @@ func referenceFixture(rows ...string) string {
 
 func TestReferenceDriftReportsEachKindOfDrift(t *testing.T) {
 	entries := []Entry{
-		{Code: "ARCHIVE_IN_PROGRESS", Status: 409, Retryable: true, DispatchState: NotDispatched},
-		{Code: "INVALID_REQUEST_BODY", Status: 400, DispatchState: NotDispatched},
-		{Code: "PROCESS_NOT_FOUND", Status: 404, DispatchState: NotDispatched},
+		{Code: "ARCHIVE_IN_PROGRESS", Action: "Act.", Status: 409, Retryable: true, DispatchState: NotDispatched},
+		{Code: "INVALID_REQUEST_BODY", Action: "Act.", Status: 400, DispatchState: NotDispatched},
+		{Code: "PROCESS_NOT_FOUND", Action: "Act.", Status: 404, DispatchState: NotDispatched},
 	}
 	rows := []string{
 		"| <span id=\"archive-in-progress\"></span>`ARCHIVE_IN_PROGRESS` | 409 | **Yes** | `not_dispatched` | `an archive export is in progress` | Wait, then resend. |",
@@ -171,7 +235,7 @@ func TestReferenceDriftReportsEachKindOfDrift(t *testing.T) {
 		expect(t, page, entries)
 	})
 	t.Run("a registered code missing from the page", func(t *testing.T) {
-		grown := append(append([]Entry{}, entries...), Entry{Code: "FILE_NOT_FOUND", Status: 404, DispatchState: NotDispatched})
+		grown := append(append([]Entry{}, entries...), Entry{Code: "FILE_NOT_FOUND", Action: "Act.", Status: 404, DispatchState: NotDispatched})
 		expect(t, page, grown, "FILE_NOT_FOUND is registered but missing from the page")
 	})
 	t.Run("a documented code no longer registered", func(t *testing.T) {

@@ -12,5 +12,6 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for how the repo is organized and built.
 
 ## Errors
 
-- Every error a handler answers comes from the registry in `sandbox-api/src/lib/apierrors`: `h.SendError(c, apierrors.X, err)`, or `WriteError` for a fixed message. No hand-built `ErrorResponse` or `gin.H{"error": ...}`; `catalog_test.go` fails on them and on any site `catalog.csv` does not list.
+- Every error a handler answers comes from the registry in `sandbox-api/src/lib/apierrors`: `h.SendError(c, apierrors.X, err)`, or `WriteError` for a fixed message. No hand-built `ErrorResponse` or `gin.H{"error": ...}`; `catalog_test.go` fails on them and on any site `catalog.csv` does not list. Elsewhere in the module, `error_sites_test.go` fails on a new error written straight to the client (`c.JSON` with an error status, `http.Error`, ...); its list of older sites only gets shorter.
+- A new code's row on the error codes reference lands in the same PR, on a `blaxel-ai/docs` branch named like yours: `node scripts/error-codes/generate.mjs --sandbox-api <sandbox>/sandbox-api/src/lib/apierrors/registry.json`.
 - A new code gets its entry in `registry.go` (dispatch state and retry fields read from the emitting code), its rows in `catalog.csv`, and `UPDATE_EXPORT=1 go test ./src/lib/apierrors/` to refresh `registry.json`. Never change a shipped code or status.
