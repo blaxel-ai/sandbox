@@ -19,6 +19,7 @@ import (
 	"github.com/blaxel-ai/sandbox-api/docs"
 	"github.com/blaxel-ai/sandbox-api/src/handler"
 	"github.com/blaxel-ai/sandbox-api/src/handler/archive"
+	"github.com/blaxel-ai/sandbox-api/src/lib/apierrors"
 	"github.com/blaxel-ai/sandbox-api/src/lib/audit"
 )
 
@@ -235,7 +236,7 @@ func SetupRouter(disableRequestLogging bool, enableProcessingTime bool) *gin.Eng
 	r.DELETE("/drives/mount/*mountPath", func(c *gin.Context) {
 		mountPath := c.Param("mountPath")
 		if mountPath == "" || mountPath == "/" {
-			c.JSON(http.StatusBadRequest, handler.ErrorResponse{Error: "Mount path is required (must start with /)"})
+			handler.WriteError(c, apierrors.DriveRequestInvalid, "Mount path is required (must start with /)")
 			return
 		}
 		if !strings.HasPrefix(mountPath, "/") {
@@ -314,10 +315,13 @@ func quiesceMiddleware() gin.HandlerFunc {
 		}
 
 		status := archive.Status()
-		c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{
-			"error":  fmt.Sprintf("sandbox is %s (%s): this endpoint is unavailable until the archive completes, follow it on /archive/status", status.State, status.Reason),
-			"status": status,
-		})
+		entry := apierrors.SandboxFrozen
+		entry.SetHeaders(c.Header)
+		body := handler.ErrorBody(c, entry, fmt.Sprintf("sandbox is %s (%s): this endpoint is unavailable until the archive completes, follow it on /archive/status", status.State, status.Reason))
+		// status stays the archive status object it has always been, in place
+		// of the HTTP status the other error bodies carry.
+		body["status"] = status
+		c.AbortWithStatusJSON(entry.Status, body)
 	}
 }
 

@@ -14,6 +14,7 @@ import (
 	"github.com/sirupsen/logrus"
 
 	"github.com/blaxel-ai/sandbox-api/src/handler/terminal"
+	"github.com/blaxel-ai/sandbox-api/src/lib/apierrors"
 	"github.com/blaxel-ai/sandbox-api/src/lib/audit"
 )
 
@@ -79,7 +80,7 @@ func (h *TerminalHandler) HandleTerminalStream(c *gin.Context) {
 	ms, isNew, err := terminal.GetSessionManager().GetOrCreate(sessionId, shell, workingDir, nil, cols, rows)
 	if err != nil {
 		logrus.Errorf("Failed to create terminal session: %v", err)
-		h.SendError(c, http.StatusInternalServerError, err)
+		h.SendError(c, apierrors.TerminalStartFailed, err)
 		return
 	}
 
@@ -204,7 +205,7 @@ func (h *TerminalHandler) HandleTerminalInput(c *gin.Context) {
 	sessionId := c.DefaultQuery("sessionId", "default")
 	ms, ok := terminal.GetSessionManager().Get(sessionId)
 	if !ok {
-		h.SendError(c, http.StatusNotFound, fmt.Errorf("terminal session %q not found: open it with GET /terminal/stream first", sessionId))
+		h.SendError(c, apierrors.TerminalSessionNotFound, fmt.Errorf("terminal session %q not found: open it with GET /terminal/stream first", sessionId))
 		return
 	}
 
@@ -214,15 +215,15 @@ func (h *TerminalHandler) HandleTerminalInput(c *gin.Context) {
 	if err != nil {
 		var tooLarge *http.MaxBytesError
 		if errors.As(err, &tooLarge) {
-			h.SendError(c, http.StatusRequestEntityTooLarge, fmt.Errorf("input is larger than %d bytes", terminalInputMaxBytes))
+			h.SendError(c, apierrors.TerminalInputTooLarge, fmt.Errorf("input is larger than %d bytes", terminalInputMaxBytes))
 			return
 		}
-		h.SendError(c, http.StatusBadRequest, fmt.Errorf("failed to read terminal message: %w", err))
+		h.SendError(c, apierrors.TerminalMessageInvalid, fmt.Errorf("failed to read terminal message: %w", err))
 		return
 	}
 	var msg TerminalMessage
 	if err := json.Unmarshal(body, &msg); err != nil {
-		h.SendError(c, http.StatusBadRequest, fmt.Errorf("invalid terminal message: %w", err))
+		h.SendError(c, apierrors.TerminalMessageInvalid, fmt.Errorf("invalid terminal message: %w", err))
 		return
 	}
 
@@ -241,20 +242,20 @@ func (h *TerminalHandler) HandleTerminalInput(c *gin.Context) {
 			})
 		}
 		if err != nil {
-			h.SendError(c, http.StatusConflict, fmt.Errorf("terminal session %q is not accepting input: %w", sessionId, err))
+			h.SendError(c, apierrors.TerminalSessionClosed, fmt.Errorf("terminal session %q is not accepting input: %w", sessionId, err))
 			return
 		}
 	case "resize":
 		if msg.Cols == 0 || msg.Rows == 0 {
-			h.SendError(c, http.StatusBadRequest, fmt.Errorf("resize needs cols and rows greater than 0"))
+			h.SendError(c, apierrors.TerminalMessageInvalid, fmt.Errorf("resize needs cols and rows greater than 0"))
 			return
 		}
 		if err := ms.Resize(msg.Cols, msg.Rows); err != nil {
-			h.SendError(c, http.StatusConflict, fmt.Errorf("failed to resize terminal session %q: %w", sessionId, err))
+			h.SendError(c, apierrors.TerminalResizeFailed, fmt.Errorf("failed to resize terminal session %q: %w", sessionId, err))
 			return
 		}
 	default:
-		h.SendError(c, http.StatusBadRequest, fmt.Errorf("unknown message type %q: expected \"input\" or \"resize\"", msg.Type))
+		h.SendError(c, apierrors.TerminalMessageInvalid, fmt.Errorf("unknown message type %q: expected \"input\" or \"resize\"", msg.Type))
 		return
 	}
 	c.Status(http.StatusNoContent)

@@ -3,10 +3,14 @@ package networking
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"os"
 )
+
+// ErrWireGuardNotRunning is StopWireGuard with no client to stop.
+var ErrWireGuardNotRunning = errors.New("no WireGuard client is running")
 
 const (
 	// EnvNetworkingConfig is the environment variable name for the base64-encoded WireGuard config

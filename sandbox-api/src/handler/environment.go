@@ -5,6 +5,7 @@ import (
 	"os"
 	"sync"
 
+	"github.com/blaxel-ai/sandbox-api/src/lib/apierrors"
 	"github.com/gin-gonic/gin"
 	"github.com/sirupsen/logrus"
 )
@@ -106,10 +107,10 @@ func (h *EnvironmentHandler) HandleReload(c *gin.Context) {
 	response, err := h.Reload()
 	if err != nil {
 		if os.IsNotExist(err) {
-			h.SendError(c, http.StatusNotFound, err)
+			h.SendError(c, apierrors.EnvironmentFileNotFound, err)
 			return
 		}
-		h.SendError(c, http.StatusInternalServerError, err)
+		h.SendError(c, apierrors.EnvironmentReloadFailed, err)
 		return
 	}
 	c.JSON(http.StatusOK, response)

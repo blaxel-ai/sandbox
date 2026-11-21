@@ -1,8 +1,10 @@
 package api
 
 import (
+	stdjson "encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -87,6 +89,27 @@ func TestQuiesceMiddleware(t *testing.T) {
 		router.ServeHTTP(recorder, httptest.NewRequest(c.method, c.path, nil))
 		if recorder.Code != http.StatusOK {
 			t.Errorf("%s %s should stay available during an export, got %d", c.method, c.path, recorder.Code)
+		}
+	}
+
+	{
+		// The refusal carries its code and the platform fields; status stays the
+		// archive status object it has always been.
+		recorder := httptest.NewRecorder()
+		router.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/process", nil))
+		var body map[string]any
+		if err := stdjson.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		message, _ := body["error"].(string)
+		if !strings.HasPrefix(message, "sandbox is ") || body["message"] != message {
+			t.Errorf("error %q, message %v", message, body["message"])
+		}
+		if body["code"] != "SANDBOX_FROZEN" || body["dispatch_state"] != "not_dispatched" || recorder.Header().Get("X-Blaxel-Error-Code") != "SANDBOX_FROZEN" {
+			t.Errorf("body %s, headers %v", recorder.Body.String(), recorder.Header())
+		}
+		if state, ok := body["status"].(map[string]any); !ok || state["state"] == nil {
+			t.Errorf("status %v: want the archive status object", body["status"])
 		}
 	}
 

@@ -9,3 +9,8 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for how the repo is organized and built.
 - You need write access to the repo. Only the labeled commit is deployed: after a new push, add the label again.
 - A PR that changes `.github/workflows/` cannot be deployed this way. Merge it into `develop` by hand.
 - Never push directly to `main`.
+
+## Errors
+
+- Every error a handler answers comes from the registry in `sandbox-api/src/lib/apierrors`: `h.SendError(c, apierrors.X, err)`, or `WriteError` for a fixed message. No hand-built `ErrorResponse` or `gin.H{"error": ...}`; `catalog_test.go` fails on them and on any site `catalog.csv` does not list.
+- A new code gets its entry in `registry.go` (dispatch state and retry fields read from the emitting code), its rows in `catalog.csv`, and `UPDATE_EXPORT=1 go test ./src/lib/apierrors/` to refresh `registry.json`. Never change a shipped code or status.

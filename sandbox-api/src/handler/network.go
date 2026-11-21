@@ -2,6 +2,7 @@ package handler
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -10,6 +11,7 @@ import (
 	"github.com/sirupsen/logrus"
 
 	"github.com/blaxel-ai/sandbox-api/src/handler/network"
+	"github.com/blaxel-ai/sandbox-api/src/lib/apierrors"
 	networking "github.com/blaxel-ai/sandbox-api/src/lib/networking"
 )
 
@@ -75,19 +77,19 @@ func (h *NetworkHandler) UnregisterPortOpenCallback(pid int) {
 func (h *NetworkHandler) HandleGetPorts(c *gin.Context) {
 	pidStr, err := h.GetPathParam(c, "pid")
 	if err != nil {
-		h.SendError(c, http.StatusBadRequest, err)
+		h.SendError(c, apierrors.InvalidParameter, err)
 		return
 	}
 
 	pid, err := strconv.Atoi(pidStr)
 	if err != nil {
-		h.SendError(c, http.StatusBadRequest, fmt.Errorf("invalid PID"))
+		h.SendError(c, apierrors.InvalidParameter, fmt.Errorf("invalid PID"))
 		return
 	}
 
 	ports, err := h.GetPortsForPID(pid)
 	if err != nil {
-		h.SendError(c, http.StatusUnprocessableEntity, err)
+		h.SendError(c, apierrors.PortsReadFailed, err)
 		return
 	}
 
@@ -113,19 +115,19 @@ func (h *NetworkHandler) HandleGetPorts(c *gin.Context) {
 func (h *NetworkHandler) HandleMonitorPorts(c *gin.Context) {
 	pidStr, err := h.GetPathParam(c, "pid")
 	if err != nil {
-		h.SendError(c, http.StatusBadRequest, err)
+		h.SendError(c, apierrors.InvalidParameter, err)
 		return
 	}
 
 	pid, err := strconv.Atoi(pidStr)
 	if err != nil {
-		h.SendError(c, http.StatusBadRequest, fmt.Errorf("invalid PID"))
+		h.SendError(c, apierrors.InvalidParameter, fmt.Errorf("invalid PID"))
 		return
 	}
 
 	var req PortMonitorRequest
 	if err := h.BindJSON(c, &req); err != nil {
-		h.SendError(c, http.StatusBadRequest, err)
+		h.SendError(c, apierrors.InvalidRequestBody, err)
 		return
 	}
 
@@ -167,13 +169,13 @@ func (h *NetworkHandler) HandleMonitorPorts(c *gin.Context) {
 func (h *NetworkHandler) HandleStopMonitoringPorts(c *gin.Context) {
 	pidStr, err := h.GetPathParam(c, "pid")
 	if err != nil {
-		h.SendError(c, http.StatusBadRequest, err)
+		h.SendError(c, apierrors.InvalidParameter, err)
 		return
 	}
 
 	pid, err := strconv.Atoi(pidStr)
 	if err != nil {
-		h.SendError(c, http.StatusBadRequest, fmt.Errorf("invalid PID"))
+		h.SendError(c, apierrors.InvalidParameter, fmt.Errorf("invalid PID"))
 		return
 	}
 
@@ -197,18 +199,18 @@ func (h *NetworkHandler) HandleStopMonitoringPorts(c *gin.Context) {
 func (h *NetworkHandler) HandleUpdateTunnelConfig(c *gin.Context) {
 	var req TunnelConfigRequest
 	if err := h.BindJSON(c, &req); err != nil {
-		h.SendError(c, http.StatusBadRequest, err)
+		h.SendError(c, apierrors.InvalidRequestBody, err)
 		return
 	}
 
 	config, err := networking.ParseBase64Config(req.Config)
 	if err != nil {
-		h.SendError(c, http.StatusUnprocessableEntity, fmt.Errorf("invalid tunnel config: %w", err))
+		h.SendError(c, apierrors.TunnelConfigInvalid, fmt.Errorf("invalid tunnel config: %w", err))
 		return
 	}
 
 	if err := networking.UpdateWireGuardConfig(config); err != nil {
-		h.SendError(c, http.StatusInternalServerError, fmt.Errorf("failed to apply tunnel config: %w", err))
+		h.SendError(c, apierrors.TunnelConfigFailed, fmt.Errorf("failed to apply tunnel config: %w", err))
 		return
 	}
 
@@ -226,9 +228,18 @@ func (h *NetworkHandler) HandleUpdateTunnelConfig(c *gin.Context) {
 // @Router /network/tunnel [delete]
 func (h *NetworkHandler) HandleDisconnectTunnel(c *gin.Context) {
 	if err := networking.StopWireGuard(); err != nil {
-		h.SendError(c, http.StatusBadRequest, err)
+		h.SendError(c, tunnelStopEntry(err), err)
 		return
 	}
 
 	h.SendSuccess(c, "Tunnel disconnected")
+}
+
+// tunnelStopEntry is the registry entry for a tunnel that could not be
+// stopped: none was running, or the stop failed. Both keep their 400.
+func tunnelStopEntry(err error) apierrors.Entry {
+	if errors.Is(err, networking.ErrWireGuardNotRunning) {
+		return apierrors.TunnelNotRunning
+	}
+	return apierrors.TunnelStopFailed
 }

@@ -2710,13 +2710,77 @@ const docTemplate = `{
                 "error"
             ],
             "properties": {
-                "code": {
+                "action": {
+                    "description": "The one next step that works",
                     "type": "string",
-                    "example": "FILE_ALREADY_EXISTS"
+                    "example": "Use another name, or stop the running process (DELETE /process/{name}) or wait for it (GET /process/{name}/wait) before reusing its name."
+                },
+                "code": {
+                    "description": "Stable error code: branch on it, not on the message",
+                    "type": "string",
+                    "example": "PROCESS_NAME_IN_USE"
+                },
+                "dispatch_state": {
+                    "description": "Whether the operation may have started: not_dispatched (nothing changed) or dispatched_unknown (it may have, for example the command ran)",
+                    "type": "string",
+                    "enum": [
+                        "not_dispatched",
+                        "dispatched_unknown"
+                    ],
+                    "example": "not_dispatched"
+                },
+                "do_not": {
+                    "description": "The tempting wrong move, when there is one",
+                    "type": "string",
+                    "example": "Do not resend unchanged while the process runs: the name stays taken."
+                },
+                "docs_url": {
+                    "description": "The code's entry in the error codes reference",
+                    "type": "string",
+                    "example": "https://docs.blaxel.ai/troubleshooting/error-codes#process-name-in-use"
                 },
                 "error": {
+                    "description": "The error message, for clients that read only this field",
                     "type": "string",
-                    "example": "Error message"
+                    "example": "process with name 'web' already exists and is running"
+                },
+                "error_code": {
+                    "description": "Same as code, under the name every platform error has",
+                    "type": "string",
+                    "example": "PROCESS_NAME_IN_USE"
+                },
+                "message": {
+                    "description": "Same as error",
+                    "type": "string",
+                    "example": "process with name 'web' already exists and is running"
+                },
+                "origin": {
+                    "description": "Always platform",
+                    "type": "string",
+                    "example": "platform"
+                },
+                "request_id": {
+                    "description": "The request's X-Request-Id, or the ID the sandbox generated for it",
+                    "type": "string",
+                    "example": "4bf92f35-77b3-4da6-a3ce-929d0e0e4736"
+                },
+                "retryable": {
+                    "description": "The same request may succeed later without changes",
+                    "type": "boolean",
+                    "example": false
+                },
+                "safe_to_retry_request": {
+                    "description": "Resending the request cannot do its work twice: retryable and not_dispatched",
+                    "type": "boolean",
+                    "example": false
+                },
+                "status": {
+                    "description": "The HTTP status of the response, an integer (on a stream error event, the status the same error gets as a response). The archive freeze answer (code SANDBOX_FROZEN) keeps its archive status object here instead, so the schema leaves the type open."
+                },
+                "timestamp": {
+                    "description": "When the error was answered, RFC 3339 in UTC",
+                    "type": "string",
+                    "example": "2026-11-18T12:00:00.123456Z"
                 }
             }
         },

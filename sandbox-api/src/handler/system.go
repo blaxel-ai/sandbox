@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"errors"
 	"net/http"
 	"os"
 	"regexp"
@@ -11,6 +12,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/blaxel-ai/sandbox-api/src/handler/process"
+	"github.com/blaxel-ai/sandbox-api/src/lib/apierrors"
 	"github.com/blaxel-ai/sandbox-api/src/lib/blaxel"
 	"github.com/sirupsen/logrus"
 )
@@ -152,13 +154,13 @@ func (h *SystemHandler) HandleUpgrade(c *gin.Context) {
 	// Reject arbitrary binary sources and paths before saving state or starting an upgrade.
 	version := resolveUpgradeVersion(req.Version)
 	if req.BaseURL != "" || !validUpgradeVersion(version) {
-		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "invalid upgrade version or custom baseUrl"})
+		h.SendError(c, apierrors.UpgradeVersionInvalid, errors.New("invalid upgrade version or custom baseUrl"))
 		return
 	}
 
 	// Save state before responding
 	if err := h.processManager.SaveState(); err != nil {
-		h.SendError(c, http.StatusInternalServerError, err)
+		h.SendError(c, apierrors.UpgradeStateSaveFailed, err)
 		return
 	}
 
@@ -192,6 +194,21 @@ var (
 // the host pauses it.
 var standbyDelay = 100 * time.Millisecond
 
+// standbyErrorEntry is the registry entry for a standby refused by its check.
+// Every one is answered before the standby is requested.
+func standbyErrorEntry(err error) apierrors.Entry {
+	switch err {
+	case blaxel.ErrStandbyUnsupported:
+		return apierrors.StandbyUnsupported
+	case blaxel.ErrHeldAwake:
+		return apierrors.SandboxHeldAwake
+	case blaxel.ErrCounterUnknown:
+		return apierrors.StandbyStateUnknown
+	default:
+		return apierrors.StandbyFailed
+	}
+}
+
 // HandleResume handles POST requests to /resume
 // @Summary Resume the sandbox
 // @Description Wakes a sandbox in standby: like any request, it resumes the sandbox before it is answered.
@@ -223,16 +240,7 @@ func (h *SystemHandler) HandleResume(c *gin.Context) {
 func (h *SystemHandler) HandleStandby(c *gin.Context) {
 	force := c.Query("force") == "true"
 	if _, err := checkStandby(force); err != nil {
-		status := http.StatusInternalServerError
-		switch err {
-		case blaxel.ErrStandbyUnsupported:
-			status = http.StatusNotImplemented
-		case blaxel.ErrHeldAwake:
-			status = http.StatusConflict
-		case blaxel.ErrCounterUnknown:
-			status = http.StatusServiceUnavailable
-		}
-		h.SendError(c, status, err)
+		h.SendError(c, standbyErrorEntry(err), err)
 		return
 	}
 

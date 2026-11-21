@@ -8,6 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/blaxel-ai/sandbox-api/src/handler/archive"
+	"github.com/blaxel-ai/sandbox-api/src/lib/apierrors"
 )
 
 // ArchiveHandler exports the sandbox's filesystem changes so the sandbox can be
@@ -42,7 +43,7 @@ func NewArchiveHandler() *ArchiveHandler {
 func (h *ArchiveHandler) HandleExport(c *gin.Context) {
 	var options archive.ExportOptions
 	if err := h.BindJSON(c, &options); err != nil {
-		h.SendError(c, http.StatusBadRequest, err)
+		h.SendError(c, apierrors.InvalidRequestBody, err)
 		return
 	}
 
@@ -50,7 +51,7 @@ func (h *ArchiveHandler) HandleExport(c *gin.Context) {
 		// An error, not the bare status: a client reads the reason of a failure
 		// from the error field, and /archive/status is where the state itself is
 		// asked for.
-		h.SendError(c, http.StatusConflict, archive.ErrAlreadyQuiesced)
+		h.SendError(c, apierrors.SandboxAlreadyFrozen, archive.ErrAlreadyQuiesced)
 		return
 	}
 
@@ -67,20 +68,20 @@ func (h *ArchiveHandler) HandleExport(c *gin.Context) {
 	if errors.As(err, &invalid) {
 		// A missing url, or an image the archive cannot be compared against: the
 		// request is wrong, so the sandbox did not fail.
-		h.SendError(c, http.StatusBadRequest, err)
+		h.SendError(c, apierrors.ArchiveOptionsInvalid, err)
 		return
 	}
-	if errors.Is(err, archive.ErrExportInProgress) || errors.Is(err, archive.ErrAlreadyQuiesced) {
+	if entry, ok := archiveConflictEntry(err); ok {
 		// ErrExportInProgress: another export, or a dry run, is reading the
 		// filesystem through the mountpoint this one would replace.
 		// ErrAlreadyQuiesced: the check above is not the authority - two exports
 		// arriving together both pass it, and only the export itself claims the
 		// sandbox atomically. The loser is a conflict, not a server error.
-		h.SendError(c, http.StatusConflict, err)
+		h.SendError(c, entry, err)
 		return
 	}
 	if err != nil {
-		h.SendError(c, http.StatusInternalServerError, err)
+		h.SendError(c, apierrors.ArchiveExportFailed, err)
 		return
 	}
 	h.SendJSON(c, http.StatusOK, result)
@@ -95,18 +96,32 @@ func (h *ArchiveHandler) startExport(c *gin.Context, options archive.ExportOptio
 	progress, err := archive.StartExport(context.WithoutCancel(c.Request.Context()), options)
 	var invalid *archive.InvalidOptionsError
 	if errors.As(err, &invalid) {
-		h.SendError(c, http.StatusBadRequest, err)
+		h.SendError(c, apierrors.ArchiveOptionsInvalid, err)
 		return
 	}
-	if errors.Is(err, archive.ErrExportInProgress) || errors.Is(err, archive.ErrAlreadyQuiesced) {
-		h.SendError(c, http.StatusConflict, err)
+	if entry, ok := archiveConflictEntry(err); ok {
+		h.SendError(c, entry, err)
 		return
 	}
 	if err != nil {
-		h.SendError(c, http.StatusInternalServerError, err)
+		h.SendError(c, apierrors.ArchiveExportFailed, err)
 		return
 	}
 	h.SendJSON(c, http.StatusAccepted, progress)
+}
+
+// archiveConflictEntry is the registry entry for an export refused because
+// the sandbox is already frozen or another export is running, and ok false for
+// any other error. Both are 409s answered before anything is done.
+func archiveConflictEntry(err error) (apierrors.Entry, bool) {
+	switch {
+	case errors.Is(err, archive.ErrAlreadyQuiesced):
+		return apierrors.SandboxAlreadyFrozen, true
+	case errors.Is(err, archive.ErrExportInProgress):
+		return apierrors.ArchiveInProgress, true
+	default:
+		return apierrors.Entry{}, false
+	}
 }
 
 // HandleStatus handles GET requests to /archive/status
@@ -138,13 +153,13 @@ func (h *ArchiveHandler) HandleResume(c *gin.Context) {
 		// ErrRestoreInProgress: the archive is being written over the filesystem,
 		// which the freeze is what keeps anything else out of. Neither is a
 		// failure of the sandbox: it is busy, and the caller may ask again.
-		h.SendError(c, http.StatusConflict, err)
+		h.SendError(c, apierrors.ArchiveInProgress, err)
 		return
 	}
 	if err != nil {
 		// The freeze was lifted on the API but the filesystem stayed read-only,
 		// so the sandbox is not usable and must not be reported as resumed.
-		h.SendError(c, http.StatusInternalServerError, err)
+		h.SendError(c, apierrors.ArchiveResumeFailed, err)
 		return
 	}
 	h.SendJSON(c, http.StatusOK, status)

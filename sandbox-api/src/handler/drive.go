@@ -8,6 +8,7 @@ import (
 	"syscall"
 
 	"github.com/blaxel-ai/sandbox-api/src/handler/drive"
+	"github.com/blaxel-ai/sandbox-api/src/lib/apierrors"
 	"github.com/gin-gonic/gin"
 	"github.com/sirupsen/logrus"
 )
@@ -66,31 +67,31 @@ type DriveListResponse struct {
 	Mounts []DriveMountInfo `json:"mounts"`
 } // @name DriveListResponse
 
-// mountFailureStatus maps a mount failure to its HTTP status. Only causes the
+// mountFailureEntry is the registry entry for a mount failure. Only causes the
 // sandbox itself is responsible for are reported as server faults: a mount the
 // filer refuses, or a target already taken, are the caller's to fix.
-func mountFailureStatus(err error) int {
+func mountFailureEntry(err error) apierrors.Entry {
 	switch {
 	case errors.Is(err, drive.ErrMountPathSymlink):
-		return http.StatusBadRequest
+		return apierrors.DriveMountPathSymlink
 	case errors.Is(err, drive.ErrMountPathBusy):
-		return http.StatusConflict
+		return apierrors.DriveMountPathBusy
 	case errors.Is(err, drive.ErrDriveAccessDenied):
-		return http.StatusForbidden
+		return apierrors.DriveAccessDenied
 	case errors.Is(err, drive.ErrInsufficientStorage), errors.Is(err, drive.ErrInsufficientMemory), errors.Is(err, syscall.ENOSPC):
-		return http.StatusInsufficientStorage
+		return apierrors.DriveInsufficientStorage
 	default:
-		return http.StatusInternalServerError
+		return apierrors.DriveMountFailed
 	}
 }
 
-// unmountFailureStatus maps an unmount failure to its HTTP status: a path with
-// nothing mounted is the caller's mistake, anything else is a server fault.
-func unmountFailureStatus(err error) int {
+// unmountFailureEntry is the registry entry for an unmount failure: a path
+// with nothing mounted is the caller's mistake, anything else is a server fault.
+func unmountFailureEntry(err error) apierrors.Entry {
 	if errors.Is(err, drive.ErrNotMounted) {
-		return http.StatusNotFound
+		return apierrors.DriveNotMounted
 	}
-	return http.StatusInternalServerError
+	return apierrors.DriveUnmountFailed
 }
 
 // AttachDrive godoc
@@ -112,9 +113,7 @@ func (h *DriveHandler) AttachDrive(c *gin.Context) {
 	var req DriveMountRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		logrus.WithError(err).Error("Failed to bind JSON for drive attachment")
-		c.JSON(http.StatusBadRequest, ErrorResponse{
-			Error: fmt.Sprintf("Invalid request body: %v", err),
-		})
+		WriteError(c, apierrors.InvalidRequestBody, fmt.Sprintf("Invalid request body: %v", err))
 		return
 	}
 
@@ -127,29 +126,21 @@ func (h *DriveHandler) AttachDrive(c *gin.Context) {
 
 	// Validate drive name and mount path (security: path traversal and injection)
 	if err := drive.ValidateDriveName(req.DriveName); err != nil {
-		c.JSON(http.StatusBadRequest, ErrorResponse{
-			Error: err.Error(),
-		})
+		WriteError(c, apierrors.DriveRequestInvalid, err.Error())
 		return
 	}
 	if err := drive.ValidateMountPath(req.MountPath); err != nil {
-		c.JSON(http.StatusBadRequest, ErrorResponse{
-			Error: err.Error(),
-		})
+		WriteError(c, apierrors.DriveRequestInvalid, err.Error())
 		return
 	}
 	if err := drive.ValidateMountTarget(req.MountPath); err != nil {
-		c.JSON(http.StatusBadRequest, ErrorResponse{
-			Error: err.Error(),
-		})
+		WriteError(c, apierrors.DriveRequestInvalid, err.Error())
 		return
 	}
 
 	// Validate drive path starts with /
 	if !strings.HasPrefix(req.DrivePath, "/") {
-		c.JSON(http.StatusBadRequest, ErrorResponse{
-			Error: "Invalid drive path: Drive path must start with /",
-		})
+		WriteError(c, apierrors.DriveRequestInvalid, "Invalid drive path: Drive path must start with /")
 		return
 	}
 
@@ -169,9 +160,7 @@ func (h *DriveHandler) AttachDrive(c *gin.Context) {
 			"mount_path": req.MountPath,
 			"drive_path": req.DrivePath,
 		}).Error("Failed to mount drive")
-		c.JSON(mountFailureStatus(err), ErrorResponse{
-			Error: fmt.Sprintf("Failed to mount drive: %v", err),
-		})
+		WriteError(c, mountFailureEntry(err), fmt.Sprintf("Failed to mount drive: %v", err))
 		return
 	}
 
@@ -211,9 +200,7 @@ func (h *DriveHandler) DetachDrive(c *gin.Context) {
 	// Get mount path from context (set by middleware)
 	mountPathRaw, exists := c.Get("mountPath")
 	if !exists {
-		c.JSON(http.StatusBadRequest, ErrorResponse{
-			Error: "Mount path not provided",
-		})
+		WriteError(c, apierrors.DriveRequestInvalid, "Mount path not provided")
 		return
 	}
 
@@ -224,16 +211,13 @@ func (h *DriveHandler) DetachDrive(c *gin.Context) {
 	// Unmount the drive
 	err := drive.UnmountDrive(mountPath)
 	if err != nil {
-		status := unmountFailureStatus(err)
 		entry := logrus.WithError(err).WithField("mount_path", mountPath)
-		if status == http.StatusNotFound {
+		if errors.Is(err, drive.ErrNotMounted) {
 			entry.Warn("No drive mounted at path")
 		} else {
 			entry.Error("Failed to unmount drive")
 		}
-		c.JSON(status, ErrorResponse{
-			Error: fmt.Sprintf("Failed to unmount drive: %v", err),
-		})
+		WriteError(c, unmountFailureEntry(err), fmt.Sprintf("Failed to unmount drive: %v", err))
 		return
 	}
 
@@ -261,9 +245,7 @@ func (h *DriveHandler) ListMounts(c *gin.Context) {
 	mounts, err := drive.ListMounts()
 	if err != nil {
 		logrus.WithError(err).Error("Failed to list mounts")
-		c.JSON(http.StatusInternalServerError, ErrorResponse{
-			Error: fmt.Sprintf("Failed to list mounts: %v", err),
-		})
+		WriteError(c, apierrors.DriveListFailed, fmt.Sprintf("Failed to list mounts: %v", err))
 		return
 	}
 

@@ -7,11 +7,12 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
+
+	"github.com/blaxel-ai/sandbox-api/src/lib/apierrors"
 )
 
 // serveExec sends one POST /process to the handler, streamed when accept asks
@@ -38,15 +39,6 @@ func execBody(t *testing.T, workingDir string) string {
 		t.Fatal(err)
 	}
 	return string(b)
-}
-
-func sortedKeys(m map[string]any) string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return strings.Join(keys, ",")
 }
 
 func TestHandleExecuteCommandWorkingDirUnusable(t *testing.T) {
@@ -79,16 +71,14 @@ func TestHandleExecuteCommandWorkingDirUnusable(t *testing.T) {
 			if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
 				t.Fatalf("decode %q: %v", w.Body.String(), err)
 			}
-			if keys := sortedKeys(body); keys != "code,error" {
-				t.Errorf("body keys %s, want code,error: %s", keys, w.Body.String())
-			}
-			if body["code"] != codeProcessWorkingDirUnusable {
-				t.Errorf("code = %v", body["code"])
-			}
 			msg, _ := body["error"].(string)
+			checkErrorFields(t, body, apierrors.ProcessWorkingDirUnusable, http.StatusUnprocessableEntity, msg)
 			checkWorkingDirMessage(t, msg, tc.dir, tc.next)
-			if got := w.Header().Get("X-Blaxel-Error-Code"); got != codeProcessWorkingDirUnusable {
+			if got := w.Header().Get("X-Blaxel-Error-Code"); got != apierrors.ProcessWorkingDirUnusable.Code {
 				t.Errorf("X-Blaxel-Error-Code = %q", got)
+			}
+			if got := w.Header().Get("X-Blaxel-Dispatch-State"); got != "not_dispatched" {
+				t.Errorf("X-Blaxel-Dispatch-State = %q", got)
 			}
 		})
 
@@ -116,13 +106,12 @@ func TestHandleExecuteCommandWorkingDirUnusable(t *testing.T) {
 			if err := json.Unmarshal([]byte(lines[0]), &event); err != nil {
 				t.Fatal(err)
 			}
-			if keys := sortedKeys(event); keys != "code,data,type" {
-				t.Errorf("event keys %s, want code,data,type: %s", keys, lines[0])
-			}
-			if event["type"] != "error" || event["code"] != codeProcessWorkingDirUnusable {
+			if event["type"] != "error" {
 				t.Errorf("event %s", lines[0])
 			}
 			data, _ := event["data"].(string)
+			// The event's status is the one the same error gets as a response.
+			checkErrorFields(t, event, apierrors.ProcessWorkingDirUnusable, http.StatusUnprocessableEntity, data)
 			checkWorkingDirMessage(t, data, tc.dir, tc.next)
 		})
 	}
@@ -153,7 +142,7 @@ func checkWorkingDirMessage(t *testing.T, msg, dir, next string) {
 }
 
 func TestWorkingDirErrorIgnoresOtherErrors(t *testing.T) {
-	if code, _, ok := workingDirError(errors.New("failed to start process: working directory")); ok || code != "" {
-		t.Fatalf("a plain error got code %q", code)
+	if err := workingDirError(errors.New("failed to start process: working directory")); err != nil {
+		t.Fatalf("a plain error was taken for a working directory error: %v", err)
 	}
 }

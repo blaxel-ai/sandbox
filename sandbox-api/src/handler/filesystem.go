@@ -23,6 +23,7 @@ import (
 
 	"github.com/blaxel-ai/sandbox-api/src/handler/filesystem"
 	"github.com/blaxel-ai/sandbox-api/src/lib"
+	"github.com/blaxel-ai/sandbox-api/src/lib/apierrors"
 	"github.com/blaxel-ai/sandbox-api/src/lib/identity"
 )
 
@@ -272,7 +273,7 @@ func (h *FileSystemHandler) HandleGetFile(c *gin.Context) {
 
 	path, err := lib.FormatPath(path)
 	if err != nil {
-		h.SendError(c, http.StatusBadRequest, err)
+		h.SendError(c, apierrors.InvalidPath, err)
 		return
 	}
 
@@ -280,10 +281,10 @@ func (h *FileSystemHandler) HandleGetFile(c *gin.Context) {
 	info, err := h.fs.Infos(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			h.SendError(c, http.StatusNotFound, err)
+			h.SendError(c, apierrors.FileNotFound, err)
 			return
 		}
-		h.SendError(c, http.StatusInternalServerError, err)
+		h.SendError(c, apierrors.FileInfoFailed, err)
 		return
 	}
 
@@ -297,7 +298,7 @@ func (h *FileSystemHandler) HandleGetFile(c *gin.Context) {
 		return
 	}
 
-	h.SendError(c, http.StatusNotFound, fmt.Errorf("file or directory not found"))
+	h.SendError(c, apierrors.FileNotFound, fmt.Errorf("file or directory not found"))
 }
 
 // HandleStatFile handles HEAD requests to /filesystem/:path
@@ -368,19 +369,19 @@ func (h *FileSystemHandler) handleReadFile(c *gin.Context, path string) {
 		// Stream binary content directly from disk (no memory buffering)
 		absPath, err := h.fs.GetAbsolutePath(path)
 		if err != nil {
-			h.SendError(c, http.StatusBadRequest, err)
+			h.SendError(c, apierrors.InvalidPath, err)
 			return
 		}
 
 		// Get file info for headers
 		info, err := os.Stat(absPath)
 		if err != nil {
-			h.SendError(c, http.StatusUnprocessableEntity, fmt.Errorf("error reading file: %w", err))
+			h.SendError(c, apierrors.FilesystemReadFailed, fmt.Errorf("error reading file: %w", err))
 			return
 		}
 
 		if info.IsDir() {
-			h.SendError(c, http.StatusBadRequest, fmt.Errorf("path is a directory, not a file"))
+			h.SendError(c, apierrors.PathIsDirectory, fmt.Errorf("path is a directory, not a file"))
 			return
 		}
 
@@ -430,7 +431,7 @@ func (h *FileSystemHandler) handleReadFile(c *gin.Context, path string) {
 			return openErr
 		})
 		if err != nil {
-			h.SendError(c, http.StatusUnprocessableEntity, fmt.Errorf("error opening file: %w", err))
+			h.SendError(c, apierrors.FilesystemReadFailed, fmt.Errorf("error opening file: %w", err))
 			return
 		}
 		defer file.Close()
@@ -448,7 +449,7 @@ func (h *FileSystemHandler) handleReadFile(c *gin.Context, path string) {
 	// JSON mode: read entire file into memory for serialization
 	file, err := h.ReadFile(path)
 	if err != nil {
-		h.SendError(c, http.StatusUnprocessableEntity, fmt.Errorf("error reading file: %w", err))
+		h.SendError(c, apierrors.FilesystemReadFailed, fmt.Errorf("error reading file: %w", err))
 		return
 	}
 
@@ -460,7 +461,7 @@ func (h *FileSystemHandler) handleReadFile(c *gin.Context, path string) {
 func (h *FileSystemHandler) handleListDirectory(c *gin.Context, path string) {
 	dir, err := h.ListDirectory(path)
 	if err != nil {
-		h.SendError(c, http.StatusUnprocessableEntity, fmt.Errorf("error listing directory: %w", err))
+		h.SendError(c, apierrors.FilesystemReadFailed, fmt.Errorf("error listing directory: %w", err))
 		return
 	}
 
@@ -498,7 +499,7 @@ func (h *FileSystemHandler) HandleCreateOrUpdateFileJSON(c *gin.Context) {
 
 	path, err := lib.FormatPath(path)
 	if err != nil {
-		h.SendError(c, http.StatusBadRequest, err)
+		h.SendError(c, apierrors.InvalidPath, err)
 		return
 	}
 
@@ -509,7 +510,7 @@ func (h *FileSystemHandler) HandleCreateOrUpdateFileJSON(c *gin.Context) {
 	}
 
 	if err := h.BindJSON(c, &request); err != nil {
-		h.SendError(c, http.StatusBadRequest, err)
+		h.SendError(c, apierrors.InvalidRequestBody, err)
 		return
 	}
 
@@ -518,7 +519,7 @@ func (h *FileSystemHandler) HandleCreateOrUpdateFileJSON(c *gin.Context) {
 	if request.Permissions != "" {
 		permInt, err := strconv.ParseUint(request.Permissions, 8, 32)
 		if err != nil {
-			h.SendError(c, http.StatusBadRequest, fmt.Errorf("invalid permissions format '%s': %w", request.Permissions, err))
+			h.SendError(c, apierrors.InvalidPermissions, fmt.Errorf("invalid permissions format '%s': %w", request.Permissions, err))
 			return
 		}
 		permissions = os.FileMode(permInt)
@@ -538,7 +539,7 @@ func (h *FileSystemHandler) HandleCreateOrUpdateFileJSON(c *gin.Context) {
 			permissions = 0755
 		}
 		if err := h.CreateDirectory(path, permissions); err != nil {
-			h.SendError(c, http.StatusUnprocessableEntity, fmt.Errorf("error creating directory: %w", err))
+			h.SendError(c, apierrors.FilesystemWriteFailed, fmt.Errorf("error creating directory: %w", err))
 			return
 		}
 		h.SendSuccessWithPath(c, path, "Directory created successfully")
@@ -547,7 +548,7 @@ func (h *FileSystemHandler) HandleCreateOrUpdateFileJSON(c *gin.Context) {
 
 	// Handle file creation/update
 	if err := h.WriteFile(path, []byte(request.Content), permissions); err != nil {
-		h.SendError(c, http.StatusUnprocessableEntity, fmt.Errorf("error writing file: %w", err))
+		h.SendError(c, apierrors.FilesystemWriteFailed, fmt.Errorf("error writing file: %w", err))
 		return
 	}
 
@@ -560,14 +561,14 @@ func (h *FileSystemHandler) HandleCreateOrUpdateBinary(c *gin.Context) {
 
 	path, err := lib.FormatPath(path)
 	if err != nil {
-		h.SendError(c, http.StatusBadRequest, err)
+		h.SendError(c, apierrors.InvalidPath, err)
 		return
 	}
 
 	// Use streaming multipart reader to avoid extra buffering/copies
 	mr, err := c.Request.MultipartReader()
 	if err != nil {
-		h.SendError(c, http.StatusBadRequest, fmt.Errorf("error reading multipart data: %w", err))
+		h.SendError(c, apierrors.InvalidMultipartBody, fmt.Errorf("error reading multipart data: %w", err))
 		return
 	}
 
@@ -581,7 +582,7 @@ func (h *FileSystemHandler) HandleCreateOrUpdateBinary(c *gin.Context) {
 			break
 		}
 		if err != nil {
-			h.SendError(c, http.StatusBadRequest, fmt.Errorf("error reading multipart part: %w", err))
+			h.SendError(c, apierrors.InvalidMultipartBody, fmt.Errorf("error reading multipart part: %w", err))
 			return
 		}
 
@@ -594,7 +595,7 @@ func (h *FileSystemHandler) HandleCreateOrUpdateBinary(c *gin.Context) {
 				permInt, perr := strconv.ParseUint(strings.TrimSpace(string(data)), 8, 32)
 				if perr != nil {
 					_ = part.Close()
-					h.SendError(c, http.StatusBadRequest, fmt.Errorf("invalid permissions format '%s': %w", strings.TrimSpace(string(data)), perr))
+					h.SendError(c, apierrors.InvalidPermissions, fmt.Errorf("invalid permissions format '%s': %w", strings.TrimSpace(string(data)), perr))
 					return
 				}
 				permissions = os.FileMode(permInt)
@@ -608,7 +609,7 @@ func (h *FileSystemHandler) HandleCreateOrUpdateBinary(c *gin.Context) {
 			upload, err = h.fs.WriteUpload(path, part)
 			if err != nil {
 				_ = part.Close()
-				h.SendError(c, http.StatusUnprocessableEntity, fmt.Errorf("error writing binary file: %w", err))
+				h.SendError(c, apierrors.FilesystemWriteFailed, fmt.Errorf("error writing binary file: %w", err))
 				return
 			}
 			defer upload.Close()
@@ -623,7 +624,7 @@ func (h *FileSystemHandler) HandleCreateOrUpdateBinary(c *gin.Context) {
 	}
 
 	if !wroteFile {
-		h.SendError(c, http.StatusBadRequest, fmt.Errorf("missing 'file' field in multipart form"))
+		h.SendError(c, apierrors.MultipartFileMissing, fmt.Errorf("missing 'file' field in multipart form"))
 		return
 	}
 
@@ -631,7 +632,7 @@ func (h *FileSystemHandler) HandleCreateOrUpdateBinary(c *gin.Context) {
 	// files retain their mode, and the descriptor prevents path replacement races.
 	if explicitPermissions {
 		if err := upload.SetPermissions(permissions); err != nil {
-			h.SendError(c, http.StatusUnprocessableEntity, fmt.Errorf("error setting permissions: %w", err))
+			h.SendError(c, apierrors.FilesystemWriteFailed, fmt.Errorf("error setting permissions: %w", err))
 			return
 		}
 	}
@@ -656,7 +657,7 @@ func (h *FileSystemHandler) HandleDeleteFile(c *gin.Context) {
 
 	path, err := lib.FormatPath(path)
 	if err != nil {
-		h.SendError(c, http.StatusBadRequest, err)
+		h.SendError(c, apierrors.InvalidPath, err)
 		return
 	}
 
@@ -665,7 +666,7 @@ func (h *FileSystemHandler) HandleDeleteFile(c *gin.Context) {
 	// Check if it's a directory
 	isDir, err := h.DirectoryExists(path)
 	if err != nil {
-		h.SendError(c, http.StatusUnprocessableEntity, err)
+		h.SendError(c, apierrors.FilesystemReadFailed, err)
 		return
 	}
 
@@ -673,7 +674,7 @@ func (h *FileSystemHandler) HandleDeleteFile(c *gin.Context) {
 		// Delete directory
 		err := h.DeleteDirectory(path, recursive == "true")
 		if err != nil {
-			h.SendError(c, http.StatusUnprocessableEntity, fmt.Errorf("error deleting directory: %w", err))
+			h.SendError(c, apierrors.FilesystemDeleteFailed, fmt.Errorf("error deleting directory: %w", err))
 			return
 		}
 		h.SendSuccessWithPath(c, path, "Directory deleted successfully")
@@ -683,7 +684,7 @@ func (h *FileSystemHandler) HandleDeleteFile(c *gin.Context) {
 	// Check if it's a file
 	isFile, err := h.FileExists(path)
 	if err != nil {
-		h.SendError(c, http.StatusUnprocessableEntity, err)
+		h.SendError(c, apierrors.FilesystemReadFailed, err)
 		return
 	}
 
@@ -691,14 +692,14 @@ func (h *FileSystemHandler) HandleDeleteFile(c *gin.Context) {
 		// Delete file
 		err := h.DeleteFile(path)
 		if err != nil {
-			h.SendError(c, http.StatusUnprocessableEntity, fmt.Errorf("error deleting file: %w", err))
+			h.SendError(c, apierrors.FilesystemDeleteFailed, fmt.Errorf("error deleting file: %w", err))
 			return
 		}
 		h.SendSuccessWithPath(c, path, "File deleted successfully")
 		return
 	}
 
-	h.SendError(c, http.StatusNotFound, fmt.Errorf("file or directory not found"))
+	h.SendError(c, apierrors.FileNotFound, fmt.Errorf("file or directory not found"))
 }
 
 // HandleGetTree handles GET requests for directory trees
@@ -734,31 +735,31 @@ func (h *FileSystemHandler) HandleGetTree(c *gin.Context) {
 	// Convert to string
 	rootPathStr, ok := rootPath.(string)
 	if !ok {
-		h.SendError(c, http.StatusUnprocessableEntity, fmt.Errorf("invalid path parameter"))
+		h.SendError(c, apierrors.InvalidPathParameter, fmt.Errorf("invalid path parameter"))
 		return
 	}
 
 	rootPathStr, err := lib.FormatPath(rootPathStr)
 	if err != nil {
-		h.SendError(c, http.StatusBadRequest, err)
+		h.SendError(c, apierrors.InvalidPath, err)
 		return
 	}
 
 	// Check if path exists and is a directory
 	isDir, err := h.DirectoryExists(rootPathStr)
 	if err != nil {
-		h.SendError(c, http.StatusUnprocessableEntity, err)
+		h.SendError(c, apierrors.FilesystemReadFailed, err)
 		return
 	}
 
 	if !isDir {
-		h.SendError(c, http.StatusBadRequest, fmt.Errorf("path is not a directory"))
+		h.SendError(c, apierrors.PathNotDirectory, fmt.Errorf("path is not a directory"))
 		return
 	}
 
 	options, err := parseTreeOptions(c)
 	if err != nil {
-		h.SendError(c, http.StatusBadRequest, err)
+		h.SendError(c, apierrors.InvalidParameter, err)
 		return
 	}
 
@@ -770,7 +771,7 @@ func (h *FileSystemHandler) HandleGetTree(c *gin.Context) {
 		dir, err = h.fs.ReadTree(rootPathStr, *options)
 	}
 	if err != nil {
-		h.SendError(c, http.StatusUnprocessableEntity, fmt.Errorf("error getting file system tree: %w", err))
+		h.SendError(c, apierrors.FilesystemReadFailed, fmt.Errorf("error getting file system tree: %w", err))
 		return
 	}
 
@@ -887,12 +888,12 @@ func (h *FileSystemHandler) HandleCreateOrUpdateTree(c *gin.Context) {
 	// Convert to string
 	rootPathStr, ok := rootPath.(string)
 	if !ok {
-		h.SendError(c, http.StatusUnprocessableEntity, fmt.Errorf("invalid path parameter"))
+		h.SendError(c, apierrors.InvalidPathParameter, fmt.Errorf("invalid path parameter"))
 		return
 	}
 	rootPathStr, err := lib.FormatPath(rootPathStr)
 	if err != nil {
-		h.SendError(c, http.StatusBadRequest, err)
+		h.SendError(c, apierrors.InvalidPath, err)
 		return
 	}
 
@@ -901,20 +902,20 @@ func (h *FileSystemHandler) HandleCreateOrUpdateTree(c *gin.Context) {
 	}
 
 	if err := h.BindJSON(c, &request); err != nil {
-		h.SendError(c, http.StatusBadRequest, err)
+		h.SendError(c, apierrors.InvalidRequestBody, err)
 		return
 	}
 
 	// Create the root directory if it doesn't exist
 	isDir, err := h.DirectoryExists(rootPathStr)
 	if err != nil {
-		h.SendError(c, http.StatusUnprocessableEntity, err)
+		h.SendError(c, apierrors.FilesystemReadFailed, err)
 		return
 	}
 
 	if !isDir {
 		if err := h.CreateDirectory(rootPathStr, 0755); err != nil {
-			h.SendError(c, http.StatusUnprocessableEntity, fmt.Errorf("error creating root directory: %w", err))
+			h.SendError(c, apierrors.FilesystemWriteFailed, fmt.Errorf("error creating root directory: %w", err))
 			return
 		}
 	}
@@ -928,20 +929,20 @@ func (h *FileSystemHandler) HandleCreateOrUpdateTree(c *gin.Context) {
 		parentDir := filepath.Dir(absPath)
 		isDir, err := h.DirectoryExists(parentDir)
 		if err != nil {
-			h.SendError(c, http.StatusUnprocessableEntity, err)
+			h.SendError(c, apierrors.FilesystemWriteFailed, err)
 			return
 		}
 
 		if !isDir {
 			if err := h.CreateDirectory(parentDir, 0755); err != nil {
-				h.SendError(c, http.StatusUnprocessableEntity, fmt.Errorf("error creating parent directory: %w", err))
+				h.SendError(c, apierrors.FilesystemWriteFailed, fmt.Errorf("error creating parent directory: %w", err))
 				return
 			}
 		}
 
 		// Write the file
 		if err := h.WriteFile(absPath, []byte(content), 0644); err != nil {
-			h.SendError(c, http.StatusUnprocessableEntity, fmt.Errorf("error writing file: %w", err))
+			h.SendError(c, apierrors.FilesystemWriteFailed, fmt.Errorf("error writing file: %w", err))
 			return
 		}
 	}
@@ -949,7 +950,7 @@ func (h *FileSystemHandler) HandleCreateOrUpdateTree(c *gin.Context) {
 	// Get updated tree
 	dir, err := h.ListDirectory(rootPathStr)
 	if err != nil {
-		h.SendError(c, http.StatusUnprocessableEntity, fmt.Errorf("error getting updated file system tree: %w", err))
+		h.SendError(c, apierrors.FilesystemWriteFailed, fmt.Errorf("error getting updated file system tree: %w", err))
 		return
 	}
 
@@ -979,7 +980,7 @@ func (h *FileSystemHandler) HandleDeleteTree(c *gin.Context) {
 	// Convert to string
 	rootPathStr, ok := rootPath.(string)
 	if !ok {
-		h.SendError(c, http.StatusUnprocessableEntity, fmt.Errorf("invalid path parameter"))
+		h.SendError(c, apierrors.InvalidPathParameter, fmt.Errorf("invalid path parameter"))
 		return
 	}
 
@@ -987,7 +988,7 @@ func (h *FileSystemHandler) HandleDeleteTree(c *gin.Context) {
 
 	// Delete the directory
 	if err := h.DeleteDirectory(rootPathStr, recursive); err != nil {
-		h.SendError(c, http.StatusUnprocessableEntity, fmt.Errorf("error deleting directory: %w", err))
+		h.SendError(c, apierrors.FilesystemDeleteFailed, fmt.Errorf("error deleting directory: %w", err))
 		return
 	}
 
@@ -1008,21 +1009,21 @@ func (h *FileSystemHandler) HandleDeleteTree(c *gin.Context) {
 // @Router /filesystem-multipart/initiate/{path} [post]
 func (h *FileSystemHandler) HandleInitiateMultipartUpload(c *gin.Context) {
 	if h.multipartManager == nil {
-		h.SendError(c, http.StatusInternalServerError, fmt.Errorf("multipart upload not available"))
+		h.SendError(c, apierrors.MultipartUnavailable, fmt.Errorf("multipart upload not available"))
 		return
 	}
 
 	path := h.extractPathFromRequest(c)
 	path, err := lib.FormatPath(path)
 	if err != nil {
-		h.SendError(c, http.StatusBadRequest, err)
+		h.SendError(c, apierrors.InvalidPath, err)
 		return
 	}
 
 	// Get absolute path for final destination
 	absPath, err := h.fs.GetAbsolutePath(path)
 	if err != nil {
-		h.SendError(c, http.StatusBadRequest, err)
+		h.SendError(c, apierrors.InvalidPath, err)
 		return
 	}
 
@@ -1034,7 +1035,7 @@ func (h *FileSystemHandler) HandleInitiateMultipartUpload(c *gin.Context) {
 	if request.Permissions != "" {
 		permInt, err := strconv.ParseUint(request.Permissions, 8, 32)
 		if err != nil {
-			h.SendError(c, http.StatusBadRequest, fmt.Errorf("invalid permissions format: %w", err))
+			h.SendError(c, apierrors.InvalidPermissions, fmt.Errorf("invalid permissions format: %w", err))
 			return
 		}
 		permissions = os.FileMode(permInt)
@@ -1042,7 +1043,7 @@ func (h *FileSystemHandler) HandleInitiateMultipartUpload(c *gin.Context) {
 
 	upload, err := h.multipartManager.InitiateUpload(absPath, permissions)
 	if err != nil {
-		h.SendError(c, http.StatusInternalServerError, fmt.Errorf("failed to initiate upload: %w", err))
+		h.SendError(c, apierrors.MultipartUploadFailed, fmt.Errorf("failed to initiate upload: %w", err))
 		return
 	}
 
@@ -1069,32 +1070,32 @@ func (h *FileSystemHandler) HandleInitiateMultipartUpload(c *gin.Context) {
 // @Router /filesystem-multipart/{uploadId}/part [put]
 func (h *FileSystemHandler) HandleUploadPart(c *gin.Context) {
 	if h.multipartManager == nil {
-		h.SendError(c, http.StatusInternalServerError, fmt.Errorf("multipart upload not available"))
+		h.SendError(c, apierrors.MultipartUnavailable, fmt.Errorf("multipart upload not available"))
 		return
 	}
 
 	uploadID := c.Param("uploadId")
 	if uploadID == "" {
-		h.SendError(c, http.StatusBadRequest, fmt.Errorf("uploadId is required"))
+		h.SendError(c, apierrors.InvalidParameter, fmt.Errorf("uploadId is required"))
 		return
 	}
 
 	partNumberStr := c.Query("partNumber")
 	if partNumberStr == "" {
-		h.SendError(c, http.StatusBadRequest, fmt.Errorf("partNumber is required"))
+		h.SendError(c, apierrors.InvalidParameter, fmt.Errorf("partNumber is required"))
 		return
 	}
 
 	partNumber, err := strconv.Atoi(partNumberStr)
 	if err != nil {
-		h.SendError(c, http.StatusBadRequest, fmt.Errorf("invalid partNumber: %w", err))
+		h.SendError(c, apierrors.InvalidParameter, fmt.Errorf("invalid partNumber: %w", err))
 		return
 	}
 
 	// Use streaming multipart reader
 	mr, err := c.Request.MultipartReader()
 	if err != nil {
-		h.SendError(c, http.StatusBadRequest, fmt.Errorf("error reading multipart data: %w", err))
+		h.SendError(c, apierrors.InvalidMultipartBody, fmt.Errorf("error reading multipart data: %w", err))
 		return
 	}
 
@@ -1105,7 +1106,7 @@ func (h *FileSystemHandler) HandleUploadPart(c *gin.Context) {
 			break
 		}
 		if err != nil {
-			h.SendError(c, http.StatusBadRequest, fmt.Errorf("error reading multipart part: %w", err))
+			h.SendError(c, apierrors.InvalidMultipartBody, fmt.Errorf("error reading multipart part: %w", err))
 			return
 		}
 
@@ -1113,7 +1114,7 @@ func (h *FileSystemHandler) HandleUploadPart(c *gin.Context) {
 			uploadedPart, err = h.multipartManager.UploadPart(uploadID, partNumber, part)
 			_ = part.Close()
 			if err != nil {
-				h.SendError(c, http.StatusInternalServerError, fmt.Errorf("failed to upload part: %w", err))
+				h.SendError(c, apierrors.MultipartUploadFailed, fmt.Errorf("failed to upload part: %w", err))
 				return
 			}
 			break
@@ -1122,7 +1123,7 @@ func (h *FileSystemHandler) HandleUploadPart(c *gin.Context) {
 	}
 
 	if uploadedPart == nil {
-		h.SendError(c, http.StatusBadRequest, fmt.Errorf("missing 'file' field in multipart form"))
+		h.SendError(c, apierrors.MultipartFileMissing, fmt.Errorf("missing 'file' field in multipart form"))
 		return
 	}
 
@@ -1149,31 +1150,31 @@ func (h *FileSystemHandler) HandleUploadPart(c *gin.Context) {
 // @Router /filesystem-multipart/{uploadId}/complete [post]
 func (h *FileSystemHandler) HandleCompleteMultipartUpload(c *gin.Context) {
 	if h.multipartManager == nil {
-		h.SendError(c, http.StatusInternalServerError, fmt.Errorf("multipart upload not available"))
+		h.SendError(c, apierrors.MultipartUnavailable, fmt.Errorf("multipart upload not available"))
 		return
 	}
 
 	uploadID := c.Param("uploadId")
 	if uploadID == "" {
-		h.SendError(c, http.StatusBadRequest, fmt.Errorf("uploadId is required"))
+		h.SendError(c, apierrors.InvalidParameter, fmt.Errorf("uploadId is required"))
 		return
 	}
 
 	var request MultipartCompleteRequest
 	if err := h.BindJSON(c, &request); err != nil {
-		h.SendError(c, http.StatusBadRequest, err)
+		h.SendError(c, apierrors.InvalidRequestBody, err)
 		return
 	}
 
 	if len(request.Parts) == 0 {
-		h.SendError(c, http.StatusBadRequest, fmt.Errorf("at least one part is required"))
+		h.SendError(c, apierrors.InvalidParameter, fmt.Errorf("at least one part is required"))
 		return
 	}
 
 	// Get upload metadata to get the path
 	upload, err := h.multipartManager.GetUpload(uploadID)
 	if err != nil {
-		h.SendError(c, http.StatusNotFound, err)
+		h.SendError(c, apierrors.MultipartUploadNotFound, err)
 		return
 	}
 
@@ -1187,7 +1188,7 @@ func (h *FileSystemHandler) HandleCompleteMultipartUpload(c *gin.Context) {
 	}
 
 	if err := h.multipartManager.CompleteUpload(uploadID, parts); err != nil {
-		h.SendError(c, http.StatusInternalServerError, fmt.Errorf("failed to complete upload: %w", err))
+		h.SendError(c, apierrors.MultipartUploadFailed, fmt.Errorf("failed to complete upload: %w", err))
 		return
 	}
 
@@ -1207,18 +1208,22 @@ func (h *FileSystemHandler) HandleCompleteMultipartUpload(c *gin.Context) {
 // @Router /filesystem-multipart/{uploadId}/abort [delete]
 func (h *FileSystemHandler) HandleAbortMultipartUpload(c *gin.Context) {
 	if h.multipartManager == nil {
-		h.SendError(c, http.StatusInternalServerError, fmt.Errorf("multipart upload not available"))
+		h.SendError(c, apierrors.MultipartUnavailable, fmt.Errorf("multipart upload not available"))
 		return
 	}
 
 	uploadID := c.Param("uploadId")
 	if uploadID == "" {
-		h.SendError(c, http.StatusBadRequest, fmt.Errorf("uploadId is required"))
+		h.SendError(c, apierrors.InvalidParameter, fmt.Errorf("uploadId is required"))
 		return
 	}
 
 	if err := h.multipartManager.AbortUpload(uploadID); err != nil {
-		h.SendError(c, http.StatusNotFound, err)
+		entry := apierrors.MultipartAbortFailed
+		if errors.Is(err, filesystem.ErrUploadNotFound) {
+			entry = apierrors.MultipartUploadNotFound
+		}
+		h.SendError(c, entry, err)
 		return
 	}
 
@@ -1238,19 +1243,19 @@ func (h *FileSystemHandler) HandleAbortMultipartUpload(c *gin.Context) {
 // @Router /filesystem-multipart/{uploadId}/parts [get]
 func (h *FileSystemHandler) HandleListParts(c *gin.Context) {
 	if h.multipartManager == nil {
-		h.SendError(c, http.StatusInternalServerError, fmt.Errorf("multipart upload not available"))
+		h.SendError(c, apierrors.MultipartUnavailable, fmt.Errorf("multipart upload not available"))
 		return
 	}
 
 	uploadID := c.Param("uploadId")
 	if uploadID == "" {
-		h.SendError(c, http.StatusBadRequest, fmt.Errorf("uploadId is required"))
+		h.SendError(c, apierrors.InvalidParameter, fmt.Errorf("uploadId is required"))
 		return
 	}
 
 	parts, err := h.multipartManager.ListParts(uploadID)
 	if err != nil {
-		h.SendError(c, http.StatusNotFound, err)
+		h.SendError(c, apierrors.MultipartUploadNotFound, err)
 		return
 	}
 
@@ -1277,7 +1282,7 @@ func (h *FileSystemHandler) HandleListParts(c *gin.Context) {
 // @Router /filesystem-multipart [get]
 func (h *FileSystemHandler) HandleListMultipartUploads(c *gin.Context) {
 	if h.multipartManager == nil {
-		h.SendError(c, http.StatusInternalServerError, fmt.Errorf("multipart upload not available"))
+		h.SendError(c, apierrors.MultipartUnavailable, fmt.Errorf("multipart upload not available"))
 		return
 	}
 
@@ -1308,7 +1313,7 @@ func (h *FileSystemHandler) HandleWatchDirectory(c *gin.Context) {
 
 	path, err := lib.FormatPath(path)
 	if err != nil {
-		h.SendError(c, http.StatusBadRequest, err)
+		h.SendError(c, apierrors.InvalidPath, err)
 		return
 	}
 
@@ -1338,18 +1343,18 @@ func (h *FileSystemHandler) HandleWatchDirectory(c *gin.Context) {
 
 	isDir, err := h.DirectoryExists(path)
 	if err != nil {
-		h.SendError(c, http.StatusUnprocessableEntity, err)
+		h.SendError(c, apierrors.FilesystemReadFailed, err)
 		return
 	}
 
 	if !isDir {
-		h.SendError(c, http.StatusBadRequest, fmt.Errorf("path is not a directory"))
+		h.SendError(c, apierrors.PathNotDirectory, fmt.Errorf("path is not a directory"))
 		return
 	}
 
 	flusher, ok := c.Writer.(http.Flusher)
 	if !ok {
-		h.SendError(c, http.StatusInternalServerError, fmt.Errorf("streaming not supported"))
+		h.SendError(c, apierrors.FilesystemWatchFailed, fmt.Errorf("streaming not supported"))
 		return
 	}
 
@@ -1409,7 +1414,7 @@ func (h *FileSystemHandler) HandleWatchDirectory(c *gin.Context) {
 	}
 	if err != nil {
 		writeMu.Unlock()
-		h.SendError(c, http.StatusInternalServerError, err)
+		h.SendError(c, apierrors.FilesystemWatchFailed, err)
 		return
 	}
 	defer stop() // Ensures watcher is removed when handler exits
@@ -1470,7 +1475,7 @@ func (h *FileSystemHandler) HandleFind(c *gin.Context) {
 		} else if err == nil && parsed == 0 {
 			maxResults = -1
 		} else {
-			h.SendError(c, http.StatusBadRequest, fmt.Errorf("invalid maxResults: %s", c.Query("maxResults")))
+			h.SendError(c, apierrors.InvalidParameter, fmt.Errorf("invalid maxResults: %s", c.Query("maxResults")))
 			return
 		}
 	}
@@ -1480,7 +1485,7 @@ func (h *FileSystemHandler) HandleFind(c *gin.Context) {
 	if c.Query("type") != "" {
 		searchType = c.Query("type")
 		if searchType != "file" && searchType != "directory" {
-			h.SendError(c, http.StatusBadRequest, fmt.Errorf("invalid search type: %s", searchType))
+			h.SendError(c, apierrors.InvalidParameter, fmt.Errorf("invalid search type: %s", searchType))
 			return
 		}
 	}
@@ -1532,7 +1537,7 @@ func (h *FileSystemHandler) HandleFind(c *gin.Context) {
 	// Get absolute path for searching
 	absSearchDir, err := h.fs.GetAbsolutePath(searchDir)
 	if err != nil {
-		h.SendError(c, http.StatusBadRequest, err)
+		h.SendError(c, apierrors.InvalidPath, err)
 		return
 	}
 
@@ -1591,7 +1596,7 @@ func (h *FileSystemHandler) HandleFind(c *gin.Context) {
 	})
 
 	if err != nil {
-		h.SendError(c, http.StatusInternalServerError, fmt.Errorf("error walking directory: %w", err))
+		h.SendError(c, apierrors.FilesystemSearchFailed, fmt.Errorf("error walking directory: %w", err))
 		return
 	}
 
@@ -1653,7 +1658,7 @@ func (h *FileSystemHandler) HandleFuzzySearch(c *gin.Context) {
 		} else if err == nil && parsed == 0 {
 			maxResults = -1
 		} else {
-			h.SendError(c, http.StatusBadRequest, fmt.Errorf("invalid maxResults: %s", c.Query("maxResults")))
+			h.SendError(c, apierrors.InvalidParameter, fmt.Errorf("invalid maxResults: %s", c.Query("maxResults")))
 			return
 		}
 	}
@@ -1705,7 +1710,7 @@ func (h *FileSystemHandler) HandleFuzzySearch(c *gin.Context) {
 	// Get absolute path for searching
 	absSearchDir, err := h.fs.GetAbsolutePath(searchDir)
 	if err != nil {
-		h.SendError(c, http.StatusBadRequest, err)
+		h.SendError(c, apierrors.InvalidPath, err)
 		return
 	}
 
@@ -1714,7 +1719,7 @@ func (h *FileSystemHandler) HandleFuzzySearch(c *gin.Context) {
 		// Without query, the search path doubles as the pattern.
 		query = searchDir
 		if query == "" || query == "/" || query == "." {
-			h.SendError(c, http.StatusBadRequest, fmt.Errorf("query parameter is required in path"))
+			h.SendError(c, apierrors.InvalidParameter, fmt.Errorf("query parameter is required in path"))
 			return
 		}
 	}
@@ -1758,7 +1763,7 @@ func (h *FileSystemHandler) HandleFuzzySearch(c *gin.Context) {
 	})
 
 	if err != nil {
-		h.SendError(c, http.StatusInternalServerError, fmt.Errorf("error walking directory: %w", err))
+		h.SendError(c, apierrors.FilesystemSearchFailed, fmt.Errorf("error walking directory: %w", err))
 		return
 	}
 
@@ -1830,7 +1835,7 @@ func (h *FileSystemHandler) HandleContentSearch(c *gin.Context) {
 	// Get search query
 	query := c.Query("query")
 	if query == "" {
-		h.SendError(c, http.StatusBadRequest, fmt.Errorf("query parameter is required"))
+		h.SendError(c, apierrors.InvalidParameter, fmt.Errorf("query parameter is required"))
 		return
 	}
 
@@ -1840,17 +1845,17 @@ func (h *FileSystemHandler) HandleContentSearch(c *gin.Context) {
 	if searchDir != "" && searchDir != "/" && searchDir != "." {
 		searchDir, err := lib.FormatPath(searchDir)
 		if err != nil {
-			h.SendError(c, http.StatusBadRequest, err)
+			h.SendError(c, apierrors.InvalidPath, err)
 			return
 		}
 		// Verify directory exists
 		isDir, err := h.DirectoryExists(searchDir)
 		if err != nil {
-			h.SendError(c, http.StatusUnprocessableEntity, err)
+			h.SendError(c, apierrors.FilesystemReadFailed, err)
 			return
 		}
 		if !isDir {
-			h.SendError(c, http.StatusBadRequest, fmt.Errorf("specified directory does not exist: %s", searchDir))
+			h.SendError(c, apierrors.PathNotDirectory, fmt.Errorf("specified directory does not exist: %s", searchDir))
 			return
 		}
 	} else {
@@ -1875,7 +1880,7 @@ func (h *FileSystemHandler) HandleContentSearch(c *gin.Context) {
 		} else if err == nil && parsed == 0 {
 			maxResults = -1
 		} else {
-			h.SendError(c, http.StatusBadRequest, fmt.Errorf("invalid maxResults: %s", c.Query("maxResults")))
+			h.SendError(c, apierrors.InvalidParameter, fmt.Errorf("invalid maxResults: %s", c.Query("maxResults")))
 			return
 		}
 	}
@@ -1907,7 +1912,7 @@ func (h *FileSystemHandler) HandleContentSearch(c *gin.Context) {
 	// Get absolute path for searching
 	absSearchDir, err := h.fs.GetAbsolutePath(searchDir)
 	if err != nil {
-		h.SendError(c, http.StatusBadRequest, err)
+		h.SendError(c, apierrors.InvalidPath, err)
 		return
 	}
 
@@ -1957,7 +1962,7 @@ func (h *FileSystemHandler) HandleContentSearch(c *gin.Context) {
 	})
 
 	if err != nil {
-		h.SendError(c, http.StatusInternalServerError, fmt.Errorf("error walking directory: %w", err))
+		h.SendError(c, apierrors.FilesystemSearchFailed, fmt.Errorf("error walking directory: %w", err))
 		return
 	}
 

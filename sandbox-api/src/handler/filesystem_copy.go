@@ -7,6 +7,7 @@ import (
 	"os"
 
 	"github.com/blaxel-ai/sandbox-api/src/handler/filesystem"
+	"github.com/blaxel-ai/sandbox-api/src/lib/apierrors"
 	"github.com/gin-gonic/gin"
 )
 
@@ -40,11 +41,11 @@ type CopyResponse struct {
 func (h *FileSystemHandler) HandleCopy(c *gin.Context) {
 	var request CopyRequest
 	if err := h.BindJSON(c, &request); err != nil {
-		h.SendError(c, http.StatusBadRequest, err)
+		h.SendError(c, apierrors.InvalidRequestBody, err)
 		return
 	}
 	if err := h.fs.Copy(request.Source, request.Destination, filesystem.WriteOptions{NoOverwrite: request.NoOverwrite}); err != nil {
-		h.sendFilesystemError(c, http.StatusUnprocessableEntity, fmt.Errorf("error copying destination %s: %w", request.Destination, err))
+		h.sendFilesystemError(c, apierrors.FilesystemWriteFailed, fmt.Errorf("error copying destination %s: %w", request.Destination, err))
 		return
 	}
 	h.SendJSON(c, http.StatusOK, CopyResponse{
@@ -52,12 +53,11 @@ func (h *FileSystemHandler) HandleCopy(c *gin.Context) {
 	})
 }
 
-// Preserve existing error statuses except for exclusive-create conflicts.
+// Send entry's error except for exclusive-create conflicts.
 // errors.Is recognizes wrapped PathErrors (unlike os.IsExist).
-func (h *FileSystemHandler) sendFilesystemError(c *gin.Context, status int, err error) {
+func (h *FileSystemHandler) sendFilesystemError(c *gin.Context, entry apierrors.Entry, err error) {
 	if errors.Is(err, os.ErrExist) {
-		c.JSON(http.StatusConflict, ErrorResponse{Error: err.Error(), Code: "FILE_ALREADY_EXISTS"})
-		return
+		entry = apierrors.FileAlreadyExists
 	}
-	h.SendError(c, status, err)
+	h.SendError(c, entry, err)
 }
