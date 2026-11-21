@@ -1,7 +1,7 @@
 #!/bin/sh
 # Swagger 2 has one response schema for all produced media types. Correct
 # the converted OpenAPI media schemas without describing a stream as one result.
-yq eval '.paths."/process".post.responses."200".content."application/x-ndjson".schema = {"type": "string", "description": "Newline-delimited JSON event objects. Each record has type (stdout, stderr, result, error, or keepalive) and optional string data. Result data is a JSON-encoded ProcessResponse; output data preserves raw chunks."} | del(.paths."/process".post.responses."200".content."text/event-stream")' -i openapi.yml
+yq eval '.paths."/process".post.responses."200".content."application/x-ndjson".schema = {"type": "string", "description": "Newline-delimited JSON event objects. Each record has type (stdout, stderr, result, error, or keepalive) and optional string data. An error record whose error has a stable code also has code. Result data is a JSON-encoded ProcessResponse; output data preserves raw chunks."} | del(.paths."/process".post.responses."200".content."text/event-stream")' -i openapi.yml
 
 # Only the generic file/directory read has polymorphic responses. Downloads
 # may use the file's MIME type, so retain its raw-file alternative for each media.

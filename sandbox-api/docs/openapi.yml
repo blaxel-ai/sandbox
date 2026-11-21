@@ -1450,7 +1450,7 @@ paths:
 
         Streaming: with `Accept: application/x-ndjson` (or `Accept: text/event-stream`, kept for compatibility) the response is NDJSON (`Content-Type: application/x-ndjson`), not SSE: one JSON object per line, `{"type": "...", "data": "..."}`.
 
-        `type` is `stdout` or `stderr` (`data` is a raw output chunk, sent as soon as the process writes it, newlines included; if the process finished before any chunk was streamed, its output is sent instead as one event per line, without the newline), `keepalive` (every 5 seconds, no data), `error` (`data` is the message, ends the stream) or `result` (last event, `data` is the ProcessResponse as a JSON string).
+        `type` is `stdout` or `stderr` (`data` is a raw output chunk, sent as soon as the process writes it, newlines included; if the process finished before any chunk was streamed, its output is sent instead as one event per line, without the newline), `keepalive` (every 5 seconds, no data), `error` (`data` is the message, ends the stream; `code` is set when the error has a stable code, such as PROCESS_WORKING_DIR_UNUSABLE) or `result` (last event, `data` is the ProcessResponse as a JSON string).
       requestBody:
         content:
           application/json:
@@ -1468,7 +1468,7 @@ paths:
             application/x-ndjson:
               schema:
                 type: string
-                description: Newline-delimited JSON event objects. Each record has type (stdout, stderr, result, error, or keepalive) and optional string data. Result data is a JSON-encoded ProcessResponse; output data preserves raw chunks.
+                description: Newline-delimited JSON event objects. Each record has type (stdout, stderr, result, error, or keepalive) and optional string data. An error record whose error has a stable code also has code. Result data is a JSON-encoded ProcessResponse; output data preserves raw chunks.
         "400":
           description: Invalid request
           content:
@@ -1479,7 +1479,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "422":
-          description: The process could not start, its timeout ended, it exited before opening its ports, or the wait reached 115 seconds while the process kept running (code PROCESS_WAIT_LIMIT_REACHED)
+          description: The process could not start (code PROCESS_WORKING_DIR_UNUSABLE when workingDir is not a directory or cannot be created), its timeout ended, it exited before opening its ports, or the wait reached 115 seconds while the process kept running (code PROCESS_WAIT_LIMIT_REACHED)
           content:
             application/json:
               schema:
@@ -2755,7 +2755,7 @@ components:
             type: integer
           type: array
         workingDir:
-          description: "Working directory of the command. Created with its missing parents when it does not exist, like `docker run -w`, as the user the command runs as. A path that exists but is not a directory, or that this user may not create, fails with 422."
+          description: Working directory of the command. Created with its missing parents when it does not exist, like `docker run -w`, as the user the command runs as. A path that exists but is not a directory, or that this user may not create, fails with 422 and code PROCESS_WORKING_DIR_UNUSABLE.
           example: /home/user
           type: string
       required:

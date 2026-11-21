@@ -5,9 +5,27 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"syscall"
 
 	"github.com/blaxel-ai/sandbox-api/src/lib/identity"
 )
+
+// WorkingDirError is why the working directory requested for a new process
+// cannot be used: the path exists and is not a directory, a parent is a file,
+// or the exec user may not create it. It is returned before anything starts,
+// so callers can answer it with a stable code.
+type WorkingDirError struct {
+	// Dir is the working directory as requested.
+	Dir string
+	// Err is the cause: the failing call's errno, or syscall.ENOTDIR for a
+	// path that exists and is not a directory.
+	Err error
+	msg string
+}
+
+func (e *WorkingDirError) Error() string { return e.msg }
+
+func (e *WorkingDirError) Unwrap() error { return e.Err }
 
 // workingDirMode is what a created working directory gets before the umask:
 // the mode Docker gives the directory it creates for `docker run -w`.
@@ -63,7 +81,7 @@ func prepareWorkingDirAs(id *identity.Identity, dir string) error {
 		return workingDirError(dir, err)
 	}
 	if !info.IsDir() {
-		return fmt.Errorf("working directory '%s' is not a directory", dir)
+		return &WorkingDirError{Dir: dir, Err: syscall.ENOTDIR, msg: fmt.Sprintf("working directory '%s' is not a directory", dir)}
 	}
 	return nil
 }
@@ -73,7 +91,7 @@ func workingDirError(dir string, err error) error {
 	if errors.As(err, &pathErr) {
 		// Name the operation and the component that failed, which is not
 		// always dir itself: mkdir fails on the first parent it cannot create.
-		return fmt.Errorf("cannot use working directory '%s': %s %s: %w", dir, pathErr.Op, pathErr.Path, pathErr.Err)
+		return &WorkingDirError{Dir: dir, Err: pathErr.Err, msg: fmt.Sprintf("cannot use working directory '%s': %s %s: %v", dir, pathErr.Op, pathErr.Path, pathErr.Err)}
 	}
-	return fmt.Errorf("cannot use working directory '%s': %w", dir, err)
+	return &WorkingDirError{Dir: dir, Err: err, msg: fmt.Sprintf("cannot use working directory '%s': %v", dir, err)}
 }

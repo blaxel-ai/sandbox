@@ -1734,7 +1734,7 @@ const docTemplate = `{
                 }
             },
             "post": {
-                "description": "Execute a command and return process information.\n\nWith waitForCompletion or waitForPorts, one request waits at most 115 seconds, under the edge gateway's 120-second limit. A process still running then (or still short of its ports) gets a 422 with code PROCESS_WAIT_LIMIT_REACHED, and keeps running until it exits or its own timeout ends: follow it with GET /process/{identifier}/wait or GET /process/{identifier}/logs/stream. Streamed requests (below) are not capped.\n\nStreaming: with ` + "`" + `Accept: application/x-ndjson` + "`" + ` (or ` + "`" + `Accept: text/event-stream` + "`" + `, kept for compatibility) the response is NDJSON (` + "`" + `Content-Type: application/x-ndjson` + "`" + `), not SSE: one JSON object per line, ` + "`" + `{\"type\": \"...\", \"data\": \"...\"}` + "`" + `.\n` + "`" + `type` + "`" + ` is ` + "`" + `stdout` + "`" + ` or ` + "`" + `stderr` + "`" + ` (` + "`" + `data` + "`" + ` is a raw output chunk, sent as soon as the process writes it, newlines included; if the process finished before any chunk was streamed, its output is sent instead as one event per line, without the newline), ` + "`" + `keepalive` + "`" + ` (every 5 seconds, no data), ` + "`" + `error` + "`" + ` (` + "`" + `data` + "`" + ` is the message, ends the stream) or ` + "`" + `result` + "`" + ` (last event, ` + "`" + `data` + "`" + ` is the ProcessResponse as a JSON string).",
+                "description": "Execute a command and return process information.\n\nWith waitForCompletion or waitForPorts, one request waits at most 115 seconds, under the edge gateway's 120-second limit. A process still running then (or still short of its ports) gets a 422 with code PROCESS_WAIT_LIMIT_REACHED, and keeps running until it exits or its own timeout ends: follow it with GET /process/{identifier}/wait or GET /process/{identifier}/logs/stream. Streamed requests (below) are not capped.\n\nStreaming: with ` + "`" + `Accept: application/x-ndjson` + "`" + ` (or ` + "`" + `Accept: text/event-stream` + "`" + `, kept for compatibility) the response is NDJSON (` + "`" + `Content-Type: application/x-ndjson` + "`" + `), not SSE: one JSON object per line, ` + "`" + `{\"type\": \"...\", \"data\": \"...\"}` + "`" + `.\n` + "`" + `type` + "`" + ` is ` + "`" + `stdout` + "`" + ` or ` + "`" + `stderr` + "`" + ` (` + "`" + `data` + "`" + ` is a raw output chunk, sent as soon as the process writes it, newlines included; if the process finished before any chunk was streamed, its output is sent instead as one event per line, without the newline), ` + "`" + `keepalive` + "`" + ` (every 5 seconds, no data), ` + "`" + `error` + "`" + ` (` + "`" + `data` + "`" + ` is the message, ends the stream; ` + "`" + `code` + "`" + ` is set when the error has a stable code, such as PROCESS_WORKING_DIR_UNUSABLE) or ` + "`" + `result` + "`" + ` (last event, ` + "`" + `data` + "`" + ` is the ProcessResponse as a JSON string).",
                 "consumes": [
                     "application/json"
                 ],
@@ -1771,7 +1771,7 @@ const docTemplate = `{
                         }
                     },
                     "422": {
-                        "description": "The process could not start, its timeout ended, it exited before opening its ports, or the wait reached 115 seconds while the process kept running (code PROCESS_WAIT_LIMIT_REACHED)",
+                        "description": "The process could not start (code PROCESS_WORKING_DIR_UNUSABLE when workingDir is not a directory or cannot be created), its timeout ended, it exited before opening its ports, or the wait reached 115 seconds while the process kept running (code PROCESS_WAIT_LIMIT_REACHED)",
                         "schema": {
                             "$ref": "#/definitions/ErrorResponse"
                         }
@@ -3325,7 +3325,7 @@ const docTemplate = `{
                     ]
                 },
                 "workingDir": {
-                    "description": "Working directory of the command. Created with its missing parents when it does not exist, like ` + "`" + `docker run -w` + "`" + `, as the user the command runs as. A path that exists but is not a directory, or that this user may not create, fails with 422.",
+                    "description": "Working directory of the command. Created with its missing parents when it does not exist, like ` + "`" + `docker run -w` + "`" + `, as the user the command runs as. A path that exists but is not a directory, or that this user may not create, fails with 422 and code PROCESS_WORKING_DIR_UNUSABLE.",
                     "type": "string",
                     "example": "/home/user"
                 }
