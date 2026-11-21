@@ -39,6 +39,8 @@ type ProcessState struct {
 	CompletedAt      *time.Time              `json:"completedAt,omitempty"`
 	ExitCode         int                     `json:"exitCode"`
 	Status           constants.ProcessStatus `json:"status"`
+	ExitReason       string                  `json:"exitReason,omitempty"`
+	OOMKills         int                     `json:"oomKills,omitempty"`
 	WorkingDir       string                  `json:"workingDir"`
 	LogIncomplete    bool                    `json:"logIncomplete,omitempty"`
 	LogFormat        string                  `json:"logFormat,omitempty"`
@@ -126,6 +128,8 @@ func (pm *ProcessManager) SaveState() error {
 			CompletedAt:      proc.CompletedAt,
 			ExitCode:         proc.ExitCode,
 			Status:           proc.Status,
+			ExitReason:       proc.ExitReason,
+			OOMKills:         proc.OOMKills,
 			WorkingDir:       proc.WorkingDir,
 			LogFile:          proc.LogFile,
 			LogFormat:        proc.LogFormat,
@@ -281,6 +285,9 @@ func (pm *ProcessManager) LoadState() error {
 			CompletedAt:      procState.CompletedAt,
 			ExitCode:         procState.ExitCode,
 			Status:           procState.Status,
+			ExitReason:       procState.ExitReason,
+			OOMKills:         procState.OOMKills,
+			oomKillsAtStart:  -1, // the run started under the previous API; its count is gone
 			WorkingDir:       procState.WorkingDir,
 			LogFile:          procState.LogFile,
 			LogFormat:        procState.LogFormat,

@@ -250,15 +250,18 @@ func openLogTail(path string, max int64) (file *os.File, truncated bool, err err
 
 // readLogTail returns the last max bytes of a log file, skipping any head that
 // capLogFile has already released, so a caller never holds more than the cap in
-// memory. ok is false when the file cannot be read at all.
-func readLogTail(path string, max int64) (string, bool) {
+// memory. ok is false when the file cannot be read at all. cutAt is 0 when the
+// whole output is returned, else the limit that cut its start: max when the
+// file is longer than that, retention (the log file cap in effect) when only
+// the file's own released head is missing.
+func readLogTail(path string, max, retention int64) (output string, cutAt int64, ok bool) {
 	if path == "" {
-		return "", false
+		return "", 0, false
 	}
 
 	file, truncated, err := openLogTail(path, max)
 	if err != nil {
-		return "", false
+		return "", 0, false
 	}
 	defer file.Close()
 
@@ -267,16 +270,33 @@ func readLogTail(path string, max int64) (string, bool) {
 	// a poller calls on every process.
 	content, err := readAtMost(file, max)
 	if err != nil {
-		return "", false
+		return "", 0, false
 	}
 
 	// A file whose head was released reads back as zeros; a file we seeked past
 	// is missing its head. Either way say so rather than handing back a tail
 	// that looks like the whole output.
 	if truncated {
-		return truncationMarker + string(content), true
+		return truncationMarker + string(content), max, true
 	}
-	return string(trimReleasedHead(content)), true
+	if len(content) > 0 && content[0] == 0 {
+		return string(trimReleasedHead(content)), retention, true
+	}
+	return string(content), 0, true
+}
+
+// outputCut combines the cuts of stdout and stderr (0: whole) into what a
+// response reports: whether either lost its start, and the limit that cut it.
+func outputCut(stdoutCut, stderrCut int64) (truncated bool, limit int64) {
+	switch {
+	case stdoutCut > 0 && stderrCut > 0:
+		return true, min(stdoutCut, stderrCut)
+	case stdoutCut > 0:
+		return true, stdoutCut
+	case stderrCut > 0:
+		return true, stderrCut
+	}
+	return false, 0
 }
 
 // backlogReader reads file up to the absolute offset end, so a replay stops

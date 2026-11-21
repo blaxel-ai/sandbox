@@ -2684,6 +2684,14 @@ components:
           description: Concatenation of the returned stdout followed by the returned stderr. Output from the two streams is not interleaved.
           example: logs output
           type: string
+        outputLimitBytes:
+          description: "The limit that cut the output, in bytes per stream: how much of each stream this response returns, or how much of it the sandbox keeps on disk when that is less. Set only with outputTruncated."
+          example: 4194304
+          type: integer
+        outputTruncated:
+          description: 'True when the start of stdout or stderr is missing: the stream holds only its last outputLimitBytes, after a "[... truncated, see the process log file for the full output ...]" line. Absent when the output is whole.'
+          example: true
+          type: boolean
         stderr:
           example: stderr output
           type: string
@@ -2765,6 +2773,13 @@ components:
         exitCode:
           example: 0
           type: integer
+        exitReason:
+          description: "Why the process ended, when exitCode alone does not say: oom_killed (the kernel's out-of-memory killer ended it, or the command its shell ran last: the sandbox ran out of memory) or disk_full (it failed while the sandbox's disk had no space left, so its output, error message included, may be missing). Absent otherwise, and for a process the API stopped, killed or timed out. status and exitCode are unchanged."
+          enum:
+            - oom_killed
+            - disk_full
+          example: oom_killed
+          type: string
         keepAlive:
           description: Whether scale-to-zero is disabled for this process
           example: false
@@ -2778,6 +2793,18 @@ components:
         name:
           example: my-process
           type: string
+        oomKills:
+          description: "How many processes the kernel's out-of-memory killer ended in the sandbox while this process ran: this one or any other, such as a test worker it started. Set only when the process failed and the count is above zero."
+          example: 1
+          type: integer
+        outputLimitBytes:
+          description: "The limit that cut the output, in bytes per stream: how much of each stream this response returns, or how much of it the sandbox keeps on disk when that is less. Set only with outputTruncated."
+          example: 4194304
+          type: integer
+        outputTruncated:
+          description: 'True when the start of stdout or stderr is missing: the stream holds only its last outputLimitBytes, after a "[... truncated, see the process log file for the full output ...]" line. Absent when the output is whole. GET /process/{identifier}/logs/stream replays what the sandbox kept.'
+          example: true
+          type: boolean
         pid:
           example: "1234"
           type: string

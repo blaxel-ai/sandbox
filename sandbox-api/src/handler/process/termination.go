@@ -105,20 +105,30 @@ func (pm *ProcessManager) waitForRun(p *ProcessInfo, cmd *exec.Cmd, callback fun
 	p.logLock.Lock()
 	p.Logs, p.Stdout, p.Stderr = nil, nil, nil
 	p.logLock.Unlock()
+	// Reads the kernel's OOM counter and the disk's free space, so it runs
+	// before the lock. p.oomKillsAtStart and p.StdoutFile only change when a
+	// run starts, which cannot happen before this one is published below.
+	reason, oomKills := classifyExit(err, p.oomKillsAtStart, p.StdoutFile)
 	now := time.Now()
 	pm.mu.Lock()
 	p.CompletedAt = &now
 	p.ExitCode = 0
 	p.Status = StatusCompleted
+	p.ExitReason, p.OOMKills = "", 0
 	if err != nil {
 		p.Status = StatusFailed
 		p.ExitCode = 1
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			p.ExitCode = exitErr.ExitCode()
 		}
+		p.OOMKills = oomKills
 	}
 	if p.terminationRequested != "" {
 		p.Status = p.terminationRequested
+	} else {
+		// A run the API stopped or killed (stop, kill, timeout) ended for
+		// that reason, whatever else happened in the sandbox meanwhile.
+		p.ExitReason = reason
 	}
 	restart := shouldRestart(p)
 	if restart {

@@ -81,6 +81,15 @@ func (b *logBuffer) tail() string {
 	return string(b.buf)
 }
 
+// cut is the limit that dropped the head of what String() returns, or 0 when
+// nothing was dropped.
+func (b *logBuffer) cut() int64 {
+	if b.written > len(b.buf) {
+		return int64(b.max)
+	}
+	return 0
+}
+
 // Len is the number of bytes ever written, not the number buffered.
 func (b *logBuffer) Len() int {
 	return b.written
