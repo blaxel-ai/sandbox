@@ -19,8 +19,9 @@ func TestShortCommandWaitSkipsTailerPollDelay(t *testing.T) {
 			t.Fatal(err)
 		}
 		d = append(d, time.Since(start))
-		if p.Status != StatusCompleted || p.Stdout == nil || *p.Stdout != "Hello World\n" {
-			t.Fatalf("status %s stdout %v", p.Status, p.Stdout)
+		output, err := pm.GetProcessOutput(p.PID)
+		if err != nil || p.Status != StatusCompleted || output.Stdout != "Hello World\n" {
+			t.Fatalf("status %s stdout %q err %v", p.Status, output.Stdout, err)
 		}
 	}
 	sort.Slice(d, func(a, b int) bool { return d[a] < d[b] })
