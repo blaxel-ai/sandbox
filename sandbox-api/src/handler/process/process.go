@@ -124,7 +124,6 @@ type ProcessInfo struct {
 
 	terminationRequested constants.ProcessStatus // Protected by ProcessManager.mu.
 	oomKillsAtStart      int64                   // oomKillCount() just before this run started; -1 when unknown.
-	outputCutBytes       int64                   // Guarded by logLock: the limit that cut Logs, Stdout and Stderr when an exec read them; 0 when whole.
 	runExited            bool                    // Wait has returned; no live OS process may be signalled.
 	skipExitWebhook      bool                    // Protected by ProcessManager.mu; an archive stops it to relaunch it elsewhere.
 
@@ -267,7 +266,37 @@ func (pm *ProcessManager) leaveStopped(proc *ProcessInfo, callback func(*Process
 // restart attempt. A negative MaxRestarts means unlimited restarts.
 // markFinished closes Finished exactly once, so every terminal path can call it.
 func (p *ProcessInfo) markFinished() {
-	p.finishOnce.Do(func() { p.releaseJournalOwnership(); close(p.Finished) })
+	p.finishOnce.Do(func() {
+		p.releaseJournalOwnership()
+		p.releaseOutput()
+		close(p.Finished)
+	})
+}
+
+// releaseOutput frees the in-memory output of a process that is over for good.
+// Its output is still served from the log files; records are never removed, so
+// keeping it grew sandbox-api with every command a long-lived sandbox ran.
+func (p *ProcessInfo) releaseOutput() {
+	p.logLock.Lock()
+	defer p.logLock.Unlock()
+	for _, b := range []*logBuffer{p.stdout, p.stderr, p.logs} {
+		if b != nil {
+			b.release()
+		}
+	}
+	p.Logs, p.Stdout, p.Stderr = nil, nil, nil
+	p.prefixBuf = nil
+}
+
+// reopenOutput lets a finished process that is restarted buffer output again.
+func (p *ProcessInfo) reopenOutput() {
+	p.logLock.Lock()
+	defer p.logLock.Unlock()
+	for _, b := range []*logBuffer{p.stdout, p.stderr, p.logs} {
+		if b != nil {
+			b.reopen()
+		}
+	}
 }
 
 func shouldRestart(p *ProcessInfo) bool {
@@ -899,6 +928,7 @@ func (pm *ProcessManager) restartProcess(oldProcess *ProcessInfo, callback func(
 	case <-oldProcess.Finished:
 		oldProcess.Finished = make(chan struct{})
 		oldProcess.finishOnce = sync.Once{}
+		oldProcess.reopenOutput()
 	default:
 	}
 	oldProcess.Done = make(chan struct{})
