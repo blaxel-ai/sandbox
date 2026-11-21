@@ -84,7 +84,7 @@ func TestTerminationWaitsForExit(t *testing.T) {
 			if state.Status != wantStatus || state.ExitCode != wantExit || state.CompletedAt == nil || state.RestartCount != 0 {
 				t.Fatalf("wrong terminal observation: %+v", state)
 			}
-			if graceful && (state.Stdout == nil || !strings.Contains(*state.Stdout, "FINAL")) {
+			if graceful && !strings.Contains(state.OutputTail(MaxInlinedLogBytes).Stdout, "FINAL") {
 				t.Fatal("final output not drained")
 			}
 			if err := syscall.Kill(osPID, 0); err != syscall.ESRCH {

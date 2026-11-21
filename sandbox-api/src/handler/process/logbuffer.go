@@ -12,8 +12,8 @@ import (
 // chatty workload grew sandbox-api until it, rather than the workload, was the
 // fattest process in the guest and the OOM killer's pick - taking the whole
 // sandbox down. Output is served from the process' log files instead, so this
-// buffer is only the fallback for when a file cannot be read, and small enough
-// that many processes still cost the API next to nothing.
+// buffer is only the fallback for when a running process' file cannot be read.
+// It is released once the process finishes, as records are never removed.
 const maxInMemoryLogBytes = 64 * 1024
 
 func maxInMemoryLog() int {
@@ -30,9 +30,10 @@ func maxInMemoryLog() int {
 // the log file stay correct after the head has been dropped.
 // Not safe for concurrent use: callers hold ProcessInfo.logLock.
 type logBuffer struct {
-	buf     []byte
-	max     int
-	written int
+	buf      []byte
+	max      int
+	written  int
+	released bool
 }
 
 func newLogBuffer() *logBuffer {
@@ -63,6 +64,9 @@ func (b *logBuffer) WriteString(s string) (int, error) {
 // when the head was dropped, so the tail cannot be mistaken for the whole
 // output. Use tail() for anything that round-trips through the buffer.
 func (b *logBuffer) String() string {
+	if b.released {
+		return ""
+	}
 	if b.written > len(b.buf) {
 		return truncationMarker + b.tail()
 	}
@@ -107,6 +111,20 @@ func (b *logBuffer) resume(offset int) {
 	if offset > b.written {
 		b.written = offset
 	}
+}
+
+// release drops the buffered bytes of a finished process but keeps the count,
+// which restarts and saved states use as the log file offset.
+func (b *logBuffer) release() {
+	b.buf = nil
+	b.max = 0
+	b.released = true
+}
+
+// reopen undoes release for a finished process that is restarted.
+func (b *logBuffer) reopen() {
+	b.max = maxInMemoryLog()
+	b.released = false
 }
 
 // restore seeds the buffer from a saved state: tail is what is left of the
