@@ -315,24 +315,7 @@ func (pm *ProcessManager) ExecuteProcessWithCallback(
 	if !exists {
 		return nil, fmt.Errorf("process creation failed because process does not exist")
 	}
-	if waitForCompletion {
-		// Read logs from file if available (more reliable than in-memory)
-		output, err := pm.GetProcessOutput(pid)
-		processInfo.logLock.Lock()
-		if err == nil {
-			processInfo.Logs = &output.Logs
-			processInfo.Stdout = &output.Stdout
-			processInfo.Stderr = &output.Stderr
-		} else {
-			// Fall back to in-memory
-			logs := processInfo.logs.String()
-			processInfo.Logs = &logs
-			stdout := processInfo.stdout.String()
-			processInfo.Stdout = &stdout
-			stderr := processInfo.stderr.String()
-			processInfo.Stderr = &stderr
-		}
-		processInfo.logLock.Unlock()
-	}
+	// Callers read output from the log files: this record lives as long as the
+	// sandbox, so anything attached to it would too.
 	return processInfo, nil
 }

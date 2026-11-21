@@ -124,6 +124,16 @@ func (h *ProcessHandler) ExecuteProcessWithCallback(cb process.ExitCallback, com
 	if !exists {
 		return ProcessResponse{}, fmt.Errorf("process not found")
 	}
+	// A process can finish before this snapshot, with its in-memory output
+	// already released, so the response is always read from the log files.
+	output, outErr := process.ProcessLogs{}, error(nil)
+	if waitForCompletion && err == nil {
+		output, outErr = h.processManager.GetProcessOutput(processInfo.PID)
+	}
+	if !waitForCompletion || err != nil || outErr != nil {
+		output = snapshot.OutputTail(process.MaxInlinedLogBytes)
+	}
+	snapshot.Logs, snapshot.Stdout, snapshot.Stderr = &output.Logs, &output.Stdout, &output.Stderr
 	return processResponse(snapshot), err
 }
 
