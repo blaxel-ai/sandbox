@@ -70,10 +70,6 @@ func snapshotLocked(p *ProcessInfo) ProcessSnapshot {
 	snapshot.Stdout = copyString(p.Stdout)
 	snapshot.Stderr = copyString(p.Stderr)
 	var stdoutCut, stderrCut int64
-	if snapshot.Stdout != nil {
-		// An exec read Logs, Stdout and Stderr together; keep its cut.
-		stdoutCut = p.outputCutBytes
-	}
 	if snapshot.Logs == nil && p.logs != nil && p.logs.Len() > 0 {
 		logs := p.logs.String()
 		snapshot.Logs = &logs
