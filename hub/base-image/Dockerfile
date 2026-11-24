@@ -7,6 +7,7 @@ RUN apk update && apk add --no-cache \
   bash \
   coreutils \
   git \
+  iptables \
   python3 \
   py3-pip \
   && rm -rf /var/cache/apk/*
