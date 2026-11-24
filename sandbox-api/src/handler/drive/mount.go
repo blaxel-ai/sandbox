@@ -1,11 +1,13 @@
 package drive
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/netip"
 	"os"
 	"os/exec"
@@ -593,9 +595,41 @@ func MountDrive(driveName, mountPath, drivePath string, readOnly bool, uidMap, g
 	return "", "", fmt.Errorf("timeout waiting for mount point to be ready after %s", mountTimeout)
 }
 
-// getFilerAddress reads the filer address from /etc/resolv.conf
-// The filer is the first nameserver listed in resolv.conf
+// filerServiceName is the Agent Drive filer's service-discovery name. The
+// host-local resolver on mk3.1 answers it; mk3.0 has no such zone.
+const filerServiceName = "agent-drive.svc.blaxel.local"
+
+const filerServiceLookupTimeout = 2 * time.Second
+
+// lookupFilerService is a variable so tests can stand in for DNS.
+var lookupFilerService = func(ctx context.Context) error {
+	_, err := net.DefaultResolver.LookupHost(ctx, filerServiceName)
+	return err
+}
+
+// getFilerAddress returns the host the filer answers on: filerServiceName when
+// it resolves, otherwise the first nameserver in /etc/resolv.conf.
+//
+// The resolv.conf inference is correct on mk3.0, where the per-host filer and
+// the DNS resolver are the same address. On mk3.1 they are separate sandboxes,
+// and the name is how the filer is found. The name is fixed rather than taken
+// from the environment because blfs presents the workload identity token to
+// whichever host it dials, and the environment is customer-writable (image
+// ENV, .env, runtime envs). Redirecting the name needs the guest's DNS, which
+// is no more than resolv.conf already exposes.
+//
+// On mk3.1 a failed lookup still lands on the filer: the platform answers the
+// filer's ports at the resolver's address for images built before this.
 func getFilerAddress() (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), filerServiceLookupTimeout)
+	err := lookupFilerService(ctx)
+	cancel()
+	if err == nil {
+		logrus.WithField("filer_address", filerServiceName).Debug("Found filer address from service discovery")
+		return filerServiceName, nil
+	}
+	logrus.WithError(err).Debug("Filer service name did not resolve, falling back to resolv.conf")
+
 	resolvConf, err := os.ReadFile("/etc/resolv.conf")
 	if err != nil {
 		return "", fmt.Errorf("failed to read /etc/resolv.conf: %w", err)
