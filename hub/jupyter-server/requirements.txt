@@ -35,7 +35,7 @@ seaborn==0.13.2
 soundfile==0.14.0
 spacy==3.8.15 # doesn't work on 3.13.x
 textblob==0.20.1
-tornado==6.6
+tornado==6.6.1
 urllib3==2.8.0
 xarray==2026.7.0
 xlrd==2.0.2
