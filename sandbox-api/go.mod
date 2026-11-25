@@ -15,7 +15,7 @@ require (
 	github.com/gorilla/websocket v1.5.3
 	github.com/joho/godotenv v1.5.1
 	github.com/json-iterator/go v1.1.12
-	github.com/junegunn/fzf v0.74.2
+	github.com/junegunn/fzf v0.74.5
 	github.com/modelcontextprotocol/go-sdk v1.7.0
 	github.com/quic-go/quic-go v0.59.1
 	github.com/sirupsen/logrus v1.9.3
