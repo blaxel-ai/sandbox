@@ -55,7 +55,7 @@ COPY --from=sandbox-api /sandbox-api /usr/local/bin/sandbox-api
 
 COPY hub/github-runner/entrypoint.sh /entrypoint.sh
 COPY hub/github-runner/start-runner.sh /usr/local/bin/start-runner
-COPY hub/github-runner/job-started.sh /usr/local/bin/job-started
-RUN chmod +x /entrypoint.sh /usr/local/bin/start-runner /usr/local/bin/job-started
+COPY hub/github-runner/job-started.sh /usr/local/bin/job-started.sh
+RUN chmod +x /entrypoint.sh /usr/local/bin/start-runner /usr/local/bin/job-started.sh
 
 ENTRYPOINT ["/entrypoint.sh"]
