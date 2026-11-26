@@ -1,8 +1,4 @@
 #!/bin/sh
-# Starts the Docker engine in the background, then the sandbox API in the
-# foreground. Docker keeps its data on the runner volume (/runner) when the
-# sandbox has one, so images and build cache survive from job to job.
-
 export PATH="/usr/local/bin:$PATH"
 
 start_docker() {
@@ -17,15 +13,11 @@ start_docker() {
   fi
   mkdir -p "$data_root" /etc/docker
 
-  # Overlay mounts cannot stack on the root overlay, so without the runner
-  # volume Docker falls back to the slower vfs driver.
   storage=""
   case "$(stat -f -c %T "$data_root" 2>/dev/null)" in
     overlay*) storage='"storage-driver": "vfs", "features": {"containerd-snapshotter": false},' ;;
   esac
 
-  # MTU 1280 matches the sandbox network. Containers get an IPv6 subnet from
-  # the documentation prefix, masqueraded to the sandbox's address.
   cat >/etc/docker/daemon.json <<EOF
 {
   $storage
@@ -45,8 +37,6 @@ EOF
   ip6tables -t nat -C POSTROUTING -s 2001:db8:1::/64 ! -o docker0 -j MASQUERADE 2>/dev/null ||
     ip6tables -t nat -A POSTROUTING -s 2001:db8:1::/64 ! -o docker0 -j MASQUERADE 2>/dev/null || true
 
-  # Restart the engine if it stops, so one crash does not leave every later
-  # job without Docker.
   while true; do
     dockerd >>/var/log/dockerd.log 2>&1
     echo "dockerd exited with $?, restarting" >>/var/log/dockerd.log

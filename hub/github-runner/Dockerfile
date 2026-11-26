@@ -1,9 +1,6 @@
 ARG SANDBOX_VERSION=latest
 FROM ghcr.io/blaxel-ai/sandbox:${SANDBOX_VERSION} AS sandbox-api
 
-# A GitHub Actions runner sandbox: the sandbox API, the Actions runner in
-# /actions-runner and a Docker engine. The control plane starts one
-# single-use runner per job through the process API, with start-runner.
 FROM ubuntu:24.04
 
 ARG RUNNER_VERSION=2.338.2
@@ -38,8 +35,6 @@ RUN apt-get update -qq \
     zstd \
   && rm -rf /var/lib/apt/lists/*
 
-# The sandbox kernel has no nftables, so Docker and the runner use the legacy
-# iptables backend.
 RUN update-alternatives --set iptables /usr/sbin/iptables-legacy \
   && update-alternatives --set ip6tables /usr/sbin/ip6tables-legacy
 
