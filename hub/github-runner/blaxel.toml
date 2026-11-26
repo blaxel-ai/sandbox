@@ -1,0 +1,8 @@
+type = "sandbox"
+
+[runtime]
+generation = "mk3"
+memory = 4096
+
+[build]
+slim = false
