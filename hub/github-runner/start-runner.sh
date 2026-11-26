@@ -55,6 +55,7 @@ until docker info >/dev/null 2>&1; do
 done
 
 export RUNNER_ALLOW_RUNASROOT=1
+export ACTIONS_RUNNER_HOOK_JOB_STARTED=/usr/local/bin/job-started
 export RUNNER_TOOL_CACHE="$base/toolcache" AGENT_TOOLSDIRECTORY="$base/toolcache"
 export GOCACHE="$base/cache/go-build" GOMODCACHE="$base/cache/go-mod"
 export npm_config_cache="$base/cache/npm" PIP_CACHE_DIR="$base/cache/pip"
