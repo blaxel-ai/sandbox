@@ -1,10 +1,4 @@
 #!/bin/sh
-# Runs one single-use GitHub Actions runner with the just-in-time
-# configuration in JIT_CONFIG, and exits when its job is done.
-#
-# Everything that should outlive the job lives under /runner, the runner
-# volume, when the sandbox has one: the work folder, the tool cache, the
-# language caches and newer runner releases.
 set -eu
 
 : "${JIT_CONFIG:?JIT_CONFIG is required}"
@@ -13,9 +7,6 @@ base=/runner
 [ -d "$base" ] || base=/tmp/runner
 mkdir -p "$base/work" "$base/toolcache" "$base/cache" "$base/tmp"
 
-# GitHub stops sending jobs to deprecated runner versions, so a runner newer
-# than the one baked into the image is fetched once and kept on the volume.
-# Any failure falls back to the baked runner.
 runner_dir() {
   baked=$(cat /actions-runner/.version)
   latest=$(curl -fsSI --max-time 10 https://github.com/actions/runner/releases/latest |
@@ -43,7 +34,6 @@ runner_dir() {
 }
 dir=$(runner_dir)
 
-# The engine starts with the sandbox; give it a moment after a cold start.
 tries=0
 until docker info >/dev/null 2>&1; do
   tries=$((tries + 1))
@@ -55,6 +45,7 @@ until docker info >/dev/null 2>&1; do
 done
 
 export RUNNER_ALLOW_RUNASROOT=1
+export ACTIONS_RUNNER_HOOK_JOB_STARTED=/usr/local/bin/job-started
 export RUNNER_TOOL_CACHE="$base/toolcache" AGENT_TOOLSDIRECTORY="$base/toolcache"
 export GOCACHE="$base/cache/go-build" GOMODCACHE="$base/cache/go-mod"
 export npm_config_cache="$base/cache/npm" PIP_CACHE_DIR="$base/cache/pip"
