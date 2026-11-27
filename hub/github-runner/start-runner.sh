@@ -23,10 +23,11 @@ clear_docker() {
   docker volume prune -f >/dev/null || true
 }
 
-clear_checkout_credentials() {
+clear_checkouts() {
   for git_dir in "$base"/work/*/*/.git; do
     [ -d "$git_dir" ] || continue
-    git --git-dir="$git_dir" config --local --get-regexp '^http\..*\.extraheader$' 2>/dev/null |
+    rm -rf "$git_dir/hooks"
+    git --git-dir="$git_dir" config --local --get-regexp '^(http\..*\.extraheader|core\.hookspath|core\.fsmonitor)$' 2>/dev/null |
       while read -r key _; do
         git --git-dir="$git_dir" config --local --unset-all "$key" || true
       done
@@ -38,7 +39,7 @@ clear_files() {
     ! -path /tmp/runner ! -path /tmp/multipart-uploads ! -name 'sandbox-api-*' \
     -exec rm -rf {} + 2>/dev/null || true
   home=${HOME:-/root}
-  rm -rf "$base/tmp" "$base/work/_temp" /actions-runner/_diag "$base/actions-runner" \
+  rm -rf "$base/tmp" "$base/work/_temp" "$base/work/_actions" /actions-runner/_diag "$base/actions-runner" \
     "$home/.docker/config.json" "$home/.git-credentials" "$home/.gitconfig" "$home/.netrc" \
     "$home/.npmrc" "$home/.yarnrc.yml" "$home/.pypirc" "$home/.aws" "$home/.azure" \
     "$home/.config/gcloud" "$home/.config/gh" "$home/.kube" "$home/.ssh" \
@@ -57,7 +58,7 @@ done
 
 stop_job_processes
 clear_docker
-clear_checkout_credentials
+clear_checkouts
 clear_files
 mkdir -p "$base/work" "$base/toolcache" "$base/cache" "$base/tmp"
 
