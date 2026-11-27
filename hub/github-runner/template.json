@@ -1,0 +1,25 @@
+{
+  "name": "github-runner",
+  "displayName": "GitHub Actions runner",
+  "categories": [
+    "devops"
+  ],
+  "description": "A sandbox that runs GitHub Actions jobs, with the Actions runner and Docker installed.",
+  "longDescription": "The GitHub Actions runner sandbox ships the Actions runner in /actions-runner, a Docker engine that keeps its data on the /runner volume when there is one, git, Python and build tools on Ubuntu 24.04. Blaxel starts a single-use runner in it for each workflow job that asks for a blaxel- runner label.",
+  "url": "https://github.com/actions/runner",
+  "icon": "https://avatars.githubusercontent.com/u/44036562?s=200&v=4",
+  "memory": 4096,
+  "ports": [
+    {
+      "name": "sandbox-api",
+      "target": 8080,
+      "protocol": "HTTP"
+    }
+  ],
+  "build": {
+    "slim": false
+  },
+  "enterprise": false,
+  "coming_soon": false,
+  "hidden": true
+}

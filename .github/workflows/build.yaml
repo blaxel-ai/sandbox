@@ -30,6 +30,7 @@ on:
           - cua-xfce
           - docker-in-sandbox
           - expo
+          - github-runner
           - lightpanda
           - nextjs
           - node
