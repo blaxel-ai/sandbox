@@ -90,7 +90,7 @@ func TestTelemetryBudgetDropsAndSummarizesOnce(t *testing.T) {
 	useLogSink(t, sink)
 	const name = "telemetry-budget-test"
 
-	tel := newProcessTelemetry(name, "1", 100, 1000, 5)
+	tel := newProcessTelemetry(name, "1", 0, 100, 1000, 5)
 	for i := 0; i < 12; i++ {
 		tel.offer(telemetryLine{line: []byte(fmt.Sprintf("line-%02d\n", i))})
 	}
@@ -121,7 +121,7 @@ func TestTelemetryByteBudgetIsSticky(t *testing.T) {
 	sink := &logSink{}
 	useLogSink(t, sink)
 
-	tel := newProcessTelemetry("telemetry-bytes-test", "1", 100, 1000, 1000)
+	tel := newProcessTelemetry("telemetry-bytes-test", "1", 0, 100, 1000, 1000)
 	long := strings.Repeat("y", 300)
 	for i := 0; i < 4; i++ {
 		tel.offer(telemetryLine{line: []byte(long + "\n")})
@@ -143,12 +143,75 @@ func TestTelemetryCapsLineLength(t *testing.T) {
 	sink := &logSink{}
 	useLogSink(t, sink)
 
-	tel := newProcessTelemetry("telemetry-cap-test", "1", 10, 1<<20, 10)
+	tel := newProcessTelemetry("telemetry-cap-test", "1", 0, 10, 1<<20, 10)
 	tel.offer(telemetryLine{line: []byte(strings.Repeat("z", 3*maxLoggedLineBytes))})
 	tel.close()
 	waitExporter(t, tel, 5*time.Second)
 	if tel.loggedByte != maxLoggedLineBytes {
 		t.Fatalf("budget charged %d bytes, want %d", tel.loggedByte, maxLoggedLineBytes)
+	}
+}
+
+// A line longer than a read arrives in fragments: the cap and the budget
+// apply to the line, so its fragments past the cap cost nothing, and the
+// next line starts afresh. stdout and stderr are tracked apart.
+func TestTelemetryCapsALineAcrossFragments(t *testing.T) {
+	sink := &logSink{}
+	useLogSink(t, sink)
+
+	tel := newProcessTelemetry("telemetry-fragments-test", "1", 0, 100, 1<<20, 100)
+	chunk := strings.Repeat("f", 4096)
+	for i := 0; i < 8; i++ { // one 32 KiB line in 4 KiB reads
+		tel.offer(telemetryLine{line: []byte(chunk)})
+	}
+	tel.offer(telemetryLine{stderr: true, line: []byte("err\n")})
+	tel.offer(telemetryLine{line: []byte("end\n")})
+	tel.offer(telemetryLine{line: []byte("next\n")})
+	tel.close()
+	waitExporter(t, tel, 5*time.Second)
+
+	if want := maxLoggedLineBytes + len("err") + len("next"); tel.loggedByte != want {
+		t.Fatalf("budget charged %d bytes, want %d", tel.loggedByte, want)
+	}
+	if tel.droppedBudget != 0 || tel.droppedQueueFull != 0 {
+		t.Fatalf("dropped %d over budget, %d queue full; a cut line is not a drop", tel.droppedBudget, tel.droppedQueueFull)
+	}
+}
+
+// Exporters of every run share one cap on queued bytes, so a process
+// restarting faster than the sink drains cannot pile up a queue per run.
+func TestTelemetryQueuedBytesAreCappedAcrossExporters(t *testing.T) {
+	const name = "telemetry-shared-cap-test"
+	sink := &logSink{blockOn: name, block: make(chan struct{}), entered: make(chan struct{})}
+	useLogSink(t, sink)
+
+	line := []byte(strings.Repeat("q", maxLoggedLineBytes-1) + "\n")
+	perRun := telemetryQueuedBytesMax / (maxLoggedLineBytes - 1)
+	var runs []*processTelemetry
+	for run := 0; run < 4; run++ {
+		tel := newProcessTelemetry(name, "1", run, perRun+10, 1<<30, 1<<20)
+		for i := 0; i < perRun; i++ {
+			tel.offer(telemetryLine{line: line})
+		}
+		runs = append(runs, tel)
+	}
+	if queued := telemetryQueuedBytes.Load(); queued > telemetryQueuedBytesMax {
+		t.Fatalf("%d bytes queued across runs, cap %d", queued, telemetryQueuedBytesMax)
+	}
+	dropped := 0
+	for _, tel := range runs {
+		dropped += tel.droppedQueueFull
+		tel.close()
+	}
+	if dropped == 0 {
+		t.Fatal("no line was dropped although four runs offered four times the cap")
+	}
+	close(sink.block)
+	for _, tel := range runs {
+		waitExporter(t, tel, 10*time.Second)
+	}
+	if queued := telemetryQueuedBytes.Load(); queued != 0 {
+		t.Fatalf("%d bytes still counted as queued after every exporter ended", queued)
 	}
 }
 
@@ -159,7 +222,7 @@ func TestTelemetryQueueFullDropsWithoutBlocking(t *testing.T) {
 	sink := &logSink{blockOn: name, block: make(chan struct{}), entered: make(chan struct{})}
 	useLogSink(t, sink)
 
-	tel := newProcessTelemetry(name, "1", 2, 1<<20, 1000)
+	tel := newProcessTelemetry(name, "1", 0, 2, 1<<20, 1000)
 	tel.offer(telemetryLine{line: []byte("first\n")})
 	select {
 	case <-sink.entered:
@@ -249,7 +312,9 @@ func TestLargeOutputWaitIsNotHeldBySlowTelemetry(t *testing.T) {
 		t.Fatalf("stdout file has %d bytes, want %d (equal: false)", len(got), len(want))
 	}
 
-	// The inline output is the file's tail, as before.
+	// The output API returns the file's tail up to the logs response limit,
+	// as before. (The 64 KiB inline cap of an exec response is applied by the
+	// HTTP handler, which this change does not touch.)
 	out, err := pm.GetProcessOutput(p.PID)
 	if err != nil {
 		t.Fatal(err)

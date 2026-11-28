@@ -27,7 +27,16 @@ const (
 	// output itself is still captured whole in the log files.
 	telemetryBudgetBytes = 2 * 1024 * 1024
 	telemetryBudgetLines = 20000
+	// telemetryQueuedBytesMax caps the bytes waiting for export across every
+	// exporter of the sandbox. A run's exporter outlives the run until it has
+	// drained, so a noisy process restarting faster than the sink drains would
+	// otherwise stack up one full queue per run.
+	telemetryQueuedBytesMax = 4 * 1024 * 1024
 )
+
+// telemetryQueuedBytes is what every exporter holds, queued and not yet
+// logged.
+var telemetryQueuedBytes atomic.Int64
 
 // telemetryLine is one line queued for export.
 type telemetryLine struct {
@@ -46,6 +55,7 @@ type processTelemetry struct {
 	done chan struct{}
 
 	name, pid  string
+	run        int
 	maxBytes   int
 	maxLines   int
 	loggedLine int
@@ -55,6 +65,10 @@ type processTelemetry struct {
 	// full because the exporter is behind.
 	droppedBudget    int
 	droppedQueueFull int
+	// lineBytes is how much of the current line of each stream (stdout,
+	// stderr) was already offered: a line longer than a read comes in
+	// fragments, and maxLoggedLineBytes caps the line, not each fragment.
+	lineBytes [2]int
 
 	// pending collects the lines of one chunk while the log lock is held, so
 	// they are queued only after it is released. The slices point into the
@@ -67,12 +81,15 @@ type processTelemetry struct {
 var telemetryStartedHook atomic.Pointer[func(*processTelemetry)]
 
 // newProcessTelemetry starts the exporter for one run of a process.
-func newProcessTelemetry(name, pid string, queueLines, maxBytes, maxLines int) *processTelemetry {
+// run is the process' restart count, so the runs of one process (which can
+// share a PID label) stay apart.
+func newProcessTelemetry(name, pid string, run, queueLines, maxBytes, maxLines int) *processTelemetry {
 	t := &processTelemetry{
 		queue:    make(chan telemetryLine, queueLines),
 		done:     make(chan struct{}),
 		name:     name,
 		pid:      pid,
+		run:      run,
 		maxBytes: maxBytes,
 		maxLines: maxLines,
 	}
@@ -101,12 +118,25 @@ func (t *processTelemetry) flush() {
 // offer queues a line for export, or counts it as dropped when the run's budget
 // is spent or the exporter is behind. It never blocks.
 func (t *processTelemetry) offer(l telemetryLine) {
+	stream := 0
+	if l.stderr {
+		stream = 1
+	}
+	endsLine := bytes.HasSuffix(l.line, []byte("\n"))
 	line := bytes.TrimSuffix(l.line, []byte("\n"))
-	if len(line) == 0 {
+	// The rest of a line already offered up to the cap is neither exported
+	// nor charged to the budget: it was cut, not dropped.
+	room := maxLoggedLineBytes - t.lineBytes[stream]
+	if endsLine {
+		t.lineBytes[stream] = 0
+	} else {
+		t.lineBytes[stream] += len(line)
+	}
+	if len(line) == 0 || room <= 0 {
 		return
 	}
-	if len(line) > maxLoggedLineBytes {
-		line = line[:maxLoggedLineBytes]
+	if len(line) > room {
+		line = line[:room]
 	}
 	// Once the budget is spent it stays spent: a short line after a long one
 	// that did not fit would otherwise be exported out of its context.
@@ -115,13 +145,19 @@ func (t *processTelemetry) offer(l telemetryLine) {
 		t.droppedBudget++
 		return
 	}
-	select {
-	case t.queue <- telemetryLine{stderr: l.stderr, line: bytes.Clone(line)}:
-		t.loggedLine++
-		t.loggedByte += len(line)
-	default:
+	// The tailer is the queue's only sender, so a queue with room now still
+	// has room at the send: the line is copied only when it will be queued.
+	size := int64(len(line))
+	if len(t.queue) == cap(t.queue) || telemetryQueuedBytes.Add(size) > telemetryQueuedBytesMax {
+		if len(t.queue) < cap(t.queue) {
+			telemetryQueuedBytes.Add(-size)
+		}
 		t.droppedQueueFull++
+		return
 	}
+	t.queue <- telemetryLine{stderr: l.stderr, line: bytes.Clone(line)}
+	t.loggedLine++
+	t.loggedByte += len(line)
 }
 
 // close ends the run's export. It does not wait: the exporter logs what is
@@ -136,6 +172,7 @@ func (t *processTelemetry) export() {
 		"source":       "process",
 		"process-name": t.name,
 		"process-pid":  t.pid,
+		"process-run":  t.run,
 	})
 	stdout := base.WithField("stream", "stdout")
 	stderr := base.WithField("stream", "stderr")
@@ -145,6 +182,7 @@ func (t *processTelemetry) export() {
 		} else {
 			logProcessLine(stdout, "stdout", l.line)
 		}
+		telemetryQueuedBytes.Add(-int64(len(l.line)))
 	}
 	if dropped := t.droppedBudget + t.droppedQueueFull; dropped > 0 {
 		base.WithFields(logrus.Fields{
@@ -152,6 +190,6 @@ func (t *processTelemetry) export() {
 			"dropped_queue_full":  t.droppedQueueFull,
 			"exported_lines":      t.loggedLine,
 			"exported_bytes":      t.loggedByte,
-		}).Warnf("%d lines dropped from process output telemetry; the process' logs hold all of its output", dropped)
+		}).Warnf("%d lines dropped from process output telemetry; read the process' logs for its output (they keep its most recent output up to their size cap)", dropped)
 	}
 }

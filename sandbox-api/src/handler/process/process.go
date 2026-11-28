@@ -629,7 +629,7 @@ func (pm *ProcessManager) tailLogFiles(proc *ProcessInfo) {
 	// up the capture or the exit. Closing it on return does not wait for the
 	// exporter, which finishes what is queued on its own.
 	if !disableProcessLogging {
-		tel := newProcessTelemetry(proc.Name, proc.PID, telemetryQueueLines, telemetryBudgetBytes, telemetryBudgetLines)
+		tel := newProcessTelemetry(proc.Name, proc.PID, proc.RestartCount, telemetryQueueLines, telemetryBudgetBytes, telemetryBudgetLines)
 		proc.logLock.Lock()
 		proc.telemetry = tel
 		proc.logLock.Unlock()
