@@ -841,7 +841,7 @@ func logProcessLine(entry *logrus.Entry, streamType string, line []byte) {
 // processEntryKeys are set by the capture itself and must not be overridden by
 // whatever the process printed.
 var processEntryKeys = map[string]bool{
-	"source": true, "process-name": true, "process-pid": true, "stream": true,
+	"source": true, "process-name": true, "process-pid": true, "process-run": true, "stream": true,
 }
 
 // unwrapStructuredLine recognizes a line that is itself a structured log

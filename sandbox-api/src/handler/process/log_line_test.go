@@ -23,6 +23,7 @@ func captureProcessLine(t *testing.T, streamType, line string) map[string]any {
 		"source":       "process",
 		"process-name": "build",
 		"process-pid":  "42",
+		"process-run":  3,
 		"stream":       streamType,
 	})
 
@@ -103,13 +104,16 @@ func TestStructuredLineUnknownSeverityFallsBackToStream(t *testing.T) {
 // output came from.
 func TestStructuredLineCannotOverrideProcessFields(t *testing.T) {
 	got := captureProcessLine(t, "stdout",
-		`{"message":"x","source":"api","process-name":"other","process-pid":"1","stream":"stderr"}`)
+		`{"message":"x","source":"api","process-name":"other","process-pid":"1","process-run":9,"stream":"stderr"}`)
 	for key, want := range map[string]string{
 		"source": "process", "process-name": "build", "process-pid": "42", "stream": "stdout",
 	} {
 		if got[key] != want {
 			t.Errorf("%s = %v, want %q", key, got[key], want)
 		}
+	}
+	if got["process-run"] != float64(3) {
+		t.Errorf("process-run = %v, want 3", got["process-run"])
 	}
 }
 

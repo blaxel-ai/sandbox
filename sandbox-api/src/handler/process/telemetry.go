@@ -148,10 +148,14 @@ func (t *processTelemetry) offer(l telemetryLine) {
 	// The tailer is the queue's only sender, so a queue with room now still
 	// has room at the send: the line is copied only when it will be queued.
 	size := int64(len(line))
-	if len(t.queue) == cap(t.queue) || telemetryQueuedBytes.Add(size) > telemetryQueuedBytesMax {
-		if len(t.queue) < cap(t.queue) {
-			telemetryQueuedBytes.Add(-size)
-		}
+	if len(t.queue) == cap(t.queue) {
+		t.droppedQueueFull++
+		return
+	}
+	// Reserve the bytes before queueing; give them back if that crosses the
+	// cap. Only a reservation that was made is given back.
+	if telemetryQueuedBytes.Add(size) > telemetryQueuedBytesMax {
+		telemetryQueuedBytes.Add(-size)
 		t.droppedQueueFull++
 		return
 	}
