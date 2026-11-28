@@ -161,7 +161,10 @@ type ProcessInfo struct {
 	stdoutMidLine    bool
 	stderrMidLine    bool
 	// Reused across reads so tagging a chunk costs no allocation.
-	prefixBuf       []byte
+	prefixBuf []byte
+	// telemetry exports the current run's output lines; nil when process
+	// logging is disabled or no tailer is running. Guarded by logLock.
+	telemetry       *processTelemetry
 	logLock         sync.RWMutex
 	stopTimeout     chan struct{} // Channel to signal timeout goroutine to stop
 	stopTimeoutOnce sync.Once     // Protects stopTimeout channel from double-close
@@ -622,6 +625,24 @@ func (pm *ProcessManager) tailLogFiles(proc *ProcessInfo) {
 	}
 	proc.finishLogReady(nil)
 
+	// Telemetry is exported off this goroutine, so a slow log sink never holds
+	// up the capture or the exit. Closing it on return does not wait for the
+	// exporter, which finishes what is queued on its own.
+	if !disableProcessLogging {
+		tel := newProcessTelemetry(proc.Name, proc.PID, telemetryQueueLines, telemetryBudgetBytes, telemetryBudgetLines)
+		proc.logLock.Lock()
+		proc.telemetry = tel
+		proc.logLock.Unlock()
+		defer func() {
+			proc.logLock.Lock()
+			if proc.telemetry == tel {
+				proc.telemetry = nil
+			}
+			proc.logLock.Unlock()
+			tel.close()
+		}()
+	}
+
 	stdoutBuf := make([]byte, 4096)
 	stderrBuf := make([]byte, 4096)
 
@@ -725,15 +746,10 @@ func (pm *ProcessManager) readAndBroadcast(file *os.File, buf []byte, proc *Proc
 		// splitting it into a slice of lines used to copy it twice per chunk, and
 		// a workload that writes fast enough grew the heap doing so until the
 		// kernel OOM-killed the API for it.
-		var logEntry *logrus.Entry
-		if !disableProcessLogging {
-			logEntry = logrus.WithFields(logrus.Fields{
-				"source":       "process",
-				"process-name": proc.Name,
-				"process-pid":  proc.PID,
-				"stream":       streamType,
-			})
-		}
+		// Telemetry lines are only collected here and queued once the lock is
+		// released: logging them under it held every reader, writer and the
+		// exit behind the API's log sink.
+		tel := proc.telemetry
 		// Tag only real line starts. Tagging the chunk instead put the tag in
 		// the middle of any line longer than the read buffer, which corrupted
 		// it for every consumer: a >4KB JSON line came out with "stdout:"
@@ -762,8 +778,8 @@ func (pm *ProcessManager) readAndBroadcast(file *os.File, buf []byte, proc *Proc
 
 			// Structured attributes let the telemetry collector tell process
 			// logs from access logs.
-			if logEntry != nil {
-				logProcessLine(logEntry, streamType, line)
+			if tel != nil {
+				tel.collect(streamType, line)
 			}
 		}
 		if streamType == "stderr" {
@@ -783,6 +799,9 @@ func (pm *ProcessManager) readAndBroadcast(file *os.File, buf []byte, proc *Proc
 			writeChunkToLogWriter(w, streamType, data, proc.prefixBuf)
 		}
 		proc.logLock.Unlock()
+		if tel != nil {
+			tel.flush()
+		}
 	}
 	if err != nil && err != io.EOF {
 		// Real error, but we'll keep trying
